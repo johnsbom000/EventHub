@@ -1,4 +1,5 @@
-import { useState } from "react";
+import { useState, useEffect } from "react";
+import { useSearch } from "wouter";
 import Navigation from "@/components/Navigation";
 import Footer from "@/components/Footer";
 import VendorCard from "@/components/VendorCard";
@@ -28,10 +29,27 @@ const mockVendors = [
 const categories = ["Venues", "Catering", "Photography", "Entertainment", "Planning", "Decor"];
 
 export default function BrowseVendors() {
+  const searchString = useSearch();
   const [searchQuery, setSearchQuery] = useState("");
   const [sortBy, setSortBy] = useState("rating");
   const [selectedCategories, setSelectedCategories] = useState<string[]>([]);
   const [showFilters, setShowFilters] = useState(false);
+
+  // Parse URL parameters on mount
+  useEffect(() => {
+    const params = new URLSearchParams(searchString);
+    const location = params.get('location');
+    const eventType = params.get('eventType');
+    const date = params.get('date');
+    const categoriesParam = params.get('categories');
+    
+    if (location) setSearchQuery(location);
+    if (categoriesParam) {
+      setSelectedCategories(categoriesParam.split(','));
+    }
+    
+    console.log('Search filters:', { location, eventType, date, categories: categoriesParam });
+  }, [searchString]);
 
   const toggleCategory = (category: string) => {
     setSelectedCategories(prev =>
@@ -40,12 +58,12 @@ export default function BrowseVendors() {
   };
 
   return (
-    <div className="min-h-screen flex flex-col">
+    <div className="min-h-screen flex flex-col bg-white">
       <Navigation />
       <main className="flex-1 bg-background">
-        <div className="bg-card border-b py-8">
+        <div className="bg-white border-b py-8">
           <div className="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8">
-            <h1 className="text-3xl md:text-4xl font-bold mb-4" data-testid="text-page-title">
+            <h1 className="text-3xl md:text-4xl font-bold mb-4 text-foreground" data-testid="text-page-title">
               Browse Vendors
             </h1>
             <p className="text-muted-foreground mb-6">

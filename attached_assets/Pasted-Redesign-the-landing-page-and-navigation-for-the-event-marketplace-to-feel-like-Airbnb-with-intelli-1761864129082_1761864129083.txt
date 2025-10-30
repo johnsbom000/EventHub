@@ -1,0 +1,42 @@
+Redesign the landing page and navigation for the event marketplace to feel like Airbnb, with intelligent vendor recommendations and simplified navigation.
+Overall goal:
+Create a home/landing page that lets users immediately search for event vendors. The site should feel open and usable without login, and automatically show nearby vendor suggestions after a user scrolls.
+Top navigation:
+Logo on the left.
+Center: nothing (keep it minimal).
+Right side: “Login / Sign Up” and a “Vendors” button.
+When a user clicks Vendors:
+If not logged in, show a prompt:
+“Are you a new vendor or an existing vendor?”
+New Vendor → goes to vendor sign-up/onboarding.
+Existing Vendor → goes to vendor login/dashboard.
+If already logged in as a vendor → go directly to their dashboard.
+If logged in as admin → go to admin dashboard.
+Landing page hero section:
+Large centered search bar similar to Airbnb’s layout with four fields:
+Location (text or Google Maps Autocomplete)
+Event type (dropdown: wedding, corporate, party, other)
+Event date (date picker)
+Vendors needed (multi-select dropdown: Photographer, Venue, Florist, DJ, Catering, Prop Rentals, etc.)
+Include a prominent Search button that leads to /vendors with filters applied based on search input.
+No “Browse Vendors” or “Event Planner” buttons — everything is accessible via this main search bar.
+Smart recommendations (scroll behavior):
+When the user scrolls down past the hero section, display vendor recommendations by category.
+Use approximate geolocation (browser navigator.geolocation API or IP-based lookup) to detect the user’s area.
+Show up to 6 categories (e.g., Venues near you, Photographers near you, DJs near you).
+For each category, show a horizontal scroll row of vendor cards (Airbnb-style) including image, name, city, price, and “View” button.
+If geolocation is denied, default to showing popular vendors across all locations.
+Vendor card layout:
+Image, vendor name, service category, location, starting price.
+Clicking the card opens /vendor/:id.
+Responsiveness:
+Desktop-first, but ensure the layout gracefully stacks on mobile (search bar collapses into vertical layout).
+Styling:
+Minimal Airbnb-inspired aesthetic: white background, gray text, muted accents (#F5F5F5, #E5E7EB, #111827).
+Use TailwindCSS.
+Keep it clean and modern — emphasize whitespace and card shadows.
+Technical details:
+The search form should send query parameters to /vendors?location=&eventType=&date=&categories=[] for filtering.
+Use the existing vendor database (approved vendors only) to populate recommendations.
+Use mock data if location detection isn’t available in development.
+Ensure the homepage loads fast and works without login.
