@@ -1,0 +1,75 @@
+CHUNK 2 – Vendor Model + Onboarding
+Title: Vendor Model + Onboarding
+Prompt:
+Extend the event marketplace to support vendor onboarding.
+	1. Create vendors table linked to users (1 vendor per vendor user).
+	2. Fields: business_name, description, service_area, categories, base_price, deposit_amount, media (array or separate table), status (draft | submitted | approved), calendar_url.
+	3. Add availability table with fields: vendor_id, date, is_available.
+	4. Build a Vendor Dashboard (protected for vendor role):
+		○ Edit and save profile info
+		○ Upload images (store file paths)
+		○ Manage availability (block/unblock dates)
+		○ Show listing status (draft/submitted/approved).
+	5. Include an endpoint for vendors to “submit for approval” (changes status).
+	6. Document how to create, edit, and view a vendor profile.
+
+CHUNK 3 – Customer Browsing + Event Planner
+Title: Customer Browsing + Event Planner
+Prompt:
+Create public browsing and guided event-planning flow.
+	1. Public /vendors page: show approved vendors only.
+	2. Filters: category, location, budget range, date (check against availability table).
+	3. Vendor profile page /vendor/:id:
+		○ show photos, description, location, base price, deposit amount, availability calendar, “Book” button.
+	4. Add Event Planner flow:
+		○ Step 1: event type, date, location, budget
+		○ Step 2: select vendor types (Venue, Photographer, Florist, DJ, Catering, Prop Rentals)
+		○ Step 3: follow-up questions for at least Florist and Venue (color palette, flowers, budget, indoor/outdoor, guest count)
+	5. Store planner data in planner_entries linked to the customer.
+	6. After submit, redirect to /vendors with filters pre-filled from planner selections.
+
+CHUNK 4 – Booking + Stripe Deposits
+Title: Booking + Stripe Deposits
+Prompt:
+Implement booking creation and Stripe integration for deposits.
+	1. Create bookings table with:
+		○ id, customer_id, vendor_id, event_date, total_price, deposit_paid, status (pending_payment | confirmed | cancelled), stripe_payment_id, remaining_balance_due_date.
+	2. Booking flow:
+		○ Customer selects date/time on vendor page.
+		○ Backend checks vendor availability.
+		○ Create booking record with status pending_payment.
+		○ Redirect to Stripe Checkout for the vendor’s deposit_amount.
+	3. On Stripe success webhook:
+		○ Mark booking as confirmed, deposit_paid = true.
+		○ Set remaining_balance_due_date = event_date - 14 days.
+	4. Log successful payment in console for MVP (email notifications optional).
+	5. Document how to test with Stripe’s test keys and sample checkout.
+
+CHUNK 5 – Admin Panel
+Title: Admin Panel
+Prompt:
+Add administrative tools to manage vendors, bookings, and users.
+	1. Protected /admin route (only for admin role).
+	2. Admin views:
+		○ Users: list all users with id, email, role.
+		○ Vendors: list vendors with status; include Approve/Reject buttons to update status.
+		○ Bookings: list all bookings with filters for status or date.
+	3. Add search/filter bar for quick lookup.
+	4. Ensure all admin actions require requireRole('admin').
+	5. Document how to access and use the admin dashboard.
+
+CHUNK 6 – Styling + Landing Experience
+Title: Styling + Landing Experience
+Prompt:
+Polish the interface and unify navigation.
+	1. Use TailwindCSS for consistent styling.
+	2. Add a Landing Page with two clear CTAs:
+		○ “Browse Vendors” → vendor list page
+		○ “Use Event Planner” → guided planner flow.
+	3. Add top navigation with conditional links:
+		○ Logged-out: Browse Vendors, Event Planner, Login/Sign Up, Become a Vendor
+		○ Vendor-logged-in: Dashboard, Logout
+		○ Admin-logged-in: Admin Dashboard, Logout
+	4. Apply minimal Airbnb-style theme: white background, gray typography, light accents.
+	5. Make sure all main pages (landing, vendor list, planner, vendor dashboard, admin) are reachable via nav links.
+	6. Finalize README with run instructions, env variables (STRIPE_SECRET_KEY, JWT_SECRET, DATABASE_URL).
