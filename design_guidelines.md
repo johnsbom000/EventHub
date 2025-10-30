@@ -1,8 +1,13 @@
-# Event Marketplace Design Guidelines
+# Event Hub Design Guidelines
 
 ## Design Approach: Reference-Based (Marketplace Experience)
 
 Drawing inspiration from successful event and service marketplaces (Airbnb, Eventbrite, Thumbtack), this design prioritizes visual discovery, trust-building, and seamless booking experiences.
+
+**Brand Identity:**
+- Company Name: Event Hub
+- Primary Color: Emerald Green (HSL: 160 84% 39%)
+- Design Philosophy: Airbnb-inspired minimal aesthetic with generous whitespace
 
 **Core Principles:**
 - Visual-first discovery to inspire and engage

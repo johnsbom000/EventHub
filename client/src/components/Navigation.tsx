@@ -36,7 +36,7 @@ export default function Navigation() {
           <div className="flex justify-between items-center h-16">
             <Link href="/" className="flex items-center gap-2 hover-elevate active-elevate-2 px-3 py-2 rounded-lg -ml-3" data-testid="link-home">
               <Calendar className="h-6 w-6 text-primary" />
-              <span className="font-serif text-xl font-bold">EventVibe</span>
+              <span className="font-serif text-xl font-bold">Event Hub</span>
             </Link>
 
             <div className="flex items-center gap-3">
