@@ -1,7 +1,7 @@
 import { Link } from "wouter";
 import { Button } from "@/components/ui/button";
-import { Calendar } from "lucide-react";
 import { useState } from "react";
+import Logo from "@/components/Logo";
 import {
   Dialog,
   DialogContent,
@@ -35,7 +35,7 @@ export default function Navigation() {
         <div className="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8">
           <div className="flex justify-between items-center h-16">
             <Link href="/" className="flex items-center gap-2 hover-elevate active-elevate-2 px-3 py-2 rounded-lg -ml-3" data-testid="link-home">
-              <Calendar className="h-6 w-6 text-primary" />
+              <Logo className="h-6 w-6" />
               <span className="font-serif text-xl font-bold">Event Hub</span>
             </Link>
 

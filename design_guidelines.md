@@ -6,7 +6,8 @@ Drawing inspiration from successful event and service marketplaces (Airbnb, Even
 
 **Brand Identity:**
 - Company Name: Event Hub
-- Primary Color: Emerald Green (HSL: 160 84% 39%)
+- Primary Color: Emerald Green (#10B981 / HSL: 160 84% 39%)
+- Logo: Emerald green calendar icon with golden sparkle (inspired by Google Gemini)
 - Design Philosophy: Airbnb-inspired minimal aesthetic with generous whitespace
 
 **Core Principles:**
@@ -20,8 +21,8 @@ Drawing inspiration from successful event and service marketplaces (Airbnb, Even
 ## Typography System
 
 **Font Families:**
-- Primary: Inter or DM Sans (modern, clean, excellent at all sizes)
-- Accent: Playfair Display or Lora (for hero headlines and emotional moments)
+- Primary: Nunito Sans (modern, clean, excellent readability)
+- Accent: Playfair Display (for hero headlines and emotional moments)
 
 **Hierarchy:**
 - Hero Headline: 3xl to 6xl, accent font, font-semibold
