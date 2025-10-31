@@ -1,0 +1,110 @@
+STEP 1 — Event Intake + Optional Deep Dive
+1. Basic Event Details (always shown on landing)
+Fields:
+Event type (dropdown)
+Wedding
+Corporate Event
+Birthday
+Anniversary
+Baby Shower
+Graduation
+Other
+Location (text / Google-style autocomplete): City, State or venue
+Date (date picker)
+Start time (time picker)
+Guest count (number)
+Vendors needed (multi-select chips)
+Photographer
+Videographer
+Florist
+Catering
+DJ
+Prop / décor rental
+Planner / Coordinator (optional for later)
+After submit → show 2 paths:
+A. “Browse vendors” (just show vendors filtered by location/date/vendor types)
+B. “Get a curated list” (open follow-up questions per vendor type)
+2. Curated Path (service-specific follow-ups)
+For every vendor type the user selected, show only that block. Reuse the same patterns:
+Dates (main event day is prefilled)
+Before-event needs
+Hours / scope
+Budget (range)
+Notes + inspo upload
+Photographer
+Pre-event shoots?
+“Would you like to do photoshoots before event day (bridals, engagements, first look)?” → yes/no
+If yes → Pre-event dates (one or more dates)
+Event-day coverage hours: “How many hours do you need them on the event day?”
+Start time: "When would you like the photographer to start?"
+Budget (photography):
+Option 1: single number
+Option 2: min–max range
+Inspiration / notes:
+“Any other notes for the photographer?”
+“Drop a mood board / Pinterest board link”
+File/link field
+Videographer
+Pre-event shoots?
+“Would you like to do a video shoot before event day (bridals, engagements)?” → yes/no
+If yes → Pre-event dates (one or more dates)
+Event-day coverage hours: “How many hours do you need video on event day?”
+Start time: "When would you like the videographer to start?"
+Budget (videography):
+single number or min–max
+(fixing your original line: this should say “videographers,” not “photographers”)
+Deliverable notes (optional): highlight reel / full ceremony / social cuts
+Other notes: text area
+Florist
+Arrangements needed (multi-select / checklist):
+Bridal bouquet
+Bridesmaid bouquets
+Boutonnieres
+Centerpieces
+Ceremony arch / install
+Aisle florals
+Cake florals
+Other
+Flower preferences:
+“Any flower types you want?”
+“Any flower types you don’t want?”
+Before-event needs?
+“Do you need any arrangements before event day?” → yes/no
+If yes → Date/time needed
+If no > Would you like to have the florist set up the arrangements? Additional$
+If Yes > Start time: "When would you like the florist to have the arrangements set up by?"
+Touch-ups?
+“Will you want touch ups before/during the event?” → yes/no
+Floral budget: number or range
+Notes: text area (color palette, theme, inspo links)
+Catering
+Food style / cuisine: text or multi-select (American, BBQ, Mexican, Italian, Mediterranean, Brunch, Dessert bar, Other)
+Service type / courses:
+Buffet
+Plated
+Cocktail / hors d’oeuvres
+Dessert only
+Allergy / dietary friendly?
+If yes → list (GF, DF, nut-free, vegetarian, vegan, kids’ menu)
+Before-event catering? (rehearsal dinner / bridal shower) → yes/no
+If yes → date/time needed
+Event-day serving time: “What time do you need the food ready by?”
+Catering budget: number or range
+Notes: text area (staffed vs drop-off, rentals, tableware)
+DJs
+Services needed:
+Ceremony music
+Cocktail hour
+Reception / dancing
+MC / announcements
+Music input:
+“Do you have a pre-made playlist?” → yes/no
+If no → “What genre(s) or vibe are you going for?”
+Optional: “Do-not-play” list
+DJ budget: number or range
+Notes: text area (sound system needed? outdoor? multiple locations?)
+Prop / Décor Rental
+What props / décor do you need? (text or checklist later)
+When do you need them? (pickup/delivery date + return date)
+Budget / price range: number or range
+Notes: text area (color, theme, venue limitations)
