@@ -33,7 +33,13 @@ Preferred communication style: Simple, everyday language.
 
 **Express Server**: Node.js server built with Express, using ES modules (type: "module"). Server entry point at `server/index.ts` handles API routes and serves the Vite-built frontend in production.
 
-**API Structure**: RESTful API endpoints prefixed with `/api`. Current implementation includes event management endpoints (`/api/events`) with CRUD operations. Routes are registered in `server/routes.ts`.
+**API Structure**: RESTful API endpoints prefixed with `/api`. Current implementation includes:
+- Event management endpoints (`/api/events`):
+  - POST `/api/events` - Create new event with optional vendor-specific details
+  - GET `/api/events` - Retrieve all events
+  - GET `/api/events/:id` - Retrieve specific event by ID
+- All routes include Zod schema validation for type safety
+- Routes are registered in `server/routes.ts`
 
 **Data Layer Abstraction**: Storage interface (`IStorage`) defined in `server/storage.ts` allows switching between in-memory storage (current: `MemStorage`) and database implementations without changing application logic. This follows the repository pattern.
 
@@ -49,8 +55,17 @@ Preferred communication style: Simple, everyday language.
 
 **Schema Design**:
 - `users` table: Basic authentication with username/password
-- `events` table: Stores event planning data with embedded JSON fields for vendor-specific requirements (photographer, videographer, florist, catering, DJ, prop/decor details)
-- Vendor-specific details use typed schemas (e.g., `photographerDetailsSchema`) validated with Zod
+- `events` table: Comprehensive event planning data with:
+  - Basic fields: eventType, location, date, startTime, guestCount, vendorsNeeded (array)
+  - path: "browse" or "curated" (determines user's choice of vendor discovery method)
+  - Vendor-specific JSONB fields for detailed requirements:
+    - photographerDetails: pre-event shoots, coverage hours, budget, inspiration links
+    - videographerDetails: video shoots, coverage hours, deliverable preferences, budget
+    - floristDetails: arrangements needed, flower preferences, setup requirements, touch-ups, budget
+    - cateringDetails: food styles, service types, dietary requirements, serving times, budget
+    - djDetails: services needed, playlist preferences, music genres, equipment needs, budget
+    - propDecorDetails: items needed, pickup/return dates, budget, theme notes
+- All vendor-specific details use strongly-typed Zod schemas for validation
 
 **Migrations**: Drizzle Kit manages migrations with output to `./migrations` directory. Schema changes are pushed using `npm run db:push`.
 
@@ -63,6 +78,39 @@ Preferred communication style: Simple, everyday language.
 **Role-Based Access**: Three user roles planned (customer, vendor, admin) with role-specific dashboards and routing logic in Navigation component. Current implementation has role checks but no active authentication.
 
 **Protected Routes**: Conditional navigation based on login state and user role, with vendor prompts for unauthenticated users trying to access vendor features.
+
+## Key Features
+
+### Event Planning Intake System
+
+**Multi-Step Event Intake** (`/planner`): Comprehensive questionnaire system for event planning with two pathways:
+
+1. **Basic Event Details (Step 1)**:
+   - Event type selection (Wedding, Corporate, Birthday, Anniversary, Baby Shower, Graduation, Other)
+   - Location input with autocomplete support
+   - Date and time pickers
+   - Guest count
+   - Vendor type multi-select (Photographer, Videographer, Florist, Catering, DJ, Prop/Décor Rental)
+
+2. **Path Selection (Step 2)**:
+   - **Browse Vendors Path**: Direct navigation to filtered vendor listings based on basic details
+   - **Curated List Path**: Detailed vendor-specific questionnaires for personalized recommendations
+
+3. **Curated Questionnaires** (when selected):
+   - **Photographer**: Pre-event shoots, coverage hours, start time, budget, notes, inspiration links
+   - **Videographer**: Pre-event shoots, coverage hours, deliverable preferences (highlight reel, full ceremony), budget
+   - **Florist**: Arrangements needed (bouquets, centerpieces, arch, etc.), flower preferences/avoidances, setup requirements, touch-up needs, budget
+   - **Catering**: Food style/cuisine, service type (buffet, plated, cocktail), dietary accommodations, serving times, budget
+   - **DJ**: Services needed (ceremony, cocktail, reception, MC), playlist preferences, music genres, do-not-play list, budget
+   - **Prop/Décor Rental**: Items needed, pickup/return dates, budget, theme notes
+
+**Technical Implementation**:
+- React Hook Form with Zod validation
+- Multi-step state management with conditional rendering
+- Type-safe vendor detail schemas
+- Comprehensive data-testid attributes for E2E testing
+- Toast notifications for success/error states
+- Automatic redirection to browse vendors after submission
 
 ## External Dependencies
 
