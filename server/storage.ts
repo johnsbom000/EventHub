@@ -115,7 +115,7 @@ export class MemStorage implements IStorage {
     const sampleVendors: InsertVendor[] = [
       {
         name: "Sarah Chen Photography",
-        category: "photographer",
+        category: "Photographer",
         city: "San Francisco",
         state: "CA",
         metro: "San Francisco Bay Area",
@@ -196,7 +196,7 @@ export class MemStorage implements IStorage {
       },
       {
         name: "Golden Gate Videography",
-        category: "videographer",
+        category: "Videographer",
         city: "San Francisco",
         state: "CA",
         metro: "San Francisco Bay Area",
@@ -224,7 +224,7 @@ export class MemStorage implements IStorage {
       },
       {
         name: "Bloom & Petal Florists",
-        category: "florist",
+        category: "Florists",
         city: "San Francisco",
         state: "CA",
         metro: "San Francisco Bay Area",
@@ -256,7 +256,7 @@ export class MemStorage implements IStorage {
       },
       {
         name: "Bay Area Catering Co.",
-        category: "catering",
+        category: "Catering",
         city: "San Francisco",
         state: "CA",
         metro: "San Francisco Bay Area",
@@ -288,7 +288,7 @@ export class MemStorage implements IStorage {
       },
       {
         name: "DJ Soundwave Entertainment",
-        category: "dj",
+        category: "DJs",
         city: "San Francisco",
         state: "CA",
         metro: "San Francisco Bay Area",
@@ -316,7 +316,7 @@ export class MemStorage implements IStorage {
       },
       {
         name: "Event Rentals Plus",
-        category: "prop-decor",
+        category: "Prop Rentals",
         city: "San Francisco",
         state: "CA",
         metro: "San Francisco Bay Area",
