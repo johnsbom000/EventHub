@@ -371,6 +371,16 @@ export async function registerRoutes(app: Express): Promise<Server> {
     }
   });
 
+  app.get("/api/vendors/meta/categories", async (req, res) => {
+    try {
+      const vendors = await storage.getAllVendors();
+      const categories = Array.from(new Set(vendors.map(v => v.category))).sort();
+      res.json(categories);
+    } catch (error: any) {
+      res.status(500).json({ error: error.message });
+    }
+  });
+
   app.get("/api/vendors/:id", async (req, res) => {
     try {
       const vendor = await storage.getVendor(req.params.id);
