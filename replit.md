@@ -1,167 +1,97 @@
 # Event Hub - Event Vendor Marketplace
 
 ## Overview
-
-Event Hub is an event vendor marketplace platform that connects customers planning events with professional vendors. The application features an Airbnb-inspired design with emerald green branding, enabling customers to search, browse, and book event vendors across multiple categories (venues, catering, photography, DJ, florists, prop rentals, etc.). The platform supports three user roles: customers who plan events, vendors who offer services, and administrators who manage vendor approvals.
+Event Hub is an event vendor marketplace designed to connect customers with professional event vendors (venues, catering, photography, DJ, florists, prop rentals, etc.). The platform features an Airbnb-inspired design with emerald green branding and supports three user roles: customers, vendors, and administrators. Its core purpose is to streamline event planning by enabling customers to search, browse, and book vendors, while providing vendors with a platform to offer their services. The platform aims to simplify vendor discovery and booking, enhance event planning efficiency, and provide a curated marketplace experience.
 
 ## User Preferences
-
 Preferred communication style: Simple, everyday language.
 
 ## System Architecture
 
-### Frontend Architecture
+### Frontend
+- **Technology**: React 18+ with TypeScript, bundled by Vite.
+- **Routing**: Lightweight client-side routing using Wouter, with role-specific paths.
+- **UI/UX**: Utilizes shadcn/ui components (based on Radix UI) and Tailwind CSS.
+  - **Design System**: Emerald green primary color (#10B981), Nunito Sans for body text, Playfair Display for headlines, and responsive design following Tailwind defaults.
+  - **Interaction**: Custom `hover-elevate` and `active-elevate-2` utility classes.
+- **State Management**: TanStack Query for server state (with optimistic updates), React hooks for local UI state.
+- **Form Handling**: React Hook Form with Zod validation, sharing schemas with the backend for type safety.
 
-**React SPA with Vite**: The client is built as a single-page application using React 18+ with TypeScript, bundled via Vite for fast development and optimized production builds.
-
-**Routing Strategy**: Uses Wouter for lightweight client-side routing. All routes are defined in `client/src/App.tsx` with role-specific paths for customers, vendors, and admins.
-
-**UI Component System**: Built on shadcn/ui components with Radix UI primitives, providing accessible and customizable components. The design system uses Tailwind CSS with custom theme variables defined in `client/src/index.css` following the "new-york" style from shadcn.
-
-**State Management**: Uses TanStack Query (React Query) for server state management with optimistic updates. Local UI state is managed with React hooks. Query client configuration in `client/src/lib/queryClient.ts` includes custom error handling and credential inclusion for authentication.
-
-**Design System**: 
-- Primary color: Emerald green (#10B981)
-- Typography: Nunito Sans for body text, Playfair Display for headlines
-- Spacing uses Tailwind units (2, 4, 6, 8, 12, 16, 20, 24, 32)
-- Responsive breakpoints following Tailwind defaults
-- Custom elevation system with `hover-elevate` and `active-elevate-2` utility classes
-
-**Form Handling**: Uses React Hook Form with Zod validation via `@hookform/resolvers`. Schema definitions are shared between client and server from `shared/schema.ts`.
-
-### Backend Architecture
-
-**Express Server**: Node.js server built with Express, using ES modules (type: "module"). Server entry point at `server/index.ts` handles API routes and serves the Vite-built frontend in production.
-
-**API Structure**: RESTful API endpoints prefixed with `/api`. Current implementation includes:
-- Event management endpoints (`/api/events`):
-  - POST `/api/events` - Create new event with optional vendor-specific details
-  - GET `/api/events` - Retrieve all events
-  - GET `/api/events/:id` - Retrieve specific event by ID
-- All routes include Zod schema validation for type safety
-- Routes are registered in `server/routes.ts`
-
-**Data Layer Abstraction**: Storage interface (`IStorage`) defined in `server/storage.ts` allows switching between in-memory storage (current: `MemStorage`) and database implementations without changing application logic. This follows the repository pattern.
-
-**Request Logging**: Custom middleware logs all API requests with timing, method, path, status code, and response preview (truncated to 80 characters).
-
-**Error Handling**: Centralized error handling with typed error responses. Validation errors return 400, not found returns 404, server errors return 500.
+### Backend
+- **Technology**: Node.js Express server using ES modules.
+- **API**: RESTful API endpoints (`/api/events`, `/api/vendors`) with Zod schema validation for all routes.
+- **Data Layer**: Abstracted storage interface (`IStorage`) allowing flexible storage implementations (currently in-memory, designed for future database integration).
+- **Error Handling**: Centralized, typed error handling for consistent responses.
 
 ### Data Storage
-
-**Database**: PostgreSQL via Neon serverless (@neondatabase/serverless), configured for websocket connections using the `ws` library for compatibility with serverless environments.
-
-**ORM**: Drizzle ORM for type-safe database queries. Schema definitions in `shared/schema.ts` are shared between client and server, ensuring type consistency across the stack.
-
-**Schema Design**:
-- `users` table: Basic authentication with username/password
-- `events` table: Comprehensive event planning data with:
-  - Basic fields: eventType, location, date, startTime, guestCount, vendorsNeeded (array)
-  - path: "browse" or "curated" (determines user's choice of vendor discovery method)
-  - Vendor-specific JSONB fields for detailed requirements:
-    - photographerDetails: pre-event shoots, coverage hours, budget, inspiration links
-    - videographerDetails: video shoots, coverage hours, deliverable preferences, budget
-    - floristDetails: arrangements needed, flower preferences, setup requirements, touch-ups, budget
-    - cateringDetails: food styles, service types, dietary requirements, serving times, budget
-    - djDetails: services needed, playlist preferences, music genres, equipment needs, budget
-    - propDecorDetails: items needed, pickup/return dates, budget, theme notes
-- All vendor-specific details use strongly-typed Zod schemas for validation
-
-**Migrations**: Drizzle Kit manages migrations with output to `./migrations` directory. Schema changes are pushed using `npm run db:push`.
-
-**Type Safety**: Drizzle-zod integration generates Zod schemas from Drizzle table definitions, creating `InsertEvent`, `Event`, `InsertUser`, `User` types that are used across the application.
+- **Database**: PostgreSQL via Neon serverless, utilizing `ws` for serverless compatibility.
+- **ORM**: Drizzle ORM for type-safe database interactions.
+- **Schema Design**:
+  - `users`: Basic authentication.
+  - `events`: Stores comprehensive event details, including vendor-specific requirements as JSONB fields (e.g., `photographerDetails`, `cateringDetails`).
+  - `vendors`: Stores vendor profiles with details for matching and scoring (e.g., category, location, pricing, availability, service offerings).
+- **Migrations**: Drizzle Kit manages schema changes.
+- **Type Safety**: Drizzle-zod integration generates Zod schemas from Drizzle table definitions for end-to-end type consistency.
 
 ### Authentication & Authorization
+- **Roles**: Supports Customer, Vendor, and Admin roles with planned role-based access control.
+- **Session Management**: Designed for session-based authentication using `connect-pg-simple` (dependency present).
 
-**Session Management**: Placeholder for session-based authentication. Infrastructure suggests future implementation using `connect-pg-simple` for PostgreSQL session storage (already in dependencies).
+### Key Features
 
-**Role-Based Access**: Three user roles planned (customer, vendor, admin) with role-specific dashboards and routing logic in Navigation component. Current implementation has role checks but no active authentication.
+- **Multi-Step Event Planning Intake**: A comprehensive questionnaire system (`/planner`) for collecting event details and vendor-specific requirements.
+  - Offers "Browse Vendors" path for direct filtering or "Curated List" path for personalized recommendations based on detailed questionnaires (e.g., photographer, catering, DJ requirements).
+  - Implemented with React Hook Form, Zod validation, conditional rendering, and comprehensive data-testid attributes for E2E testing.
 
-**Protected Routes**: Conditional navigation based on login state and user role, with vendor prompts for unauthenticated users trying to access vendor features.
-
-## Key Features
-
-### Event Planning Intake System
-
-**Multi-Step Event Intake** (`/planner`): Comprehensive questionnaire system for event planning with two pathways:
-
-1. **Basic Event Details (Step 1)**:
-   - Event type selection (Wedding, Corporate, Birthday, Anniversary, Baby Shower, Graduation, Other)
-   - Location input with autocomplete support
-   - Date and time pickers
-   - Guest count
-   - Vendor type multi-select (Photographer, Videographer, Florist, Catering, DJ, Prop/Décor Rental)
-
-2. **Path Selection (Step 2)**:
-   - **Browse Vendors Path**: Direct navigation to filtered vendor listings based on basic details
-   - **Curated List Path**: Detailed vendor-specific questionnaires for personalized recommendations
-
-3. **Curated Questionnaires** (when selected):
-   - **Photographer**: Pre-event shoots, coverage hours, start time, budget, notes, inspiration links
-   - **Videographer**: Pre-event shoots, coverage hours, deliverable preferences (highlight reel, full ceremony), budget
-   - **Florist**: Arrangements needed (bouquets, centerpieces, arch, etc.), flower preferences/avoidances, setup requirements, touch-up needs, budget
-   - **Catering**: Food style/cuisine, service type (buffet, plated, cocktail), dietary accommodations, serving times, budget
-   - **DJ**: Services needed (ceremony, cocktail, reception, MC), playlist preferences, music genres, do-not-play list, budget
-   - **Prop/Décor Rental**: Items needed, pickup/return dates, budget, theme notes
-
-**Technical Implementation**:
-- React Hook Form with Zod validation
-- Multi-step state management with conditional rendering
-- Type-safe vendor detail schemas
-- Comprehensive data-testid attributes for E2E testing
-- Toast notifications for success/error states
-- Automatic redirection to browse vendors after submission
+- **Intelligent Vendor Ranking & Recommendation System**:
+  - A 4-dimension weighted scoring algorithm (`server/vendorScoring.ts`) to rank vendors based on customer needs:
+    1.  **Availability Score (35%)**: Checks vendor availability for event dates.
+    2.  **Budget Score (25%)**: Matches vendor pricing against customer budget.
+    3.  **Service Match Score (20%)**: Compares vendor service offerings to customer requirements.
+    4.  **Location Score (20%)**: Evaluates vendor proximity and service area.
+  - **Label Assignment**: Assigns labels like "Best match," "Budget friendly," and "Popular choice" to top vendors.
+  - **Curated Recommendations UI**: Presents recommendations in a Netflix-style layout with horizontal scrolling vendor cards per category, displaying key details, badges, and action buttons.
 
 ## External Dependencies
 
 ### Third-Party UI Libraries
-
-- **Radix UI**: Comprehensive set of unstyled, accessible UI primitives (accordion, alert-dialog, avatar, checkbox, dialog, dropdown-menu, popover, select, tabs, toast, tooltip, etc.)
-- **shadcn/ui**: Component library configuration ("new-york" style) building on Radix UI
-- **Tailwind CSS**: Utility-first CSS framework with custom theme configuration
-- **Embla Carousel**: Carousel/slider functionality for vendor recommendations
-- **Lucide React**: Icon library used throughout the application
+- **Radix UI**: Unstyled, accessible UI primitives.
+- **shadcn/ui**: Configured component library atop Radix UI.
+- **Tailwind CSS**: Utility-first CSS framework.
+- **Embla Carousel**: Carousel/slider functionality.
+- **Lucide React**: Icon library.
 
 ### Data & State Management
-
-- **TanStack Query v5**: Server state management, caching, and data fetching
-- **React Hook Form**: Form state management and validation
-- **Zod**: Schema validation and TypeScript type inference
-- **Drizzle-Zod**: Bridges Drizzle ORM schemas with Zod validators
+- **TanStack Query v5**: Server state management.
+- **React Hook Form**: Form management.
+- **Zod**: Schema validation.
+- **Drizzle-Zod**: Drizzle ORM to Zod schema integration.
 
 ### Database & Storage
-
-- **Neon Serverless PostgreSQL**: Cloud-hosted PostgreSQL database
-- **Drizzle ORM**: Type-safe SQL query builder and ORM
-- **connect-pg-simple**: PostgreSQL session store for Express (dependency present, not yet implemented)
+- **Neon Serverless PostgreSQL**: Cloud database.
+- **Drizzle ORM**: Type-safe SQL query builder.
+- **connect-pg-simple**: PostgreSQL session store (planned).
 
 ### Build Tools & Development
-
-- **Vite**: Frontend build tool and dev server with HMR
-- **TypeScript**: Type safety across the entire stack
-- **esbuild**: Server-side bundling for production builds
-- **Replit Plugins**: Runtime error modal, cartographer, and dev banner for Replit environment
+- **Vite**: Frontend build tool.
+- **TypeScript**: Language.
+- **esbuild**: Server-side bundling.
 
 ### Routing & HTTP
-
-- **Wouter**: Lightweight client-side routing (~1KB)
-- **Express**: Web server framework for API and static file serving
+- **Wouter**: Lightweight client-side router.
+- **Express**: Backend web server framework.
 
 ### Utilities
-
-- **clsx**: Utility for constructing className strings
-- **class-variance-authority**: Type-safe variant styling (used in component variants)
-- **date-fns**: Date manipulation and formatting
-- **nanoid**: Unique ID generation
+- **clsx**: className string utility.
+- **class-variance-authority**: Type-safe variant styling.
+- **date-fns**: Date manipulation.
+- **nanoid**: Unique ID generation.
 
 ### Payment Processing
-
-**Stripe**: Payment infrastructure planned for vendor deposit collection (mentioned in attached requirements but not yet implemented in codebase).
+- **Stripe**: Planned for vendor deposit collection.
 
 ### Future Integrations
-
-Based on attached requirements and component placeholders:
-- **Google Maps API**: Location autocomplete for event and vendor location inputs
-- **Geolocation API**: Browser-based location detection for smart vendor recommendations
-- **Email Service**: Notification system for bookings and payments (mentioned but not implemented)
-- **File Upload Service**: Vendor media uploads and customer inspiration boards
+- **Google Maps API**: Location autocomplete.
+- **Geolocation API**: Browser-based location detection.
+- **Email Service**: Notifications.
+- **File Upload Service**: Media uploads.
