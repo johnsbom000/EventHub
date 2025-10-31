@@ -24,8 +24,6 @@ type Vendor = {
   imageUrl: string | null;
 };
 
-const categories = ["Venues", "Catering", "Photography", "DJ", "Florist", "Decor", "Entertainment", "Planning"];
-
 const categoryImages: Record<string, string> = {
   "Venues": "https://images.unsplash.com/photo-1519167758481-83f29da78c32?w=800",
   "Catering": "https://images.unsplash.com/photo-1555244162-803834f70033?w=800",
@@ -47,6 +45,11 @@ export default function BrowseVendors() {
   // Fetch vendors from API
   const { data: vendors = [], isLoading } = useQuery<Vendor[]>({
     queryKey: ["/api/vendors"],
+  });
+
+  // Fetch vendor categories from API
+  const { data: categories = [] } = useQuery<string[]>({
+    queryKey: ["/api/vendors/meta/categories"],
   });
 
   // Parse URL parameters on mount
