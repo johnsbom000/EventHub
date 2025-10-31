@@ -1,7 +1,8 @@
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
-import { useState } from "react";
+import { useState, useRef } from "react";
 import { useLocation } from "wouter";
+import { useQuery } from "@tanstack/react-query";
 import { Calendar, MapPin, Briefcase, Users } from "lucide-react";
 import {
   Popover,
@@ -10,17 +11,6 @@ import {
 } from "@/components/ui/popover";
 import { Checkbox } from "@/components/ui/checkbox";
 import { Label } from "@/components/ui/label";
-
-const vendorTypes = [
-  "Photographer",
-  "Venue",
-  "Florist",
-  "DJ",
-  "Catering",
-  "Prop Rentals",
-  "Event Planner",
-  "Decor",
-];
 
 const eventTypes = [
   { value: "wedding", label: "Wedding" },
@@ -35,6 +25,11 @@ export default function Hero() {
   const [eventType, setEventType] = useState("");
   const [eventDate, setEventDate] = useState("");
   const [selectedVendors, setSelectedVendors] = useState<string[]>([]);
+  const dateInputRef = useRef<HTMLInputElement>(null);
+
+  const { data: vendorCategories = [] } = useQuery<string[]>({
+    queryKey: ["/api/vendors/meta/categories"],
+  });
 
   const toggleVendor = (vendor: string) => {
     setSelectedVendors(prev =>
@@ -101,9 +96,13 @@ export default function Hero() {
                 <Calendar className="h-4 w-4 text-muted-foreground" />
               </div>
               <Input
+                ref={dateInputRef}
                 type="date"
                 value={eventDate}
-                onChange={(e) => setEventDate(e.target.value)}
+                onChange={(e) => {
+                  setEventDate(e.target.value);
+                  dateInputRef.current?.blur();
+                }}
                 className="h-14 pl-10 border-0 focus-visible:ring-0 hover:bg-muted/50 rounded-lg"
                 data-testid="input-event-date"
               />
@@ -128,7 +127,7 @@ export default function Hero() {
                 <PopoverContent className="w-64" align="start">
                   <div className="space-y-3">
                     <h4 className="font-medium text-sm">Select vendor types</h4>
-                    {vendorTypes.map((vendor) => (
+                    {vendorCategories.map((vendor) => (
                       <div key={vendor} className="flex items-center gap-2">
                         <Checkbox
                           id={vendor}
