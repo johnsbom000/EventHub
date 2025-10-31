@@ -1,5 +1,6 @@
-import { useState, useEffect } from "react";
+import { useState, useEffect, useMemo } from "react";
 import { useSearch } from "wouter";
+import { useQuery } from "@tanstack/react-query";
 import Navigation from "@/components/Navigation";
 import Footer from "@/components/Footer";
 import VendorCard from "@/components/VendorCard";
@@ -10,23 +11,31 @@ import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { Checkbox } from "@/components/ui/checkbox";
 import { Label } from "@/components/ui/label";
 import { Search, SlidersHorizontal } from "lucide-react";
-import venueImage from "@assets/generated_images/Elegant_venue_category_image_2de26e8e.png";
-import cateringImage from "@assets/generated_images/Catering_service_category_image_cf900d0e.png";
-import photographyImage from "@assets/generated_images/Photography_service_category_image_42830a2e.png";
-import entertainmentImage from "@assets/generated_images/Entertainment_category_image_ab98e31b.png";
-import planningImage from "@assets/generated_images/Event_planning_category_image_da1b013b.png";
-import decorImage from "@assets/generated_images/Decor_services_category_image_3cd1cabb.png";
 
-const mockVendors = [
-  { id: "1", name: "Grand Ballroom Events", category: "Venues", rating: 4.9, reviewCount: 127, location: "New York, NY", startingPrice: "$5,000", image: venueImage },
-  { id: "2", name: "Culinary Elegance Catering", category: "Catering", rating: 4.8, reviewCount: 93, location: "Los Angeles, CA", startingPrice: "$2,500", image: cateringImage },
-  { id: "3", name: "Moments Photography Studio", category: "Photography", rating: 5.0, reviewCount: 156, location: "Chicago, IL", startingPrice: "$1,800", image: photographyImage },
-  { id: "4", name: "Harmony Entertainment Group", category: "Entertainment", rating: 4.7, reviewCount: 84, location: "Miami, FL", startingPrice: "$1,200", image: entertainmentImage },
-  { id: "5", name: "Perfect Day Planning", category: "Planning", rating: 4.9, reviewCount: 112, location: "Seattle, WA", startingPrice: "$3,000", image: planningImage },
-  { id: "6", name: "Bloom & Decor Studio", category: "Decor", rating: 4.8, reviewCount: 98, location: "Austin, TX", startingPrice: "$1,500", image: decorImage },
-];
+type Vendor = {
+  id: string;
+  name: string;
+  category: string;
+  city: string;
+  state: string;
+  basePrice: number;
+  rating: string;
+  reviewCount: number;
+  imageUrl: string | null;
+};
 
-const categories = ["Venues", "Catering", "Photography", "Entertainment", "Planning", "Decor"];
+const categories = ["Venues", "Catering", "Photography", "DJ", "Florist", "Decor", "Entertainment", "Planning"];
+
+const categoryImages: Record<string, string> = {
+  "Venues": "https://images.unsplash.com/photo-1519167758481-83f29da78c32?w=800",
+  "Catering": "https://images.unsplash.com/photo-1555244162-803834f70033?w=800",
+  "Photography": "https://images.unsplash.com/photo-1606216794074-735e91aa2c92?w=800",
+  "DJ": "https://images.unsplash.com/photo-1571266028243-d220c1ac6e14?w=800",
+  "Florist": "https://images.unsplash.com/photo-1487070183336-b863922373d4?w=800",
+  "Decor": "https://images.unsplash.com/photo-1511578314322-379afb476865?w=800",
+  "Entertainment": "https://images.unsplash.com/photo-1571266028243-d220c1ac6e14?w=800",
+  "Planning": "https://images.unsplash.com/photo-1511578314322-379afb476865?w=800",
+};
 
 export default function BrowseVendors() {
   const searchString = useSearch();
@@ -34,6 +43,11 @@ export default function BrowseVendors() {
   const [sortBy, setSortBy] = useState("rating");
   const [selectedCategories, setSelectedCategories] = useState<string[]>([]);
   const [showFilters, setShowFilters] = useState(false);
+
+  // Fetch vendors from API
+  const { data: vendors = [], isLoading } = useQuery<Vendor[]>({
+    queryKey: ["/api/vendors"],
+  });
 
   // Parse URL parameters on mount
   useEffect(() => {
@@ -56,6 +70,57 @@ export default function BrowseVendors() {
       prev.includes(category) ? prev.filter(c => c !== category) : [...prev, category]
     );
   };
+
+  // Filter and sort vendors
+  const filteredVendors = useMemo(() => {
+    let filtered = vendors;
+
+    // Filter by category
+    if (selectedCategories.length > 0) {
+      filtered = filtered.filter(v => selectedCategories.includes(v.category));
+    }
+
+    // Filter by search query
+    if (searchQuery) {
+      const query = searchQuery.toLowerCase();
+      filtered = filtered.filter(v => 
+        v.name.toLowerCase().includes(query) ||
+        v.city.toLowerCase().includes(query) ||
+        v.state.toLowerCase().includes(query)
+      );
+    }
+
+    // Sort
+    const sorted = [...filtered];
+    switch (sortBy) {
+      case "rating":
+        sorted.sort((a, b) => parseFloat(b.rating) - parseFloat(a.rating));
+        break;
+      case "price-low":
+        sorted.sort((a, b) => a.basePrice - b.basePrice);
+        break;
+      case "price-high":
+        sorted.sort((a, b) => b.basePrice - a.basePrice);
+        break;
+      case "popular":
+        sorted.sort((a, b) => b.reviewCount - a.reviewCount);
+        break;
+    }
+
+    return sorted;
+  }, [vendors, selectedCategories, searchQuery, sortBy]);
+
+  // Map vendors to VendorCard props
+  const vendorCards = filteredVendors.map(vendor => ({
+    id: vendor.id,
+    name: vendor.name,
+    category: vendor.category,
+    rating: parseFloat(vendor.rating),
+    reviewCount: vendor.reviewCount,
+    location: `${vendor.city}, ${vendor.state}`,
+    startingPrice: `$${vendor.basePrice.toLocaleString()}`,
+    image: vendor.imageUrl || categoryImages[vendor.category] || categoryImages["Venues"],
+  }));
 
   return (
     <div className="min-h-screen flex flex-col bg-white">
@@ -126,7 +191,7 @@ export default function BrowseVendors() {
             <div className="flex-1">
               <div className="flex justify-between items-center mb-6">
                 <p className="text-sm text-muted-foreground" data-testid="text-results-count">
-                  {mockVendors.length} vendors found
+                  {isLoading ? 'Loading...' : `${vendorCards.length} vendors found`}
                 </p>
                 <Select value={sortBy} onValueChange={setSortBy}>
                   <SelectTrigger className="w-[180px]" data-testid="select-sort">
@@ -141,11 +206,24 @@ export default function BrowseVendors() {
                 </Select>
               </div>
 
-              <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-6">
-                {mockVendors.map((vendor) => (
-                  <VendorCard key={vendor.id} {...vendor} />
-                ))}
-              </div>
+              {isLoading ? (
+                <div className="flex items-center justify-center py-12">
+                  <div className="text-center space-y-4">
+                    <div className="h-8 w-8 border-4 border-primary border-t-transparent rounded-full animate-spin mx-auto" />
+                    <p className="text-muted-foreground">Loading vendors...</p>
+                  </div>
+                </div>
+              ) : vendorCards.length === 0 ? (
+                <div className="text-center py-12">
+                  <p className="text-muted-foreground">No vendors found matching your criteria.</p>
+                </div>
+              ) : (
+                <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-6">
+                  {vendorCards.map((vendor) => (
+                    <VendorCard key={vendor.id} {...vendor} />
+                  ))}
+                </div>
+              )}
             </div>
           </div>
         </div>

@@ -1,398 +1,360 @@
-import { useState } from "react";
-import { useRoute } from "wouter";
 import { useQuery } from "@tanstack/react-query";
-import Navigation from "@/components/Navigation";
-import Footer from "@/components/Footer";
+import { useRoute } from "wouter";
 import { Button } from "@/components/ui/button";
-import { Card, CardContent, CardHeader, CardTitle, CardDescription } from "@/components/ui/card";
+import { Card } from "@/components/ui/card";
 import { Badge } from "@/components/ui/badge";
 import { Separator } from "@/components/ui/separator";
-import { Calendar } from "@/components/ui/calendar";
-import { Dialog, DialogContent, DialogDescription, DialogHeader, DialogTitle, DialogTrigger } from "@/components/ui/dialog";
-import { MapPin, Star, DollarSign, MessageCircle, Check, Shield, Calendar as CalendarIcon, Package2, Sparkles } from "lucide-react";
-import { type Vendor } from "@shared/schema";
-import venueImage from "@assets/generated_images/Elegant_venue_category_image_2de26e8e.png";
+import { Avatar, AvatarFallback, AvatarImage } from "@/components/ui/avatar";
+import { Star, MapPin, Heart, Check, Calendar, DollarSign, Award, Users } from "lucide-react";
+import { useState } from "react";
+import type { VendorPackage, VendorAddOn, VendorReview } from "@shared/schema";
+
+type Vendor = {
+  id: string;
+  name: string;
+  category: string;
+  city: string;
+  state: string;
+  basePrice: number;
+  priceRangeMax: number | null;
+  rating: string;
+  reviewCount: number;
+  bookingCount: number;
+  verified: boolean;
+  imageUrl: string | null;
+  description: string | null;
+  aboutSection: string | null;
+  packages: VendorPackage[] | null;
+  addOns: VendorAddOn[] | null;
+  reviews: VendorReview[] | null;
+};
 
 export default function VendorProfile() {
   const [, params] = useRoute("/vendor/:id");
-  const [selectedDate, setSelectedDate] = useState<Date | undefined>(undefined);
-  const [bookingDialogOpen, setBookingDialogOpen] = useState(false);
+  const vendorId = params?.id;
+  const [isFavorite, setIsFavorite] = useState(false);
 
   const { data: vendor, isLoading } = useQuery<Vendor>({
-    queryKey: ["/api/vendors", params?.id],
-    queryFn: async () => {
-      const response = await fetch(`/api/vendors/${params?.id}`);
-      if (!response.ok) {
-        throw new Error('Failed to fetch vendor');
-      }
-      return response.json();
-    },
-    enabled: !!params?.id,
+    queryKey: ["/api/vendors", vendorId],
+    enabled: !!vendorId,
   });
-
-  const handleBooking = () => {
-    console.log("Booking request for:", vendor?.name, selectedDate);
-    setBookingDialogOpen(true);
-  };
-
-  const handleMessage = () => {
-    console.log("Message vendor:", vendor?.name);
-  };
 
   if (isLoading) {
     return (
-      <div className="min-h-screen flex flex-col">
-        <Navigation />
-        <main className="flex-1 bg-background flex items-center justify-center">
-          <p className="text-muted-foreground">Loading vendor information...</p>
-        </main>
-        <Footer />
+      <div className="min-h-screen bg-background flex items-center justify-center">
+        <div className="text-center space-y-4">
+          <div className="h-8 w-8 border-4 border-primary border-t-transparent rounded-full animate-spin mx-auto" />
+          <p className="text-muted-foreground">Loading vendor details...</p>
+        </div>
       </div>
     );
   }
 
   if (!vendor) {
     return (
-      <div className="min-h-screen flex flex-col">
-        <Navigation />
-        <main className="flex-1 bg-background flex items-center justify-center">
-          <div className="text-center">
-            <h1 className="text-2xl font-bold mb-2">Vendor Not Found</h1>
-            <p className="text-muted-foreground">The vendor you're looking for doesn't exist.</p>
-          </div>
-        </main>
-        <Footer />
+      <div className="min-h-screen bg-background flex items-center justify-center">
+        <div className="text-center space-y-4">
+          <h1 className="text-2xl font-bold">Vendor not found</h1>
+          <p className="text-muted-foreground">The vendor you're looking for doesn't exist.</p>
+          <Button onClick={() => window.history.back()} data-testid="button-go-back">
+            Go Back
+          </Button>
+        </div>
       </div>
     );
   }
 
-  const blockedDates = vendor.blockedDates?.map(dateStr => new Date(dateStr)) || [];
+  const averageRating = parseFloat(vendor.rating);
+  const fullStars = Math.floor(averageRating);
+  const hasHalfStar = averageRating % 1 >= 0.5;
 
   return (
-    <div className="min-h-screen flex flex-col">
-      <Navigation />
-      <main className="flex-1 bg-background">
-        <div className="relative h-[400px] overflow-hidden">
-          <img 
-            src={vendor.imageUrl || venueImage} 
-            alt={vendor.name}
-            className="w-full h-full object-cover"
-          />
-          <div className="absolute inset-0 bg-gradient-to-t from-black/60 to-transparent" />
-        </div>
-
-        <div className="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8 -mt-32 relative z-10 pb-12">
-          <div className="flex flex-col lg:flex-row gap-8">
-            {/* Main Content */}
-            <div className="flex-1 space-y-6">
-              {/* Header Card */}
-              <Card>
-                <CardContent className="p-6">
-                  <div className="flex flex-wrap items-start justify-between gap-4 mb-4">
-                    <div>
-                      <div className="flex items-center gap-2 mb-2">
-                        <h1 className="text-3xl font-bold" data-testid="text-vendor-name">
-                          {vendor.name}
-                        </h1>
-                        {vendor.verified && (
-                          <Badge variant="secondary" className="gap-1">
-                            <Shield className="h-3 w-3" />
-                            Verified
-                          </Badge>
-                        )}
-                      </div>
-                      <Badge variant="outline" className="mb-3 capitalize">{vendor.category}</Badge>
-                      <div className="flex items-center gap-4 text-sm">
-                        <div className="flex items-center gap-1">
-                          <Star className="h-4 w-4 fill-primary text-primary" />
-                          <span className="font-medium">{vendor.rating}</span>
-                          <span className="text-muted-foreground">({vendor.reviewCount} reviews)</span>
-                        </div>
-                        <div className="flex items-center gap-1 text-muted-foreground">
-                          <MapPin className="h-4 w-4" />
-                          <span>{vendor.city}, {vendor.state}</span>
-                        </div>
-                      </div>
-                    </div>
-                  </div>
-
-                  {vendor.description && (
-                    <p className="text-muted-foreground leading-relaxed" data-testid="text-vendor-description">
-                      {vendor.description}
-                    </p>
+    <div className="min-h-screen bg-background">
+      {/* Hero Section */}
+      <div className="relative h-[400px] overflow-hidden">
+        <div 
+          className="absolute inset-0 bg-cover bg-center"
+          style={{ 
+            backgroundImage: vendor.imageUrl 
+              ? `linear-gradient(rgba(0, 0, 0, 0.4), rgba(0, 0, 0, 0.4)), url(${vendor.imageUrl})`
+              : 'linear-gradient(135deg, hsl(var(--primary)) 0%, hsl(var(--primary) / 0.8) 100%)'
+          }}
+        />
+        <div className="absolute inset-0 flex items-end">
+          <div className="container mx-auto px-6 pb-8">
+            <div className="flex items-end justify-between gap-6 flex-wrap">
+              <div className="space-y-3">
+                <div className="flex items-center gap-2 flex-wrap">
+                  <Badge variant="secondary" className="text-sm" data-testid="badge-category">
+                    {vendor.category}
+                  </Badge>
+                  {vendor.verified && (
+                    <Badge variant="default" className="text-sm gap-1" data-testid="badge-verified">
+                      <Award className="h-3 w-3" />
+                      Verified
+                    </Badge>
                   )}
-                </CardContent>
-              </Card>
-
-              {/* About Section */}
-              {vendor.aboutSection && (
-                <Card>
-                  <CardHeader>
-                    <CardTitle>About</CardTitle>
-                  </CardHeader>
-                  <CardContent>
-                    <p className="text-muted-foreground leading-relaxed whitespace-pre-line" data-testid="text-vendor-about">
-                      {vendor.aboutSection}
-                    </p>
-                  </CardContent>
-                </Card>
-              )}
-
-              {/* Packages */}
-              {vendor.packages && vendor.packages.length > 0 && (
-                <Card>
-                  <CardHeader>
-                    <CardTitle className="flex items-center gap-2">
-                      <Package2 className="h-5 w-5" />
-                      Packages
-                    </CardTitle>
-                    <CardDescription>
-                      Choose the perfect package for your event
-                    </CardDescription>
-                  </CardHeader>
-                  <CardContent className="grid gap-4">
-                    {vendor.packages.map((pkg, index) => (
-                      <Card key={index} className={pkg.popular ? "border-primary" : ""} data-testid={`card-package-${index}`}>
-                        <CardContent className="p-6">
-                          <div className="flex items-start justify-between mb-4">
-                            <div>
-                              <div className="flex items-center gap-2">
-                                <h3 className="text-lg font-semibold">{pkg.name}</h3>
-                                {pkg.popular && (
-                                  <Badge variant="default" className="gap-1">
-                                    <Sparkles className="h-3 w-3" />
-                                    Popular
-                                  </Badge>
-                                )}
-                              </div>
-                              <p className="text-sm text-muted-foreground mt-1">{pkg.description}</p>
-                            </div>
-                            <div className="text-right">
-                              <p className="text-2xl font-bold">${pkg.price.toLocaleString()}</p>
-                            </div>
-                          </div>
-                          <Separator className="my-4" />
-                          <div className="space-y-2">
-                            <p className="text-sm font-medium mb-2">Includes:</p>
-                            {pkg.inclusions.map((item, i) => (
-                              <div key={i} className="flex items-center gap-2 text-sm">
-                                <Check className="h-4 w-4 text-primary shrink-0" />
-                                <span>{item}</span>
-                              </div>
-                            ))}
-                          </div>
-                        </CardContent>
-                      </Card>
-                    ))}
-                  </CardContent>
-                </Card>
-              )}
-
-              {/* Add-ons */}
-              {vendor.addOns && vendor.addOns.length > 0 && (
-                <Card>
-                  <CardHeader>
-                    <CardTitle>Add-ons</CardTitle>
-                    <CardDescription>
-                      Customize your package with these extras
-                    </CardDescription>
-                  </CardHeader>
-                  <CardContent>
-                    <div className="grid gap-3">
-                      {vendor.addOns.map((addOn, index) => (
-                        <div
-                          key={index}
-                          className="flex items-center justify-between p-4 rounded-lg border hover-elevate"
-                          data-testid={`addon-${index}`}
-                        >
-                          <div>
-                            <p className="font-medium">{addOn.name}</p>
-                            <p className="text-sm text-muted-foreground">{addOn.description}</p>
-                          </div>
-                          <p className="font-semibold">+${addOn.price}</p>
-                        </div>
-                      ))}
-                    </div>
-                  </CardContent>
-                </Card>
-              )}
-
-              {/* Reviews */}
-              <Card>
-                <CardHeader>
-                  <CardTitle>Reviews ({vendor.reviewCount})</CardTitle>
-                  <div className="flex items-center gap-2">
-                    <div className="flex gap-1">
-                      {Array.from({ length: 5 }).map((_, i) => {
-                        const rating = parseFloat(vendor.rating);
-                        const isFilled = i < Math.floor(rating);
-                        return (
-                          <Star 
-                            key={i} 
-                            className={`h-5 w-5 ${isFilled ? 'fill-primary text-primary' : 'text-muted-foreground'}`}
-                          />
-                        );
-                      })}
-                    </div>
-                    <span className="text-lg font-semibold">{vendor.rating}</span>
+                </div>
+                <h1 className="text-4xl font-bold text-white" data-testid="text-vendor-name">
+                  {vendor.name}
+                </h1>
+                <div className="flex items-center gap-4 flex-wrap text-white/90">
+                  <div className="flex items-center gap-1">
+                    <MapPin className="h-4 w-4" />
+                    <span data-testid="text-location">{vendor.city}, {vendor.state}</span>
                   </div>
-                </CardHeader>
-                <CardContent>
-                  <div className="space-y-6">
-                    {vendor.reviews && vendor.reviews.length > 0 ? (
-                      vendor.reviews.map((review, index) => (
-                        <div key={index} className="border-b last:border-0 pb-6 last:pb-0" data-testid={`review-${index}`}>
-                          <div className="flex items-start justify-between mb-2">
-                            <div>
-                              <p className="font-medium">{review.reviewerName}</p>
-                              {review.eventType && (
-                                <p className="text-sm text-muted-foreground">{review.eventType}</p>
-                              )}
-                            </div>
-                            <div className="flex items-center gap-2">
-                              <div className="flex gap-1">
-                                {Array.from({ length: 5 }).map((_, i) => (
-                                  <Star 
-                                    key={i} 
-                                    className={`h-4 w-4 ${i < review.rating ? 'fill-primary text-primary' : 'text-muted-foreground'}`}
-                                  />
-                                ))}
-                              </div>
-                              <span className="text-sm text-muted-foreground">{new Date(review.date).toLocaleDateString()}</span>
-                            </div>
-                          </div>
-                          <p className="text-muted-foreground">{review.comment}</p>
-                        </div>
-                      ))
-                    ) : (
-                      <p className="text-muted-foreground">No reviews yet. Be the first to review!</p>
-                    )}
+                  <div className="flex items-center gap-1">
+                    <Star className="h-4 w-4 fill-white" />
+                    <span className="font-medium" data-testid="text-rating">{vendor.rating}</span>
+                    <span className="text-sm">({vendor.reviewCount} reviews)</span>
                   </div>
-                </CardContent>
-              </Card>
-            </div>
-
-            {/* Sidebar */}
-            <div className="lg:w-96">
-              <Card className="sticky top-4">
-                <CardContent className="p-6 space-y-4">
-                  <div>
-                    <div className="flex items-center gap-2 text-sm text-muted-foreground mb-1">
-                      <DollarSign className="h-4 w-4" />
-                      <span>Starting at</span>
-                    </div>
-                    <p className="text-3xl font-bold" data-testid="text-vendor-price">
-                      ${vendor.basePrice.toLocaleString()}
-                    </p>
-                    {vendor.priceRangeMax && (
-                      <p className="text-sm text-muted-foreground">
-                        Up to ${vendor.priceRangeMax.toLocaleString()}
-                      </p>
-                    )}
+                  <div className="flex items-center gap-1">
+                    <Users className="h-4 w-4" />
+                    <span className="text-sm" data-testid="text-bookings">{vendor.bookingCount} bookings</span>
                   </div>
-
-                  <Separator />
-
-                  {/* Availability Calendar */}
-                  <div>
-                    <div className="flex items-center gap-2 text-sm mb-3">
-                      <CalendarIcon className="h-4 w-4" />
-                      <span className="font-medium">Check Availability</span>
-                    </div>
-                    <Calendar
-                      mode="single"
-                      selected={selectedDate}
-                      onSelect={setSelectedDate}
-                      disabled={(date) => {
-                        return blockedDates.some(blockedDate => 
-                          blockedDate.toDateString() === date.toDateString()
-                        ) || date < new Date();
-                      }}
-                      className="rounded-md border"
-                      data-testid="calendar-availability"
-                    />
-                    {selectedDate && (
-                      <p className="text-sm text-muted-foreground mt-2">
-                        Selected: {selectedDate.toLocaleDateString()}
-                      </p>
-                    )}
-                  </div>
-
-                  <Separator />
-
-                  <Dialog open={bookingDialogOpen} onOpenChange={setBookingDialogOpen}>
-                    <DialogTrigger asChild>
-                      <Button 
-                        className="w-full" 
-                        size="lg"
-                        onClick={handleBooking}
-                        data-testid="button-book-now"
-                      >
-                        Book Now
-                      </Button>
-                    </DialogTrigger>
-                    <DialogContent>
-                      <DialogHeader>
-                        <DialogTitle>Request Booking</DialogTitle>
-                        <DialogDescription>
-                          Send a booking request to {vendor.name}
-                        </DialogDescription>
-                      </DialogHeader>
-                      <div className="space-y-4 py-4">
-                        <div className="space-y-2">
-                          <p className="text-sm"><span className="font-medium">Vendor:</span> {vendor.name}</p>
-                          <p className="text-sm"><span className="font-medium">Date:</span> {selectedDate?.toLocaleDateString() || 'Not selected'}</p>
-                          <p className="text-sm"><span className="font-medium">Starting Price:</span> ${vendor.basePrice.toLocaleString()}</p>
-                        </div>
-                        <Separator />
-                        <p className="text-sm text-muted-foreground">
-                          A booking request will be sent to the vendor. They typically respond within 24 hours.
-                        </p>
-                        <Button className="w-full" onClick={() => {
-                          console.log("Booking confirmed for", selectedDate);
-                          setBookingDialogOpen(false);
-                        }}>
-                          Confirm Request
-                        </Button>
-                      </div>
-                    </DialogContent>
-                  </Dialog>
-
-                  <Button 
-                    variant="outline" 
-                    className="w-full"
-                    onClick={handleMessage}
-                    data-testid="button-message-vendor"
-                  >
-                    <MessageCircle className="h-4 w-4 mr-2" />
-                    Message Vendor
-                  </Button>
-
-                  <Separator />
-
-                  <div className="space-y-3 text-sm">
-                    <div className="flex justify-between">
-                      <span className="text-muted-foreground">Response time</span>
-                      <span className="font-medium">Within 24 hours</span>
-                    </div>
-                    <div className="flex justify-between">
-                      <span className="text-muted-foreground">Service area</span>
-                      <span className="font-medium">{vendor.serviceArea?.[0] || vendor.city}</span>
-                    </div>
-                    {vendor.travelFeeRequired && (
-                      <div className="flex justify-between">
-                        <span className="text-muted-foreground">Travel fee</span>
-                        <span className="font-medium">May apply</span>
-                      </div>
-                    )}
-                  </div>
-                </CardContent>
-              </Card>
+                </div>
+              </div>
+              <div className="flex gap-3">
+                <Button
+                  variant="outline"
+                  size="lg"
+                  className={`bg-white/10 backdrop-blur-sm border-white/20 text-white hover:bg-white/20 ${isFavorite ? 'bg-white/30' : ''}`}
+                  onClick={() => setIsFavorite(!isFavorite)}
+                  data-testid="button-favorite"
+                >
+                  <Heart className={`h-5 w-5 ${isFavorite ? 'fill-white' : ''}`} />
+                  {isFavorite ? 'Saved' : 'Save'}
+                </Button>
+                <Button
+                  variant="default"
+                  size="lg"
+                  className="bg-primary text-primary-foreground hover:bg-primary/90"
+                  data-testid="button-book-now"
+                >
+                  <Calendar className="h-5 w-5 mr-2" />
+                  Book Now
+                </Button>
+              </div>
             </div>
           </div>
         </div>
-      </main>
-      <Footer />
+      </div>
+
+      {/* Content */}
+      <div className="container mx-auto px-6 py-12">
+        <div className="grid grid-cols-1 lg:grid-cols-3 gap-8">
+          {/* Main Content */}
+          <div className="lg:col-span-2 space-y-8">
+            {/* About */}
+            {(vendor.description || vendor.aboutSection) && (
+              <section>
+                <h2 className="text-2xl font-bold mb-4">About</h2>
+                <Card className="p-6">
+                  <p className="text-muted-foreground leading-relaxed" data-testid="text-description">
+                    {vendor.description || vendor.aboutSection}
+                  </p>
+                </Card>
+              </section>
+            )}
+
+            {/* Packages */}
+            {vendor.packages && vendor.packages.length > 0 && (
+              <section>
+                <h2 className="text-2xl font-bold mb-4">Packages</h2>
+                <div className="grid gap-4">
+                  {vendor.packages.map((pkg, index) => (
+                    <Card key={index} className={`p-6 ${pkg.popular ? 'border-primary border-2' : ''}`} data-testid={`card-package-${index}`}>
+                      <div className="flex items-start justify-between gap-4 mb-4">
+                        <div>
+                          <div className="flex items-center gap-2 mb-1">
+                            <h3 className="text-xl font-semibold" data-testid={`text-package-name-${index}`}>
+                              {pkg.name}
+                            </h3>
+                            {pkg.popular && (
+                              <Badge variant="default" className="text-xs" data-testid={`badge-popular-${index}`}>
+                                Most Popular
+                              </Badge>
+                            )}
+                          </div>
+                          <p className="text-sm text-muted-foreground" data-testid={`text-package-description-${index}`}>
+                            {pkg.description}
+                          </p>
+                        </div>
+                        <div className="text-right shrink-0">
+                          <div className="flex items-center gap-1 text-2xl font-bold text-primary" data-testid={`text-package-price-${index}`}>
+                            <DollarSign className="h-5 w-5" />
+                            {pkg.price.toLocaleString()}
+                          </div>
+                        </div>
+                      </div>
+                      <Separator className="my-4" />
+                      <div className="space-y-2">
+                        <h4 className="font-medium text-sm text-muted-foreground">Included:</h4>
+                        <ul className="space-y-2">
+                          {pkg.inclusions.map((inclusion, i) => (
+                            <li key={i} className="flex items-start gap-2 text-sm" data-testid={`text-inclusion-${index}-${i}`}>
+                              <Check className="h-4 w-4 text-primary shrink-0 mt-0.5" />
+                              <span>{inclusion}</span>
+                            </li>
+                          ))}
+                        </ul>
+                      </div>
+                      <Button className="w-full mt-6" data-testid={`button-select-package-${index}`}>
+                        Select Package
+                      </Button>
+                    </Card>
+                  ))}
+                </div>
+              </section>
+            )}
+
+            {/* Add-Ons */}
+            {vendor.addOns && vendor.addOns.length > 0 && (
+              <section>
+                <h2 className="text-2xl font-bold mb-4">Add-Ons</h2>
+                <div className="grid sm:grid-cols-2 gap-4">
+                  {vendor.addOns.map((addOn, index) => (
+                    <Card key={index} className="p-4" data-testid={`card-addon-${index}`}>
+                      <div className="flex items-start justify-between gap-3 mb-2">
+                        <h3 className="font-semibold" data-testid={`text-addon-name-${index}`}>
+                          {addOn.name}
+                        </h3>
+                        <span className="font-bold text-primary shrink-0" data-testid={`text-addon-price-${index}`}>
+                          +${addOn.price}
+                        </span>
+                      </div>
+                      <p className="text-sm text-muted-foreground" data-testid={`text-addon-description-${index}`}>
+                        {addOn.description}
+                      </p>
+                    </Card>
+                  ))}
+                </div>
+              </section>
+            )}
+
+            {/* Reviews */}
+            {vendor.reviews && vendor.reviews.length > 0 && (
+              <section>
+                <h2 className="text-2xl font-bold mb-4">Reviews</h2>
+                <div className="space-y-4">
+                  {vendor.reviews.map((review, index) => (
+                    <Card key={index} className="p-6" data-testid={`card-review-${index}`}>
+                      <div className="flex items-start gap-4">
+                        <Avatar>
+                          <AvatarFallback className="bg-primary/10 text-primary font-semibold">
+                            {review.reviewerName.substring(0, 2).toUpperCase()}
+                          </AvatarFallback>
+                        </Avatar>
+                        <div className="flex-1 min-w-0">
+                          <div className="flex items-start justify-between gap-4 mb-2 flex-wrap">
+                            <div>
+                              <h3 className="font-semibold" data-testid={`text-reviewer-name-${index}`}>
+                                {review.reviewerName}
+                              </h3>
+                              {review.eventType && (
+                                <p className="text-sm text-muted-foreground" data-testid={`text-event-type-${index}`}>
+                                  {review.eventType}
+                                </p>
+                              )}
+                            </div>
+                            <div className="flex flex-col items-end gap-1">
+                              <div className="flex items-center gap-1">
+                                {[...Array(5)].map((_, i) => (
+                                  <Star
+                                    key={i}
+                                    className={`h-4 w-4 ${
+                                      i < review.rating
+                                        ? 'fill-foreground text-foreground'
+                                        : 'fill-transparent text-muted-foreground'
+                                    }`}
+                                  />
+                                ))}
+                              </div>
+                              <span className="text-xs text-muted-foreground" data-testid={`text-review-date-${index}`}>
+                                {new Date(review.date).toLocaleDateString()}
+                              </span>
+                            </div>
+                          </div>
+                          <p className="text-sm text-foreground leading-relaxed" data-testid={`text-review-comment-${index}`}>
+                            {review.comment}
+                          </p>
+                        </div>
+                      </div>
+                    </Card>
+                  ))}
+                </div>
+              </section>
+            )}
+          </div>
+
+          {/* Sidebar */}
+          <div className="space-y-6">
+            {/* Pricing Summary */}
+            <Card className="p-6 sticky top-6">
+              <h3 className="font-bold text-lg mb-4">Pricing</h3>
+              <div className="space-y-4">
+                <div>
+                  <p className="text-sm text-muted-foreground mb-1">Starting from</p>
+                  <div className="flex items-center gap-1">
+                    <DollarSign className="h-6 w-6 text-primary" />
+                    <span className="text-3xl font-bold text-primary" data-testid="text-base-price">
+                      {vendor.basePrice.toLocaleString()}
+                    </span>
+                  </div>
+                  {vendor.priceRangeMax && (
+                    <p className="text-sm text-muted-foreground mt-1">
+                      Up to ${vendor.priceRangeMax.toLocaleString()}
+                    </p>
+                  )}
+                </div>
+                <Separator />
+                <Button className="w-full" size="lg" data-testid="button-request-quote">
+                  Request Quote
+                </Button>
+                <Button variant="outline" className="w-full" size="lg" data-testid="button-check-availability">
+                  Check Availability
+                </Button>
+              </div>
+            </Card>
+
+            {/* Quick Stats */}
+            <Card className="p-6">
+              <h3 className="font-bold text-lg mb-4">At a Glance</h3>
+              <div className="space-y-3">
+                <div className="flex items-center justify-between">
+                  <span className="text-sm text-muted-foreground">Average Rating</span>
+                  <div className="flex items-center gap-1">
+                    {[...Array(5)].map((_, i) => (
+                      <Star
+                        key={i}
+                        className={`h-3 w-3 ${
+                          i < fullStars || (i === fullStars && hasHalfStar)
+                            ? 'fill-foreground text-foreground'
+                            : 'fill-transparent text-muted-foreground'
+                        }`}
+                      />
+                    ))}
+                  </div>
+                </div>
+                <div className="flex items-center justify-between">
+                  <span className="text-sm text-muted-foreground">Total Reviews</span>
+                  <span className="font-medium">{vendor.reviewCount}</span>
+                </div>
+                <div className="flex items-center justify-between">
+                  <span className="text-sm text-muted-foreground">Bookings</span>
+                  <span className="font-medium">{vendor.bookingCount}</span>
+                </div>
+                {vendor.verified && (
+                  <div className="flex items-center justify-between">
+                    <span className="text-sm text-muted-foreground">Verified</span>
+                    <Award className="h-4 w-4 text-primary" />
+                  </div>
+                )}
+              </div>
+            </Card>
+          </div>
+        </div>
+      </div>
     </div>
   );
 }
