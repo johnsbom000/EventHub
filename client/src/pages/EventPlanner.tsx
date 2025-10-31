@@ -39,12 +39,30 @@ export default function EventPlanner() {
   const [guestCount, setGuestCount] = useState("");
   const [selectedVendors, setSelectedVendors] = useState<string[]>([]);
 
-  const [photographerDetails, setPhotographerDetails] = useState<Partial<PhotographerDetails>>({});
-  const [videographerDetails, setVideographerDetails] = useState<Partial<VideographerDetails>>({});
-  const [floristDetails, setFloristDetails] = useState<Partial<FloristDetails>>({ arrangementsNeeded: [] });
-  const [cateringDetails, setCateringDetails] = useState<Partial<CateringDetails>>({ foodStyle: [], serviceType: [] });
-  const [djDetails, setDJDetails] = useState<Partial<DJDetails>>({ servicesNeeded: [] });
-  const [propDecorDetails, setPropDecorDetails] = useState<Partial<PropDecorDetails>>({});
+  const [photographerDetails, setPhotographerDetails] = useState<Partial<PhotographerDetails>>({ 
+    preEventShoots: false 
+  });
+  const [videographerDetails, setVideographerDetails] = useState<Partial<VideographerDetails>>({ 
+    preEventShoots: false 
+  });
+  const [floristDetails, setFloristDetails] = useState<Partial<FloristDetails>>({ 
+    arrangementsNeeded: [],
+    beforeEventNeeds: false,
+    touchUps: false
+  });
+  const [cateringDetails, setCateringDetails] = useState<Partial<CateringDetails>>({ 
+    foodStyle: [],
+    serviceType: [],
+    allergyFriendly: false,
+    beforeEventCatering: false
+  });
+  const [djDetails, setDJDetails] = useState<Partial<DJDetails>>({ 
+    servicesNeeded: [],
+    hasPlaylist: false
+  });
+  const [propDecorDetails, setPropDecorDetails] = useState<Partial<PropDecorDetails>>({ 
+    itemsNeeded: "" 
+  });
 
   const createEventMutation = useMutation({
     mutationFn: async (eventData: InsertEvent) => {
