@@ -1,0 +1,65 @@
+2. Ranking logic (scoring model)
+For each service, score every eligible vendor on 4 core dimensions:
+Availability score (0–1)
+1.0 if vendor is available on event date (and on pre-event date if required)
+0.5 if available on event date but not pre-event
+0.0 if not available → keep for fallback only
+Location / radius score (0–1)
+1.0 if in same city / service area
+0.7 if in same metro
+0.4 if nearby but travel fee required
+Budget fit (0–1)
+1.0 if vendor base price is within user’s budget range
+0.7 if within +10–15% of max
+0.3 if above but still serviceable (keep for “premium” suggestion)
+Service match (0–1)
+1.0 if vendor explicitly offers what the user asked (e.g. “bridals” + “event day” or “arch install” + “touch-ups”)
+0.5 if vendor offers partial coverage
+0.0 if vendor doesn’t list that sub-service
+Final score (tweakable weights):
+final_score = 0.35*availability + 0.25*budget + 0.2*service_match + 0.2*location
+Sort vendors in descending order of final_score.
+This is the “replicate Bidi smart matching” part — Bidi says it considers budget, style preferences, and specific requirements to connect you with vendors who match your needs. We’re doing the same and adding availability and location to make it event-aware.
+3. Fallback / composable suggestions
+If no single vendor hits a “good” score (e.g. ≥0.75):
+Try composite suggestion:
+Photographer A → handles pre-event only (because they match the dates)
+Photographer B → handles event day (because they match time/budget)
+Label these as:
+Best match (highest score)
+Budget friendly (lowest price but still available)
+Popular choice (highest rating / most bookings)
+If availability is the only blocker, suggest: “This vendor is available X days before / after” → useful for shoots that can move.
+4. UI layout (horizontal → vertical)
+Goal: Make it feel like Netflix / streaming: horizontal scroll per category, vertical scroll for more categories.
+Structure:
+Page title / summary
+“Vendors curated for your event in Lehi, UT”
+Subtext: “Based on your date, budget, and selected services”
+Category blocks stacked vertically (one for each vendor type the user picked):
+Photography
+Videography
+Florist
+Catering
+DJs
+Prop / décor rental
+Inside each category → horizontal scroll
+Card = single vendor
+Show:
+Vendor name + badge (Verified / Top Vendor)
+Distance / city
+Price or “From $X”
+Tags: Best match, Budget friendly, Popular choice
+Availability chip: “Available Jun 21” or “Available Jun 21 — pre-event NA”
+Interaction:
+Horizontal scroll → see more vendors in that category
+Vertical scroll → move to the next category
+Each category has a “View all [category] in your area” link
+Example layout:
+Photography (H-scroll)
+[Card][Card][Card][Card…]
+Videography (H-scroll)
+[Card][Card][Card…]
+Catering (H-scroll)
+[Card][Card][Card…]
+This matches your request: “Horizontal scrolling through vendor types… Vertical scrolling to see other vendor categories. Each vendor category should be clearly labeled.”
