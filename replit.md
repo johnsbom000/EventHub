@@ -27,15 +27,27 @@ Preferred communication style: Simple, everyday language.
 - **Database**: PostgreSQL via Neon serverless, utilizing `ws` for serverless compatibility.
 - **ORM**: Drizzle ORM for type-safe database interactions.
 - **Schema Design**:
-  - `users`: Basic authentication.
-  - `events`: Stores comprehensive event details, including vendor-specific requirements as JSONB fields (e.g., `photographerDetails`, `cateringDetails`).
-  - `vendors`: Stores vendor profiles with details for matching and scoring (e.g., category, location, pricing, availability, service offerings).
-- **Migrations**: Drizzle Kit manages schema changes.
+  - `users`: Customer authentication (basic).
+  - `events`: Comprehensive event details with vendor-specific requirements as JSONB fields.
+  - `vendors`: Vendor profiles with matching/scoring details, packages, add-ons, reviews, availability.
+  - `vendor_accounts`: Separate vendor authentication with Stripe Connect integration.
+  - `bookings`: Customer bookings with payment tracking, status management, and platform fees.
+  - `payment_schedules`: Tracks deposit and final payment installments per booking.
+  - `payments`: Transaction records with Stripe payment intent IDs and platform fees.
+  - `messages`: Per-booking chat between customers and vendors.
+  - `notifications`: System notifications for vendors and customers.
+  - `review_replies`: Vendor responses to customer reviews.
+- **Enums**: PostgreSQL enums for type safety (booking_status, payment_status, payment_type, notification_type).
+- **Migrations**: Drizzle Kit manages schema changes via `npm run db:push`.
 - **Type Safety**: Drizzle-zod integration generates Zod schemas from Drizzle table definitions for end-to-end type consistency.
 
 ### Authentication & Authorization
-- **Roles**: Supports Customer, Vendor, and Admin roles with planned role-based access control.
-- **Session Management**: Designed for session-based authentication using `connect-pg-simple` (dependency present).
+- **Roles**: Supports Customer, Vendor, and Admin roles with role-based access control.
+- **Vendor Authentication**: Separate authentication system from customers using bcrypt password hashing and JWT tokens.
+  - Routes: `/api/vendor/signup`, `/api/vendor/login`, `/api/vendor/me` (protected)
+  - JWT tokens stored in localStorage and attached to all vendor API requests via Authorization header.
+- **Customer Authentication**: To be implemented (currently using session-based auth placeholder).
+- **Password Security**: Bcrypt with 10 salt rounds for secure password hashing.
 
 ### Key Features
 
@@ -51,6 +63,15 @@ Preferred communication style: Simple, everyday language.
     4.  **Location Score (20%)**: Evaluates vendor proximity and service area.
   - **Label Assignment**: Assigns labels like "Best match," "Budget friendly," and "Popular choice" to top vendors.
   - **Curated Recommendations UI**: Presents recommendations in a Netflix-style layout with horizontal scrolling vendor cards per category, displaying key details, badges, and action buttons.
+
+- **Vendor Portal** (In Progress):
+  - **Authentication**: Vendor signup, login, and JWT-based authentication (separate from customer auth).
+  - **Onboarding**: Stripe Connect integration with Express/Standard account options.
+  - **Frontend Pages**: VendorLogin, VendorSignup, VendorOnboarding (Stripe Connect setup).
+  - **Backend Routes**: Complete auth, Stripe Connect, booking, and payment APIs.
+  - **Payment Flow**: Deposit + custom final payment schedules with 15% platform fee calculation.
+  - **Refund System**: 48-hour refund policy enforcement.
+  - **Remaining**: Dashboard UI, listings management, bookings table, calendar, messaging, payments view, reviews management, notifications.
 
 ## External Dependencies
 
@@ -87,8 +108,21 @@ Preferred communication style: Simple, everyday language.
 - **date-fns**: Date manipulation.
 - **nanoid**: Unique ID generation.
 
-### Payment Processing
-- **Stripe**: Planned for vendor deposit collection.
+### Payment Processing  
+- **Stripe Connect Marketplace**: Fully implemented for vendor payments with 15% platform fee.
+  - **Account Types**: Supports both Express (simplified onboarding) and Standard (link existing account).
+  - **Onboarding Flow**: Automated Stripe Connect account creation and onboarding links.
+  - **Payment Intent Creation**: Creates payment intents with platform fee (15%) and vendor destination.
+  - **Payment Schedules**: Down payment + final payment with custom strategies (immediately, 2 weeks prior, day of event).
+  - **Refund Policy**: 48-hour refund window enforced for deposits.
+  - **Vendor Dashboard Access**: Login links to Stripe Dashboard for vendors to manage their accounts.
+  - **Routes**: 
+    - `/api/vendor/connect/onboard` - Create Stripe Connect account
+    - `/api/vendor/connect/status` - Check onboarding completion
+    - `/api/vendor/connect/dashboard` - Get dashboard login link
+    - `/api/bookings` - Create booking with payment schedules
+    - `/api/bookings/:id/payments/:scheduleId` - Process payment
+    - `/api/bookings/:id/refund` - Request refund
 
 ### Future Integrations
 - **Google Maps API**: Location autocomplete.

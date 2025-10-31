@@ -10,6 +10,9 @@ import VendorProfile from "@/pages/VendorProfile";
 import EventPlanner from "@/pages/EventPlanner";
 import CuratedRecommendations from "@/pages/CuratedRecommendations";
 import VendorDashboard from "@/pages/VendorDashboard";
+import VendorLogin from "@/pages/VendorLogin";
+import VendorSignup from "@/pages/VendorSignup";
+import VendorOnboarding from "@/pages/VendorOnboarding";
 import AdminDashboard from "@/pages/AdminDashboard";
 import NotFound from "@/pages/not-found";
 
@@ -20,11 +23,13 @@ function Router() {
       <Route path="/login" component={Login} />
       <Route path="/signup" component={Login} />
       <Route path="/browse" component={BrowseVendors} />
+      <Route path="/vendor/login" component={VendorLogin} />
+      <Route path="/vendor/signup" component={VendorSignup} />
+      <Route path="/vendor/onboarding" component={VendorOnboarding} />
+      <Route path="/vendor/dashboard" component={VendorDashboard} />
       <Route path="/vendor/:id" component={VendorProfile} />
       <Route path="/planner" component={EventPlanner} />
       <Route path="/recommendations/:eventId" component={CuratedRecommendations} />
-      <Route path="/vendor/dashboard" component={VendorDashboard} />
-      <Route path="/vendor/signup" component={Login} />
       <Route path="/admin" component={AdminDashboard} />
       <Route component={NotFound} />
     </Switch>
