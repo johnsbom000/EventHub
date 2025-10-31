@@ -36,6 +36,7 @@ export async function registerRoutes(app: Express): Promise<Server> {
       const account = await storage.createVendorAccount({
         email,
         password: hashedPassword,
+        businessName,
         vendorId: null,
         stripeConnectId: null,
         stripeAccountType: null,
@@ -114,6 +115,7 @@ export async function registerRoutes(app: Express): Promise<Server> {
       res.json({
         id: account.id,
         email: account.email,
+        businessName: account.businessName,
         vendorId: account.vendorId,
         stripeConnectId: account.stripeConnectId,
         stripeAccountType: account.stripeAccountType,

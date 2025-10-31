@@ -46,7 +46,12 @@ export default function VendorLogin() {
         description: "Welcome back to your vendor portal",
       });
 
-      setLocation("/vendor/dashboard");
+      // Redirect to onboarding if not yet completed, otherwise to dashboard
+      if (vendorAccount.stripeOnboardingComplete) {
+        setLocation("/vendor/dashboard");
+      } else {
+        setLocation("/vendor/onboarding");
+      }
     } catch (error: any) {
       toast({
         variant: "destructive",

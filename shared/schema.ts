@@ -268,6 +268,7 @@ export const vendorAccounts = pgTable("vendor_accounts", {
   id: varchar("id").primaryKey().default(sql`gen_random_uuid()`),
   email: text("email").notNull().unique(),
   password: text("password").notNull(),
+  businessName: text("business_name").notNull(),
   vendorId: varchar("vendor_id").references(() => vendors.id),
   stripeConnectId: text("stripe_connect_id"),
   stripeAccountType: text("stripe_account_type"), // 'express' or 'standard'
