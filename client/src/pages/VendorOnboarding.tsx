@@ -183,7 +183,7 @@ export default function VendorOnboarding() {
             </Button>
             <Button
               variant="ghost"
-              onClick={() => setLocation("/vendor/login")}
+              onClick={() => setLocation("/vendor/dashboard")}
               disabled={isCreating}
               data-testid="button-skip"
             >
