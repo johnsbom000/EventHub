@@ -181,6 +181,32 @@ export const vendorServiceOfferingsSchema = z.object({
 
 export type VendorServiceOfferings = z.infer<typeof vendorServiceOfferingsSchema>;
 
+export const vendorPackageSchema = z.object({
+  name: z.string(),
+  description: z.string(),
+  price: z.number(),
+  inclusions: z.array(z.string()),
+  popular: z.boolean().optional(),
+});
+
+export const vendorAddOnSchema = z.object({
+  name: z.string(),
+  description: z.string(),
+  price: z.number(),
+});
+
+export const vendorReviewSchema = z.object({
+  reviewerName: z.string(),
+  rating: z.number(),
+  date: z.string(),
+  comment: z.string(),
+  eventType: z.string().optional(),
+});
+
+export type VendorPackage = z.infer<typeof vendorPackageSchema>;
+export type VendorAddOn = z.infer<typeof vendorAddOnSchema>;
+export type VendorReview = z.infer<typeof vendorReviewSchema>;
+
 export const vendors = pgTable("vendors", {
   id: varchar("id").primaryKey().default(sql`gen_random_uuid()`),
   name: text("name").notNull(),
@@ -202,6 +228,10 @@ export const vendors = pgTable("vendors", {
   imageUrl: text("image_url"),
   description: text("description"),
   travelFeeRequired: boolean("travel_fee_required").default(false),
+  packages: jsonb("packages").$type<VendorPackage[] | null>(),
+  addOns: jsonb("add_ons").$type<VendorAddOn[] | null>(),
+  reviews: jsonb("reviews").$type<VendorReview[] | null>(),
+  aboutSection: text("about_section"),
   createdAt: timestamp("created_at").defaultNow(),
 });
 
@@ -210,6 +240,9 @@ export const insertVendorSchema = createInsertSchema(vendors).omit({
   createdAt: true,
 }).extend({
   serviceOfferings: vendorServiceOfferingsSchema.optional(),
+  packages: z.array(vendorPackageSchema).optional(),
+  addOns: z.array(vendorAddOnSchema).optional(),
+  reviews: z.array(vendorReviewSchema).optional(),
 });
 
 export type InsertVendor = z.infer<typeof insertVendorSchema>;
