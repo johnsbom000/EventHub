@@ -69,12 +69,20 @@ export default function EventPlanner() {
       const response = await apiRequest("POST", "/api/events", eventData);
       return await response.json();
     },
-    onSuccess: () => {
-      toast({
-        title: "Event created successfully!",
-        description: "Redirecting to browse vendors...",
-      });
-      setLocation("/browse");
+    onSuccess: (data, variables) => {
+      if (variables.path === 'curated') {
+        toast({
+          title: "Event created successfully!",
+          description: "Showing your curated recommendations...",
+        });
+        setLocation(`/recommendations/${data.id}`);
+      } else {
+        toast({
+          title: "Event created successfully!",
+          description: "Redirecting to browse vendors...",
+        });
+        setLocation("/browse");
+      }
     },
     onError: (error: any) => {
       toast({

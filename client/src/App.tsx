@@ -8,6 +8,7 @@ import Login from "@/pages/Login";
 import BrowseVendors from "@/pages/BrowseVendors";
 import VendorProfile from "@/pages/VendorProfile";
 import EventPlanner from "@/pages/EventPlanner";
+import CuratedRecommendations from "@/pages/CuratedRecommendations";
 import VendorDashboard from "@/pages/VendorDashboard";
 import AdminDashboard from "@/pages/AdminDashboard";
 import NotFound from "@/pages/not-found";
@@ -21,6 +22,7 @@ function Router() {
       <Route path="/browse" component={BrowseVendors} />
       <Route path="/vendor/:id" component={VendorProfile} />
       <Route path="/planner" component={EventPlanner} />
+      <Route path="/recommendations/:eventId" component={CuratedRecommendations} />
       <Route path="/vendor/dashboard" component={VendorDashboard} />
       <Route path="/vendor/signup" component={Login} />
       <Route path="/admin" component={AdminDashboard} />
