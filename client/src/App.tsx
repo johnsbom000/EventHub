@@ -13,6 +13,13 @@ import VendorDashboard from "@/pages/VendorDashboard";
 import VendorLogin from "@/pages/VendorLogin";
 import VendorSignup from "@/pages/VendorSignup";
 import VendorOnboarding from "@/pages/VendorOnboarding";
+import VendorBookings from "@/pages/VendorBookings";
+import VendorListings from "@/pages/VendorListings";
+import VendorMessages from "@/pages/VendorMessages";
+import VendorCalendar from "@/pages/VendorCalendar";
+import VendorPayments from "@/pages/VendorPayments";
+import VendorReviews from "@/pages/VendorReviews";
+import VendorNotifications from "@/pages/VendorNotifications";
 import AdminDashboard from "@/pages/AdminDashboard";
 import NotFound from "@/pages/not-found";
 
@@ -27,6 +34,13 @@ function Router() {
       <Route path="/vendor/signup" component={VendorSignup} />
       <Route path="/vendor/onboarding" component={VendorOnboarding} />
       <Route path="/vendor/dashboard" component={VendorDashboard} />
+      <Route path="/vendor/bookings" component={VendorBookings} />
+      <Route path="/vendor/listings" component={VendorListings} />
+      <Route path="/vendor/messages" component={VendorMessages} />
+      <Route path="/vendor/calendar" component={VendorCalendar} />
+      <Route path="/vendor/payments" component={VendorPayments} />
+      <Route path="/vendor/reviews" component={VendorReviews} />
+      <Route path="/vendor/notifications" component={VendorNotifications} />
       <Route path="/vendor/:id" component={VendorProfile} />
       <Route path="/planner" component={EventPlanner} />
       <Route path="/recommendations/:eventId" component={CuratedRecommendations} />

@@ -64,14 +64,21 @@ Preferred communication style: Simple, everyday language.
   - **Label Assignment**: Assigns labels like "Best match," "Budget friendly," and "Popular choice" to top vendors.
   - **Curated Recommendations UI**: Presents recommendations in a Netflix-style layout with horizontal scrolling vendor cards per category, displaying key details, badges, and action buttons.
 
-- **Vendor Portal** (In Progress):
-  - **Authentication**: Vendor signup, login, and JWT-based authentication (separate from customer auth).
-  - **Onboarding**: Stripe Connect integration with Express/Standard account options.
-  - **Frontend Pages**: VendorLogin, VendorSignup, VendorOnboarding (Stripe Connect setup).
-  - **Backend Routes**: Complete auth, Stripe Connect, booking, and payment APIs.
-  - **Payment Flow**: Deposit + custom final payment schedules with 15% platform fee calculation.
-  - **Refund System**: 48-hour refund policy enforcement.
-  - **Remaining**: Dashboard UI, listings management, bookings table, calendar, messaging, payments view, reviews management, notifications.
+- **Vendor Portal** (Complete Framework):
+  - **Authentication**: Vendor signup, login, and JWT-based authentication (separate from customer auth). Smart login redirect based on onboarding completion status.
+  - **Onboarding**: Stripe Connect integration with Express/Standard account options. "Skip for now" option redirects to dashboard.
+  - **Dashboard UI**: Complete dashboard with sidebar navigation, stats cards (bookings, revenue, profile views), onboarding status banner, and quick actions.
+  - **Sidebar Navigation**: shadcn-based sidebar with 8 main sections: Dashboard, Bookings, Listings, Messages, Calendar, Payments, Reviews, Notifications.
+  - **Feature Pages** (UI Complete, Data Integration Pending):
+    - **Bookings**: Table view with tabs (all, upcoming, pending, completed, cancelled), booking details, customer info, and action buttons.
+    - **Listings**: Create/edit/delete listings, toggle active/inactive, manage pricing/packages/add-ons, preview functionality.
+    - **Messages**: Unified inbox with per-booking chat, attachment support, read indicators.
+    - **Calendar**: Month/week views, bookings display, date blocking functionality.
+    - **Payments**: Payment history table, CSV export, Stripe dashboard link, platform fee tracking.
+    - **Reviews**: View ratings/comments, reply functionality, average rating stats, response rate tracking.
+    - **Notifications**: Recent alerts, notification preferences with toggles for bookings/messages/reschedules/cancellations/payments.
+  - **Backend Routes**: Auth (signup/login/me), Stripe Connect (onboard/status/dashboard), vendor operations (stats/bookings/messages/payments/reviews) - placeholder implementations ready for data integration.
+  - **Next Steps**: Implement actual database queries for vendor-specific data retrieval, create vendor profile during onboarding to link vendor_accounts to vendors table.
 
 ## External Dependencies
 

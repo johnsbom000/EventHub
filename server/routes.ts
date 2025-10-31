@@ -219,6 +219,117 @@ export async function registerRoutes(app: Express): Promise<Server> {
     }
   });
 
+  // Vendor Dashboard & Management Routes
+  
+  // Get vendor dashboard stats
+  app.get("/api/vendor/stats", requireVendorAuth, async (req, res) => {
+    try {
+      const vendorAuth = (req as any).vendorAuth;
+      const account = await storage.getVendorAccount(vendorAuth.id);
+      
+      if (!account?.vendorId) {
+        return res.json({
+          totalBookings: 0,
+          revenue: 0,
+          profileViews: 0,
+          recentBookings: [],
+        });
+      }
+
+      // TODO: Implement actual stats calculation from database
+      // For now, return mock data
+      res.json({
+        totalBookings: 24,
+        bookingsThisMonth: 3,
+        revenue: 45200,
+        revenueGrowth: 12,
+        profileViews: 1234,
+        profileViewsGrowth: 18,
+        recentBookings: [],
+      });
+    } catch (error: any) {
+      res.status(500).json({ error: error.message });
+    }
+  });
+
+  // Get vendor's bookings
+  app.get("/api/vendor/bookings", requireVendorAuth, async (req, res) => {
+    try {
+      const vendorAuth = (req as any).vendorAuth;
+      const account = await storage.getVendorAccount(vendorAuth.id);
+      
+      if (!account?.vendorId) {
+        return res.json([]);
+      }
+
+      // TODO: Implement actual bookings retrieval
+      res.json([]);
+    } catch (error: any) {
+      res.status(500).json({ error: error.message });
+    }
+  });
+
+  // Update booking status (accept, reschedule, cancel, complete)
+  app.patch("/api/vendor/bookings/:id", requireVendorAuth, async (req, res) => {
+    try {
+      const { status, notes } = req.body;
+      // TODO: Implement booking update logic
+      res.json({ success: true });
+    } catch (error: any) {
+      res.status(500).json({ error: error.message });
+    }
+  });
+
+  // Get vendor's messages
+  app.get("/api/vendor/messages", requireVendorAuth, async (req, res) => {
+    try {
+      const vendorAuth = (req as any).vendorAuth;
+      // TODO: Implement messages retrieval
+      res.json([]);
+    } catch (error: any) {
+      res.status(500).json({ error: error.message });
+    }
+  });
+
+  // Get vendor's payments
+  app.get("/api/vendor/payments", requireVendorAuth, async (req, res) => {
+    try {
+      const vendorAuth = (req as any).vendorAuth;
+      // TODO: Implement payments retrieval
+      res.json([]);
+    } catch (error: any) {
+      res.status(500).json({ error: error.message });
+    }
+  });
+
+  // Get vendor's reviews
+  app.get("/api/vendor/reviews", requireVendorAuth, async (req, res) => {
+    try {
+      const vendorAuth = (req as any).vendorAuth;
+      const account = await storage.getVendorAccount(vendorAuth.id);
+      
+      if (!account?.vendorId) {
+        return res.json([]);
+      }
+
+      // TODO: Implement reviews retrieval
+      res.json([]);
+    } catch (error: any) {
+      res.status(500).json({ error: error.message });
+    }
+  });
+
+  // Reply to a review
+  app.post("/api/vendor/reviews/:id/reply", requireVendorAuth, async (req, res) => {
+    try {
+      const { replyText } = req.body;
+      // TODO: Implement review reply logic
+      res.json({ success: true });
+    } catch (error: any) {
+      res.status(500).json({ error: error.message });
+    }
+  });
+
   // Customer-facing routes (existing)
   app.post("/api/events", async (req, res) => {
     try {
