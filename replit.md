@@ -51,6 +51,13 @@ Preferred communication style: Simple, everyday language.
 
 ### Key Features
 
+- **Hero Search Bar**: Prominent search component on homepage enabling customers to quickly find vendors.
+  - **Dynamic Category Filtering**: Vendor categories populate automatically from database via `/api/vendors/meta/categories` endpoint.
+  - **Auto-Closing Date Picker**: Date input automatically closes after selection for improved UX.
+  - **Filter Persistence**: Selected filters (location, event type, date, vendor categories) persist through navigation via URL parameters.
+  - **Smart Navigation**: Search button constructs query params and navigates to `/browse` page with filters applied.
+  - Database categories currently include: Catering, DJ, Florist, Photography, Props, Venues, Videography.
+
 - **Multi-Step Event Planning Intake**: A comprehensive questionnaire system (`/planner`) for collecting event details and vendor-specific requirements.
   - Offers "Browse Vendors" path for direct filtering or "Curated List" path for personalized recommendations based on detailed questionnaires (e.g., photographer, catering, DJ requirements).
   - Implemented with React Hook Form, Zod validation, conditional rendering, and comprehensive data-testid attributes for E2E testing.
