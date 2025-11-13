@@ -20,16 +20,30 @@ import { ListingDoneStep } from "./steps/ListingDoneStep";
 
 interface CreateListingWizardProps {
   onClose: () => void;
+  initialData?: ListingFormData;
+  editMode?: boolean;
 }
 
-export function CreateListingWizard({ onClose }: CreateListingWizardProps) {
-  const [currentStep, setCurrentStep] = useState<WizardStep>("serviceType");
-  const [formData, setFormData] = useState<ListingFormData>(DEFAULT_FORM_DATA);
-  const [completedSteps, setCompletedSteps] = useState<Set<WizardStep>>(new Set());
+export function CreateListingWizard({ onClose, initialData, editMode = false }: CreateListingWizardProps) {
+  // Initialize with edit context if provided
+  const [currentStep, setCurrentStep] = useState<WizardStep>(
+    initialData ? "reviewSubmit" : "serviceType"
+  );
+  const [formData, setFormData] = useState<ListingFormData>(initialData || DEFAULT_FORM_DATA);
+  const [completedSteps, setCompletedSteps] = useState<Set<WizardStep>>(
+    initialData ? new Set(STEP_METADATA.map(s => s.id)) : new Set()
+  );
+  const [isDraft, setIsDraft] = useState(false);
+  const [isSavingDraft, setIsSavingDraft] = useState(false);
 
   const currentStepIndex = STEP_METADATA.findIndex(s => s.id === currentStep);
 
   useEffect(() => {
+    // Only load from localStorage if no initialData (draft recovery mode)
+    if (initialData) {
+      return; // Skip localStorage in edit mode
+    }
+    
     const savedData = localStorage.getItem("createListingDraft");
     if (savedData) {
       try {
@@ -37,30 +51,56 @@ export function CreateListingWizard({ onClose }: CreateListingWizardProps) {
         setFormData(parsed.formData || DEFAULT_FORM_DATA);
         setCurrentStep(parsed.currentStep || "serviceType");
         setCompletedSteps(new Set(parsed.completedSteps || []));
+        setIsDraft(parsed.isDraft || false);
       } catch (e) {
         console.error("Failed to load draft:", e);
       }
     }
-  }, []);
+  }, [initialData]);
 
   const saveToLocalStorage = () => {
     localStorage.setItem("createListingDraft", JSON.stringify({
       formData,
       currentStep,
-      completedSteps: [...completedSteps],
+      completedSteps: Array.from(completedSteps),
+      isDraft,
     }));
   };
 
   useEffect(() => {
-    saveToLocalStorage();
-  }, [formData, currentStep, completedSteps]);
+    // Don't auto-save during draft save operation or in edit mode
+    if (!editMode && !isSavingDraft && !initialData) {
+      saveToLocalStorage();
+    }
+  }, [formData, currentStep, completedSteps, isDraft, editMode, isSavingDraft, initialData]);
 
   const goNext = () => {
     const nextIndex = currentStepIndex + 1;
     if (nextIndex < STEP_METADATA.length) {
-      setCompletedSteps(prev => new Set([...prev, currentStep]));
+      setCompletedSteps(prev => new Set([...Array.from(prev), currentStep]));
       setCurrentStep(STEP_METADATA[nextIndex].id);
     }
+  };
+
+  const saveDraft = () => {
+    // Prevent auto-save during draft operation
+    setIsSavingDraft(true);
+    
+    // Atomically save draft with isDraft flag set to true
+    const draftData = {
+      formData,
+      currentStep,
+      completedSteps: Array.from(completedSteps),
+      isDraft: true,
+    };
+    localStorage.setItem("createListingDraft", JSON.stringify(draftData));
+    setIsDraft(true);
+    
+    // Re-enable auto-save and navigate to done
+    setTimeout(() => {
+      setIsSavingDraft(false);
+      setCurrentStep("done");
+    }, 100);
   };
 
   const goBack = () => {
@@ -115,7 +155,7 @@ export function CreateListingWizard({ onClose }: CreateListingWizardProps) {
       case "requirements":
         return <RequirementsStep {...stepProps} />;
       case "reviewSubmit":
-        return <ReviewSubmitStep {...stepProps} />;
+        return <ReviewSubmitStep {...stepProps} saveDraft={saveDraft} />;
       case "done":
         return <ListingDoneStep onClose={onClose} formData={formData} />;
       default:

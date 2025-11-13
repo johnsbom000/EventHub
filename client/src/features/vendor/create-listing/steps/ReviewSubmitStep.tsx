@@ -7,9 +7,10 @@ interface ReviewSubmitStepProps {
   formData: ListingFormData;
   goNext: () => void;
   goBack: () => void;
+  saveDraft?: () => void;
 }
 
-export function ReviewSubmitStep({ formData, goNext, goBack }: ReviewSubmitStepProps) {
+export function ReviewSubmitStep({ formData, goNext, goBack, saveDraft }: ReviewSubmitStepProps) {
   const isValid = 
     formData.serviceType &&
     formData.city &&
@@ -17,8 +18,8 @@ export function ReviewSubmitStep({ formData, goNext, goBack }: ReviewSubmitStepP
     formData.serviceDescription &&
     formData.offerings.length > 0 &&
     formData.businessHours.some((h) => h.enabled && h.timeRanges.length > 0) &&
-    formData.termsAccepted &&
-    formData.guidelinesAccepted;
+    formData.agreeToTerms &&
+    formData.agreeToGuidelines;
 
   const validationErrors = [];
   if (!formData.serviceType) validationErrors.push("Service type is required");
@@ -27,12 +28,19 @@ export function ReviewSubmitStep({ formData, goNext, goBack }: ReviewSubmitStepP
   if (!formData.serviceDescription) validationErrors.push("Service description is required");
   if (formData.offerings.length === 0) validationErrors.push("At least one package is required");
   if (!formData.businessHours.some((h) => h.enabled && h.timeRanges.length > 0)) validationErrors.push("Business hours are required");
-  if (!formData.termsAccepted || !formData.guidelinesAccepted) validationErrors.push("Terms and guidelines must be accepted");
+  if (!formData.agreeToTerms || !formData.agreeToGuidelines) validationErrors.push("Terms and guidelines must be accepted");
 
   const handleSubmit = () => {
     if (!isValid) return;
     console.log("Submitting listing:", formData);
     goNext();
+  };
+
+  const handleSaveDraft = () => {
+    console.log("Saving listing as draft:", formData);
+    if (saveDraft) {
+      saveDraft();
+    }
   };
 
   return (
@@ -134,15 +142,25 @@ export function ReviewSubmitStep({ formData, goNext, goBack }: ReviewSubmitStepP
         <Button variant="outline" onClick={goBack} data-testid="button-back">
           Back
         </Button>
-        <Button 
-          onClick={handleSubmit} 
-          size="lg" 
-          disabled={!isValid}
-          data-testid="button-submit"
-        >
-          <CheckCircle className="w-4 h-4 mr-2" />
-          Submit for Review
-        </Button>
+        <div className="flex gap-2">
+          <Button 
+            variant="outline" 
+            onClick={handleSaveDraft} 
+            size="lg"
+            data-testid="button-save-draft"
+          >
+            Save Listing Draft
+          </Button>
+          <Button 
+            onClick={handleSubmit} 
+            size="lg" 
+            disabled={!isValid}
+            data-testid="button-submit"
+          >
+            <CheckCircle className="w-4 h-4 mr-2" />
+            Submit for Review
+          </Button>
+        </div>
       </div>
     </div>
   );
