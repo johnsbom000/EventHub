@@ -9,7 +9,7 @@ export default function Footer() {
           <div className="col-span-1 md:col-span-2">
             <div className="flex items-center gap-2 mb-4">
               <Calendar className="h-6 w-6 text-primary" />
-              <span className="font-serif text-xl font-bold">EventVibe</span>
+              <span className="font-serif text-xl font-bold">EventHub</span>
             </div>
             <p className="text-muted-foreground mb-4">
               Your trusted platform for finding and booking the perfect event vendors.
