@@ -3,6 +3,7 @@ import { ListingFormData } from "../types";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
+import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
 import { Plus, X } from "lucide-react";
 
 interface AboutYouStepProps {
@@ -118,13 +119,23 @@ export function AboutYouStep({ formData, updateFormData, goNext, goBack }: About
               </div>
             ))}
             <div className="flex gap-2">
-              <Input
+              <Select
                 value={newProfile.platform}
-                onChange={(e) => setNewProfile({ ...newProfile, platform: e.target.value })}
-                placeholder="Platform"
-                className="w-32"
-                data-testid="input-profile-platform"
-              />
+                onValueChange={(value) => setNewProfile({ ...newProfile, platform: value })}
+              >
+                <SelectTrigger className="w-40" data-testid="select-profile-platform">
+                  <SelectValue placeholder="Platform" />
+                </SelectTrigger>
+                <SelectContent>
+                  <SelectItem value="Instagram">Instagram</SelectItem>
+                  <SelectItem value="LinkedIn">LinkedIn</SelectItem>
+                  <SelectItem value="X">X</SelectItem>
+                  <SelectItem value="VSCO">VSCO</SelectItem>
+                  <SelectItem value="Youtube">Youtube</SelectItem>
+                  <SelectItem value="Personal Website">Personal Website</SelectItem>
+                  <SelectItem value="Other">Other</SelectItem>
+                </SelectContent>
+              </Select>
               <Input
                 value={newProfile.url}
                 onChange={(e) => setNewProfile({ ...newProfile, url: e.target.value })}
