@@ -6,6 +6,26 @@ Event Hub is an event vendor marketplace designed to connect customers with prof
 ## User Preferences
 Preferred communication style: Simple, everyday language.
 
+## Recent Changes
+
+### November 13, 2025 - Vendor Profile Wizard & Database Integration
+- **Implemented complete vendor profile onboarding wizard** (6 steps + decision point):
+  - Step 1: Service Type selection
+  - Step 2: About You (experience, qualifications, address, city)
+  - Step 3: Location (travel mode, service radius/address)
+  - Step 4: Photos (optional, placeholder URLs)
+  - Step 5: Service Description
+  - Step 6: Ready to List decision (create listing vs skip to dashboard)
+- **Database Integration**: All vendor operations now use PostgreSQL via Drizzle ORM
+  - POST /api/vendor/signup → vendor_accounts table
+  - POST /api/vendor/profile → vendor_profiles table
+  - GET /api/vendor/me → queries database for profile status
+- **Navigation Routes**:
+  - Added `/vendor/listings/new` → VendorCreateListing page (renders CreateListingWizard)
+  - "Yes, Create Listing" button navigates to listing creation wizard
+  - "I'll Do This Later" button navigates to vendor dashboard
+- **Data Validation**: Photos made optional (empty array allowed) during profile setup
+
 ## System Architecture
 
 ### Frontend

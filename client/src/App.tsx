@@ -15,6 +15,7 @@ import VendorSignup from "@/pages/VendorSignup";
 import VendorOnboarding from "@/pages/VendorOnboarding";
 import VendorBookings from "@/pages/VendorBookings";
 import VendorListings from "@/pages/VendorListings";
+import VendorCreateListing from "@/pages/VendorCreateListing";
 import VendorMessages from "@/pages/VendorMessages";
 import VendorCalendar from "@/pages/VendorCalendar";
 import VendorPayments from "@/pages/VendorPayments";
@@ -37,6 +38,7 @@ function Router() {
       <Route path="/vendor/dashboard" component={VendorDashboard} />
       <Route path="/vendor/bookings" component={VendorBookings} />
       <Route path="/vendor/listings" component={VendorListings} />
+      <Route path="/vendor/listings/new" component={VendorCreateListing} />
       <Route path="/vendor/messages" component={VendorMessages} />
       <Route path="/vendor/calendar" component={VendorCalendar} />
       <Route path="/vendor/payments" component={VendorPayments} />
