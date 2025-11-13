@@ -8,6 +8,18 @@ Preferred communication style: Simple, everyday language.
 
 ## Recent Changes
 
+### November 13, 2025 - Draft Listing Publish Feature
+- **Implemented draft listing publish functionality**:
+  - Draft listing cards now display two separate buttons: "Edit" (outline variant) and "Publish" (mint green #9EDBC0)
+  - Added PATCH /api/vendor/listings/:id/publish endpoint to update listing status from "draft" to "active"
+  - Publish mutation properly invalidates React Query cache to refresh both draft and active listings
+  - Toast notification appears when listing is published: "Listing published! Your listing is now live and visible to customers."
+- **Fixed CreateListingWizard draft creation**:
+  - Corrected apiRequest function calls to use positional parameters (method, url, data) instead of object syntax
+  - Draft listings now properly persist to database when wizard opens
+  - Auto-save functionality works correctly with debounced updates
+- **E2E Testing**: Verified complete draft-to-active flow including login, draft creation, and publishing
+
 ### November 13, 2025 - Vendor Profile Wizard & Database Integration
 - **Implemented complete vendor profile onboarding wizard** (6 steps + decision point):
   - Step 1: Service Type selection
