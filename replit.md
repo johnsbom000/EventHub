@@ -12,8 +12,12 @@ Preferred communication style: Simple, everyday language.
 - **Technology**: React 18+ with TypeScript, bundled by Vite.
 - **Routing**: Lightweight client-side routing using Wouter, with role-specific paths.
 - **UI/UX**: Utilizes shadcn/ui components (based on Radix UI) and Tailwind CSS.
-  - **Design System**: Emerald green primary color (#10B981), Nunito Sans for body text, Playfair Display for headlines, and responsive design following Tailwind defaults.
-  - **Interaction**: Custom `hover-elevate` and `active-elevate-2` utility classes.
+  - **Design System**: Mint green primary color (#9EDBC0), Inter font for all typography, responsive design following Tailwind defaults.
+    - **Colors**: Primary #9EDBC0 (mint), text-primary #222222, text-secondary #717171, background #FFFFFF, surface #F7F7F7, border #E0E0E0
+    - **Typography**: Inter font family (16px body, 14px subtext), replaces previous Nunito Sans/Playfair Display
+    - **Component Styling**: Buttons use rounded-lg (10px corners), Cards use rounded-xl (12px corners) with shadow-md
+    - **Dark Mode**: Darker mint variant (HSL 153 46% 58%) with appropriate contrast for all surfaces and text
+  - **Interaction**: Custom `hover-elevate` and `active-elevate-2` utility classes for consistent hover/active states.
 - **State Management**: TanStack Query for server state (with optimistic updates), React hooks for local UI state.
 - **Form Handling**: React Hook Form with Zod validation, sharing schemas with the backend for type safety.
 
