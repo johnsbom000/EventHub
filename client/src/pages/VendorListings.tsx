@@ -6,7 +6,9 @@ import { Button } from "@/components/ui/button";
 import { Badge } from "@/components/ui/badge";
 import { Plus, Edit, MapPin, DollarSign, Eye } from "lucide-react";
 import { CreateListingWizard } from "@/features/vendor/create-listing/CreateListingWizard";
-import { useQuery } from "@tanstack/react-query";
+import { useQuery, useMutation } from "@tanstack/react-query";
+import { queryClient } from "@/lib/queryClient";
+import { useToast } from "@/hooks/use-toast";
 
 // Mock listing data - TODO: Replace with API data
 const mockListings = {
@@ -81,6 +83,7 @@ const mockListings = {
 export default function VendorListings() {
   const [showCreateWizard, setShowCreateWizard] = useState(false);
   const [editingListing, setEditingListing] = useState<any | null>(null);
+  const { toast } = useToast();
   
   // Fetch draft listings from API
   const { data: draftListings = [], isLoading: loadingDrafts } = useQuery({
@@ -121,6 +124,37 @@ export default function VendorListings() {
       });
       if (!response.ok) throw new Error("Failed to fetch inactive listings");
       return response.json();
+    },
+  });
+
+  // Mutation for publishing a listing
+  const publishMutation = useMutation({
+    mutationFn: async (listingId: string) => {
+      const response = await fetch(`/api/vendor/listings/${listingId}/publish`, {
+        method: "PATCH",
+        headers: {
+          "Authorization": `Bearer ${localStorage.getItem("vendorToken")}`,
+          "Content-Type": "application/json",
+        },
+      });
+      
+      if (!response.ok) throw new Error("Failed to publish listing");
+      return response.json();
+    },
+    onSuccess: () => {
+      // Invalidate all listing queries to refetch updated data
+      queryClient.invalidateQueries({ queryKey: ["/api/vendor/listings"] });
+      toast({
+        title: "Listing published!",
+        description: "Your listing is now live and visible to customers.",
+      });
+    },
+    onError: (error) => {
+      toast({
+        title: "Failed to publish",
+        description: error.message,
+        variant: "destructive",
+      });
     },
   });
   
@@ -195,23 +229,8 @@ export default function VendorListings() {
     setEditingListing(null);
   };
 
-  const handlePublishListing = async (listingId: string) => {
-    try {
-      const response = await fetch(`/api/vendor/listings/${listingId}/publish`, {
-        method: "PATCH",
-        headers: {
-          "Authorization": `Bearer ${localStorage.getItem("vendorToken")}`,
-          "Content-Type": "application/json",
-        },
-      });
-      
-      if (!response.ok) throw new Error("Failed to publish listing");
-      
-      // Invalidate queries to refresh the listings
-      window.location.reload();
-    } catch (error) {
-      console.error("Error publishing listing:", error);
-    }
+  const handlePublishListing = (listingId: string) => {
+    publishMutation.mutate(listingId);
   };
 
   const ListingCard = ({ listing, status }: { listing: any; status: string }) => {
