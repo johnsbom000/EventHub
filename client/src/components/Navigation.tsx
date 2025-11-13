@@ -45,9 +45,7 @@ export default function Navigation() {
                 size="default"
                 onClick={handleVendorsClick}
                 data-testid="button-vendors"
-              >
-                Vendors
-              </Button>
+              >Vendor Dashboard</Button>
               <Link href="/login">
                 <Button variant="outline" size="default" className="bg-[#9edbc0]" data-testid="button-login">
                   Login / Sign up
@@ -57,7 +55,6 @@ export default function Navigation() {
           </div>
         </div>
       </nav>
-
       <Dialog open={showVendorPrompt} onOpenChange={setShowVendorPrompt}>
         <DialogContent data-testid="dialog-vendor-prompt">
           <DialogHeader>
