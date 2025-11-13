@@ -195,63 +195,119 @@ export default function VendorListings() {
     setEditingListing(null);
   };
 
-  const ListingCard = ({ listing, status }: { listing: any; status: string }) => (
-    <Card 
-      className="w-[320px] shrink-0 overflow-hidden hover-elevate cursor-pointer group"
-      onClick={() => handleEditListing(listing.id)}
-      data-testid={`card-listing-${listing.id}`}
-    >
-      <div className="aspect-[4/3] overflow-hidden relative">
-        <img
-          src={listing.image}
-          alt={listing.title}
-          className="w-full h-full object-cover transition-transform duration-300 group-hover:scale-105"
-        />
-        <div className="absolute top-3 right-3">
-          <Badge variant="secondary" className="bg-white/90 hover:bg-white" style={{ borderColor: '#9EDBC0' }}>
-            <Edit className="w-3 h-3 mr-1" style={{ color: '#9EDBC0' }} />
-            <span style={{ color: '#9EDBC0' }}>Edit</span>
-          </Badge>
-        </div>
-        {status === "draft" && (
-          <div className="absolute top-3 left-3">
-            <Badge style={{ backgroundColor: '#9EDBC0', color: 'white', borderColor: '#8CCBB0' }}>
-              Draft
-            </Badge>
-          </div>
-        )}
-      </div>
-      <div className="p-4">
-        <div className="flex items-start justify-between mb-2">
-          <div className="flex-1">
-            <h3 className="font-semibold text-base mb-1 line-clamp-1" data-testid={`text-title-${listing.id}`}>
-              {listing.title}
-            </h3>
-            <p className="text-sm text-muted-foreground">{listing.category}</p>
-          </div>
-        </div>
-        <div className="flex items-center gap-2 text-sm text-muted-foreground mb-3">
-          <MapPin className="w-4 h-4" />
-          <span>{listing.location}</span>
-        </div>
-        <div className="flex items-center justify-between">
-          <div className="flex items-center gap-1">
-            <span className="font-semibold" style={{ color: '#9EDBC0' }}>{listing.price}</span>
-          </div>
-          <div className="flex items-center gap-3 text-sm text-muted-foreground">
-            <div className="flex items-center gap-1">
-              <Eye className="w-4 h-4" />
-              <span>{listing.views}</span>
+  const handlePublishListing = async (listingId: string) => {
+    try {
+      const response = await fetch(`/api/vendor/listings/${listingId}/publish`, {
+        method: "PATCH",
+        headers: {
+          "Authorization": `Bearer ${localStorage.getItem("vendorToken")}`,
+          "Content-Type": "application/json",
+        },
+      });
+      
+      if (!response.ok) throw new Error("Failed to publish listing");
+      
+      // Invalidate queries to refresh the listings
+      window.location.reload();
+    } catch (error) {
+      console.error("Error publishing listing:", error);
+    }
+  };
+
+  const ListingCard = ({ listing, status }: { listing: any; status: string }) => {
+    const isDraft = status === "draft";
+    
+    return (
+      <Card 
+        className={`w-[320px] shrink-0 overflow-hidden ${!isDraft ? 'hover-elevate cursor-pointer' : ''} group`}
+        onClick={!isDraft ? () => handleEditListing(listing.id) : undefined}
+        data-testid={`card-listing-${listing.id}`}
+      >
+        <div className="aspect-[4/3] overflow-hidden relative">
+          <img
+            src={listing.image || "https://via.placeholder.com/300x200?text=No+Image"}
+            alt={listing.title}
+            className="w-full h-full object-cover transition-transform duration-300 group-hover:scale-105"
+          />
+          {!isDraft && (
+            <div className="absolute top-3 right-3">
+              <Badge variant="secondary" className="bg-white/90 hover:bg-white" style={{ borderColor: '#9EDBC0' }}>
+                <Edit className="w-3 h-3 mr-1" style={{ color: '#9EDBC0' }} />
+                <span style={{ color: '#9EDBC0' }}>Edit</span>
+              </Badge>
             </div>
-            <div className="flex items-center gap-1">
-              <span className="font-medium">{listing.bookings}</span>
-              <span>bookings</span>
+          )}
+          {isDraft && (
+            <div className="absolute top-3 left-3">
+              <Badge style={{ backgroundColor: '#9EDBC0', color: 'white', borderColor: '#8CCBB0' }}>
+                Draft
+              </Badge>
+            </div>
+          )}
+        </div>
+        <div className="p-4">
+          <div className="flex items-start justify-between mb-2">
+            <div className="flex-1">
+              <h3 className="font-semibold text-base mb-1 line-clamp-1" data-testid={`text-title-${listing.id}`}>
+                {listing.title || listing.listingData?.serviceType || "Untitled Listing"}
+              </h3>
+              <p className="text-sm text-muted-foreground">{listing.category || listing.listingData?.serviceType}</p>
             </div>
           </div>
+          <div className="flex items-center gap-2 text-sm text-muted-foreground mb-3">
+            <MapPin className="w-4 h-4" />
+            <span>{listing.location || listing.listingData?.city || "Location not set"}</span>
+          </div>
+          <div className="flex items-center justify-between">
+            <div className="flex items-center gap-1">
+              <span className="font-semibold" style={{ color: '#9EDBC0' }}>
+                {listing.price || (listing.listingData?.offerings?.[0]?.price ? `$${listing.listingData.offerings[0].price}` : "Price not set")}
+              </span>
+            </div>
+            {!isDraft && (
+              <div className="flex items-center gap-3 text-sm text-muted-foreground">
+                <div className="flex items-center gap-1">
+                  <Eye className="w-4 h-4" />
+                  <span>{listing.views || 0}</span>
+                </div>
+                <div className="flex items-center gap-1">
+                  <span className="font-medium">{listing.bookings || 0}</span>
+                  <span>bookings</span>
+                </div>
+              </div>
+            )}
+          </div>
+          
+          {isDraft && (
+            <div className="flex gap-2 mt-4 pt-4 border-t">
+              <Button
+                variant="outline"
+                className="flex-1"
+                onClick={(e) => {
+                  e.stopPropagation();
+                  handleEditListing(listing.id);
+                }}
+                data-testid={`button-edit-${listing.id}`}
+              >
+                Edit
+              </Button>
+              <Button
+                className="flex-1"
+                style={{ backgroundColor: '#9EDBC0', color: 'white' }}
+                onClick={(e) => {
+                  e.stopPropagation();
+                  handlePublishListing(listing.id);
+                }}
+                data-testid={`button-publish-${listing.id}`}
+              >
+                Publish
+              </Button>
+            </div>
+          )}
         </div>
-      </div>
-    </Card>
-  );
+      </Card>
+    );
+  };
 
   const ListingSection = ({ title, listings, status, emptyMessage }: any) => (
     <div className="mb-10" data-testid={`section-${status}`}>

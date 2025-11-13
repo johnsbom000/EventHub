@@ -286,6 +286,39 @@ export async function registerRoutes(app: Express): Promise<Server> {
     }
   });
 
+  // Publish a draft listing (change status to active)
+  app.patch("/api/vendor/listings/:id/publish", requireVendorAuth, async (req, res) => {
+    try {
+      const vendorAuth = (req as any).vendorAuth;
+      const { id } = req.params;
+
+      // Verify ownership and that it's a draft
+      const existingListings = await db.select().from(vendorListings).where(
+        and(
+          eq(vendorListings.id, id),
+          eq(vendorListings.accountId, vendorAuth.id)
+        )
+      );
+
+      if (existingListings.length === 0) {
+        return res.status(404).json({ error: "Listing not found" });
+      }
+
+      // Update status to active
+      const [published] = await db.update(vendorListings)
+        .set({
+          status: "active",
+          updatedAt: new Date(),
+        })
+        .where(eq(vendorListings.id, id))
+        .returning();
+
+      res.json(published);
+    } catch (error: any) {
+      res.status(500).json({ error: error.message });
+    }
+  });
+
   // Get all vendor listings (with optional status filter)
   app.get("/api/vendor/listings", requireVendorAuth, async (req, res) => {
     try {
