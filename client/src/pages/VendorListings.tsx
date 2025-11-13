@@ -6,6 +6,7 @@ import { Button } from "@/components/ui/button";
 import { Badge } from "@/components/ui/badge";
 import { Plus, Edit, MapPin, DollarSign, Eye } from "lucide-react";
 import { CreateListingWizard } from "@/features/vendor/create-listing/CreateListingWizard";
+import { useQuery } from "@tanstack/react-query";
 
 // Mock listing data - TODO: Replace with API data
 const mockListings = {
@@ -80,6 +81,48 @@ const mockListings = {
 export default function VendorListings() {
   const [showCreateWizard, setShowCreateWizard] = useState(false);
   const [editingListing, setEditingListing] = useState<any | null>(null);
+  
+  // Fetch draft listings from API
+  const { data: draftListings = [], isLoading: loadingDrafts } = useQuery({
+    queryKey: ["/api/vendor/listings", "draft"],
+    queryFn: async () => {
+      const response = await fetch("/api/vendor/listings?status=draft", {
+        headers: {
+          "Authorization": `Bearer ${localStorage.getItem("vendorToken")}`,
+        },
+      });
+      if (!response.ok) throw new Error("Failed to fetch draft listings");
+      return response.json();
+    },
+  });
+
+  // Fetch active listings from API
+  const { data: activeListings = [], isLoading: loadingActive } = useQuery({
+    queryKey: ["/api/vendor/listings", "active"],
+    queryFn: async () => {
+      const response = await fetch("/api/vendor/listings?status=active", {
+        headers: {
+          "Authorization": `Bearer ${localStorage.getItem("vendorToken")}`,
+        },
+      });
+      if (!response.ok) throw new Error("Failed to fetch active listings");
+      return response.json();
+    },
+  });
+
+  // Fetch inactive listings from API
+  const { data: inactiveListings = [], isLoading: loadingInactive } = useQuery({
+    queryKey: ["/api/vendor/listings", "inactive"],
+    queryFn: async () => {
+      const response = await fetch("/api/vendor/listings?status=inactive", {
+        headers: {
+          "Authorization": `Bearer ${localStorage.getItem("vendorToken")}`,
+        },
+      });
+      if (!response.ok) throw new Error("Failed to fetch inactive listings");
+      return response.json();
+    },
+  });
   
   const sidebarStyle = {
     "--sidebar-width": "16rem",

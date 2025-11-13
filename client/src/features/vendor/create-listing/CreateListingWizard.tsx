@@ -3,6 +3,8 @@ import { motion, AnimatePresence } from "framer-motion";
 import { X, Save } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { WizardStep, STEP_METADATA, ListingFormData, DEFAULT_FORM_DATA } from "./types";
+import { useMutation, useQuery } from "@tanstack/react-query";
+import { apiRequest } from "@/lib/queryClient";
 import { ServiceTypeStep } from "./steps/ServiceTypeStep";
 import { LocationSelectionStep } from "./steps/LocationSelectionStep";
 import { CreateListingIntroStep } from "./steps/CreateListingIntroStep";
@@ -22,9 +24,10 @@ interface CreateListingWizardProps {
   onClose: () => void;
   initialData?: ListingFormData;
   editMode?: boolean;
+  listingId?: string; // For editing existing drafts
 }
 
-export function CreateListingWizard({ onClose, initialData, editMode = false }: CreateListingWizardProps) {
+export function CreateListingWizard({ onClose, initialData, editMode = false, listingId: existingListingId }: CreateListingWizardProps) {
   // Initialize with edit context if provided
   const [currentStep, setCurrentStep] = useState<WizardStep>(
     initialData ? "reviewSubmit" : "serviceType"
@@ -35,44 +38,53 @@ export function CreateListingWizard({ onClose, initialData, editMode = false }: 
   );
   const [isDraft, setIsDraft] = useState(false);
   const [isSavingDraft, setIsSavingDraft] = useState(false);
+  const [listingId, setListingId] = useState<string | null>(existingListingId || null);
 
   const currentStepIndex = STEP_METADATA.findIndex(s => s.id === currentStep);
 
-  useEffect(() => {
-    // Only load from localStorage if no initialData (draft recovery mode)
-    if (initialData) {
-      return; // Skip localStorage in edit mode
-    }
-    
-    const savedData = localStorage.getItem("createListingDraft");
-    if (savedData) {
-      try {
-        const parsed = JSON.parse(savedData);
-        setFormData(parsed.formData || DEFAULT_FORM_DATA);
-        setCurrentStep(parsed.currentStep || "serviceType");
-        setCompletedSteps(new Set(parsed.completedSteps || []));
-        setIsDraft(parsed.isDraft || false);
-      } catch (e) {
-        console.error("Failed to load draft:", e);
-      }
-    }
-  }, [initialData]);
+  // Create draft mutation
+  const createDraft = useMutation({
+    mutationFn: async (data: ListingFormData) => {
+      const response = await apiRequest("/api/vendor/listings", {
+        method: "POST",
+        body: { listingData: data },
+      });
+      return response;
+    },
+    onSuccess: (data: any) => {
+      setListingId(data.id);
+    },
+  });
 
-  const saveToLocalStorage = () => {
-    localStorage.setItem("createListingDraft", JSON.stringify({
-      formData,
-      currentStep,
-      completedSteps: Array.from(completedSteps),
-      isDraft,
-    }));
-  };
+  // Update draft mutation
+  const updateDraft = useMutation({
+    mutationFn: async (data: { id: string; listingData: ListingFormData }) => {
+      const response = await apiRequest(`/api/vendor/listings/${data.id}`, {
+        method: "PATCH",
+        body: { listingData: data.listingData },
+      });
+      return response;
+    },
+  });
 
+  // Create draft on mount (for new listings only)
   useEffect(() => {
-    // Don't auto-save during draft save operation or in edit mode
-    if (!editMode && !isSavingDraft && !initialData) {
-      saveToLocalStorage();
+    if (!existingListingId && !listingId && !initialData) {
+      createDraft.mutate(DEFAULT_FORM_DATA);
     }
-  }, [formData, currentStep, completedSteps, isDraft, editMode, isSavingDraft, initialData]);
+  }, []);
+
+  // Auto-save to database when formData changes
+  useEffect(() => {
+    if (listingId && !isSavingDraft) {
+      const debounceTimer = setTimeout(() => {
+        updateDraft.mutate({ id: listingId, listingData: formData });
+      }, 1000); // Debounce for 1 second
+
+      return () => clearTimeout(debounceTimer);
+    }
+  }, [formData, listingId, isSavingDraft]);
+
 
   const goNext = () => {
     const nextIndex = currentStepIndex + 1;
@@ -83,24 +95,23 @@ export function CreateListingWizard({ onClose, initialData, editMode = false }: 
   };
 
   const saveDraft = () => {
-    // Prevent auto-save during draft operation
+    if (!listingId) return;
+    
+    // Save to database and navigate to done
     setIsSavingDraft(true);
-    
-    // Atomically save draft with isDraft flag set to true
-    const draftData = {
-      formData,
-      currentStep,
-      completedSteps: Array.from(completedSteps),
-      isDraft: true,
-    };
-    localStorage.setItem("createListingDraft", JSON.stringify(draftData));
-    setIsDraft(true);
-    
-    // Re-enable auto-save and navigate to done
-    setTimeout(() => {
-      setIsSavingDraft(false);
-      setCurrentStep("done");
-    }, 100);
+    updateDraft.mutate(
+      { id: listingId, listingData: formData },
+      {
+        onSuccess: () => {
+          setIsDraft(true);
+          setCurrentStep("done");
+          setIsSavingDraft(false);
+        },
+        onError: () => {
+          setIsSavingDraft(false);
+        },
+      }
+    );
   };
 
   const goBack = () => {
@@ -118,7 +129,9 @@ export function CreateListingWizard({ onClose, initialData, editMode = false }: 
   };
 
   const handleSaveAndExit = () => {
-    saveToLocalStorage();
+    if (listingId) {
+      updateDraft.mutate({ id: listingId, listingData: formData });
+    }
     onClose();
   };
 
@@ -155,7 +168,7 @@ export function CreateListingWizard({ onClose, initialData, editMode = false }: 
       case "requirements":
         return <RequirementsStep {...stepProps} />;
       case "reviewSubmit":
-        return <ReviewSubmitStep {...stepProps} saveDraft={saveDraft} />;
+        return <ReviewSubmitStep {...stepProps} saveDraft={saveDraft} listingId={listingId} updateDraft={updateDraft} />;
       case "done":
         return <ListingDoneStep onClose={onClose} formData={formData} />;
       default:

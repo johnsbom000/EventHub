@@ -10,9 +10,11 @@ interface ReviewSubmitStepProps {
   goNext: () => void;
   goBack: () => void;
   saveDraft?: () => void;
+  listingId: string | null;
+  updateDraft: any; // UseMutationResult type
 }
 
-export function ReviewSubmitStep({ formData, goNext, goBack, saveDraft }: ReviewSubmitStepProps) {
+export function ReviewSubmitStep({ formData, goNext, goBack, saveDraft, listingId, updateDraft }: ReviewSubmitStepProps) {
   const { toast } = useToast();
   const [lastSavedData, setLastSavedData] = useState<string>("");
   
@@ -42,6 +44,15 @@ export function ReviewSubmitStep({ formData, goNext, goBack, saveDraft }: Review
   };
 
   const handleSaveDraft = () => {
+    if (!listingId) {
+      toast({
+        title: "Error",
+        description: "Listing ID not found. Please try again.",
+        variant: "destructive",
+      });
+      return;
+    }
+
     const currentDataString = JSON.stringify(formData);
     
     // Check if there are any changes since last save
@@ -53,25 +64,26 @@ export function ReviewSubmitStep({ formData, goNext, goBack, saveDraft }: Review
       return;
     }
     
-    console.log("Saving listing as draft:", formData);
-    
-    // Save the draft to localStorage
-    localStorage.setItem("createListingDraft", JSON.stringify({
-      formData,
-      currentStep: "reviewSubmit",
-      completedSteps: ["serviceType", "locationSelection", "createIntro", "about", "location", "photos", "service", "offerings", "offeringDetails", "businessHours", "discounts", "requirements"],
-      isDraft: true,
-    }));
-    
-    // Update last saved state
-    setLastSavedData(currentDataString);
-    
-    toast({
-      title: "Changes Saved",
-      description: "Your listing draft has been saved successfully.",
-    });
-    
-    // Stay on this page - don't call saveDraft() which navigates away
+    // Save to database via API
+    updateDraft.mutate(
+      { id: listingId, listingData: formData },
+      {
+        onSuccess: () => {
+          setLastSavedData(currentDataString);
+          toast({
+            title: "Changes Saved",
+            description: "Your listing draft has been saved successfully.",
+          });
+        },
+        onError: (error: any) => {
+          toast({
+            title: "Save Failed",
+            description: error.message || "Failed to save listing. Please try again.",
+            variant: "destructive",
+          });
+        },
+      }
+    );
   };
 
   return (
