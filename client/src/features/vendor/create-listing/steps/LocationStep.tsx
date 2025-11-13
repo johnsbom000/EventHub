@@ -14,7 +14,7 @@ interface LocationStepProps {
 }
 
 export function LocationStep({ formData, updateFormData, goNext, goBack }: LocationStepProps) {
-  const [travelMode, setTravelMode] = useState<"travel-to-guests" | "guests-come-to-you">(
+  const [travelMode, setTravelMode] = useState<"travel-to-guests" | "guests-come-to-me">(
     formData.travelMode || "travel-to-guests"
   );
   const [serviceRadius, setServiceRadius] = useState(formData.serviceRadius || 25);
@@ -24,7 +24,7 @@ export function LocationStep({ formData, updateFormData, goNext, goBack }: Locat
     updateFormData({ 
       travelMode, 
       serviceRadius: travelMode === "travel-to-guests" ? serviceRadius : undefined,
-      serviceAddress: travelMode === "guests-come-to-you" ? serviceAddress : undefined
+      serviceAddress: travelMode === "guests-come-to-me" ? serviceAddress : undefined
     });
     goNext();
   };
@@ -60,15 +60,15 @@ export function LocationStep({ formData, updateFormData, goNext, goBack }: Locat
         </Card>
 
         <Card
-          onClick={() => setTravelMode("guests-come-to-you")}
+          onClick={() => setTravelMode("guests-come-to-me")}
           className={`p-6 cursor-pointer hover-elevate ${
-            travelMode === "guests-come-to-you" ? "ring-2 ring-primary" : ""
+            travelMode === "guests-come-to-me" ? "ring-2 ring-primary" : ""
           }`}
-          data-testid="option-guests-come-to-you"
+          data-testid="option-guests-come-to-me"
         >
           <div className="flex flex-col items-center text-center gap-3">
             <div className={`w-16 h-16 rounded-full flex items-center justify-center ${
-              travelMode === "guests-come-to-you" ? "bg-primary text-white" : "bg-muted"
+              travelMode === "guests-come-to-me" ? "bg-primary text-white" : "bg-muted"
             }`}>
               <HomeIcon className="w-8 h-8" />
             </div>
@@ -98,7 +98,7 @@ export function LocationStep({ formData, updateFormData, goNext, goBack }: Locat
         </div>
       )}
 
-      {travelMode === "guests-come-to-you" && (
+      {travelMode === "guests-come-to-me" && (
         <div className="space-y-4">
           <div>
             <Label>Service Address</Label>
@@ -120,7 +120,7 @@ export function LocationStep({ formData, updateFormData, goNext, goBack }: Locat
           Back
         </Button>
         <div className="flex gap-2">
-          <Button variant="outline" onClick={goNext} data-testid="button-skip">
+          <Button variant="outline" onClick={handleNext} data-testid="button-skip">
             Skip
           </Button>
           <Button onClick={handleNext} data-testid="button-next">

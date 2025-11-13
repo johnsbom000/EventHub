@@ -1,10 +1,12 @@
 import type { Express } from "express";
 import { createServer, type Server } from "http";
 import { storage } from "./storage";
-import { insertEventSchema, insertVendorAccountSchema } from "@shared/schema";
+import { insertEventSchema, insertVendorAccountSchema, insertVendorProfileSchema, vendorProfiles, vendorAccounts } from "@shared/schema";
 import { scoreVendorsForEvent } from "./vendorScoring";
 import { hashPassword, comparePassword, generateToken, requireVendorAuth } from "./auth";
 import { z } from "zod";
+import { db } from "./db";
+import { eq } from "drizzle-orm";
 
 export async function registerRoutes(app: Express): Promise<Server> {
   // Vendor Authentication Routes
@@ -23,17 +25,17 @@ export async function registerRoutes(app: Express): Promise<Server> {
     try {
       const { email, password, businessName } = vendorSignupSchema.parse(req.body);
       
-      // Check if vendor account already exists
-      const existing = await storage.getVendorAccountByEmail(email);
-      if (existing) {
+      // Check if vendor account already exists (check database)
+      const existing = await db.select().from(vendorAccounts).where(eq(vendorAccounts.email, email));
+      if (existing.length > 0) {
         return res.status(400).json({ error: "Email already registered" });
       }
 
       // Hash password
       const hashedPassword = await hashPassword(password);
 
-      // Create vendor account (without vendorId initially - will be linked during onboarding)
-      const account = await storage.createVendorAccount({
+      // Create vendor account in database
+      const [account] = await db.insert(vendorAccounts).values({
         email,
         password: hashedPassword,
         businessName,
@@ -42,7 +44,7 @@ export async function registerRoutes(app: Express): Promise<Server> {
         stripeAccountType: null,
         stripeOnboardingComplete: false,
         active: true,
-      });
+      }).returning();
 
       // Generate JWT token
       const token = generateToken({
@@ -69,11 +71,12 @@ export async function registerRoutes(app: Express): Promise<Server> {
     try {
       const { email, password } = vendorLoginSchema.parse(req.body);
 
-      // Find vendor account
-      const account = await storage.getVendorAccountByEmail(email);
-      if (!account) {
+      // Find vendor account (from database)
+      const accounts = await db.select().from(vendorAccounts).where(eq(vendorAccounts.email, email));
+      if (accounts.length === 0) {
         return res.status(401).json({ error: "Invalid credentials" });
       }
+      const account = accounts[0];
 
       // Verify password
       const valid = await comparePassword(password, account.password);
@@ -106,11 +109,16 @@ export async function registerRoutes(app: Express): Promise<Server> {
   app.get("/api/vendor/me", requireVendorAuth, async (req, res) => {
     try {
       const vendorAuth = (req as any).vendorAuth;
-      const account = await storage.getVendorAccount(vendorAuth.id);
+      const accounts = await db.select().from(vendorAccounts).where(eq(vendorAccounts.id, vendorAuth.id));
       
-      if (!account) {
+      if (accounts.length === 0) {
         return res.status(404).json({ error: "Account not found" });
       }
+      const account = accounts[0];
+
+      // Check if vendor has completed profile (using database)
+      const profiles = await db.select().from(vendorProfiles).where(eq(vendorProfiles.accountId, account.id));
+      const profile = profiles[0];
 
       res.json({
         id: account.id,
@@ -121,8 +129,97 @@ export async function registerRoutes(app: Express): Promise<Server> {
         stripeAccountType: account.stripeAccountType,
         stripeOnboardingComplete: account.stripeOnboardingComplete,
         active: account.active,
+        profileComplete: profile !== undefined,
+        profileId: profile?.id || null,
       });
     } catch (error: any) {
+      res.status(500).json({ error: error.message });
+    }
+  });
+
+  // Create vendor profile (protected route, steps 1-6 of onboarding)
+  const createVendorProfileSchema = insertVendorProfileSchema
+    .omit({ accountId: true })
+    .extend({
+      // Ensure serviceRadius is present when travel mode is "travel-to-guests"
+      serviceRadius: z.number().optional(),
+      serviceAddress: z.string().optional(),
+    })
+    .refine(
+      (data) => {
+        if (data.travelMode === "travel-to-guests") {
+          return data.serviceRadius !== undefined && data.serviceRadius > 0;
+        }
+        return true;
+      },
+      {
+        message: "Service radius is required when you travel to guests",
+        path: ["serviceRadius"],
+      }
+    )
+    .refine(
+      (data) => {
+        if (data.travelMode === "guests-come-to-me") {
+          return data.serviceAddress !== undefined && data.serviceAddress.length > 0;
+        }
+        return true;
+      },
+      {
+        message: "Service address is required when guests come to you",
+        path: ["serviceAddress"],
+      }
+    );
+
+  app.post("/api/vendor/profile", requireVendorAuth, async (req, res) => {
+    try {
+      const vendorAuth = (req as any).vendorAuth;
+      const accounts = await db.select().from(vendorAccounts).where(eq(vendorAccounts.id, vendorAuth.id));
+      
+      if (accounts.length === 0) {
+        return res.status(404).json({ error: "Account not found" });
+      }
+      const account = accounts[0];
+
+      // Check if profile already exists (using database)
+      const existingProfiles = await db.select().from(vendorProfiles).where(eq(vendorProfiles.accountId, account.id));
+      if (existingProfiles.length > 0) {
+        return res.status(409).json({ 
+          error: "Profile already exists. Use PUT/PATCH to update existing profile." 
+        });
+      }
+
+      // Validate and parse request body
+      const validatedData = createVendorProfileSchema.parse(req.body);
+
+      // Enrich with accountId from authenticated session
+      const profileData = {
+        ...validatedData,
+        accountId: account.id,
+      };
+
+      // Create vendor profile in database
+      const [profile] = await db.insert(vendorProfiles).values(profileData).returning();
+
+      // Return both account and profile data to avoid extra round trip
+      res.json({
+        account: {
+          id: account.id,
+          email: account.email,
+          businessName: account.businessName,
+          vendorId: account.vendorId,
+          stripeConnectId: account.stripeConnectId,
+          stripeAccountType: account.stripeAccountType,
+          stripeOnboardingComplete: account.stripeOnboardingComplete,
+          active: account.active,
+          profileComplete: true,
+          profileId: profile.id,
+        },
+        profile,
+      });
+    } catch (error: any) {
+      if (error.name === "ZodError") {
+        return res.status(400).json({ error: "Validation failed", details: error.errors });
+      }
       res.status(500).json({ error: error.message });
     }
   });

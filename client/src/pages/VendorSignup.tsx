@@ -9,6 +9,7 @@ import { Form, FormControl, FormField, FormItem, FormLabel, FormMessage } from "
 import { Input } from "@/components/ui/input";
 import { useToast } from "@/hooks/use-toast";
 import { apiRequest } from "@/lib/queryClient";
+import { VendorProfileWizard } from "@/features/vendor/profile-wizard/VendorProfileWizard";
 
 const signupSchema = z.object({
   email: z.string().email("Invalid email address"),
@@ -26,6 +27,7 @@ export default function VendorSignup() {
   const [, setLocation] = useLocation();
   const { toast } = useToast();
   const [isLoading, setIsLoading] = useState(false);
+  const [showProfileWizard, setShowProfileWizard] = useState(false);
 
   const form = useForm<SignupFormData>({
     resolver: zodResolver(signupSchema),
@@ -54,10 +56,11 @@ export default function VendorSignup() {
 
       toast({
         title: "Account created",
-        description: "Welcome to Event Hub! Let's set up your payment processing.",
+        description: "Welcome to Event Hub! Let's set up your vendor profile.",
       });
 
-      setLocation("/vendor/onboarding");
+      // Show profile wizard instead of redirecting
+      setShowProfileWizard(true);
     } catch (error: any) {
       toast({
         variant: "destructive",
@@ -67,6 +70,22 @@ export default function VendorSignup() {
     } finally {
       setIsLoading(false);
     }
+  }
+
+  // Handle profile wizard completion
+  const handleProfileComplete = (createListing: boolean) => {
+    if (createListing) {
+      // Navigate to create listing page
+      setLocation("/vendor/listings/new");
+    } else {
+      // Navigate to dashboard
+      setLocation("/vendor/dashboard");
+    }
+  };
+
+  // If profile wizard is active, show it instead of signup form
+  if (showProfileWizard) {
+    return <VendorProfileWizard onComplete={handleProfileComplete} />;
   }
 
   return (

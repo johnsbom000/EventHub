@@ -49,7 +49,7 @@ export interface ListingFormData {
   onlineProfiles: { platform: string; url: string }[];
   address: string;
   introVideo?: File | string;
-  travelMode: "travel-to-guests" | "guests-come-to-you";
+  travelMode: "travel-to-guests" | "guests-come-to-me";
   serviceRadius?: number;
   serviceAddress?: string;
   photos: (File | string)[];

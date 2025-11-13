@@ -261,6 +261,88 @@ export class MemStorage implements IStorage {
     return updated;
   }
 
+  // Vendor Profile Methods
+  async createVendorProfile(insertProfile: InsertVendorProfile): Promise<VendorProfile> {
+    const id = randomUUID();
+    const profile: VendorProfile = {
+      ...insertProfile,
+      photos: insertProfile.photos ?? [],
+      qualifications: insertProfile.qualifications ?? [],
+      willTravel: insertProfile.willTravel ?? null,
+      travelDistance: insertProfile.travelDistance ?? null,
+      id,
+      createdAt: new Date(),
+      updatedAt: new Date(),
+    };
+    this.vendorProfiles.set(id, profile);
+    return profile;
+  }
+
+  async getVendorProfile(id: string): Promise<VendorProfile | undefined> {
+    return this.vendorProfiles.get(id);
+  }
+
+  async getVendorProfileByAccountId(accountId: string): Promise<VendorProfile | undefined> {
+    return Array.from(this.vendorProfiles.values()).find(
+      (profile) => profile.accountId === accountId
+    );
+  }
+
+  async updateVendorProfile(id: string, updates: Partial<VendorProfile>): Promise<VendorProfile | undefined> {
+    const profile = this.vendorProfiles.get(id);
+    if (!profile) return undefined;
+    
+    const updated = { ...profile, ...updates, updatedAt: new Date() };
+    this.vendorProfiles.set(id, updated);
+    return updated;
+  }
+
+  // Vendor Listing Methods
+  async createVendorListing(insertListing: InsertVendorListing): Promise<VendorListing> {
+    const id = randomUUID();
+    const listing: VendorListing = {
+      ...insertListing,
+      packages: insertListing.packages ?? [],
+      addOns: insertListing.addOns ?? [],
+      discounts: insertListing.discounts ?? [],
+      availableDays: insertListing.availableDays ?? [],
+      unavailableDates: insertListing.unavailableDates ?? [],
+      minNotice: insertListing.minNotice ?? null,
+      maxAdvanceBooking: insertListing.maxAdvanceBooking ?? null,
+      active: insertListing.active ?? true,
+      id,
+      createdAt: new Date(),
+      updatedAt: new Date(),
+    };
+    this.vendorListings.set(id, listing);
+    return listing;
+  }
+
+  async getVendorListing(id: string): Promise<VendorListing | undefined> {
+    return this.vendorListings.get(id);
+  }
+
+  async getVendorListingsByProfile(profileId: string): Promise<VendorListing[]> {
+    return Array.from(this.vendorListings.values()).filter(
+      (listing) => listing.profileId === profileId
+    );
+  }
+
+  async getVendorListingsByAccount(accountId: string): Promise<VendorListing[]> {
+    const profile = await this.getVendorProfileByAccountId(accountId);
+    if (!profile) return [];
+    return this.getVendorListingsByProfile(profile.id);
+  }
+
+  async updateVendorListing(id: string, updates: Partial<VendorListing>): Promise<VendorListing | undefined> {
+    const listing = this.vendorListings.get(id);
+    if (!listing) return undefined;
+    
+    const updated = { ...listing, ...updates, updatedAt: new Date() };
+    this.vendorListings.set(id, updated);
+    return updated;
+  }
+
   // Booking Methods
   async createBooking(insertBooking: InsertBooking): Promise<Booking> {
     const id = randomUUID();

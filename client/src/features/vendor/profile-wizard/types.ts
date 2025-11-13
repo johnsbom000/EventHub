@@ -67,10 +67,10 @@ export const profileSchema = z.object({
     url: z.string().url(),
   })),
   address: z.string().min(1, "Address is required"),
-  city: z.string().min(1, "City is required"),
+  city: z.string().min(1, "City is required").trim(),
   travelMode: z.enum(["travel-to-guests", "guests-come-to-me"]),
   serviceRadius: z.number().optional(),
   serviceAddress: z.string().optional(),
-  photos: z.array(z.string()).min(1, "At least one photo is required"),
+  photos: z.array(z.string()),
   serviceDescription: z.string().min(50, "Description must be at least 50 characters"),
 });

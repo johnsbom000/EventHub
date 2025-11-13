@@ -28,17 +28,17 @@ export function PhotosStep({ formData, updateFormData, goNext, goBack }: PhotosS
     goNext();
   };
 
-  const canProceed = photos.length >= 15;
+  const canProceed = true; // Photos are optional during profile setup
 
   return (
     <div className="max-w-5xl mx-auto p-8" data-testid="step-content-photos">
       <div className="mb-8">
         <h2 className="text-2xl font-bold mb-2">Add your photos</h2>
         <p className="text-muted-foreground">
-          Upload at least 15 high-quality photos of your work
+          Showcase your work with photos (you can add more later)
         </p>
         <p className="text-sm text-muted-foreground mt-1">
-          {photos.length}/15 photos uploaded
+          {photos.length} photo{photos.length !== 1 ? 's' : ''} added
         </p>
       </div>
 
@@ -75,11 +75,11 @@ export function PhotosStep({ formData, updateFormData, goNext, goBack }: PhotosS
           Back
         </Button>
         <div className="flex gap-2">
-          <Button variant="outline" onClick={goNext} data-testid="button-skip">
+          <Button variant="outline" onClick={handleNext} data-testid="button-skip">
             Skip
           </Button>
-          <Button onClick={handleNext} disabled={!canProceed} data-testid="button-next">
-            Next {!canProceed && `(${15 - photos.length} more needed)`}
+          <Button onClick={handleNext} data-testid="button-next">
+            Next
           </Button>
         </div>
       </div>

@@ -18,6 +18,7 @@ export function AboutYouStep({ formData, updateFormData, goNext, goBack }: About
   const [qualifications, setQualifications] = useState(formData.qualifications || []);
   const [profiles, setProfiles] = useState(formData.onlineProfiles || []);
   const [address, setAddress] = useState(formData.address || "");
+  const [city, setCity] = useState(formData.city || "");
   const [newQualification, setNewQualification] = useState("");
   const [newProfile, setNewProfile] = useState({ platform: "", url: "" });
 
@@ -44,7 +45,14 @@ export function AboutYouStep({ formData, updateFormData, goNext, goBack }: About
   };
 
   const handleNext = () => {
-    updateFormData({ experience, qualifications, onlineProfiles: profiles, address });
+    // Validate required fields
+    if (!address.trim()) {
+      return; // Don't proceed if address is empty
+    }
+    if (!city.trim()) {
+      return; // Don't proceed if city is empty
+    }
+    updateFormData({ experience, qualifications, onlineProfiles: profiles, address, city });
     goNext();
   };
 
@@ -152,11 +160,21 @@ export function AboutYouStep({ formData, updateFormData, goNext, goBack }: About
         </div>
 
         <div>
+          <Label>City</Label>
+          <Input
+            value={city}
+            onChange={(e) => setCity(e.target.value)}
+            placeholder="New York"
+            data-testid="input-city"
+          />
+        </div>
+
+        <div>
           <Label>Business Address</Label>
           <Input
             value={address}
             onChange={(e) => setAddress(e.target.value)}
-            placeholder="123 Main St, City, State ZIP"
+            placeholder="123 Main St, State ZIP"
             data-testid="input-address"
           />
         </div>

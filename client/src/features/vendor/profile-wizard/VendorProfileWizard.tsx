@@ -76,10 +76,8 @@ export function VendorProfileWizard({ onComplete, onSkip }: VendorProfileWizardP
   const saveProfile = async () => {
     setIsSaving(true);
     try {
-      await apiRequest("/api/vendor/profile", {
-        method: "POST",
-        body: JSON.stringify(formData),
-      });
+      // Send form data directly - no transformation needed since steps now collect correct format
+      await apiRequest("POST", "/api/vendor/profile", formData);
       
       // Clear draft after successful save
       localStorage.removeItem("vendorProfileDraft");
