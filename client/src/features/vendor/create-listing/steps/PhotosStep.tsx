@@ -74,9 +74,14 @@ export function PhotosStep({ formData, updateFormData, goNext, goBack }: PhotosS
         <Button variant="outline" onClick={goBack} data-testid="button-back">
           Back
         </Button>
-        <Button onClick={handleNext} disabled={!canProceed} data-testid="button-next">
-          Next {!canProceed && `(${15 - photos.length} more needed)`}
-        </Button>
+        <div className="flex gap-2">
+          <Button variant="outline" onClick={goNext} data-testid="button-skip">
+            Skip
+          </Button>
+          <Button onClick={handleNext} disabled={!canProceed} data-testid="button-next">
+            Next {!canProceed && `(${15 - photos.length} more needed)`}
+          </Button>
+        </div>
       </div>
     </div>
   );

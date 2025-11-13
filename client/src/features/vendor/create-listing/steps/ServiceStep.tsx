@@ -48,9 +48,14 @@ export function ServiceStep({ formData, updateFormData, goNext, goBack }: Servic
         <Button variant="outline" onClick={goBack} data-testid="button-back">
           Back
         </Button>
-        <Button onClick={handleNext} disabled={!description} data-testid="button-next">
-          Next
-        </Button>
+        <div className="flex gap-2">
+          <Button variant="outline" onClick={goNext} data-testid="button-skip">
+            Skip
+          </Button>
+          <Button onClick={handleNext} disabled={!description} data-testid="button-next">
+            Next
+          </Button>
+        </div>
       </div>
     </div>
   );

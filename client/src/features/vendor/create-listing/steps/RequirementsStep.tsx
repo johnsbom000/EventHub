@@ -78,9 +78,14 @@ export function RequirementsStep({ formData, updateFormData, goNext, goBack }: R
         <Button variant="outline" onClick={goBack} data-testid="button-back">
           Back
         </Button>
-        <Button onClick={handleNext} disabled={!canProceed} data-testid="button-next">
-          Continue to Review
-        </Button>
+        <div className="flex gap-2">
+          <Button variant="outline" onClick={goNext} data-testid="button-skip">
+            Skip
+          </Button>
+          <Button onClick={handleNext} disabled={!canProceed} data-testid="button-next">
+            Continue to Review
+          </Button>
+        </div>
       </div>
     </div>
   );

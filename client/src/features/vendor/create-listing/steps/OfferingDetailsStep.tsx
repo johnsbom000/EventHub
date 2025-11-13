@@ -109,9 +109,14 @@ export function OfferingDetailsStep({ formData, updateFormData, goNext, goBack }
         <Button variant="outline" onClick={goBack} data-testid="button-back">
           Back
         </Button>
-        <Button onClick={handleSave} disabled={!canSave} data-testid="button-save-offering">
-          Save Offering
-        </Button>
+        <div className="flex gap-2">
+          <Button variant="outline" onClick={goNext} data-testid="button-skip">
+            Skip
+          </Button>
+          <Button onClick={handleSave} disabled={!canSave} data-testid="button-save-offering">
+            Save Offering
+          </Button>
+        </div>
       </div>
     </div>
   );

@@ -33,9 +33,14 @@ export function OfferingsStep({ formData, goNext, goBack }: OfferingsStepProps) 
         <Button variant="outline" onClick={goBack} data-testid="button-back">
           Back
         </Button>
-        <Button onClick={goNext} size="lg" data-testid="button-add-offering">
-          Add Offering
-        </Button>
+        <div className="flex gap-2">
+          <Button variant="outline" onClick={goNext} data-testid="button-skip">
+            Skip
+          </Button>
+          <Button onClick={goNext} size="lg" data-testid="button-add-offering">
+            Add Offering
+          </Button>
+        </div>
       </div>
     </div>
   );
