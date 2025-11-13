@@ -51,15 +51,15 @@ export function CreateListingWizard({ onClose }: CreateListingWizardProps) {
     }));
   };
 
+  useEffect(() => {
+    saveToLocalStorage();
+  }, [formData, currentStep, completedSteps]);
+
   const goNext = () => {
     const nextIndex = currentStepIndex + 1;
     if (nextIndex < STEP_METADATA.length) {
-      setCompletedSteps(prev => {
-        const updated = new Set([...prev, currentStep]);
-        return updated;
-      });
+      setCompletedSteps(prev => new Set([...prev, currentStep]));
       setCurrentStep(STEP_METADATA[nextIndex].id);
-      setTimeout(() => saveToLocalStorage(), 100);
     }
   };
 

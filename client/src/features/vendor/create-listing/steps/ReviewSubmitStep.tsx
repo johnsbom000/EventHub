@@ -10,7 +10,27 @@ interface ReviewSubmitStepProps {
 }
 
 export function ReviewSubmitStep({ formData, goNext, goBack }: ReviewSubmitStepProps) {
+  const isValid = 
+    formData.serviceType &&
+    formData.city &&
+    formData.photos.length >= 15 &&
+    formData.serviceDescription &&
+    formData.offerings.length > 0 &&
+    formData.businessHours.some((h) => h.enabled && h.timeRanges.length > 0) &&
+    formData.termsAccepted &&
+    formData.guidelinesAccepted;
+
+  const validationErrors = [];
+  if (!formData.serviceType) validationErrors.push("Service type is required");
+  if (!formData.city) validationErrors.push("City is required");
+  if (formData.photos.length < 15) validationErrors.push(`Need ${15 - formData.photos.length} more photos (minimum 15)`);
+  if (!formData.serviceDescription) validationErrors.push("Service description is required");
+  if (formData.offerings.length === 0) validationErrors.push("At least one package is required");
+  if (!formData.businessHours.some((h) => h.enabled && h.timeRanges.length > 0)) validationErrors.push("Business hours are required");
+  if (!formData.termsAccepted || !formData.guidelinesAccepted) validationErrors.push("Terms and guidelines must be accepted");
+
   const handleSubmit = () => {
+    if (!isValid) return;
     console.log("Submitting listing:", formData);
     goNext();
   };
@@ -99,11 +119,27 @@ export function ReviewSubmitStep({ formData, goNext, goBack }: ReviewSubmitStepP
         </div>
       </div>
 
+      {!isValid && validationErrors.length > 0 && (
+        <div className="bg-destructive/10 text-destructive border border-destructive/20 rounded-lg p-4 mt-6">
+          <p className="font-semibold mb-2">Please complete the following:</p>
+          <ul className="list-disc list-inside space-y-1 text-sm">
+            {validationErrors.map((error, index) => (
+              <li key={index}>{error}</li>
+            ))}
+          </ul>
+        </div>
+      )}
+
       <div className="flex justify-between mt-8">
         <Button variant="outline" onClick={goBack} data-testid="button-back">
           Back
         </Button>
-        <Button onClick={handleSubmit} size="lg" data-testid="button-submit">
+        <Button 
+          onClick={handleSubmit} 
+          size="lg" 
+          disabled={!isValid}
+          data-testid="button-submit"
+        >
           <CheckCircle className="w-4 h-4 mr-2" />
           Submit for Review
         </Button>
