@@ -7,6 +7,10 @@ import {
   type InsertVendor,
   type VendorAccount,
   type InsertVendorAccount,
+  type VendorProfile,
+  type InsertVendorProfile,
+  type VendorListing,
+  type InsertVendorListing,
   type Booking,
   type InsertBooking,
   type Message,
@@ -34,6 +38,19 @@ export interface IStorage {
   getVendorAccountByVendorId(vendorId: string): Promise<VendorAccount | undefined>;
   createVendorAccount(account: InsertVendorAccount): Promise<VendorAccount>;
   updateVendorAccount(id: string, updates: Partial<VendorAccount>): Promise<VendorAccount | undefined>;
+  
+  // Vendor profiles (1:1 with vendor accounts)
+  createVendorProfile(profile: InsertVendorProfile): Promise<VendorProfile>;
+  getVendorProfile(id: string): Promise<VendorProfile | undefined>;
+  getVendorProfileByAccountId(accountId: string): Promise<VendorProfile | undefined>;
+  updateVendorProfile(id: string, updates: Partial<VendorProfile>): Promise<VendorProfile | undefined>;
+  
+  // Vendor listings (1:n with vendor profiles)
+  createVendorListing(listing: InsertVendorListing): Promise<VendorListing>;
+  getVendorListing(id: string): Promise<VendorListing | undefined>;
+  getVendorListingsByProfile(profileId: string): Promise<VendorListing[]>;
+  getVendorListingsByAccount(accountId: string): Promise<VendorListing[]>;
+  updateVendorListing(id: string, updates: Partial<VendorListing>): Promise<VendorListing | undefined>;
   
   // Events
   createEvent(event: InsertEvent): Promise<Event>;
@@ -86,6 +103,8 @@ export class MemStorage implements IStorage {
   private events: Map<string, Event>;
   private vendors: Map<string, Vendor>;
   private vendorAccounts: Map<string, VendorAccount>;
+  private vendorProfiles: Map<string, VendorProfile>;
+  private vendorListings: Map<string, VendorListing>;
   private bookings: Map<string, Booking>;
   private messages: Map<string, Message>;
   private payments: Map<string, Payment>;
@@ -98,6 +117,8 @@ export class MemStorage implements IStorage {
     this.events = new Map();
     this.vendors = new Map();
     this.vendorAccounts = new Map();
+    this.vendorProfiles = new Map();
+    this.vendorListings = new Map();
     this.bookings = new Map();
     this.messages = new Map();
     this.payments = new Map();

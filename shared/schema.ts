@@ -263,16 +263,16 @@ export const insertVendorSchema = createInsertSchema(vendors).omit({
 export type InsertVendor = z.infer<typeof insertVendorSchema>;
 export type Vendor = typeof vendors.$inferSelect;
 
-// Vendor Accounts (separate authentication for vendors)
+// Vendor Accounts (authentication only)
 export const vendorAccounts = pgTable("vendor_accounts", {
   id: varchar("id").primaryKey().default(sql`gen_random_uuid()`),
   email: text("email").notNull().unique(),
   password: text("password").notNull(),
   businessName: text("business_name").notNull(),
-  vendorId: varchar("vendor_id").references(() => vendors.id),
   stripeConnectId: text("stripe_connect_id"),
   stripeAccountType: text("stripe_account_type"), // 'express' or 'standard'
   stripeOnboardingComplete: boolean("stripe_onboarding_complete").default(false),
+  profileComplete: boolean("profile_complete").default(false),
   active: boolean("active").default(true),
   createdAt: timestamp("created_at").defaultNow(),
 });
@@ -284,6 +284,61 @@ export const insertVendorAccountSchema = createInsertSchema(vendorAccounts).omit
 
 export type InsertVendorAccount = z.infer<typeof insertVendorAccountSchema>;
 export type VendorAccount = typeof vendorAccounts.$inferSelect;
+
+// Vendor Profiles (1:1 with vendor_accounts, stores wizard steps 1-6)
+export const vendorProfiles = pgTable("vendor_profiles", {
+  id: varchar("id").primaryKey().default(sql`gen_random_uuid()`),
+  accountId: varchar("account_id").references(() => vendorAccounts.id).notNull().unique(),
+  serviceType: text("service_type").notNull(),
+  experience: integer("experience").notNull(),
+  qualifications: text("qualifications").array().default(sql`'{}'`),
+  onlineProfiles: jsonb("online_profiles"),
+  address: text("address").notNull(),
+  city: text("city").notNull(),
+  travelMode: text("travel_mode").notNull(), // 'travel-to-guests' or 'guests-come-to-me'
+  serviceRadius: integer("service_radius"), // in miles (for travel-to-guests)
+  serviceAddress: text("service_address"), // (for guests-come-to-me)
+  photos: text("photos").array().default(sql`'{}'`),
+  serviceDescription: text("service_description").notNull(),
+  createdAt: timestamp("created_at").defaultNow(),
+  updatedAt: timestamp("updated_at").defaultNow(),
+});
+
+export const insertVendorProfileSchema = createInsertSchema(vendorProfiles).omit({
+  id: true,
+  createdAt: true,
+  updatedAt: true,
+});
+
+export type InsertVendorProfile = z.infer<typeof insertVendorProfileSchema>;
+export type VendorProfile = typeof vendorProfiles.$inferSelect;
+
+// Vendor Listings (1:n with vendor_profiles, stores wizard steps 7-13)
+export const vendorListings = pgTable("vendor_listings", {
+  id: varchar("id").primaryKey().default(sql`gen_random_uuid()`),
+  profileId: varchar("profile_id").references(() => vendorProfiles.id).notNull(),
+  accountId: varchar("account_id").references(() => vendorAccounts.id).notNull(),
+  title: text("title").notNull(),
+  offerings: jsonb("offerings").notNull(), // array of packages/services
+  businessHours: jsonb("business_hours").notNull(),
+  servicePackages: jsonb("service_packages"), // optional bundled packages
+  addOnServices: jsonb("add_on_services"), // optional add-ons
+  pricingStrategy: text("pricing_strategy"), // hourly, per-event, custom
+  discounts: jsonb("discounts"),
+  active: boolean("active").default(true),
+  isDraft: boolean("is_draft").default(false),
+  createdAt: timestamp("created_at").defaultNow(),
+  updatedAt: timestamp("updated_at").defaultNow(),
+});
+
+export const insertVendorListingSchema = createInsertSchema(vendorListings).omit({
+  id: true,
+  createdAt: true,
+  updatedAt: true,
+});
+
+export type InsertVendorListing = z.infer<typeof insertVendorListingSchema>;
+export type VendorListing = typeof vendorListings.$inferSelect;
 
 // Bookings
 export const bookings = pgTable("bookings", {
