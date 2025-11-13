@@ -3,10 +3,12 @@ import { SidebarProvider, SidebarTrigger } from "@/components/ui/sidebar";
 import { VendorSidebar } from "@/components/vendor-sidebar";
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card";
 import { Badge } from "@/components/ui/badge";
-import { Calendar, DollarSign, Users, TrendingUp, Loader2 } from "lucide-react";
+import { Calendar, DollarSign, Users, TrendingUp, Loader2, ArrowLeft } from "lucide-react";
 import { Button } from "@/components/ui/button";
+import { useLocation } from "wouter";
 
 export default function VendorDashboard() {
+  const [, setLocation] = useLocation();
   const { data: stats, isLoading } = useQuery({
     queryKey: ["/api/vendor/stats"],
   });
@@ -45,6 +47,14 @@ export default function VendorDashboard() {
                   Payment Setup Pending
                 </Badge>
               )}
+              <Button
+                variant="outline"
+                onClick={() => setLocation("/")}
+                data-testid="button-back-marketplace"
+              >
+                <ArrowLeft className="w-4 h-4 mr-2" />
+                Back to Marketplace
+              </Button>
             </div>
           </header>
           <main className="flex-1 overflow-auto p-6">

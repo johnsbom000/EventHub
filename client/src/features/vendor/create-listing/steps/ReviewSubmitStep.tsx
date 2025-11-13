@@ -2,6 +2,8 @@ import { ListingFormData } from "../types";
 import { Button } from "@/components/ui/button";
 import { Card } from "@/components/ui/card";
 import { CheckCircle } from "lucide-react";
+import { useToast } from "@/hooks/use-toast";
+import { useState } from "react";
 
 interface ReviewSubmitStepProps {
   formData: ListingFormData;
@@ -11,6 +13,9 @@ interface ReviewSubmitStepProps {
 }
 
 export function ReviewSubmitStep({ formData, goNext, goBack, saveDraft }: ReviewSubmitStepProps) {
+  const { toast } = useToast();
+  const [lastSavedData, setLastSavedData] = useState<string>("");
+  
   const isValid = 
     formData.serviceType &&
     formData.city &&
@@ -37,10 +42,36 @@ export function ReviewSubmitStep({ formData, goNext, goBack, saveDraft }: Review
   };
 
   const handleSaveDraft = () => {
-    console.log("Saving listing as draft:", formData);
-    if (saveDraft) {
-      saveDraft();
+    const currentDataString = JSON.stringify(formData);
+    
+    // Check if there are any changes since last save
+    if (lastSavedData === currentDataString && lastSavedData !== "") {
+      toast({
+        title: "Listing Already Saved",
+        description: "No changes detected since last save.",
+      });
+      return;
     }
+    
+    console.log("Saving listing as draft:", formData);
+    
+    // Save the draft to localStorage
+    localStorage.setItem("createListingDraft", JSON.stringify({
+      formData,
+      currentStep: "reviewSubmit",
+      completedSteps: ["serviceType", "locationSelection", "createIntro", "about", "location", "photos", "service", "offerings", "offeringDetails", "businessHours", "discounts", "requirements"],
+      isDraft: true,
+    }));
+    
+    // Update last saved state
+    setLastSavedData(currentDataString);
+    
+    toast({
+      title: "Changes Saved",
+      description: "Your listing draft has been saved successfully.",
+    });
+    
+    // Stay on this page - don't call saveDraft() which navigates away
   };
 
   return (

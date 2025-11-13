@@ -7,6 +7,7 @@ import { z } from "zod";
 export const bookingStatusEnum = pgEnum("booking_status", ["pending", "confirmed", "completed", "cancelled"]);
 export const paymentStatusEnum = pgEnum("payment_status", ["pending", "partial", "paid", "refunded"]);
 export const paymentTypeEnum = pgEnum("payment_type", ["deposit", "final", "installment"]);
+export const listingStatusEnum = pgEnum("listing_status", ["draft", "pending", "active", "inactive"]);
 export const notificationTypeEnum = pgEnum("notification_type", [
   "new_booking",
   "booking_confirmed",
@@ -313,20 +314,14 @@ export const insertVendorProfileSchema = createInsertSchema(vendorProfiles).omit
 export type InsertVendorProfile = z.infer<typeof insertVendorProfileSchema>;
 export type VendorProfile = typeof vendorProfiles.$inferSelect;
 
-// Vendor Listings (1:n with vendor_profiles, stores wizard steps 7-13)
+// Vendor Listings (1:n with vendor_profiles, stores listing wizard data)
 export const vendorListings = pgTable("vendor_listings", {
   id: varchar("id").primaryKey().default(sql`gen_random_uuid()`),
-  profileId: varchar("profile_id").references(() => vendorProfiles.id).notNull(),
+  profileId: varchar("profile_id").references(() => vendorProfiles.id),
   accountId: varchar("account_id").references(() => vendorAccounts.id).notNull(),
-  title: text("title").notNull(),
-  offerings: jsonb("offerings").notNull(), // array of packages/services
-  businessHours: jsonb("business_hours").notNull(),
-  servicePackages: jsonb("service_packages"), // optional bundled packages
-  addOnServices: jsonb("add_on_services"), // optional add-ons
-  pricingStrategy: text("pricing_strategy"), // hourly, per-event, custom
-  discounts: jsonb("discounts"),
-  active: boolean("active").default(true),
-  isDraft: boolean("is_draft").default(false),
+  status: text("status").notNull().default("draft"), // draft, pending, active, inactive
+  title: text("title"),
+  listingData: jsonb("listing_data"), // Complete listing wizard form data
   createdAt: timestamp("created_at").defaultNow(),
   updatedAt: timestamp("updated_at").defaultNow(),
 });
@@ -337,7 +332,15 @@ export const insertVendorListingSchema = createInsertSchema(vendorListings).omit
   updatedAt: true,
 });
 
+export const updateVendorListingSchema = createInsertSchema(vendorListings).omit({
+  id: true,
+  createdAt: true,
+  updatedAt: true,
+  accountId: true,
+}).partial();
+
 export type InsertVendorListing = z.infer<typeof insertVendorListingSchema>;
+export type UpdateVendorListing = z.infer<typeof updateVendorListingSchema>;
 export type VendorListing = typeof vendorListings.$inferSelect;
 
 // Bookings
