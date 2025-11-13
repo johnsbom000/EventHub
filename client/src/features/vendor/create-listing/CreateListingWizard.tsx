@@ -45,11 +45,8 @@ export function CreateListingWizard({ onClose, initialData, editMode = false, li
   // Create draft mutation
   const createDraft = useMutation({
     mutationFn: async (data: ListingFormData) => {
-      const response = await apiRequest("/api/vendor/listings", {
-        method: "POST",
-        body: { listingData: data },
-      });
-      return response;
+      const response = await apiRequest("POST", "/api/vendor/listings", { listingData: data });
+      return await response.json();
     },
     onSuccess: (data: any) => {
       setListingId(data.id);
@@ -59,11 +56,8 @@ export function CreateListingWizard({ onClose, initialData, editMode = false, li
   // Update draft mutation
   const updateDraft = useMutation({
     mutationFn: async (data: { id: string; listingData: ListingFormData }) => {
-      const response = await apiRequest(`/api/vendor/listings/${data.id}`, {
-        method: "PATCH",
-        body: { listingData: data.listingData },
-      });
-      return response;
+      const response = await apiRequest("PATCH", `/api/vendor/listings/${data.id}`, { listingData: data.listingData });
+      return await response.json();
     },
   });
 
