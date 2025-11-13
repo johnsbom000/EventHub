@@ -224,6 +224,113 @@ export async function registerRoutes(app: Express): Promise<Server> {
     }
   });
 
+  // Vendor Listings Routes
+  // Create a new vendor listing (draft)
+  app.post("/api/vendor/listings", requireVendorAuth, async (req, res) => {
+    try {
+      const vendorAuth = (req as any).vendorAuth;
+      const { listingData } = req.body;
+
+      // Get vendor profile (optional - listing can be created without profile)
+      const profiles = await db.select().from(vendorProfiles).where(eq(vendorProfiles.accountId, vendorAuth.id));
+      const profileId = profiles.length > 0 ? profiles[0].id : null;
+
+      // Create draft listing
+      const [listing] = await db.insert(vendorListings).values({
+        accountId: vendorAuth.id,
+        profileId,
+        status: "draft",
+        title: listingData?.serviceType || null,
+        listingData,
+      }).returning();
+
+      res.json(listing);
+    } catch (error: any) {
+      res.status(500).json({ error: error.message });
+    }
+  });
+
+  // Update an existing vendor listing
+  app.patch("/api/vendor/listings/:id", requireVendorAuth, async (req, res) => {
+    try {
+      const vendorAuth = (req as any).vendorAuth;
+      const { id } = req.params;
+      const { listingData, status, title } = req.body;
+
+      // Verify ownership
+      const existingListings = await db.select().from(vendorListings).where(
+        and(
+          eq(vendorListings.id, id),
+          eq(vendorListings.accountId, vendorAuth.id)
+        )
+      );
+
+      if (existingListings.length === 0) {
+        return res.status(404).json({ error: "Listing not found" });
+      }
+
+      // Update listing
+      const [updated] = await db.update(vendorListings)
+        .set({
+          listingData,
+          status: status || existingListings[0].status,
+          title: title || existingListings[0].title,
+          updatedAt: new Date(),
+        })
+        .where(eq(vendorListings.id, id))
+        .returning();
+
+      res.json(updated);
+    } catch (error: any) {
+      res.status(500).json({ error: error.message });
+    }
+  });
+
+  // Get all vendor listings (with optional status filter)
+  app.get("/api/vendor/listings", requireVendorAuth, async (req, res) => {
+    try {
+      const vendorAuth = (req as any).vendorAuth;
+      const { status } = req.query;
+
+      let query = db.select().from(vendorListings).where(eq(vendorListings.accountId, vendorAuth.id));
+
+      if (status) {
+        query = query.where(and(
+          eq(vendorListings.accountId, vendorAuth.id),
+          eq(vendorListings.status, status as string)
+        )) as any;
+      }
+
+      const listings = await query;
+      res.json(listings);
+    } catch (error: any) {
+      res.status(500).json({ error: error.message });
+    }
+  });
+
+  // Get a specific listing by ID
+  app.get("/api/vendor/listings/:id", requireVendorAuth, async (req, res) => {
+    try {
+      const vendorAuth = (req as any).vendorAuth;
+      const { id } = req.params;
+
+      const listings = await db.select().from(vendorListings).where(
+        and(
+          eq(vendorListings.id, id),
+          eq(vendorListings.accountId, vendorAuth.id)
+        )
+      );
+
+      if (listings.length === 0) {
+        return res.status(404).json({ error: "Listing not found" });
+      }
+
+      res.json(listings[0]);
+    } catch (error: any) {
+      res.status(500).json({ error: error.message });
+    }
+  });
+
   // Stripe Connect onboarding routes
   const stripeOnboardingSchema = z.object({
     accountType: z.enum(["express", "standard"]),
