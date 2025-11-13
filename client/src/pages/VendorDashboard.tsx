@@ -37,25 +37,15 @@ export default function VendorDashboard() {
         <div className="flex flex-col flex-1">
           <header className="flex items-center justify-between p-4 border-b">
             <SidebarTrigger data-testid="button-sidebar-toggle" />
-            <div className="flex items-center gap-2">
-              {vendorAccount?.stripeOnboardingComplete ? (
-                <Badge variant="secondary" data-testid="badge-status">
-                  Verified
-                </Badge>
-              ) : (
-                <Badge variant="outline" data-testid="badge-status">
-                  Payment Setup Pending
-                </Badge>
-              )}
-              <Button
-                variant="outline"
-                onClick={() => setLocation("/")}
-                data-testid="button-back-marketplace"
-              >
-                <ArrowLeft className="w-4 h-4 mr-2" />
-                Back to Marketplace
-              </Button>
-            </div>
+            <Button
+              variant="outline"
+              className="bg-[#9edbc0] text-white"
+              onClick={() => setLocation("/")}
+              data-testid="button-back-marketplace"
+            >
+              <ArrowLeft className="w-4 h-4 mr-2" />
+              Back to Marketplace
+            </Button>
           </header>
           <main className="flex-1 overflow-auto p-6">
             <div className="max-w-7xl mx-auto space-y-6">
