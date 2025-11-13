@@ -94,7 +94,6 @@ export function ReviewSubmitStep({ formData, goNext, goBack, saveDraft, listingI
           Check everything before submitting
         </p>
       </div>
-
       <div className="grid grid-cols-2 gap-8">
         <div className="space-y-6">
           <div>
@@ -169,7 +168,6 @@ export function ReviewSubmitStep({ formData, goNext, goBack, saveDraft, listingI
           </Card>
         </div>
       </div>
-
       {!isValid && validationErrors.length > 0 && (
         <div className="bg-destructive/10 text-destructive border border-destructive/20 rounded-lg p-4 mt-6">
           <p className="font-semibold mb-2">Please complete the following:</p>
@@ -180,7 +178,6 @@ export function ReviewSubmitStep({ formData, goNext, goBack, saveDraft, listingI
           </ul>
         </div>
       )}
-
       <div className="flex justify-between mt-8">
         <Button variant="outline" onClick={goBack} data-testid="button-back">
           Back
@@ -191,9 +188,7 @@ export function ReviewSubmitStep({ formData, goNext, goBack, saveDraft, listingI
             onClick={handleSaveDraft} 
             size="lg"
             data-testid="button-save-draft"
-          >
-            Save Listing Draft
-          </Button>
+          >Deactivate Listing</Button>
           <Button 
             onClick={handleSubmit} 
             size="lg" 
