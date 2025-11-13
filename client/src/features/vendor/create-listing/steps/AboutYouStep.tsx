@@ -61,8 +61,8 @@ export function AboutYouStep({ formData, updateFormData, goNext, goBack }: About
           <Label>Years of Experience</Label>
           <Input
             type="number"
-            value={experience}
-            onChange={(e) => setExperience(parseInt(e.target.value) || 0)}
+            value={experience || ""}
+            onChange={(e) => setExperience(e.target.value === "" ? 0 : parseInt(e.target.value))}
             placeholder="e.g., 5"
             min="0"
             data-testid="input-experience"
