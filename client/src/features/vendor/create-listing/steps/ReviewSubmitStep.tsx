@@ -188,7 +188,7 @@ export function ReviewSubmitStep({ formData, goNext, goBack, saveDraft, listingI
             onClick={handleSaveDraft} 
             size="lg"
             data-testid="button-save-draft"
-          >Deactivate Listing</Button>
+          >Edit Listing</Button>
           <Button 
             onClick={handleSubmit} 
             size="lg" 
