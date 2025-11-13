@@ -49,7 +49,7 @@ export default function Navigation() {
                 Vendors
               </Button>
               <Link href="/login">
-                <Button variant="outline" size="default" data-testid="button-login">
+                <Button variant="outline" size="default" className="bg-[#9edbc0]" data-testid="button-login">
                   Login / Sign up
                 </Button>
               </Link>
