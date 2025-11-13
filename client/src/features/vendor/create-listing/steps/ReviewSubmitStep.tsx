@@ -194,6 +194,7 @@ export function ReviewSubmitStep({ formData, goNext, goBack, saveDraft, listingI
             size="lg" 
             disabled={!isValid}
             data-testid="button-submit"
+            className="bg-[Red] text-[White]"
           >
             <CheckCircle className="w-4 h-4 mr-2" />
             Submit for Review
