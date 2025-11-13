@@ -151,7 +151,7 @@ export default function SmartRecommendations() {
             
             <div className="mt-4">
               <Link href={`/browse?category=${category.toLowerCase()}`}>
-                <Button variant="outline" data-testid={`button-view-all-${category.toLowerCase()}`}>
+                <Button variant="outline" className="bg-[#9edbc0] text-[white]" data-testid={`button-view-all-${category.toLowerCase()}`}>
                   View all {category}
                 </Button>
               </Link>
