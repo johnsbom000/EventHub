@@ -1,0 +1,187 @@
+You are implementing the Create Listing flow for the EventHub Vendor Portal.
+
+GOAL:
+Make the “+ Create Listing” button and the “Create Your First Listing” button open a full-screen multi-step wizard. Build the entire wizard and its steps.
+
+--------------------------------------------------------------------
+1. WIRE UP BUTTONS
+--------------------------------------------------------------------
+On the vendor listings page (the page shown in the screenshot):
+
+- “+ Create Listing”
+- “Create Your First Listing”
+
+Both buttons must call:
+
+    setShowCreateWizard(true)
+
+Add:
+
+    const [showCreateWizard, setShowCreateWizard] = useState(false);
+
+Render:
+
+    {showCreateWizard && (
+      <CreateListingWizard onClose={() => setShowCreateWizard(false)} />
+    )}
+
+--------------------------------------------------------------------
+2. CREATE THE WIZARD SHELL
+--------------------------------------------------------------------
+Create a new component: src/features/vendor/listings/CreateListingWizard.tsx
+
+Requirements:
+- Full-screen overlay on top of dashboard
+- Dimmed background
+- Left sidebar with progress icons
+- Right side shows step content
+- “Next” and “Back” buttons at bottom-right
+- “Save and exit” in top-right (calls onClose)
+
+Maintain a step state:
+
+    type WizardStep =
+      | "serviceType"
+      | "locationSelection"
+      | "createIntro"
+      | "about"
+      | "location"
+      | "photos"
+      | "service"
+      | "offerings"
+      | "offeringDetails"
+      | "businessHours"
+      | "discounts"
+      | "requirements"
+      | "reviewSubmit"
+      | "done";
+
+Initial step: "serviceType"
+
+Wizard exposes:
+    goNext(), goBack(), goTo(step), formData, setFormData
+
+--------------------------------------------------------------------
+3. CREATE EACH STEP COMPONENT
+--------------------------------------------------------------------
+Create files inside:
+src/features/vendor/listings/steps/
+
+Components to create:
+
+- ServiceTypeStep.tsx
+- LocationSelectionStep.tsx
+- CreateListingIntroStep.tsx
+- AboutYouStep.tsx
+- LocationStep.tsx
+- PhotosStep.tsx
+- ServiceStep.tsx
+- OfferingsStep.tsx
+- OfferingDetailsStep.tsx
+- BusinessHoursStep.tsx
+- DiscountsStep.tsx
+- RequirementsStep.tsx
+- ReviewSubmitStep.tsx
+- ListingDoneStep.tsx (final screen)
+
+--------------------------------------------------------------------
+4. STEP BEHAVIOR (SIMPLIFIED)
+--------------------------------------------------------------------
+
+STEP 1 — ServiceType
+- Show a 3×3 grid of service cards:
+  Catering, Hair Styling, Makeup, DJ, Nails, Florist,
+  Photography, Videography, Prop Rental
+- Selecting a card updates formData.serviceType
+- Automatically goNext()
+
+STEP 2 — LocationSelection
+- Input: “Enter a city”
+- Modal city search OR “Use my current location”
+- Must store selected city
+- Next → goNext()
+
+STEP 3 — CreateIntro
+- Show card: “[Service] – [City]”
+- Button “Get Started” → goNext()
+
+STEP 4 — AboutYou
+Includes:
+- Experience (numeric selector)
+- Qualifications (fields)
+- Online profiles (add links)
+- Address verification form
+- Intro video upload
+- Next → goNext()
+
+STEP 5 — Location
+- Option A: “You travel to guests” → open modal to set service radius
+- Option B: “Guests come to you” → input address
+- Show map pin confirmation
+- Next → goNext()
+
+STEP 6 — Photos
+- Must upload minimum 15 photos
+- Grid gallery + “Add” button
+- Next → goNext()
+
+STEP 7 — Service
+- Free-text description textarea
+- Next → goNext()
+
+STEP 8 — Offerings
+- Show “Create your offerings”
+- Button “Add offering” → goNext()
+
+STEP 9 — OfferingDetails
+- Photo upload + title
+- Description
+- Price
+- Duration selector
+- Save offering → goNext()
+
+STEP 10 — BusinessHours
+- Weekday + time ranges
+- “Add more hours”
+- Next → goNext()
+
+STEP 11 — Discounts
+- Cards: Limited-time / Early bird / Large group
+- Clicking opens modal to enter %
+- Save → goNext()
+
+STEP 12 — Requirements
+- Two yes/no questions
+- “I agree” → goNext()
+
+STEP 13 — ReviewSubmit
+- Show left column summary of all steps
+- Right side preview card
+- Button “Submit for review”
+- After submit → goNext()
+
+STEP 14 — Done
+- Shows: “Your listing”
+- Status: “In progress” or “Under review”
+- Button goes back to Listings page (onClose)
+
+--------------------------------------------------------------------
+5. DESIGN REQUIREMENTS (SHORT)
+--------------------------------------------------------------------
+- Use Tailwind + shadcn components
+- Primary button color: #9EDBC0
+- Cards: white background, rounded corners
+- Modal overlays: rgba(0,0,0,0.3)
+- Sidebar icons: circular, active gets white outline
+- Transitions: Use Framer Motion fade/slide between steps
+
+--------------------------------------------------------------------
+6. SUMMARY OF WHAT TO BUILD
+--------------------------------------------------------------------
+- Both Create Listing buttons open a full-screen wizard
+- Wizard contains 14 steps listed above
+- Each step updates shared formData
+- Navigation through goNext() / goBack()
+- Final step returns to Listings page
+
+This completes the Create Listing workflow for vendors.

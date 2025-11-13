@@ -1,0 +1,113 @@
+import { ListingFormData } from "../types";
+import { Button } from "@/components/ui/button";
+import { Card } from "@/components/ui/card";
+import { CheckCircle } from "lucide-react";
+
+interface ReviewSubmitStepProps {
+  formData: ListingFormData;
+  goNext: () => void;
+  goBack: () => void;
+}
+
+export function ReviewSubmitStep({ formData, goNext, goBack }: ReviewSubmitStepProps) {
+  const handleSubmit = () => {
+    console.log("Submitting listing:", formData);
+    goNext();
+  };
+
+  return (
+    <div className="max-w-5xl mx-auto p-8" data-testid="step-content-reviewSubmit">
+      <div className="mb-8">
+        <h2 className="text-2xl font-bold mb-2">Review your listing</h2>
+        <p className="text-muted-foreground">
+          Check everything before submitting
+        </p>
+      </div>
+
+      <div className="grid grid-cols-2 gap-8">
+        <div className="space-y-6">
+          <div>
+            <h3 className="font-semibold mb-2">Service Type</h3>
+            <p className="text-muted-foreground capitalize">{formData.serviceType.replace("-", " ")}</p>
+          </div>
+
+          <div>
+            <h3 className="font-semibold mb-2">Location</h3>
+            <p className="text-muted-foreground">{formData.city}</p>
+            <p className="text-sm text-muted-foreground mt-1">
+              {formData.travelMode === "travel-to-guests"
+                ? `Travels up to ${formData.serviceRadius} miles`
+                : `Studio at ${formData.serviceAddress}`}
+            </p>
+          </div>
+
+          <div>
+            <h3 className="font-semibold mb-2">Experience</h3>
+            <p className="text-muted-foreground">{formData.experience} years</p>
+          </div>
+
+          <div>
+            <h3 className="font-semibold mb-2">Photos</h3>
+            <p className="text-muted-foreground">{formData.photos.length} photos uploaded</p>
+          </div>
+
+          <div>
+            <h3 className="font-semibold mb-2">Offerings</h3>
+            <p className="text-muted-foreground">{formData.offerings.length} packages created</p>
+            <div className="mt-2 space-y-1">
+              {formData.offerings.map((offering) => (
+                <div key={offering.id} className="text-sm">
+                  <span className="font-medium">{offering.title}</span> - ${offering.price}
+                </div>
+              ))}
+            </div>
+          </div>
+
+          <div>
+            <h3 className="font-semibold mb-2">Business Hours</h3>
+            <div className="text-sm text-muted-foreground space-y-1">
+              {formData.businessHours
+                .filter((h) => h.enabled)
+                .map((h) => (
+                  <div key={h.day}>
+                    {h.day}: {h.timeRanges.map(r => `${r.start}-${r.end}`).join(", ")}
+                  </div>
+                ))}
+            </div>
+          </div>
+        </div>
+
+        <div>
+          <Card className="p-6">
+            <div className="aspect-square bg-muted rounded-lg mb-4 flex items-center justify-center">
+              {formData.photos[0] ? (
+                <img
+                  src={formData.photos[0] as string}
+                  alt="Listing preview"
+                  className="w-full h-full object-cover rounded-lg"
+                />
+              ) : (
+                <p className="text-muted-foreground">No photo</p>
+              )}
+            </div>
+            <h3 className="text-xl font-bold mb-2 capitalize">
+              {formData.serviceType.replace("-", " ")}
+            </h3>
+            <p className="text-muted-foreground mb-4">{formData.city}</p>
+            <p className="text-sm line-clamp-3">{formData.serviceDescription}</p>
+          </Card>
+        </div>
+      </div>
+
+      <div className="flex justify-between mt-8">
+        <Button variant="outline" onClick={goBack} data-testid="button-back">
+          Back
+        </Button>
+        <Button onClick={handleSubmit} size="lg" data-testid="button-submit">
+          <CheckCircle className="w-4 h-4 mr-2" />
+          Submit for Review
+        </Button>
+      </div>
+    </div>
+  );
+}
