@@ -308,23 +308,26 @@ export default function VendorListings() {
 
                 <ListingSection
                   title="Active Listings"
-                  listings={mockListings.active}
+                  listings={activeListings}
                   status="active"
                   emptyMessage="No active listings. Publish a draft to make it active."
+                  isLoading={loadingActive}
                 />
 
                 <ListingSection
                   title="Inactive Listings"
-                  listings={mockListings.inactive}
+                  listings={inactiveListings}
                   status="inactive"
                   emptyMessage="No inactive listings."
+                  isLoading={loadingInactive}
                 />
 
                 <ListingSection
                   title="Draft Listings"
-                  listings={mockListings.draft}
+                  listings={draftListings}
                   status="draft"
                   emptyMessage="No draft listings. Start creating a new listing to save it as a draft."
+                  isLoading={loadingDrafts}
                 />
               </div>
             </main>
