@@ -1,4 +1,4 @@
-@import url("https://fonts.googleapis.com/css2?family=Nunito+Sans:wght@300;400;600;700;800&family=Playfair+Display:wght@400;600;700&display=swap");
+@import url("https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700;800&display=swap");
 @tailwind base;
 @tailwind components;
 @tailwind utilities;
@@ -17,68 +17,67 @@
 
   --background: 0 0% 100%;
 
-  --foreground: 240 5% 12%;
+  --foreground: 0 0% 13%;
 
-  --border: 240 4% 88%;
+  --border: 0 0% 88%;
 
-  --card: 240 3% 98%;
+  --card: 0 0% 97%;
 
-  --card-foreground: 240 5% 12%;
+  --card-foreground: 0 0% 13%;
 
-  --card-border: 240 4% 92%;
+  --card-border: 0 0% 88%;
 
-  --sidebar: 240 3% 96%;
+  --sidebar: 0 0% 97%;
 
-  --sidebar-foreground: 240 5% 12%;
+  --sidebar-foreground: 0 0% 13%;
 
-  --sidebar-border: 240 4% 90%;
+  --sidebar-border: 0 0% 88%;
 
-  --sidebar-primary: 160 84% 39%;
+  --sidebar-primary: 153 46% 74%;
 
-  --sidebar-primary-foreground: 0 0% 100%;
+  --sidebar-primary-foreground: 0 0% 13%;
 
-  --sidebar-accent: 240 5% 92%;
+  --sidebar-accent: 153 46% 94%;
 
-  --sidebar-accent-foreground: 240 5% 12%;
+  --sidebar-accent-foreground: 0 0% 13%;
 
-  --sidebar-ring: 160 84% 39%;
+  --sidebar-ring: 153 46% 74%;
 
-  --popover: 240 4% 94%;
+  --popover: 0 0% 97%;
 
-  --popover-foreground: 240 5% 12%;
+  --popover-foreground: 0 0% 13%;
 
-  --popover-border: 240 4% 86%;
+  --popover-border: 0 0% 88%;
 
-  --primary: 160 84% 39%;
+  --primary: 153 46% 74%;
 
-  --primary-foreground: 0 0% 100%;
+  --primary-foreground: 0 0% 13%;
 
-  --secondary: 240 5% 90%;
+  --secondary: 0 0% 90%;
 
-  --secondary-foreground: 240 5% 12%;
+  --secondary-foreground: 0 0% 13%;
 
-  --muted: 240 8% 94%;
+  --muted: 0 0% 94%;
 
-  --muted-foreground: 240 4% 40%;
+  --muted-foreground: 0 0% 44%;
 
-  --accent: 160 20% 93%;
+  --accent: 153 46% 94%;
 
-  --accent-foreground: 160 84% 25%;
+  --accent-foreground: 0 0% 13%;
 
   --destructive: 0 72% 51%;
 
   --destructive-foreground: 0 0% 100%;
 
-  --input: 240 5% 75%;
-  --ring: 160 84% 39%;
-  --chart-1: 160 84% 39%;
+  --input: 0 0% 88%;
+  --ring: 153 46% 74%;
+  --chart-1: 153 46% 74%;
   --chart-2: 340 75% 52%;
   --chart-3: 30 90% 50%;
   --chart-4: 173 75% 42%;
   --chart-5: 220 80% 55%;
 
-  --font-sans: "Nunito Sans", -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif;
-  --font-serif: Playfair Display, Georgia, serif;
+  --font-sans: "Inter", -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif;
   --font-mono: Menlo, monospace;
   --radius: .5rem; /* 8px */
   --shadow-2xs: 0px 1px 2px 0px hsl(240 5% 12% / 0.05);
@@ -133,63 +132,63 @@
   --elevate-1: rgba(255,255,255, .04);
   --elevate-2: rgba(255,255,255, .09);
 
-  --background: 240 6% 8%;
+  --background: 210 6% 10%;
 
   --foreground: 0 0% 95%;
 
-  --border: 240 5% 18%;
+  --border: 0 0% 20%;
 
-  --card: 240 5% 11%;
+  --card: 210 6% 13%;
 
   --card-foreground: 0 0% 95%;
 
-  --card-border: 240 5% 16%;
+  --card-border: 0 0% 20%;
 
-  --sidebar: 240 5% 13%;
+  --sidebar: 210 6% 13%;
 
   --sidebar-foreground: 0 0% 95%;
 
-  --sidebar-border: 240 5% 20%;
+  --sidebar-border: 0 0% 20%;
 
-  --sidebar-primary: 160 84% 39%;
+  --sidebar-primary: 153 46% 58%;
 
   --sidebar-primary-foreground: 0 0% 100%;
 
-  --sidebar-accent: 240 5% 18%;
+  --sidebar-accent: 210 6% 18%;
 
   --sidebar-accent-foreground: 0 0% 95%;
 
-  --sidebar-ring: 160 84% 39%;
+  --sidebar-ring: 153 46% 58%;
 
-  --popover: 240 5% 15%;
+  --popover: 210 6% 15%;
 
   --popover-foreground: 0 0% 95%;
 
-  --popover-border: 240 5% 22%;
+  --popover-border: 0 0% 22%;
 
-  --primary: 160 84% 39%;
+  --primary: 153 46% 58%;
 
   --primary-foreground: 0 0% 100%;
 
-  --secondary: 240 5% 20%;
+  --secondary: 0 0% 20%;
 
   --secondary-foreground: 0 0% 95%;
 
-  --muted: 240 8% 17%;
+  --muted: 0 0% 17%;
 
-  --muted-foreground: 240 4% 65%;
+  --muted-foreground: 0 0% 65%;
 
-  --accent: 160 20% 18%;
+  --accent: 153 46% 18%;
 
-  --accent-foreground: 160 84% 75%;
+  --accent-foreground: 153 46% 85%;
 
   --destructive: 0 72% 51%;
 
   --destructive-foreground: 0 0% 100%;
 
-  --input: 240 5% 35%;
-  --ring: 160 84% 39%;
-  --chart-1: 160 84% 50%;
+  --input: 0 0% 35%;
+  --ring: 153 46% 58%;
+  --chart-1: 153 46% 58%;
   --chart-2: 340 75% 65%;
   --chart-3: 30 90% 60%;
   --chart-4: 173 75% 55%;
@@ -235,7 +234,7 @@
 
 @layer base {
   * {
-    @apply border-border;
+    border-color: hsl(var(--border));
   }
 
   body {
