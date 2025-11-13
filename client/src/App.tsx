@@ -21,6 +21,7 @@ import VendorPayments from "@/pages/VendorPayments";
 import VendorReviews from "@/pages/VendorReviews";
 import VendorNotifications from "@/pages/VendorNotifications";
 import AdminDashboard from "@/pages/AdminDashboard";
+import UIDemo from "@/pages/UIDemo";
 import NotFound from "@/pages/not-found";
 
 function Router() {
@@ -45,6 +46,7 @@ function Router() {
       <Route path="/planner" component={EventPlanner} />
       <Route path="/recommendations/:eventId" component={CuratedRecommendations} />
       <Route path="/admin" component={AdminDashboard} />
+      <Route path="/ui-demo" component={UIDemo} />
       <Route component={NotFound} />
     </Switch>
   );
