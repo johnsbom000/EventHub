@@ -9,7 +9,6 @@ import { Form, FormControl, FormField, FormItem, FormLabel, FormMessage } from "
 import { Input } from "@/components/ui/input";
 import { useToast } from "@/hooks/use-toast";
 import { apiRequest } from "@/lib/queryClient";
-import { VendorProfileWizard } from "@/features/vendor/profile-wizard/VendorProfileWizard";
 
 // Step 1: Basic Info
 const basicInfoSchema = z.object({
@@ -39,7 +38,6 @@ export default function Signup() {
   const [step, setStep] = useState<SignupStep>("basic");
   const [basicInfo, setBasicInfo] = useState<BasicInfoFormData | null>(null);
   const [isVendor, setIsVendor] = useState(false);
-  const [showProfileWizard, setShowProfileWizard] = useState(false);
 
   const basicForm = useForm<BasicInfoFormData>({
     resolver: zodResolver(basicInfoSchema),
@@ -134,8 +132,8 @@ export default function Signup() {
         description: "Welcome to Event Hub! Let's set up your vendor profile.",
       });
 
-      // Show profile wizard
-      setShowProfileWizard(true);
+      // Redirect to vendor onboarding wizard
+      setLocation("/vendor/onboarding");
     } catch (error: any) {
       toast({
         variant: "destructive",
@@ -145,20 +143,6 @@ export default function Signup() {
     } finally {
       setIsLoading(false);
     }
-  }
-
-  // Handle profile wizard completion
-  const handleProfileComplete = (createListing: boolean) => {
-    if (createListing) {
-      setLocation("/vendor/listings/new");
-    } else {
-      setLocation("/vendor/dashboard");
-    }
-  };
-
-  // If profile wizard is active, show it
-  if (showProfileWizard) {
-    return <VendorProfileWizard onComplete={handleProfileComplete} />;
   }
 
   return (

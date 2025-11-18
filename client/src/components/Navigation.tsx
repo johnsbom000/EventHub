@@ -287,7 +287,7 @@ export default function Navigation() {
                     </DropdownMenuItem>
                     <DropdownMenuSeparator />
                     <DropdownMenuItem
-                      onClick={() => setLocation("/signup")}
+                      onClick={() => setLocation("/vendor/onboarding")}
                       data-testid="menu-item-become-vendor"
                     >
                       <Briefcase className="mr-2 h-4 w-4" />
