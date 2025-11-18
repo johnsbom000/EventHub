@@ -3,7 +3,7 @@ import { createServer, type Server } from "http";
 import { storage } from "./storage";
 import { insertEventSchema, insertVendorAccountSchema, insertVendorProfileSchema, vendorProfiles, vendorAccounts, vendorListings, users, insertUserSchema, webTraffic, bookings, vendors } from "@shared/schema";
 import { scoreVendorsForEvent } from "./vendorScoring";
-import { hashPassword, comparePassword, generateToken, requireVendorAuth, requireCustomerAuth, requireDualAuth, requireAdminAuth } from "./auth";
+import { hashPassword, comparePassword, generateToken, verifyToken, requireVendorAuth, requireCustomerAuth, requireDualAuth, requireAdminAuth } from "./auth";
 import { z } from "zod";
 import { db } from "./db";
 import { eq, and, sql as drizzleSql, count, sum, gte, lte, desc } from "drizzle-orm";
@@ -282,7 +282,57 @@ export async function registerRoutes(app: Express): Promise<Server> {
     try {
       const { email, password } = unifiedLoginSchema.parse(req.body);
 
-      // Check vendor accounts FIRST (priority for upgraded vendors)
+      // SPECIAL CASE: Check if this is the admin email first
+      const adminEmail = process.env.ADMIN_EMAIL;
+      const isAdminEmail = adminEmail && email.toLowerCase() === adminEmail.toLowerCase();
+
+      if (isAdminEmail) {
+        // For admin email, ONLY check customer accounts (users table)
+        const customerAccounts = await db.select().from(users).where(eq(users.email, email));
+        if (customerAccounts.length > 0) {
+          const user = customerAccounts[0];
+          
+          // Verify password
+          const valid = await comparePassword(password, user.password);
+          if (!valid) {
+            return res.status(401).json({ error: "Invalid password" });
+          }
+
+          // Ensure admin role is set
+          await db.update(users)
+            .set({ 
+              lastLoginAt: new Date(),
+              role: "admin",
+            })
+            .where(eq(users.id, user.id));
+
+          // Generate admin JWT token
+          const token = generateToken({
+            id: user.id,
+            email: user.email,
+            type: "admin",
+          });
+
+          return res.json({
+            token,
+            user: {
+              id: user.id,
+              name: user.name,
+              email: user.email,
+              role: "admin",
+            },
+          });
+        } else {
+          // Admin email but no customer account exists
+          return res.status(404).json({ 
+            userNotFound: true,
+            email,
+            message: "Admin account not found. Please sign up first."
+          });
+        }
+      }
+
+      // For non-admin emails, check vendor accounts FIRST (priority for upgraded vendors)
       // This ensures users who have both customer and vendor accounts
       // are logged in as vendors by default
       const vendorAccountsResult = await db.select().from(vendorAccounts).where(eq(vendorAccounts.email, email));
@@ -326,25 +376,16 @@ export async function registerRoutes(app: Express): Promise<Server> {
           return res.status(401).json({ error: "Invalid password" });
         }
 
-        // Auto-assign admin role if email matches ADMIN_EMAIL (in case role wasn't set on signup)
-        const adminEmail = process.env.ADMIN_EMAIL;
-        const shouldBeAdmin = adminEmail && email.toLowerCase() === adminEmail.toLowerCase();
-        
-        // Update role and last login timestamp
-        const updatedRole = shouldBeAdmin ? "admin" : user.role;
+        // Update last login timestamp
         await db.update(users)
-          .set({ 
-            lastLoginAt: new Date(),
-            role: updatedRole,
-          })
+          .set({ lastLoginAt: new Date() })
           .where(eq(users.id, user.id));
 
-        // Generate JWT token with appropriate type
-        const tokenType = updatedRole === "admin" ? "admin" : "customer";
+        // Generate customer JWT token
         const token = generateToken({
           id: user.id,
           email: user.email,
-          type: tokenType,
+          type: "customer",
         });
 
         return res.json({
@@ -353,7 +394,7 @@ export async function registerRoutes(app: Express): Promise<Server> {
             id: user.id,
             name: user.name,
             email: user.email,
-            role: updatedRole,
+            role: user.role,
           },
         });
       }

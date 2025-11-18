@@ -35,10 +35,11 @@ Preferred communication style: Simple, everyday language.
 - **Unified Authentication System**: 
   - **Single Login Entry Point**: "Login / Sign up" modal serves all users
   - **Unified Login Endpoint** (`/api/auth/login`): Checks both `users` table (customers) and `vendor_accounts` table (vendors)
+  - **Admin Priority Logic**: If email matches ADMIN_EMAIL environment variable, ONLY checks users table (skips vendor_accounts to ensure admin login)
   - **Role-Based Redirects**: Automatically routes users to appropriate dashboard based on role
     - Customers → `/dashboard`
     - Vendors → `/vendor/dashboard`
-    - Admins → `/admin/dashboard` (note: admin auth middleware not yet implemented)
+    - Admins → `/admin`
   - **Smart Error Handling**: 
     - Login with non-existent email → offers to create account
     - Signup with existing email → offers to switch to login
@@ -46,15 +47,21 @@ Preferred communication style: Simple, everyday language.
   - **Token Management**: 
     - On login/signup, both `customerToken` and `vendorToken` are cleared first
     - Appropriate token set based on role (prevents token mix-ups)
-    - JWT tokens contain `type` field ("customer" or "vendor") for backend authorization
+    - JWT tokens contain `type` field ("customer", "vendor", or "admin") for backend authorization
+    - Admin tokens stored as "customerToken" with type="admin"
   - **User Data Persistence**: `users` table includes `role`, `displayName`, and `lastLoginAt` fields
 - **Customer-to-Vendor Upgrade**: Full account linking system implemented. When a customer becomes a vendor:
   - Vendor account is created with `userId` foreign key linking to customer account
   - Password hash is synchronized so customer can log in as vendor with same credentials
   - Prevents account hijacking by only linking unowned or already-linked vendor accounts
   - All onboarding data (business name, profile, social links) properly persisted
+- **Admin Authentication**:
+  - **Completely Hidden System**: No visible UI elements for admin access
+  - **Auto-Role Assignment**: Admin role automatically assigned when email matches ADMIN_EMAIL environment variable (eventhubglobal@gmail.com)
+  - **Middleware Protection**: `requireAdminAuth` middleware protects all `/api/admin/*` endpoints
+  - **Frontend Verification**: AdminDashboard queries `/api/customer/me` to verify admin role before rendering
+  - **requireCustomerAuth** accepts both customer and admin tokens for shared customer/admin endpoints
 - **Dual-Auth Middleware**: `requireDualAuth` accepts both customer and vendor tokens, setting appropriate `req.customerAuth` or `req.vendorAuth` context
-- **Known Limitations**: Admin role exists in schema but admin-specific authentication middleware not yet implemented (admin users currently use customer token infrastructure)
 
 ### Key Features
 - **Airbnb-Style Navigation System**: Role-aware navigation with distinct states:
@@ -97,6 +104,26 @@ Preferred communication style: Simple, everyday language.
   - **Entry Points**: New vendor signup → onboarding wizard; Customer "Become a Vendor" (from dropdown) → onboarding wizard
   - **Dashboard UI**: Complete dashboard with sidebar navigation, stats cards, onboarding status, and quick actions.
   - **Feature Pages (UI Complete)**: Bookings, Listings (create/edit/delete, publish draft functionality), Messages, Calendar, Payments, Reviews, Notifications.
+- **Admin Dashboard** (Hidden system at `/admin`):
+  - **Access**: Admin role auto-assigned when email matches ADMIN_EMAIL environment variable
+  - **Authentication**: Requires admin token (type="admin") for all /api/admin/* endpoints
+  - **Analytics Dashboard**: Comprehensive platform metrics and visualizations
+    - **Summary Stats**: Total users, total vendors, total bookings, total revenue
+    - **User Growth Chart**: Line chart showing user registrations over last 30 days
+    - **Vendor Distribution**: Bar chart showing vendors by service type
+    - **Traffic Analytics**: Daily page views with trend visualization
+    - **Top Pages**: Most visited pages list
+    - **Listing Statistics**: Active/draft/deleted listings breakdown
+  - **Backend Endpoints**: Protected admin-only routes
+    - GET `/api/admin/stats/users` - User and vendor metrics
+    - GET `/api/admin/stats/bookings` - Booking statistics
+    - GET `/api/admin/stats/revenue` - Revenue metrics
+    - GET `/api/admin/stats/traffic` - Traffic analytics
+    - GET `/api/admin/stats/listings` - Listing statistics
+  - **Traffic Tracking**: Optional tracking system (`web_traffic` table)
+    - Authenticated users: userId/userType extracted from JWT (tamper-proof)
+    - Anonymous users: Tracked with userId=null (for total visit counts)
+    - Basic input validation and silent error handling
 
 ## External Dependencies
 
