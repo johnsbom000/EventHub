@@ -138,9 +138,7 @@ export default function Navigation() {
                   href="/vendor/dashboard"
                   className="text-sm font-medium hover:underline cursor-pointer"
                   data-testid="link-vendor-dashboard"
-                >
-                  Switch to Vendor Dashboard
-                </Link>
+                >Vendor Dashboard</Link>
 
                 <DropdownMenu>
                   <DropdownMenuTrigger asChild>
