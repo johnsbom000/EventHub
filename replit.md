@@ -52,6 +52,15 @@ Preferred communication style: Simple, everyday language.
   - **Step 2**: "Are you a vendor?" choice
   - **Customer path**: Creates customer account → redirects to homepage
   - **Vendor path**: Collects business name → creates vendor account → redirects to onboarding wizard
+- **Customer Dashboard** (Airbnb-style sidebar layout at `/dashboard`):
+  - **Sidebar Navigation**: 5 sections with URL-driven active state (single source of truth)
+    - **My profile**: Editable profile fields (display name, bio, location), avatar with initials fallback, edit/save functionality with toast notifications
+    - **My Events**: Event list/detail views with budget tracking, vendor management, status badges, and next steps checklist (mock data)
+    - **Messages**: Two-column messaging interface with conversation list and message thread (mock conversations)
+    - **Plan New Event**: Start screen with two paths - "Browse vendors" (→ `/browse`) or "Get recommendations" (→ `/planner`)
+    - **Browse Vendors**: Routes to main vendor marketplace
+  - **Clean URL Routing**: `/dashboard/profile`, `/dashboard/events`, `/dashboard/messages`, `/dashboard/plan` support deep linking and browser refresh without state loss
+  - **Design Pattern**: Follows Airbnb profile layout with fixed sidebar (~300px), active section highlighting, and smooth navigation
 - **Hero Search Bar**: Prominent search with dynamic category filtering, auto-closing date picker, filter persistence via URL parameters, and smart navigation to `/browse` page.
 - **Multi-Step Event Planning Intake**: Comprehensive questionnaire system (`/planner`) for collecting event details, offering paths for direct vendor browsing or curated recommendations.
 - **Intelligent Vendor Ranking & Recommendation System**: 4-dimension weighted scoring algorithm (Availability, Budget, Service Match, Location) with labels like "Best match" and "Budget friendly". Presents recommendations in a Netflix-style UI.
