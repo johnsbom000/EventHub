@@ -1,8 +1,20 @@
-import { useEffect } from "react";
+import { useEffect, useMemo } from "react";
 import { useLocation } from "wouter";
 import { useQuery } from "@tanstack/react-query";
-import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card";
-import { Calendar, MessageSquare, Bell, Settings, User, Home as HomeIcon } from "lucide-react";
+import Navigation from "@/components/Navigation";
+import { 
+  User, 
+  Calendar, 
+  MessageSquare, 
+  PlusCircle, 
+  Search,
+  ChevronRight
+} from "lucide-react";
+import { cn } from "@/lib/utils";
+import CustomerProfile from "./customer/CustomerProfile";
+import CustomerEvents from "./customer/CustomerEvents";
+import CustomerMessages from "./customer/CustomerMessages";
+import CustomerPlanEvent from "./customer/CustomerPlanEvent";
 
 interface Customer {
   id: string;
@@ -11,8 +23,18 @@ interface Customer {
   createdAt: string;
 }
 
+type Section = "profile" | "events" | "messages" | "plan" | "browse";
+
+const menuItems = [
+  { id: "profile" as Section, label: "My profile", icon: User, path: "/dashboard/profile" },
+  { id: "events" as Section, label: "My Events", icon: Calendar, path: "/dashboard/events" },
+  { id: "messages" as Section, label: "Messages", icon: MessageSquare, path: "/dashboard/messages" },
+  { id: "plan" as Section, label: "Plan New Event", icon: PlusCircle, path: "/dashboard/plan" },
+  { id: "browse" as Section, label: "Browse Vendors", icon: Search, path: "/browse" },
+];
+
 export default function CustomerDashboard() {
-  const [, setLocation] = useLocation();
+  const [location, setLocation] = useLocation();
 
   // Fetch current customer
   const { data: customer, isLoading } = useQuery<Customer>({
@@ -28,6 +50,19 @@ export default function CustomerDashboard() {
     }
   }, [isLoading, setLocation]);
 
+  // Derive active section from URL (single source of truth)
+  const activeSection = useMemo<Section>(() => {
+    if (location.startsWith("/dashboard/events")) return "events";
+    if (location.startsWith("/dashboard/messages")) return "messages";
+    if (location.startsWith("/dashboard/plan")) return "plan";
+    // Default to profile for /dashboard and /dashboard/profile
+    return "profile";
+  }, [location]);
+
+  const handleSectionClick = (section: Section, path: string) => {
+    setLocation(path);
+  };
+
   if (isLoading) {
     return (
       <div className="min-h-screen flex items-center justify-center">
@@ -42,97 +77,60 @@ export default function CustomerDashboard() {
 
   return (
     <div className="min-h-screen bg-background">
-      <div className="max-w-7xl mx-auto p-6 space-y-6">
-        <div>
-          <h1 className="text-3xl font-bold">Welcome back, {customer.name}!</h1>
-          <p className="text-muted-foreground">Manage your events and bookings</p>
-        </div>
-
-        <div className="grid gap-4 md:grid-cols-2 lg:grid-cols-3">
-          <Card className="hover-elevate cursor-pointer" onClick={() => setLocation("/planner")}>
-            <CardHeader className="flex flex-row items-center justify-between space-y-0 pb-2">
-              <CardTitle className="text-sm font-medium">My Events</CardTitle>
-              <Calendar className="h-4 w-4 text-muted-foreground" />
-            </CardHeader>
-            <CardContent>
-              <div className="text-2xl font-bold">0</div>
-              <p className="text-xs text-muted-foreground">
-                Active events
-              </p>
-            </CardContent>
-          </Card>
-
-          <Card className="hover-elevate cursor-pointer">
-            <CardHeader className="flex flex-row items-center justify-between space-y-0 pb-2">
-              <CardTitle className="text-sm font-medium">Messages</CardTitle>
-              <MessageSquare className="h-4 w-4 text-muted-foreground" />
-            </CardHeader>
-            <CardContent>
-              <div className="text-2xl font-bold">0</div>
-              <p className="text-xs text-muted-foreground">
-                Unread messages
-              </p>
-            </CardContent>
-          </Card>
-
-          <Card className="hover-elevate cursor-pointer">
-            <CardHeader className="flex flex-row items-center justify-between space-y-0 pb-2">
-              <CardTitle className="text-sm font-medium">Bookings</CardTitle>
-              <Bell className="h-4 w-4 text-muted-foreground" />
-            </CardHeader>
-            <CardContent>
-              <div className="text-2xl font-bold">0</div>
-              <p className="text-xs text-muted-foreground">
-                Active bookings
-              </p>
-            </CardContent>
-          </Card>
-        </div>
-
-        <div className="grid gap-6 md:grid-cols-2">
-          <Card>
-            <CardHeader>
-              <CardTitle>Recent Activity</CardTitle>
-              <CardDescription>Your latest interactions</CardDescription>
-            </CardHeader>
-            <CardContent>
-              <p className="text-sm text-muted-foreground">
-                No recent activity
-              </p>
-            </CardContent>
-          </Card>
-
-          <Card>
-            <CardHeader>
-              <CardTitle>Quick Actions</CardTitle>
-              <CardDescription>Get started planning your event</CardDescription>
-            </CardHeader>
-            <CardContent className="space-y-2">
-              <button
-                onClick={() => setLocation("/planner")}
-                className="w-full text-left p-3 rounded-lg hover-elevate border flex items-center gap-3"
-                data-testid="button-plan-event"
-              >
-                <Calendar className="h-5 w-5 text-primary" />
-                <div>
-                  <p className="font-medium">Plan New Event</p>
-                  <p className="text-sm text-muted-foreground">Start planning your event</p>
-                </div>
-              </button>
+      <Navigation />
+      
+      <div className="max-w-7xl mx-auto px-6 py-8">
+        <div className="flex gap-8">
+          {/* Sidebar */}
+          <aside className="w-72 flex-shrink-0">
+            <div className="sticky top-8">
+              <h2 className="text-2xl font-bold mb-6" data-testid="text-dashboard-title">
+                My Dashboard
+              </h2>
               
-              <button
-                onClick={() => setLocation("/browse")}
-                className="w-full text-left p-3 rounded-lg hover-elevate border flex items-center gap-3"
-                data-testid="button-browse-vendors"
-              >
-                <HomeIcon className="h-5 w-5 text-primary" />
-                <div>
-                  <p className="font-medium">Browse Vendors</p>
-                  <p className="text-sm text-muted-foreground">Find services for your event</p>
-                </div>
-              </button>
-            </CardContent>
-          </Card>
+              <nav className="space-y-1">
+                {menuItems.map((item) => {
+                  const isActive = activeSection === item.id;
+                  const Icon = item.icon;
+                  
+                  return (
+                    <button
+                      key={item.id}
+                      onClick={() => handleSectionClick(item.id, item.path)}
+                      className={cn(
+                        "w-full flex items-center gap-3 px-4 py-3 rounded-xl text-left transition-colors",
+                        isActive
+                          ? "bg-card shadow-sm font-medium"
+                          : "hover-elevate"
+                      )}
+                      data-testid={`button-nav-${item.id}`}
+                    >
+                      <Icon className={cn(
+                        "h-5 w-5",
+                        isActive ? "text-foreground" : "text-muted-foreground"
+                      )} />
+                      <span className={cn(
+                        isActive ? "text-foreground" : "text-muted-foreground"
+                      )}>
+                        {item.label}
+                      </span>
+                      {isActive && (
+                        <ChevronRight className="h-4 w-4 ml-auto text-muted-foreground" />
+                      )}
+                    </button>
+                  );
+                })}
+              </nav>
+            </div>
+          </aside>
+
+          {/* Main Content */}
+          <main className="flex-1 min-w-0">
+            {activeSection === "profile" && <CustomerProfile customer={customer} />}
+            {activeSection === "events" && <CustomerEvents customer={customer} />}
+            {activeSection === "messages" && <CustomerMessages customer={customer} />}
+            {activeSection === "plan" && <CustomerPlanEvent />}
+          </main>
         </div>
       </div>
     </div>

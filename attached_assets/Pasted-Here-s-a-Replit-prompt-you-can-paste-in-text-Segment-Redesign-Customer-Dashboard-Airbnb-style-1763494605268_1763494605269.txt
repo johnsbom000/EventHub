@@ -1,0 +1,147 @@
+Here’s a Replit prompt you can paste in:
+
+```text
+Segment: Redesign Customer Dashboard (Airbnb-style Sidebar Layout)
+
+Tech: Existing EventHub app using React + TypeScript + TailwindCSS.
+
+Goal:
+Redesign the **customer dashboard** to look and behave more like Airbnb’s profile layout:
+- Left sidebar with main navigation.
+- Right content area that changes based on the selected section.
+
+Use the Airbnb screenshots as layout inspiration, but adapt to our brand (white, soft cards, #9EDBC0, rounded-xl, light shadows).
+
+--------------------------------------------------
+1) Overall Layout
+
+Create a new customer dashboard layout component, e.g. `CustomerDashboardLayout.tsx`, used at route `/dashboard` (or whatever we currently use for customer home).
+
+Structure:
+- Full-width white background.
+- Top nav stays as is.
+- Below nav:
+  - Left column: fixed-width sidebar (similar to Airbnb “Profile” sidebar).
+  - Right column: main content area.
+
+Sidebar:
+- Header text at top: **“My Dashboard”** (same visual treatment as Airbnb’s “Profile”).
+- Vertical menu items from top to bottom:
+
+  1. **My profile**
+  2. **My Events**
+  3. **Messages**
+  4. **Plan New Event**
+  5. **Browse Vendors**
+
+- Each item:
+  - Clickable row with icon + label.
+  - Highlighted state for the active section (background pill, bold text, etc.).
+- Clicking a menu item updates the active section in the right panel (SPA-style, no full page reload).
+
+--------------------------------------------------
+2) Section: My profile
+
+When **My profile** is active:
+- Right side should look similar to Airbnb’s profile edit page:
+  - Header: “My profile”
+  - Subtext about why completing profile helps.
+  - Card with avatar + name.
+  - Form-style fields (we can stub for now) such as:
+    - Display name
+    - About me / bio
+    - Location
+    - Optional fun prompts (mirroring Airbnb style).
+- Include an **“Edit”** button that toggles fields into editable mode and a **“Save”** button to persist.
+- Wire to existing user profile data model where possible.
+
+--------------------------------------------------
+3) Section: My Events
+
+When **My Events** is active:
+- Show a list of upcoming events for this customer.
+- Each event card should display:
+  - Event name/title
+  - Event date
+  - Location
+  - Basic status (e.g., “Planning”, “Booked”, "Completed"etc.)
+- Clicking an event card opens an event detail view (can be:
+  - Inline on the right panel, or
+  - A secondary panel/section under the list).
+
+Event details should include placeholders for:
+- Budget tracking (e.g., total budget, spent, remaining)
+- Next steps / checklist
+- Booked vendors list (vendor name, service type, status)
+- A “View / Edit Event” button for future expansion.
+
+It’s okay to stub data structures, but design it so it’s easy to hook into real event data later.
+
+--------------------------------------------------
+4) Section: Messages
+
+When **Messages** is active:
+- Show a messaging panel:
+  - Left side: list of conversations.
+  - Right side: selected conversation.
+
+Conversation list items:
+- Vendor name
+- Service type (e.g., “Photographer”)
+- Associated event name or date (e.g., “For: Sarah’s Wedding – Jun 12”)
+- Short preview of the last message.
+
+Message thread area:
+- Show messages in bubbles with sender (customer or vendor), timestamp, and text.
+- Input box at the bottom to send a new message (can be non-functional or stubbed if backend not wired).
+
+--------------------------------------------------
+5) Section: Plan New Events
+
+When **Plan New Events** is active:
+- Right panel shows a simple start screen:
+
+  Header: **“Plan a new event”**
+  First question:
+  - “How would you like to get started?”
+  - Two main options (buttons or cards):
+    1. **Browse vendors** – takes the user directly to the vendor landing page (see section 6).
+    2. **Help me find the best matches** – starts a question flow. 
+
+- For now, you can stub the question flow entry:
+  - When the user selects “Help me find the best matches”, navigate to a placeholder route like `/events/new` or show an inline wizard container with a note: “Question flow coming soon”.
+  - Make it easy to plug in real questions later.
+
+Tell me when you want the question flow for this step.
+
+--------------------------------------------------
+6) Section: Browse Vendors
+
+When **Browse Vendors** is active:
+- Simply route the user to our vendor landing page where they can scroll through vendors (the same page used elsewhere in the app).
+- IMPORTANT:
+  - Both this sidebar item **and** the “Browse vendors” option from **Plan New Events** should go to the SAME route (the main landing page route).
+  - Use the existing vendor search/landing experience—we’re just providing a shortcut from the dashboard.
+
+--------------------------------------------------
+7) Implementation Notes
+
+- Create a main `CustomerDashboard.tsx` that:
+  - Renders the sidebar,
+  - Manages an `activeSection` state (e.g., `"profile" | "events" | "messages" | "plan" | "browse"`),
+  - Renders the correct section component in the right panel.
+
+- Use Tailwind for spacing:
+  - Sidebar width ~260–300px.
+  - Right panel fills the rest.
+  - Cards and content boxes use `rounded-xl`, `shadow-sm`/`shadow`, padding, and white backgrounds.
+
+- Navigation:
+  - You can use client-side routing (e.g., nested routes) or internal state; choose whatever best fits the existing app structure.
+  - If using routes, make sure URL patterns are clean (e.g., `/dashboard/profile`, `/dashboard/events`, etc.).
+
+Please implement:
+- The new `CustomerDashboard` layout (Airbnb-style) with sidebar “My Dashboard”.
+- The five sections: My profile, My Events, Messages, Plan New Events, Browse Vendors, with the behaviors described above.
+- Ensure it’s wired up to the current customer dashboard entry point, replacing the old layout.
+```
