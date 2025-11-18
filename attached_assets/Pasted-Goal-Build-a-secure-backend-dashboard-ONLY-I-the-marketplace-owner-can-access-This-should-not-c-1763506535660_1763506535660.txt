@@ -1,0 +1,137 @@
+Goal:
+Build a secure backend dashboard ONLY I (the marketplace owner) can access. 
+This should not change the UI for normal users and should not add any “admin login” button. 
+Admin logs in through the normal login flow and are routed automatically.
+
+----------------------------------------------------
+1) Admin Role (No UI Button)
+
+- In the `users` table/collection, ensure a `role` field:
+  "customer" | "vendor" | "admin"
+- Default new users to `"customer"` unless they select the option that they are a vendor
+- Add an environment variable: `ADMIN_EMAIL`.
+
+Behavior:
+- On signup or login:
+  - If `user.email === ADMIN_EMAIL`, automatically set `role = "admin"`.
+  - No public UI should ever allow someone to set their role to admin.
+  - No “login as admin” button should appear in any navbar or screen.
+
+This keeps admin access invisible & secure.
+ADMIN_EMAIL = eventhubglobal@gmail.com
+
+----------------------------------------------------
+2) Auth Routing Behavior
+
+After successful login/sign-up:
+- If `role === "admin"` → redirect to `admin`
+- If `role === "vendor"` → redirect to `vendor dashboard`
+- Otherwise (`customer`) → redirect to `landing page`
+
+If a logged-in user manually tries to access `/admin`:
+- If `role !== "admin"` → redirect to `/dashboard` or show 403.
+
+NO admin entry should ever appear in any navigation, dropdown, or UI component for non-admin users.
+
+----------------------------------------------------
+3) Admin-Only Backend Dashboard (Owner Analytics)
+
+Create a protected route `/admin` that loads a React admin dashboard page.
+This page must:
+- Be completely inaccessible to non-admins.
+- Pull real business data from the database.
+- NOT interfere with customer or vendor UI.
+
+----------------------------------------------------
+4) Required Metrics & Data Models
+
+Assume (or create) the following tables/collections:
+- `users`
+- `listings`
+- `bookings`
+- `web_traffic` (new)
+
+Implement backend endpoints under `/api/admin/stats/*` that compute:
+
+A) User & Vendor Metrics:
+- Total user count.
+- Total vendor count.
+- Total customers.
+- Count of vendor accounts grouped by vendorType.
+- Percentage growth of users overall weekly/monthly/annually.
+- Percentage growth by category (vendor vs customer).
+- Daily/weekly new user chart data.
+
+B) Listing Metrics:
+- Count of listings by listingType.
+- Active vs inactive listings.
+- Listings created per day/week/month.
+
+C) Booking Metrics:
+- Count of bookings made per vendorType.
+- Count of completed bookings.
+- Count of incomplete bookings.
+- Gross booking revenue.
+- Gross booking revenue per vendorType.
+- Percentage growth in revenue overall.
+- Percentage growth in revenue per vendorType.
+
+D) Traffic Metrics:
+- Count of user traffic to the site.
+- Daily/weekly/monthly/annually visit counts.
+- Most visited paths.
+- Traffic by referrer.
+- Unique visitors vs total visits.
+
+----------------------------------------------------
+5) Traffic Tracking System
+
+Create a simple `web_traffic` table with fields:
+- id
+- userId (nullable)
+- path
+- referrer (nullable)
+- timestamp
+
+Add a lightweight client-side hook or server middleware that:
+- Logs a web_traffic event every time a user visits key pages (landing page, vendor pages, dashboards).
+- This must NOT affect performance or UI.
+
+----------------------------------------------------
+6) Admin Dashboard UI (React)
+
+At `/admin`, create a layout similar to a simple analytics console:
+
+Top-level sections (cards or charts):
+- Total users, total vendors, total listings, total bookings, total revenue.
+- Vendor count by vendorType (bar chart).
+- Listing count by listingType (bar chart or table).
+- Booking count by vendorType (bar chart).
+- Revenue by vendorType (bar chart).
+- Traffic over time (line chart).
+- User growth over time (line chart).
+
+Style requirements:
+- White background.
+- Rounded-xl cards.
+- Light shadows (`shadow-sm` or `shadow`).
+- Primary color `#9EDBC0` for accents.
+
+This must be standalone and must NOT appear in public navigation.
+
+----------------------------------------------------
+7) Non-Interference With Public UI
+
+- DO NOT add any admin link in navbar, dashboard, or dropdowns.
+- Admin route must only be reachable manually or via automatic redirect on login when the user is admin.
+- All existing pages (customer dashboard, vendor dashboard, vendor onboarding, etc.) must remain unchanged.
+
+----------------------------------------------------
+Please implement:
+- Hidden admin role using `ADMIN_EMAIL`
+- Automatic admin role assignment during login/signup
+- Secure `/admin` route with role-checking
+- Backend analytics endpoints with aggregations listed above
+- `traffic_events` tracking system
+- Full admin dashboard page displaying metrics, charts, and summary cards
+- No UI exposure of admin mode to normal users
