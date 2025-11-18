@@ -33,7 +33,12 @@ Preferred communication style: Simple, everyday language.
 ### Authentication & Authorization
 - **Roles**: Customer, Vendor, and Admin roles with role-based access control.
 - **Authentication**: Separate JWT-based authentication systems for customers and vendors (bcrypt password hashing). Tokens stored in localStorage.
-- **Unified Signup Flow**: Allows users to sign up as a customer or initiate vendor onboarding.
+- **Customer-to-Vendor Upgrade**: Full account linking system implemented. When a customer becomes a vendor:
+  - Vendor account is created with `userId` foreign key linking to customer account
+  - Password hash is synchronized so customer can log in as vendor with same credentials
+  - Prevents account hijacking by only linking unowned or already-linked vendor accounts
+  - All onboarding data (business name, profile, social links) properly persisted
+- **Dual-Auth Middleware**: `requireDualAuth` accepts both customer and vendor tokens, setting appropriate `req.customerAuth` or `req.vendorAuth` context
 
 ### Key Features
 - **Hero Search Bar**: Prominent search with dynamic category filtering, auto-closing date picker, filter persistence via URL parameters, and smart navigation to `/browse` page.
@@ -43,12 +48,17 @@ Preferred communication style: Simple, everyday language.
   - **Authentication**: Vendor signup, login, and JWT-based authentication with smart login redirect based on onboarding status.
   - **6-Step Onboarding Wizard**: Comprehensive vendor profile creation flow (`/vendor/onboarding`) with sidebar progress tracking:
     - **Step 1 - Service Type**: Grid selection of 9 service categories (catering, hair-styling, makeup, DJ, nails, florist, photography, videography, prop-rental)
-    - **Step 2 - About You**: Business info with new video introduction field, social media links
+    - **Step 2 - About You**: Business info with video introduction field, social media links (website, Instagram, TikTok)
     - **Step 3 - Location**: City, state, service radius with geolocation support
     - **Step 4 - Portfolio**: Image upload with cover image selection
     - **Step 5 - Service Description**: Service headline and detailed description
     - **Step 6 - Completion**: Choice to create listing immediately or visit dashboard
-  - **Entry Points**: New vendor signup → onboarding wizard; Customer "Become a Vendor" → onboarding wizard
+  - **Onboarding Completion API** (`/api/vendor/onboarding/complete`):
+    - Handles both new vendor signups and customer-to-vendor upgrades
+    - For customer upgrades: creates/links vendor account, synchronizes password, stores vendor token
+    - Persists all wizard data: businessName, serviceType, bio, social links, headline, location, portfolio, service description
+    - Sets `profileComplete` flag and returns vendor authentication token
+  - **Entry Points**: New vendor signup → onboarding wizard; Customer "Become a Vendor" (from dropdown) → onboarding wizard
   - **Dashboard UI**: Complete dashboard with sidebar navigation, stats cards, onboarding status, and quick actions.
   - **Feature Pages (UI Complete)**: Bookings, Listings (create/edit/delete, publish draft functionality), Messages, Calendar, Payments, Reviews, Notifications.
 

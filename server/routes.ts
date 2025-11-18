@@ -257,7 +257,7 @@ export async function registerRoutes(app: Express): Promise<Server> {
     state: z.string().optional(),
     serviceRadius: z.number().optional(),
     portfolioImages: z.array(z.string()).optional(),
-    serviceHeadline: z.string(),
+    serviceHeadline: z.string().optional(),
     serviceDescription: z.string(),
   });
 
@@ -286,14 +286,31 @@ export async function registerRoutes(app: Express): Promise<Server> {
         const existingVendor = await db.select().from(vendorAccounts).where(eq(vendorAccounts.email, customer.email));
         
         if (existingVendor.length > 0) {
-          // Vendor account already exists - link it to customer if not already
+          // Vendor account already exists
           vendorAccountId = existingVendor[0].id;
           
-          // Update vendor account to link to customer if not already linked
-          if (!existingVendor[0].userId) {
+          // Only update if this vendor account is unlinked (not another user's account)
+          if (!existingVendor[0].userId || existingVendor[0].userId === customer.id) {
+            // Safe to link/update this vendor account to the customer
+            const updateData: any = { 
+              userId: customer.id,
+              password: customer.password, // Sync password so customer can log in as vendor
+            };
+            
+            // Only update business name if provided and non-empty
+            if (onboardingData.businessName && onboardingData.businessName.trim()) {
+              updateData.businessName = onboardingData.businessName;
+            }
+            
             await db.update(vendorAccounts)
-              .set({ userId: customer.id })
+              .set(updateData)
               .where(eq(vendorAccounts.id, vendorAccountId));
+          } else {
+            // Vendor account belongs to different user - this shouldn't happen
+            // but we should prevent hijacking another user's account
+            return res.status(400).json({ 
+              error: "A vendor account with this email already exists and belongs to another user" 
+            });
           }
         } else {
           // Create new vendor account linked to customer with same password
@@ -327,6 +344,7 @@ export async function registerRoutes(app: Express): Promise<Server> {
       // Create or update vendor profile with proper defaults
       const existingProfiles = await db.select().from(vendorProfiles).where(eq(vendorProfiles.accountId, vendorAccountId));
       
+      // Build profile data with all onboarding information
       const profileData = {
         accountId: vendorAccountId,
         serviceType: onboardingData.serviceType,
@@ -338,8 +356,9 @@ export async function registerRoutes(app: Express): Promise<Server> {
           tiktok: onboardingData.tiktok || null,
           introVideoUrl: onboardingData.introVideoUrl || null,
           bio: onboardingData.bio || null,
+          headline: onboardingData.serviceHeadline || null, // Save service headline
         },
-        address: onboardingData.city,
+        address: onboardingData.city + (onboardingData.state ? `, ${onboardingData.state}` : ""),
         city: onboardingData.city,
         travelMode: "travel-to-guests" as const,
         serviceRadius: onboardingData.serviceRadius || 25,
