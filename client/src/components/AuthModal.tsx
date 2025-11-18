@@ -29,7 +29,15 @@ interface LoginResponse {
   email?: string;
   message?: string;
   token?: string;
-  user?: { id: string; name: string; email: string; role: string };
+  user?: { 
+    id: string; 
+    name?: string; 
+    email: string; 
+    role: string;
+    businessName?: string;
+    profileComplete?: boolean;
+    stripeOnboardingComplete?: boolean;
+  };
 }
 
 export default function AuthModal({ open, onOpenChange }: AuthModalProps) {
@@ -51,7 +59,7 @@ export default function AuthModal({ open, onOpenChange }: AuthModalProps) {
 
   const loginMutation = useMutation({
     mutationFn: async (data: { email: string; password: string }) => {
-      const res = await fetch("/api/customer/login", {
+      const res = await fetch("/api/auth/login", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify(data),
@@ -80,9 +88,19 @@ export default function AuthModal({ open, onOpenChange }: AuthModalProps) {
 
       // Successful login
       if (data.token) {
-        // This auth flow is for customers only
-        // Vendors use the separate vendor signup/login flow
-        localStorage.setItem("customerToken", data.token);
+        const userRole = data.user?.role || "customer";
+        
+        // Clear both tokens first to prevent token mix-ups
+        localStorage.removeItem("customerToken");
+        localStorage.removeItem("vendorToken");
+        
+        // Store token based on role
+        if (userRole === "vendor") {
+          localStorage.setItem("vendorToken", data.token);
+        } else {
+          // Store for both customer and admin roles
+          localStorage.setItem("customerToken", data.token);
+        }
         
         toast({
           title: "Welcome back!",
@@ -90,8 +108,14 @@ export default function AuthModal({ open, onOpenChange }: AuthModalProps) {
         });
         onOpenChange(false);
         
-        // Redirect to customer dashboard
-        setLocation("/dashboard");
+        // Redirect based on role
+        if (userRole === "vendor") {
+          setLocation("/vendor/dashboard");
+        } else if (userRole === "admin") {
+          setLocation("/admin/dashboard");
+        } else {
+          setLocation("/dashboard");
+        }
       }
     },
     onError: (error: Error) => {
@@ -134,6 +158,10 @@ export default function AuthModal({ open, onOpenChange }: AuthModalProps) {
 
       // Successful signup
       if (data.token) {
+        // Clear both tokens first to prevent token mix-ups
+        localStorage.removeItem("customerToken");
+        localStorage.removeItem("vendorToken");
+        
         // This auth flow is for customers only
         // Vendors use the separate vendor signup/login flow
         localStorage.setItem("customerToken", data.token);

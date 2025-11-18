@@ -265,6 +265,94 @@ export async function registerRoutes(app: Express): Promise<Server> {
     }
   });
 
+  // Unified Login Endpoint (checks both customers and vendors)
+  const unifiedLoginSchema = z.object({
+    email: z.string().email(),
+    password: z.string(),
+  });
+
+  app.post("/api/auth/login", async (req, res) => {
+    try {
+      const { email, password } = unifiedLoginSchema.parse(req.body);
+
+      // Check vendor accounts FIRST (priority for upgraded vendors)
+      // This ensures users who have both customer and vendor accounts
+      // are logged in as vendors by default
+      const vendorAccountsResult = await db.select().from(vendorAccounts).where(eq(vendorAccounts.email, email));
+      if (vendorAccountsResult.length > 0) {
+        const account = vendorAccountsResult[0];
+        
+        // Verify password
+        const valid = await comparePassword(password, account.password);
+        if (!valid) {
+          return res.status(401).json({ error: "Invalid password" });
+        }
+
+        // Generate vendor JWT token
+        const token = generateToken({
+          id: account.id,
+          email: account.email,
+          type: "vendor",
+        });
+
+        return res.json({
+          token,
+          user: {
+            id: account.id,
+            email: account.email,
+            businessName: account.businessName,
+            role: "vendor",
+            profileComplete: account.profileComplete,
+            stripeOnboardingComplete: account.stripeOnboardingComplete,
+          },
+        });
+      }
+
+      // Second, check customer accounts (users table)
+      const customerAccounts = await db.select().from(users).where(eq(users.email, email));
+      if (customerAccounts.length > 0) {
+        const user = customerAccounts[0];
+        
+        // Verify password
+        const valid = await comparePassword(password, user.password);
+        if (!valid) {
+          return res.status(401).json({ error: "Invalid password" });
+        }
+
+        // Update last login timestamp
+        await db.update(users)
+          .set({ lastLoginAt: new Date() })
+          .where(eq(users.id, user.id));
+
+        // Generate customer JWT token
+        const token = generateToken({
+          id: user.id,
+          email: user.email,
+          type: "customer",
+        });
+
+        return res.json({
+          token,
+          user: {
+            id: user.id,
+            name: user.name,
+            email: user.email,
+            role: user.role,
+          },
+        });
+      }
+
+      // No account found in either table
+      return res.status(404).json({ 
+        userNotFound: true,
+        email,
+        message: "We couldn't find an account with this email. Would you like to create one?"
+      });
+    } catch (error: any) {
+      res.status(400).json({ error: error.message });
+    }
+  });
+
   // Complete vendor onboarding (handles both new vendors and customer upgrades)
   const completeOnboardingSchema = z.object({
     businessName: z.string().min(2),
