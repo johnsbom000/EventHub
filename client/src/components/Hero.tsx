@@ -50,7 +50,7 @@ export default function Hero() {
   return (
     <div className="bg-white">
       <div className="max-w-4xl mx-auto px-4 sm:px-6 lg:px-8 pt-16 pb-24">
-        <h1 className="sm:text-5xl md:text-6xl font-bold text-center mb-12 text-foreground text-[50px]" data-testid="text-hero-title">Vendors For Any Occasion</h1>
+        <h1 className="sm:text-5xl md:text-6xl font-bold text-center mb-12 text-foreground text-[50px]" data-testid="text-hero-title">Event Pros, All in One Place</h1>
 
         <div className="bg-white rounded-xl shadow-lg border border-border p-2">
           <div className="grid grid-cols-1 md:grid-cols-4 gap-2">
