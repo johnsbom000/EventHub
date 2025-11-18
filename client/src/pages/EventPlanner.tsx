@@ -172,9 +172,7 @@ export default function EventPlanner() {
       <main className="flex-1 bg-card/50 py-12">
         <div className="max-w-3xl mx-auto px-4 sm:px-6 lg:px-8">
           <div className="text-center mb-8">
-            <h1 className="text-3xl md:text-4xl font-bold mb-4" data-testid="text-page-title">
-              Event Planning Intake
-            </h1>
+            <h1 className="text-3xl md:text-4xl font-bold mb-4" data-testid="text-page-title">New Event</h1>
             <p className="text-muted-foreground">
               Tell us about your event to get matched with perfect vendors
             </p>
