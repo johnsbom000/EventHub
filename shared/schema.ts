@@ -4,6 +4,7 @@ import { createInsertSchema } from "drizzle-zod";
 import { z } from "zod";
 
 // Enums for type safety
+export const userRoleEnum = pgEnum("user_role", ["customer", "vendor", "admin"]);
 export const bookingStatusEnum = pgEnum("booking_status", ["pending", "confirmed", "completed", "cancelled"]);
 export const paymentStatusEnum = pgEnum("payment_status", ["pending", "partial", "paid", "refunded"]);
 export const paymentTypeEnum = pgEnum("payment_type", ["deposit", "final", "installment"]);
@@ -24,6 +25,9 @@ export const users = pgTable("users", {
   name: text("name").notNull(),
   email: text("email").notNull().unique(),
   password: text("password").notNull(),
+  role: userRoleEnum("role").notNull().default("customer"),
+  displayName: text("display_name"),
+  lastLoginAt: timestamp("last_login_at"),
   createdAt: timestamp("created_at").defaultNow().notNull(),
   updatedAt: timestamp("updated_at").defaultNow().notNull(),
 });

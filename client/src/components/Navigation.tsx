@@ -3,6 +3,7 @@ import { Button } from "@/components/ui/button";
 import { useState, useEffect } from "react";
 import { useQuery } from "@tanstack/react-query";
 import Logo from "@/components/Logo";
+import AuthModal from "@/components/AuthModal";
 import {
   DropdownMenu,
   DropdownMenuContent,
@@ -42,6 +43,7 @@ interface Customer {
 export default function Navigation() {
   const [,setLocation] = useLocation();
   const [userRole, setUserRole] = useState<UserRole>(null);
+  const [authModalOpen, setAuthModalOpen] = useState(false);
 
   // Fetch vendor account if vendor token exists
   const { data: vendorAccount } = useQuery<VendorAccount>({
@@ -117,18 +119,20 @@ export default function Navigation() {
           </Link>
 
           <div className="flex items-center gap-4">
+            {/* Auth Modal */}
+            <AuthModal open={authModalOpen} onOpenChange={setAuthModalOpen} />
+
             {/* Logged Out State */}
             {!userRole && (
-              <Link href="/signup">
-                <Button
-                  variant="default"
-                  size="default"
-                  className="bg-primary"
-                  data-testid="button-login-signup"
-                >
-                  Login / Sign up
-                </Button>
-              </Link>
+              <Button
+                variant="default"
+                size="default"
+                className="bg-primary"
+                onClick={() => setAuthModalOpen(true)}
+                data-testid="button-login-signup"
+              >
+                Login / Sign up
+              </Button>
             )}
 
             {/* Vendor Logged In State */}

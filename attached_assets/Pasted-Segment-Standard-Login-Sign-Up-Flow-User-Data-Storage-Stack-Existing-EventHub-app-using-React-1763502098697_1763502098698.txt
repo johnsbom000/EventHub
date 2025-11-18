@@ -1,0 +1,83 @@
+Segment: Standard Login / Sign Up Flow + User Data Storage
+
+Stack: Existing EventHub app using React + TypeScript + TailwindCSS with an existing auth system.
+
+Goal:
+Implement a clean, marketplace-style auth flow using a single "Login / Sign up" entry point AND make sure all user data is persisted in a proper users table/collection.
+
+-----------------------------------------
+1) Single Entry: "Login / Sign up" Button
+
+- In the top-right navbar, keep ONE primary button:
+  - Label: "Login / Sign up"
+- When clicked:
+  - Open a modal or navigate to an auth page with two modes: **Login** and **Create account** (tabs or toggle).
+  - Default to the **Login** view, but clearly show the option to switch to **Create account**.
+
+-----------------------------------------
+2) Login Flow (User Does NOT Have an Account Yet)
+
+Desired UX:
+- If a user clicks "Login" but enters an email that does not exist, do NOT just show a generic error.
+- Instead:
+  - Detect "no user found for this email".
+  - Show a friendly message like:
+    - "We couldn't find an account with this email. Would you like to create one?"
+  - Provide a clear button: **"Create account with this email"** that switches to the signup mode and pre-fills the email.
+
+Implementation:
+- On login submit:
+  - Check if user exists by email.
+  - If user exists → normal login.
+  - If user does not exist → show the "create account" prompt instead of a hard error.
+
+-----------------------------------------
+3) Sign Up Flow (Email Already Has an Account)
+
+We DO NOT want to bypass authentication; instead we treat this as “you already have an account”.
+
+- On signup submit:
+  - Check if a user with this email already exists.
+  - If NO → create a new user, store all profile data, log them in, and redirect to the appropriate dashboard.
+  - If YES:
+    - Do NOT throw a blocking error.
+    - Show a message like:
+      - "You already have an account with this email. Please log in instead."
+    - Option A (recommended): Automatically switch the view to **Login** and pre-fill the email.
+    - Option B: Offer **"Send me a login link"** (magic link) if email login is supported.
+
+-----------------------------------------
+4) User Data Storage
+
+Create/ensure a persistent `users` table/collection with at least:
+
+- `id`
+- `email` (unique, required)
+- `passwordHash` (if using password auth)
+- `role` (e.g., "customer" | "vendor" | "admin")
+- `name` / `displayName`
+- `createdAt`
+- `updatedAt`
+- `lastLoginAt`
+- Any existing profile fields we already capture (location, avatar, etc.)
+
+Requirements:
+- On **signup**, create a record in `users`.
+- On **every successful login**, update `lastLoginAt`.
+- Make sure user data is accessible to the rest of the app via the existing auth context/hook (e.g. `useAuth()` or similar).
+
+-----------------------------------------
+5) Redirects After Auth
+
+- After successful login or signup:
+  - If the user is a **customer** with no special redirect, send them to the **customer dashboard** (e.g. `/dashboard`).
+  - If the user is a **vendor**, send them to the **vendor dashboard** (e.g. `/vendor/dashboard`).
+  - Keep this logic centralized so it works the same whether they logged in or signed up.
+
+Please implement:
+- The unified "Login / Sign up" modal/page with Login + Create account modes.
+- The logic:
+  - Login with "no account yet" → offer to create an account instead of a hard error.
+  - Signup with existing email → switch to login flow (or magic link) instead of a dead-end error.
+- A persistent `users` data model with fields above, updated on signup and login.
+- Clean redirects to the correct dashboard after auth.

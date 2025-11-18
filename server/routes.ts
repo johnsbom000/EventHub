@@ -154,17 +154,25 @@ export async function registerRoutes(app: Express): Promise<Server> {
       // Check if customer already exists
       const existing = await db.select().from(users).where(eq(users.email, email));
       if (existing.length > 0) {
-        return res.status(400).json({ error: "Email already registered" });
+        // Smart error handling: instead of hard error, tell frontend to switch to login
+        return res.status(400).json({ 
+          emailExists: true,
+          email,
+          message: "You already have an account with this email. Please log in instead."
+        });
       }
 
       // Hash password
       const hashedPassword = await hashPassword(password);
 
-      // Create customer account
+      // Create customer account with role and lastLoginAt
       const [user] = await db.insert(users).values({
         name,
         email,
         password: hashedPassword,
+        role: "customer",
+        displayName: name,
+        lastLoginAt: new Date(),
       }).returning();
 
       // Generate JWT token
@@ -180,6 +188,7 @@ export async function registerRoutes(app: Express): Promise<Server> {
           id: user.id,
           name: user.name,
           email: user.email,
+          role: user.role,
         },
       });
     } catch (error: any) {
@@ -194,15 +203,25 @@ export async function registerRoutes(app: Express): Promise<Server> {
       // Find customer account
       const userAccounts = await db.select().from(users).where(eq(users.email, email));
       if (userAccounts.length === 0) {
-        return res.status(401).json({ error: "Invalid credentials" });
+        // Smart error handling: tell frontend to offer creating account
+        return res.status(404).json({ 
+          userNotFound: true,
+          email,
+          message: "We couldn't find an account with this email. Would you like to create one?"
+        });
       }
       const user = userAccounts[0];
 
       // Verify password
       const valid = await comparePassword(password, user.password);
       if (!valid) {
-        return res.status(401).json({ error: "Invalid credentials" });
+        return res.status(401).json({ error: "Invalid password" });
       }
+
+      // Update last login timestamp
+      await db.update(users)
+        .set({ lastLoginAt: new Date() })
+        .where(eq(users.id, user.id));
 
       // Generate JWT token
       const token = generateToken({
@@ -217,6 +236,7 @@ export async function registerRoutes(app: Express): Promise<Server> {
           id: user.id,
           name: user.name,
           email: user.email,
+          role: user.role,
         },
       });
     } catch (error: any) {
