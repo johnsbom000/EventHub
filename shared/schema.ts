@@ -271,6 +271,7 @@ export type Vendor = typeof vendors.$inferSelect;
 // Vendor Accounts (authentication only)
 export const vendorAccounts = pgTable("vendor_accounts", {
   id: varchar("id").primaryKey().default(sql`gen_random_uuid()`),
+  userId: varchar("user_id").references(() => users.id), // Links to customer account if upgraded
   email: text("email").notNull().unique(),
   password: text("password").notNull(),
   businessName: text("business_name").notNull(),

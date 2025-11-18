@@ -243,6 +243,164 @@ export async function registerRoutes(app: Express): Promise<Server> {
     }
   });
 
+  // Complete vendor onboarding (handles both new vendors and customer upgrades)
+  const completeOnboardingSchema = z.object({
+    businessName: z.string().min(2),
+    serviceType: z.string(),
+    contactName: z.string().optional(),
+    bio: z.string().optional(),
+    website: z.string().optional(),
+    instagram: z.string().optional(),
+    tiktok: z.string().optional(),
+    introVideoUrl: z.string().optional(),
+    city: z.string(),
+    state: z.string().optional(),
+    serviceRadius: z.number().optional(),
+    portfolioImages: z.array(z.string()).optional(),
+    serviceHeadline: z.string(),
+    serviceDescription: z.string(),
+  });
+
+  // Dual-auth middleware: accepts either customer or vendor token
+  const optionalDualAuth = async (req: any, res: any, next: any) => {
+    try {
+      const authHeader = req.headers.authorization;
+      if (!authHeader) {
+        return res.status(401).json({ error: "No authentication token provided" });
+      }
+
+      const token = authHeader.split(" ")[1];
+      const jwt = require("jsonwebtoken");
+      const secret = process.env.JWT_SECRET;
+      if (!secret) {
+        return res.status(500).json({ error: "JWT secret not configured" });
+      }
+
+      const decoded: any = jwt.verify(token, secret);
+      req.auth = decoded;
+      next();
+    } catch (error: any) {
+      return res.status(401).json({ error: "Invalid or expired token" });
+    }
+  };
+
+  app.post("/api/vendor/onboarding/complete", optionalDualAuth, async (req, res) => {
+    try {
+      const auth = (req as any).auth;
+      const isCustomer = auth.type === "customer";
+      const isVendor = auth.type === "vendor";
+
+      if (!isCustomer && !isVendor) {
+        return res.status(401).json({ error: "Invalid token type" });
+      }
+
+      // Validate onboarding data
+      const onboardingData = completeOnboardingSchema.parse(req.body);
+
+      let vendorAccountId: string;
+      let vendorToken: string;
+
+      if (isCustomer) {
+        // Customer becoming vendor flow
+        const customerAccounts = await db.select().from(users).where(eq(users.id, auth.id));
+        if (customerAccounts.length === 0) {
+          return res.status(404).json({ error: "Customer account not found" });
+        }
+        const customer = customerAccounts[0];
+
+        // Check if vendor account already exists for this email
+        const existingVendor = await db.select().from(vendorAccounts).where(eq(vendorAccounts.email, customer.email));
+        
+        if (existingVendor.length > 0) {
+          // Vendor account already exists, use it
+          vendorAccountId = existingVendor[0].id;
+        } else {
+          // Create new vendor account linked to customer
+          const [newVendorAccount] = await db.insert(vendorAccounts).values({
+            userId: customer.id,
+            email: customer.email,
+            password: customer.password, // Reuse hashed password
+            businessName: onboardingData.businessName,
+            profileComplete: false, // Will be set to true after profile creation
+          }).returning();
+          vendorAccountId = newVendorAccount.id;
+        }
+
+        // Generate vendor token
+        vendorToken = generateToken({
+          id: vendorAccountId,
+          email: customer.email,
+          type: "vendor",
+        });
+      } else {
+        // Existing vendor completing onboarding
+        const vendorAcct = await db.select().from(vendorAccounts).where(eq(vendorAccounts.id, auth.id));
+        if (vendorAcct.length === 0) {
+          return res.status(404).json({ error: "Vendor account not found" });
+        }
+        vendorAccountId = vendorAcct[0].id;
+        const token = req.headers.authorization.split(" ")[1];
+        vendorToken = token;
+      }
+
+      // Create or update vendor profile with proper defaults
+      const existingProfiles = await db.select().from(vendorProfiles).where(eq(vendorProfiles.accountId, vendorAccountId));
+      
+      const profileData = {
+        accountId: vendorAccountId,
+        serviceType: onboardingData.serviceType,
+        experience: 0,
+        qualifications: [],
+        onlineProfiles: {
+          website: onboardingData.website || null,
+          instagram: onboardingData.instagram || null,
+          tiktok: onboardingData.tiktok || null,
+          introVideoUrl: onboardingData.introVideoUrl || null,
+          bio: onboardingData.bio || null,
+        },
+        address: onboardingData.city,
+        city: onboardingData.city,
+        travelMode: "travel-to-guests" as const,
+        serviceRadius: onboardingData.serviceRadius || 25,
+        serviceAddress: null,
+        photos: onboardingData.portfolioImages || [],
+        serviceDescription: onboardingData.serviceDescription,
+      };
+
+      let profile;
+      if (existingProfiles.length > 0) {
+        // Update existing profile
+        [profile] = await db.update(vendorProfiles)
+          .set(profileData)
+          .where(eq(vendorProfiles.id, existingProfiles[0].id))
+          .returning();
+      } else {
+        // Create new profile
+        [profile] = await db.insert(vendorProfiles).values(profileData).returning();
+      }
+
+      // Update vendor account profileComplete flag
+      await db.update(vendorAccounts)
+        .set({ profileComplete: true })
+        .where(eq(vendorAccounts.id, vendorAccountId));
+
+      res.json({
+        vendorToken,
+        isUpgrade: isCustomer,
+        vendorAccountId,
+        profileId: profile.id,
+      });
+    } catch (error: any) {
+      if (error.name === "ZodError") {
+        return res.status(400).json({ error: "Validation failed", details: error.errors });
+      }
+      if (error.name === "JsonWebTokenError") {
+        return res.status(401).json({ error: "Invalid token" });
+      }
+      res.status(500).json({ error: error.message });
+    }
+  });
+
   // Create vendor profile (protected route, steps 1-6 of onboarding)
   const createVendorProfileSchema = insertVendorProfileSchema
     .omit({ accountId: true })

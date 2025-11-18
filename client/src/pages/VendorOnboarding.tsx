@@ -1,6 +1,9 @@
 import { useState } from "react";
 import { useLocation } from "wouter";
 import { Check } from "lucide-react";
+import { useMutation } from "@tanstack/react-query";
+import { apiRequest, queryClient } from "@/lib/queryClient";
+import { useToast } from "@/hooks/use-toast";
 import Step1_ServiceSetup from "@/features/vendor/onboarding/Step1_ServiceSetup";
 import Step2_AboutYou from "@/features/vendor/onboarding/Step2_AboutYou";
 import Step3_Location from "@/features/vendor/onboarding/Step3_Location";
@@ -72,14 +75,78 @@ export default function VendorOnboarding() {
     }
   };
 
+  const { toast } = useToast();
+
+  const completeOnboardingMutation = useMutation({
+    mutationFn: async (data: VendorOnboardingData) => {
+      // Try vendor token first, then customer token
+      const vendorToken = localStorage.getItem("vendorToken");
+      const customerToken = localStorage.getItem("customerToken");
+      const token = vendorToken || customerToken;
+
+      if (!token) {
+        throw new Error("No authentication token found");
+      }
+
+      // Convert serviceRadius to number for API
+      const payload = {
+        ...data,
+        serviceRadius: data.serviceRadius ? parseInt(data.serviceRadius) : 25,
+      };
+
+      const response = await fetch("/api/vendor/onboarding/complete", {
+        method: "POST",
+        headers: {
+          "Content-Type": "application/json",
+          "Authorization": `Bearer ${token}`,
+        },
+        body: JSON.stringify(payload),
+      });
+
+      if (!response.ok) {
+        const error = await response.json();
+        throw new Error(error.error || "Failed to complete onboarding");
+      }
+
+      return response.json();
+    },
+    onSuccess: (data) => {
+      // If this was a customer upgrade, store the vendor token
+      if (data.isUpgrade && data.vendorToken) {
+        localStorage.setItem("vendorToken", data.vendorToken);
+        localStorage.setItem("vendorAccountId", data.vendorAccountId);
+      }
+
+      // Invalidate queries to refresh user state
+      queryClient.invalidateQueries({ queryKey: ["/api/vendor/me"] });
+      queryClient.invalidateQueries({ queryKey: ["/api/customer/me"] });
+
+      toast({
+        title: "Success!",
+        description: "Your vendor profile has been created.",
+      });
+    },
+    onError: (error: Error) => {
+      toast({
+        title: "Error",
+        description: error.message,
+        variant: "destructive",
+      });
+    },
+  });
+
   const handleComplete = async (createListing: boolean) => {
-    // TODO: Save vendor profile data to backend
-    // TODO: Upgrade customer to vendor role if needed
-    // Redirect to vendor dashboard or listing creation
-    if (createListing) {
-      setLocation("/vendor/listings/new");
-    } else {
-      setLocation("/vendor/dashboard");
+    try {
+      await completeOnboardingMutation.mutateAsync(formData);
+      
+      // Redirect based on user choice
+      if (createListing) {
+        setLocation("/vendor/listings/new");
+      } else {
+        setLocation("/vendor/dashboard");
+      }
+    } catch (error) {
+      // Error already handled in mutation onError
     }
   };
 
