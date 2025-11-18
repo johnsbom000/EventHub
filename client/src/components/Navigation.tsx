@@ -22,6 +22,7 @@ import {
   LogOut,
   LayoutDashboard,
   Calendar,
+  Briefcase,
 } from "lucide-react";
 
 type UserRole = "customer" | "vendor" | null;
@@ -283,6 +284,14 @@ export default function Navigation() {
                     >
                       <Bell className="mr-2 h-4 w-4" />
                       <span>Notifications</span>
+                    </DropdownMenuItem>
+                    <DropdownMenuSeparator />
+                    <DropdownMenuItem
+                      onClick={() => setLocation("/signup")}
+                      data-testid="menu-item-become-vendor"
+                    >
+                      <Briefcase className="mr-2 h-4 w-4" />
+                      <span>Become a Vendor</span>
                     </DropdownMenuItem>
                     <DropdownMenuSeparator />
                     <DropdownMenuItem
