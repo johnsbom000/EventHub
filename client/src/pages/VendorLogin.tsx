@@ -46,8 +46,8 @@ export default function VendorLogin() {
         description: "Welcome back to your vendor portal",
       });
 
-      // Redirect to onboarding if not yet completed, otherwise to dashboard
-      if (vendorAccount.stripeOnboardingComplete) {
+      // Redirect to onboarding if profile not yet completed, otherwise to dashboard
+      if (vendorAccount.profileComplete) {
         setLocation("/vendor/dashboard");
       } else {
         setLocation("/vendor/onboarding");

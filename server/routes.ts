@@ -57,6 +57,7 @@ export async function registerRoutes(app: Express): Promise<Server> {
         vendorAccount: {
           id: account.id,
           email: account.email,
+          profileComplete: account.profileComplete,
           stripeOnboardingComplete: account.stripeOnboardingComplete,
         },
       });
@@ -94,6 +95,7 @@ export async function registerRoutes(app: Express): Promise<Server> {
         vendorAccount: {
           id: account.id,
           email: account.email,
+          profileComplete: account.profileComplete,
           stripeOnboardingComplete: account.stripeOnboardingComplete,
         },
       });
