@@ -119,27 +119,16 @@ export default function Navigation() {
           <div className="flex items-center gap-4">
             {/* Logged Out State */}
             {!userRole && (
-              <>
-                <Link href="/signup">
-                  <Button
-                    variant="ghost"
-                    size="default"
-                    data-testid="button-become-vendor"
-                  >
-                    Become a vendor
-                  </Button>
-                </Link>
-                <Link href="/signup">
-                  <Button
-                    variant="default"
-                    size="default"
-                    className="bg-primary"
-                    data-testid="button-login-signup"
-                  >
-                    Login / Sign up
-                  </Button>
-                </Link>
-              </>
+              <Link href="/signup">
+                <Button
+                  variant="default"
+                  size="default"
+                  className="bg-primary"
+                  data-testid="button-login-signup"
+                >
+                  Login / Sign up
+                </Button>
+              </Link>
             )}
 
             {/* Vendor Logged In State */}
