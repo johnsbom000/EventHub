@@ -1,0 +1,62 @@
+FIGMA PROMPT — Login/Signup Flow + Navbar Behavior + Dropdown Routing
+1. Login / Signup Flow
+After the user finishes entering signup info (name, email, password), show a screen asking:
+“Are you a vendor?”
+Yes → Create vendor account → start 6 question vendor onboarding flow → redirect to Vendor Dashboard.
+No → Create customer account → redirect to Landing Page.
+2. Navbar Behavior (Logged Out)
+Show Login / Sign Up button.
+Standard landing page navigation stays visible.
+3. Navbar Behavior (Logged In)
+A. Vendor Logged In
+Hide Login / Sign Up.
+Show:
+Profile icon button
+“Switch to Vendor Dashboard” link (like Airbnb’s “Switch to hosting.”)
+Profile Dropdown Menu (Vendor):
+Profile
+Messages
+Notifications
+Account settings
+Languages & currency
+Help Center
+Sign out
+Routing Specification (Vendor):
+Profile → Vendor dashboard → profile/settings section
+Messages → Vendor dashboard → messaging system
+Notifications → Vendor dashboard → notifications panel
+Account settings → Vendor dashboard → settings page
+Languages & currency → Global modal or settings page
+Help center → External or internal help page
+Sign out → Logs user out → returns to landing page
+B. Customer Logged In
+Hide Login / Sign Up.
+Show:
+Profile icon button
+“My Events” link (customer equivalent of hosting toggle)
+Profile Dropdown Menu (Customer):
+Profile
+Messages
+Notifications
+Account settings
+Become a vendor
+Languages & currency
+Help Center
+Sign out
+Routing Specification (Customer):
+Profile → Customer dashboard → profile editing tab
+Messages → Customer dashboard → messaging section
+Notifications → Customer dashboard → notifications center
+Account settings → Customer dashboard → settings
+Become a vendor → start 6 question vendor onboarding flow → redirect to Vendor Dashboard → switch account to vendor account type
+Languages & currency → global modal or settings
+Help center → help page
+Sign out → logout → return to landing page
+4. Dropdown Style Notes
+Use Airbnb’s example for spacing, icons, grouping, and dividers
+White rounded container, light shadow
+Red notification indicator dot (optional)
+5. Design Instruction Summary
+Vendor and customer see different top-right labels (“Vendor Dashboard” vs “My Events”).
+Profile dropdown looks the same for both but routes to different dashboards.
+All menu items should be connected to corresponding dashboard sections for the correct user type.

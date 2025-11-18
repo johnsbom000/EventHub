@@ -135,14 +135,12 @@ export default function Navigation() {
             {userRole === "vendor" && (
               <>
                 <Link href="/vendor/dashboard">
-                  <Button
-                    variant="ghost"
-                    size="default"
+                  <span
+                    className="text-sm font-medium hover:underline cursor-pointer"
                     data-testid="link-vendor-dashboard"
                   >
-                    <LayoutDashboard className="h-4 w-4 mr-2" />
-                    Vendor Dashboard
-                  </Button>
+                    Switch to Vendor Dashboard
+                  </span>
                 </Link>
 
                 <DropdownMenu>
