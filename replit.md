@@ -41,7 +41,14 @@ Preferred communication style: Simple, everyday language.
 - **Intelligent Vendor Ranking & Recommendation System**: 4-dimension weighted scoring algorithm (Availability, Budget, Service Match, Location) with labels like "Best match" and "Budget friendly". Presents recommendations in a Netflix-style UI.
 - **Vendor Portal**:
   - **Authentication**: Vendor signup, login, and JWT-based authentication with smart login redirect based on onboarding status.
-  - **Onboarding**: Stripe Connect integration for Express/Standard accounts with "Skip for now" option.
+  - **6-Step Onboarding Wizard**: Comprehensive vendor profile creation flow (`/vendor/onboarding`) with sidebar progress tracking:
+    - **Step 1 - Service Type**: Grid selection of 9 service categories (catering, hair-styling, makeup, DJ, nails, florist, photography, videography, prop-rental)
+    - **Step 2 - About You**: Business info with new video introduction field, social media links
+    - **Step 3 - Location**: City, state, service radius with geolocation support
+    - **Step 4 - Portfolio**: Image upload with cover image selection
+    - **Step 5 - Service Description**: Service headline and detailed description
+    - **Step 6 - Completion**: Choice to create listing immediately or visit dashboard
+  - **Entry Points**: New vendor signup → onboarding wizard; Customer "Become a Vendor" → onboarding wizard
   - **Dashboard UI**: Complete dashboard with sidebar navigation, stats cards, onboarding status, and quick actions.
   - **Feature Pages (UI Complete)**: Bookings, Listings (create/edit/delete, publish draft functionality), Messages, Calendar, Payments, Reviews, Notifications.
 
