@@ -134,13 +134,12 @@ export default function Navigation() {
             {/* Vendor Logged In State */}
             {userRole === "vendor" && (
               <>
-                <Link href="/vendor/dashboard">
-                  <span
-                    className="text-sm font-medium hover:underline cursor-pointer"
-                    data-testid="link-vendor-dashboard"
-                  >
-                    Switch to Vendor Dashboard
-                  </span>
+                <Link
+                  href="/vendor/dashboard"
+                  className="text-sm font-medium hover:underline cursor-pointer"
+                  data-testid="link-vendor-dashboard"
+                >
+                  Switch to Vendor Dashboard
                 </Link>
 
                 <DropdownMenu>
