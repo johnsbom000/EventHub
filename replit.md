@@ -11,7 +11,7 @@ Preferred communication style: Simple, everyday language.
 ### Frontend
 - **Technology**: React 18+ with TypeScript, bundled by Vite.
 - **UI/UX**: Utilizes shadcn/ui components (based on Radix UI) and Tailwind CSS.
-  - **Design System**: Mint green primary color (#9EDBC0), Inter font, responsive design. Dark mode included.
+  - **Design System**: Mint green primary color (#9EDBC0), Playfair Display for headings, Inter for body text, responsive design. Dark mode included.
   - **Interaction**: Custom `hover-elevate` and `active-elevate-2` utility classes.
 - **State Management**: TanStack Query for server state, React hooks for local UI state.
 - **Form Handling**: React Hook Form with Zod validation.
