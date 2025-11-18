@@ -1,0 +1,272 @@
+Segment: Vendor Onboarding Wizard (6 Steps, Styled) + Become a Vendor Flow
+
+You are updating the EventHub app built with React + TypeScript + TailwindCSS.
+
+GOAL
+1. Implement a 6-step vendor onboarding wizard with this sidebar order:
+   1) Service Type
+   2) About You
+   3) Location
+   4) Portfolio
+   5) Service Description
+   6) Ready to Create Listing?
+
+2. Use this same wizard when:
+   - A user signs up directly as a vendor, OR
+   - A logged-in customer clicks “Become a Vendor” in the profile dropdown.
+
+3. After completing Step 6, save all data, upgrade the user to vendor (if needed), and redirect them to their Vendor Dashboard.
+
+---------------------------------------------------
+GLOBAL STYLE
+
+Apply these styles consistently across all onboarding steps:
+
+- White background
+- Primary color: #9EDBC0
+- Cards and main containers:
+  - rounded-xl
+  - light shadow
+- Use a centered main card for each step with:
+  - Header (title)
+  - Short description (optional)
+  - Form fields
+  - Navigation buttons (“Back”, “Next”, etc.)
+
+Left sidebar:
+- Title: “Vendor Profile”
+- Vertical list of the 6 steps with numbered circles.
+- Active step highlighted (e.g., primary color circle and darker text).
+- Completed steps can show a subtle checkmark or filled circle.
+
+---------------------------------------------------
+ENTRY POINTS
+
+A) New Vendor Signup
+- When a user signs up as a vendor, navigate them to: `/vendor/onboarding`.
+- Start at **Step 1: Service Type**.
+
+B) “Become a Vendor” (Existing Customer)
+- In the profile dropdown for logged-in customers, there is an item: **“Become a Vendor”**.
+- When clicked:
+  - Navigate to `/vendor/onboarding`.
+  - Start at **Step 1: Service Type**.
+- On successful completion of the wizard:
+  - Upgrade their role to `vendor`.
+  - Ensure they have a vendor dashboard record.
+  - Redirect to `/vendor/dashboard`.
+
+Both paths must share the same onboarding wizard and logic.
+
+---------------------------------------------------
+STEP COMPONENTS (MAPPING TO FILES)
+
+Use/organize the steps as separate components. Map them like this:
+
+- Step 1 → `Step1_ServiceSetup.tsx`  (Service Type)
+- Step 2 → `Step2_AboutYou.tsx`     (create this if it doesn’t exist yet)
+- Step 3 → `Step3_Location.tsx`     (Location)
+- Step 4 → `Step4_Portfolio.tsx`    (rename from Photos component if needed)
+- Step 5 → `Step5_ServiceDescription.tsx`
+- Step 6 → `Step6_ReadyToCreateListing.tsx`
+
+Each step component should receive props for:
+- current form state
+- setters/update handlers
+- navigation handlers (onNext, onBack)
+
+Persist data in a parent component (`VendorOnboarding.tsx`) that controls the active step and passes state down.
+
+---------------------------------------------------
+STEP 1 – SERVICE TYPE  
+(File: `Step1_ServiceSetup.tsx`)
+
+- Header: **“Which service will you provide?”**
+- Layout: a card centered in the page with:
+  - Title
+  - Short description (optional, e.g. “Choose the main service you offer.”)
+  - A 3×3 grid of service type cards:
+
+  Services:
+  - Catering
+  - Hair Styling
+  - Makeup
+  - DJ
+  - Nails
+  - Florist
+  - Photography
+  - Videography
+  - Prop Rental
+
+- Card styles:
+  - White background
+  - `rounded-lg`
+  - Light shadow on hover
+  - Padding and centered label
+  - When selected:
+    - Border or outline using `#9EDBC0`
+    - Maybe subtle background tint
+
+- Behavior:
+  - Clicking a card selects the service type and stores it in onboarding state.
+  - “Next” button at the bottom of the card:
+    - Disabled until a service type is selected.
+    - On click → validate selection → move to Step 2 (About You).
+
+---------------------------------------------------
+STEP 2 – ABOUT YOU  
+(File: `Step2_AboutYou.tsx`)
+
+- Sidebar label: **“About You”**.
+- Header: **“Tell us about you and your business.”**
+- Fields (use previous fields you already had for “About You” + Vendor Details):
+  - Business Name (e.g., “Your Company LLC”)
+  - Contact Name
+  - Short bio/description (textarea)
+  - Optional website / Instagram / TikTok link
+- NEW FIELD (important):
+  - Label: **“Attach a personalized video”**
+  - Options:
+    - Either a file upload for a video, or
+    - A URL input (e.g., “Paste a link to your video (YouTube, Vimeo, etc.)”).
+  - Store in vendor profile as `introVideoUrl` or similar.
+
+- Style:
+  - Use the same rounded-xl card style and primary button color #9EDBC0.
+- Buttons:
+  - “Back” → returns to Step 1.
+  - “Next” → validates required fields → goes to Step 3 (Location).
+
+---------------------------------------------------
+STEP 3 – LOCATION  
+(File: `Step3_Location.tsx` or keep `Step2_Location.tsx` but use it as Step 3)
+
+- Sidebar label: **“Location”**.
+- Header: **“Where will you offer your service?”**
+- Form fields:
+  - City text input (placeholder: “Enter a city”)
+  - State/Region input or dropdown (if already present in your data model)
+  - Optional service radius or “Areas you serve”
+
+- Extra UI:
+  - Button: **“Use my current location”** with a GPS/location icon.
+  - On click:
+    - Use browser geolocation (if implemented) to suggest a city/region.
+    - This can be stubbed if not fully implemented yet.
+
+- Map Modal:
+  - “Choose on map” action can open a large centered modal.
+  - Modal style:
+    - Width: ~80% of viewport
+    - Background: white, rounded-xl, shadow
+    - Overlay: `rgba(0,0,0,0.3)`
+  - The modal content can be a placeholder map component.
+
+- Buttons:
+  - “Back” → Step 2.
+  - “Next” → Step 4 (Portfolio).
+
+- Style:
+  - Primary button uses `#9EDBC0`.
+
+---------------------------------------------------
+STEP 4 – PORTFOLIO (was Photos)  
+(File: `Step4_Portfolio.tsx` – you can rename `Step3_Photos.tsx` and update labels)
+
+- Sidebar label: **“Portfolio”** (NOT “Photos”).
+- Header: **“Add portfolio items that showcase your work.”**
+- Explain: “You can add listing-specific photos later when you create a listing.”
+
+- Layout:
+  - Grid of portfolio tiles:
+    - Tiles ~200x200
+    - `rounded-lg`
+    - Each tile shows an image preview.
+    - One tile is a “+” tile for uploading more images.
+  - Each tile should have a small “Cover” tag in the top-left for the selected cover image.
+
+- Controls:
+  - “Upload” or clicking the “+” tile opens file picker for images.
+  - Ability to mark one image as the cover photo.
+
+- Buttons:
+  - “Back” → Step 3.
+  - “Next” → Step 5.
+  - “Save and exit” button in the top-right of the card:
+    - Saves current onboarding state and returns user to vendor dashboard (if profile is partially complete).
+
+- Extra:
+  - “Get tips” text link in the bottom-left (can link to a stub help page or just be non-functional for now).
+
+---------------------------------------------------
+STEP 5 – SERVICE DESCRIPTION  
+(File: `Step5_ServiceDescription.tsx`)
+
+- Sidebar label: **“Service Description”**.
+- Header: **“Describe what you offer.”**
+- Fields (reuse existing service description fields):
+  - Short headline (e.g., “Luxury bridal makeup & hair”)
+  - Long description (textarea)
+  - Optional:
+    - Brief list of packages or starting price notes.
+
+- Buttons:
+  - “Back” → Step 4.
+  - “Next” → Step 6.
+
+---------------------------------------------------
+STEP 6 – READY TO CREATE LISTING?  
+(File: `Step6_ReadyToCreateListing.tsx`)
+
+- Sidebar label: **“Ready to Create Listing?”**
+- Use the design from your screenshot:
+  - Title: **“Great! Your Profile is Complete”**
+  - Subtext: “You’ve successfully set up your vendor profile. Now you can create your first listing to start receiving bookings.”
+  - Card with “What’s Next?” checklist:
+    - Define Your Offerings
+    - Set Your Availability
+    - Add Special Offers
+
+- Buttons at the bottom:
+  - **“I’ll Do This Later”**
+  - **“Yes, Create Listing →”**
+
+- Behavior:
+  - On either button, finalize the onboarding:
+    - Save any remaining state to the vendor profile.
+    - Mark profile as complete.
+    - Ensure vendor dashboard record exists.
+    - Upgrade user’s role to `vendor` if they came from “Become a Vendor”.
+  - If clicking **“Yes, Create Listing”**, optionally redirect to listing-creation flow; otherwise:
+    - Redirect to `/vendor/dashboard`.
+
+---------------------------------------------------
+DATA & ROLE LOGIC
+
+- Maintain a `VendorProfile` object in state across steps. Save to backend when:
+  - Moving between steps (autosave) OR
+  - On final completion (at minimum).
+- Ensure the profile is linked to the current user (`userId`).
+- After Step 6:
+  - Set `user.role = "vendor"` if they were previously a customer.
+  - Ensure there is a vendor dashboard entry for this vendor.
+
+- Finally, redirect to:
+  - `/vendor/dashboard`
+
+---------------------------------------------------
+IMPLEMENTATION NOTES
+
+- Use existing auth/context hooks for the current user.
+- Use TypeScript interfaces for:
+  - `User`
+  - `VendorProfile` (including `serviceType`, `bio`, `location`, `portfolioImages`, `introVideoUrl`, etc.)
+- Navigation between steps should NOT reset previously entered data.
+- Handle refresh by loading saved onboarding data and restoring the appropriate step if possible.
+
+Please implement:
+- The full 6-step onboarding wizard at `/vendor/onboarding` with the styles above.
+- The “Become a Vendor” entrypoint to that wizard.
+- The new “About You” video field.
+- The renaming of the “Photos” step to **“Portfolio”** with the updated text.
+- The redirect to `/vendor/dashboard` once onboarding is complete.

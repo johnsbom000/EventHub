@@ -29,12 +29,11 @@ export function ServiceTypeStep({ formData, updateFormData, goNext }: ServiceTyp
   return (
     <div className="max-w-4xl mx-auto p-8" data-testid="step-content-serviceType">
       <div className="mb-8">
-        <h2 className="text-2xl font-bold mb-2">What service do you offer?</h2>
+        <h2 className="text-2xl font-bold mb-2">What service will you offer?</h2>
         <p className="text-muted-foreground">
           Select the type of service you want to list on Event Hub
         </p>
       </div>
-
       <div className="grid grid-cols-3 gap-4">
         {SERVICE_TYPES.map((service) => {
           const Icon = service.icon;
