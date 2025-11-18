@@ -71,3 +71,32 @@ export function requireCustomerAuth(req: Request, res: Response, next: NextFunct
   (req as any).customerAuth = payload;
   next();
 }
+
+// Middleware for dual authentication (accepts both customer and vendor tokens)
+export function requireDualAuth(req: Request, res: Response, next: NextFunction) {
+  const authHeader = req.headers.authorization;
+  
+  if (!authHeader || !authHeader.startsWith("Bearer ")) {
+    return res.status(401).json({ message: "No token provided" });
+  }
+  
+  const token = authHeader.substring(7);
+  const payload = verifyToken(token);
+  
+  if (!payload) {
+    return res.status(401).json({ message: "Invalid or expired token" });
+  }
+  
+  if (payload.type !== "customer" && payload.type !== "vendor") {
+    return res.status(401).json({ message: "Invalid token type" });
+  }
+  
+  // Set appropriate auth context based on token type
+  if (payload.type === "customer") {
+    (req as any).customerAuth = payload;
+  } else {
+    (req as any).vendorAuth = payload;
+  }
+  
+  next();
+}

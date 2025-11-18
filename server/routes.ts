@@ -3,7 +3,7 @@ import { createServer, type Server } from "http";
 import { storage } from "./storage";
 import { insertEventSchema, insertVendorAccountSchema, insertVendorProfileSchema, vendorProfiles, vendorAccounts, vendorListings, users, insertUserSchema } from "@shared/schema";
 import { scoreVendorsForEvent } from "./vendorScoring";
-import { hashPassword, comparePassword, generateToken, requireVendorAuth, requireCustomerAuth } from "./auth";
+import { hashPassword, comparePassword, generateToken, requireVendorAuth, requireCustomerAuth, requireDualAuth } from "./auth";
 import { z } from "zod";
 import { db } from "./db";
 import { eq, and } from "drizzle-orm";
@@ -261,38 +261,12 @@ export async function registerRoutes(app: Express): Promise<Server> {
     serviceDescription: z.string(),
   });
 
-  // Dual-auth middleware: accepts either customer or vendor token
-  const optionalDualAuth = async (req: any, res: any, next: any) => {
+  app.post("/api/vendor/onboarding/complete", requireDualAuth, async (req, res) => {
     try {
-      const authHeader = req.headers.authorization;
-      if (!authHeader) {
-        return res.status(401).json({ error: "No authentication token provided" });
-      }
-
-      const token = authHeader.split(" ")[1];
-      const jwt = require("jsonwebtoken");
-      const secret = process.env.JWT_SECRET;
-      if (!secret) {
-        return res.status(500).json({ error: "JWT secret not configured" });
-      }
-
-      const decoded: any = jwt.verify(token, secret);
-      req.auth = decoded;
-      next();
-    } catch (error: any) {
-      return res.status(401).json({ error: "Invalid or expired token" });
-    }
-  };
-
-  app.post("/api/vendor/onboarding/complete", optionalDualAuth, async (req, res) => {
-    try {
-      const auth = (req as any).auth;
-      const isCustomer = auth.type === "customer";
-      const isVendor = auth.type === "vendor";
-
-      if (!isCustomer && !isVendor) {
-        return res.status(401).json({ error: "Invalid token type" });
-      }
+      const customerAuth = (req as any).customerAuth;
+      const vendorAuth = (req as any).vendorAuth;
+      const isCustomer = !!customerAuth;
+      const isVendor = !!vendorAuth;
 
       // Validate onboarding data
       const onboardingData = completeOnboardingSchema.parse(req.body);
@@ -302,7 +276,7 @@ export async function registerRoutes(app: Express): Promise<Server> {
 
       if (isCustomer) {
         // Customer becoming vendor flow
-        const customerAccounts = await db.select().from(users).where(eq(users.id, auth.id));
+        const customerAccounts = await db.select().from(users).where(eq(users.id, customerAuth.id));
         if (customerAccounts.length === 0) {
           return res.status(404).json({ error: "Customer account not found" });
         }
@@ -312,16 +286,23 @@ export async function registerRoutes(app: Express): Promise<Server> {
         const existingVendor = await db.select().from(vendorAccounts).where(eq(vendorAccounts.email, customer.email));
         
         if (existingVendor.length > 0) {
-          // Vendor account already exists, use it
+          // Vendor account already exists - link it to customer if not already
           vendorAccountId = existingVendor[0].id;
+          
+          // Update vendor account to link to customer if not already linked
+          if (!existingVendor[0].userId) {
+            await db.update(vendorAccounts)
+              .set({ userId: customer.id })
+              .where(eq(vendorAccounts.id, vendorAccountId));
+          }
         } else {
-          // Create new vendor account linked to customer
+          // Create new vendor account linked to customer with same password
           const [newVendorAccount] = await db.insert(vendorAccounts).values({
             userId: customer.id,
             email: customer.email,
-            password: customer.password, // Reuse hashed password
+            password: customer.password, // Share password hash
             businessName: onboardingData.businessName,
-            profileComplete: false, // Will be set to true after profile creation
+            profileComplete: false,
           }).returning();
           vendorAccountId = newVendorAccount.id;
         }
@@ -334,12 +315,12 @@ export async function registerRoutes(app: Express): Promise<Server> {
         });
       } else {
         // Existing vendor completing onboarding
-        const vendorAcct = await db.select().from(vendorAccounts).where(eq(vendorAccounts.id, auth.id));
+        const vendorAcct = await db.select().from(vendorAccounts).where(eq(vendorAccounts.id, vendorAuth.id));
         if (vendorAcct.length === 0) {
           return res.status(404).json({ error: "Vendor account not found" });
         }
         vendorAccountId = vendorAcct[0].id;
-        const token = req.headers.authorization.split(" ")[1];
+        const token = req.headers.authorization!.split(" ")[1];
         vendorToken = token;
       }
 
@@ -393,9 +374,6 @@ export async function registerRoutes(app: Express): Promise<Server> {
     } catch (error: any) {
       if (error.name === "ZodError") {
         return res.status(400).json({ error: "Validation failed", details: error.errors });
-      }
-      if (error.name === "JsonWebTokenError") {
-        return res.status(401).json({ error: "Invalid token" });
       }
       res.status(500).json({ error: error.message });
     }
