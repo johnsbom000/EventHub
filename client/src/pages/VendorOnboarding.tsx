@@ -1,197 +1,193 @@
-import { useState, useEffect } from "react";
-import { useQuery } from "@tanstack/react-query";
+import { useState } from "react";
 import { useLocation } from "wouter";
-import { Button } from "@/components/ui/button";
-import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card";
-import { Label } from "@/components/ui/label";
-import { RadioGroup, RadioGroupItem } from "@/components/ui/radio-group";
-import { Input } from "@/components/ui/input";
-import { useToast } from "@/hooks/use-toast";
-import { apiRequest } from "@/lib/queryClient";
-import { Loader2 } from "lucide-react";
+import { Check } from "lucide-react";
+import Step1_ServiceSetup from "@/features/vendor/onboarding/Step1_ServiceSetup";
+import Step2_AboutYou from "@/features/vendor/onboarding/Step2_AboutYou";
+import Step3_Location from "@/features/vendor/onboarding/Step3_Location";
+import Step4_Portfolio from "@/features/vendor/onboarding/Step4_Portfolio";
+import Step5_ServiceDescription from "@/features/vendor/onboarding/Step5_ServiceDescription";
+import Step6_ReadyToCreateListing from "@/features/vendor/onboarding/Step6_ReadyToCreateListing";
+
+export interface VendorOnboardingData {
+  serviceType: string;
+  businessName: string;
+  contactName: string;
+  bio: string;
+  website?: string;
+  instagram?: string;
+  tiktok?: string;
+  introVideoUrl?: string;
+  city: string;
+  state?: string;
+  serviceRadius?: string;
+  portfolioImages: string[];
+  coverImageIndex: number;
+  serviceHeadline: string;
+  serviceDescription: string;
+}
+
+const STEPS = [
+  { id: 1, label: "Service Type" },
+  { id: 2, label: "About You" },
+  { id: 3, label: "Location" },
+  { id: 4, label: "Portfolio" },
+  { id: 5, label: "Service Description" },
+  { id: 6, label: "Ready to Create Listing?" },
+];
 
 export default function VendorOnboarding() {
   const [, setLocation] = useLocation();
-  const { toast } = useToast();
-  const [accountType, setAccountType] = useState<"express" | "standard">("express");
-  const [businessName, setBusinessName] = useState("");
-  const [isCreating, setIsCreating] = useState(false);
-
-  // Check if vendor account exists and has stripe connected
-  const { data: vendorAccount, isLoading } = useQuery({
-    queryKey: ["/api/vendor/me"],
-    retry: false,
+  const [currentStep, setCurrentStep] = useState(1);
+  const [formData, setFormData] = useState<VendorOnboardingData>({
+    serviceType: "",
+    businessName: "",
+    contactName: "",
+    bio: "",
+    website: "",
+    instagram: "",
+    tiktok: "",
+    introVideoUrl: "",
+    city: "",
+    state: "",
+    serviceRadius: "",
+    portfolioImages: [],
+    coverImageIndex: 0,
+    serviceHeadline: "",
+    serviceDescription: "",
   });
 
-  // Populate business name from vendor account when data loads
-  useEffect(() => {
-    console.log("VendorOnboarding: vendor account data:", vendorAccount);
-    if (vendorAccount?.businessName) {
-      console.log("VendorOnboarding: setting business name to:", vendorAccount.businessName);
-      setBusinessName(vendorAccount.businessName);
+  const updateFormData = (updates: Partial<VendorOnboardingData>) => {
+    setFormData((prev) => ({ ...prev, ...updates }));
+  };
+
+  const handleNext = () => {
+    if (currentStep < STEPS.length) {
+      setCurrentStep(currentStep + 1);
+    }
+  };
+
+  const handleBack = () => {
+    if (currentStep > 1) {
+      setCurrentStep(currentStep - 1);
+    }
+  };
+
+  const handleComplete = async (createListing: boolean) => {
+    // TODO: Save vendor profile data to backend
+    // TODO: Upgrade customer to vendor role if needed
+    // Redirect to vendor dashboard or listing creation
+    if (createListing) {
+      setLocation("/vendor/listings/new");
     } else {
-      console.log("VendorOnboarding: no business name found in vendor account");
+      setLocation("/vendor/dashboard");
     }
-  }, [vendorAccount]);
+  };
 
-  async function handleCreateAccount() {
-    if (!businessName.trim()) {
-      toast({
-        variant: "destructive",
-        title: "Missing information",
-        description: "Please enter your business name",
-      });
-      return;
+  const renderStep = () => {
+    switch (currentStep) {
+      case 1:
+        return (
+          <Step1_ServiceSetup
+            selectedService={formData.serviceType}
+            onSelect={(serviceType) => updateFormData({ serviceType })}
+            onNext={handleNext}
+          />
+        );
+      case 2:
+        return (
+          <Step2_AboutYou
+            formData={formData}
+            updateFormData={updateFormData}
+            onNext={handleNext}
+            onBack={handleBack}
+          />
+        );
+      case 3:
+        return (
+          <Step3_Location
+            formData={formData}
+            updateFormData={updateFormData}
+            onNext={handleNext}
+            onBack={handleBack}
+          />
+        );
+      case 4:
+        return (
+          <Step4_Portfolio
+            formData={formData}
+            updateFormData={updateFormData}
+            onNext={handleNext}
+            onBack={handleBack}
+          />
+        );
+      case 5:
+        return (
+          <Step5_ServiceDescription
+            formData={formData}
+            updateFormData={updateFormData}
+            onNext={handleNext}
+            onBack={handleBack}
+          />
+        );
+      case 6:
+        return (
+          <Step6_ReadyToCreateListing
+            onComplete={handleComplete}
+            onBack={handleBack}
+          />
+        );
+      default:
+        return null;
     }
-
-    setIsCreating(true);
-    try {
-      const token = localStorage.getItem("vendorToken");
-      const response = await fetch("/api/vendor/connect/onboard", {
-        method: "POST",
-        headers: {
-          "Content-Type": "application/json",
-          "Authorization": `Bearer ${token}`,
-        },
-        body: JSON.stringify({
-          accountType,
-          businessName,
-        }),
-      });
-
-      if (!response.ok) {
-        const error = await response.json();
-        throw new Error(error.error || "Failed to create Stripe account");
-      }
-
-      const { onboardingUrl } = await response.json();
-
-      toast({
-        title: "Redirecting to Stripe",
-        description: "Please complete your payment setup",
-      });
-
-      // Redirect to Stripe onboarding
-      if (onboardingUrl) {
-        window.location.href = onboardingUrl;
-      }
-    } catch (error: any) {
-      toast({
-        variant: "destructive",
-        title: "Setup failed",
-        description: error.message || "Could not create Stripe account",
-      });
-    } finally {
-      setIsCreating(false);
-    }
-  }
-
-  if (isLoading) {
-    return (
-      <div className="min-h-screen flex items-center justify-center">
-        <Loader2 className="h-8 w-8 animate-spin text-primary" />
-      </div>
-    );
-  }
-
-  if (vendorAccount?.stripeOnboardingComplete) {
-    // Already onboarded, redirect to dashboard
-    setLocation("/vendor/dashboard");
-    return null;
-  }
+  };
 
   return (
-    <div className="min-h-screen flex items-center justify-center bg-background p-4">
-      <Card className="w-full max-w-2xl">
-        <CardHeader>
-          <CardTitle className="text-2xl">Set Up Payment Processing</CardTitle>
-          <CardDescription>
-            Connect your Stripe account to receive payments from customers. Event Hub takes a 15% platform fee.
-          </CardDescription>
-        </CardHeader>
-        <CardContent className="space-y-6">
-          <div className="space-y-4">
-            <div>
-              <Label htmlFor="business-name">Business Name</Label>
-              <Input
-                id="business-name"
-                value={businessName}
-                onChange={(e) => setBusinessName(e.target.value)}
-                placeholder="Your Business LLC"
-                data-testid="input-business-name"
-              />
-            </div>
-
-            <div className="space-y-3">
-              <Label>Account Type</Label>
-              <RadioGroup
-                value={accountType}
-                onValueChange={(value) => setAccountType(value as "express" | "standard")}
+    <div className="min-h-screen bg-white flex">
+      {/* Sidebar */}
+      <div className="w-64 bg-card border-r border-border p-6">
+        <h2 className="text-xl font-bold mb-8">Vendor Profile</h2>
+        <div className="space-y-4">
+          {STEPS.map((step) => (
+            <div
+              key={step.id}
+              className="flex items-center gap-3"
+              data-testid={`sidebar-step-${step.id}`}
+            >
+              <div
+                className={`flex items-center justify-center w-8 h-8 rounded-full border-2 transition-colors ${
+                  step.id === currentStep
+                    ? "bg-primary border-primary text-primary-foreground"
+                    : step.id < currentStep
+                    ? "bg-primary border-primary text-primary-foreground"
+                    : "border-border bg-background"
+                }`}
               >
-                <div className="flex items-start space-x-3 rounded-md border p-4">
-                  <RadioGroupItem value="express" id="express" data-testid="radio-express" />
-                  <div className="flex-1">
-                    <Label htmlFor="express" className="font-semibold cursor-pointer">
-                      Express Account (Recommended)
-                    </Label>
-                    <p className="text-sm text-muted-foreground mt-1">
-                      Create a new Stripe account managed by Event Hub. Quick setup with simplified onboarding.
-                    </p>
-                  </div>
-                </div>
-
-                <div className="flex items-start space-x-3 rounded-md border p-4">
-                  <RadioGroupItem value="standard" id="standard" data-testid="radio-standard" />
-                  <div className="flex-1">
-                    <Label htmlFor="standard" className="font-semibold cursor-pointer">
-                      Standard Account
-                    </Label>
-                    <p className="text-sm text-muted-foreground mt-1">
-                      Link your existing Stripe account. You'll have full control through your own Stripe dashboard.
-                    </p>
-                  </div>
-                </div>
-              </RadioGroup>
+                {step.id < currentStep ? (
+                  <Check className="w-4 h-4" />
+                ) : (
+                  <span className="text-sm font-medium">{step.id}</span>
+                )}
+              </div>
+              <span
+                className={`text-sm ${
+                  step.id === currentStep
+                    ? "font-semibold text-foreground"
+                    : step.id < currentStep
+                    ? "text-foreground"
+                    : "text-muted-foreground"
+                }`}
+              >
+                {step.label}
+              </span>
             </div>
+          ))}
+        </div>
+      </div>
 
-            <div className="bg-muted p-4 rounded-md space-y-2">
-              <h4 className="font-semibold text-sm">Payment Details</h4>
-              <ul className="text-sm text-muted-foreground space-y-1">
-                <li>• Platform fee: 15% per booking</li>
-                <li>• Customers pay via Stripe with secure checkout</li>
-                <li>• Funds are transferred to your account automatically</li>
-                <li>• You set your own pricing and packages</li>
-              </ul>
-            </div>
-          </div>
-
-          <div className="flex gap-2">
-            <Button
-              onClick={handleCreateAccount}
-              disabled={isCreating || !businessName.trim()}
-              className="flex-1"
-              data-testid="button-continue"
-            >
-              {isCreating ? (
-                <>
-                  <Loader2 className="mr-2 h-4 w-4 animate-spin" />
-                  Setting up...
-                </>
-              ) : (
-                "Continue to Stripe"
-              )}
-            </Button>
-            <Button
-              variant="ghost"
-              onClick={() => setLocation("/vendor/dashboard")}
-              disabled={isCreating}
-              data-testid="button-skip"
-            >
-              Skip for now
-            </Button>
-          </div>
-        </CardContent>
-      </Card>
+      {/* Main Content */}
+      <div className="flex-1 overflow-y-auto">
+        <div className="max-w-3xl mx-auto py-12 px-6">{renderStep()}</div>
+      </div>
     </div>
   );
 }

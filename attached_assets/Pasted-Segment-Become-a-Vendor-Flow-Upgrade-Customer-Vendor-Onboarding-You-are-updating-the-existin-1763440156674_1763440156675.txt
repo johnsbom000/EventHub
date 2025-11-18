@@ -1,0 +1,72 @@
+Segment: Become a Vendor Flow (Upgrade Customer → Vendor + Onboarding)
+
+You are updating the existing EventHub app built with React + TypeScript + TailwindCSS (and the existing auth system).
+
+Goal:
+When a logged-in CUSTOMER clicks “Become a Vendor” in the profile dropdown:
+1) Take them to the vendor onboarding questions.
+2) Save their answers as a vendor profile.
+3) Upgrade their account to vendor and create a vendor dashboard entry.
+4) Redirect them into their new Vendor Dashboard.
+
+Details & Requirements:
+
+1) Entry Point: “Become a Vendor” dropdown item
+- In the profile dropdown for logged-in customers, there is an item labeled “Become a Vendor”.
+- When clicked, navigate to route: `/vendor/onboarding`.
+- Only show this option for users who are currently customers (not already vendors).
+
+2) Vendor Onboarding Page: `/vendor/onboarding`
+- Create a page/component for vendor onboarding questions.
+- This page should:
+  - Require the user to be logged in.
+  - Pre-fill any known info from their profile where applicable (name, email, etc.).
+- Display a form (you can make simple placeholder questions that are easy to expand later), e.g.:
+  - Business name
+  - Vendor type (dropdown: e.g., photographer, DJ, florist, venue, etc.)
+  - Location (city, state)
+  - Website or social link
+  - Short bio / description
+  - Starting price or price range
+- Include a primary button at the bottom: “Save & Create My Vendor Account”.
+
+3) Saving Vendor Data
+- On form submit:
+  - Validate required fields.
+  - Save the onboarding data to a `vendors` (or `vendor_profiles`) table/collection.
+  - Link this vendor profile to the currently authenticated user (e.g., `userId` foreign key).
+  - Update the user’s role from `customer` → `vendor` (for example: `role = "vendor"`).
+- Make sure the save flow:
+  - Shows loading state while saving.
+  - Shows basic error feedback if something fails.
+  - Only proceeds when data is successfully stored.
+
+4) Create / Attach Vendor Dashboard
+- After successfully saving vendor onboarding data and updating the user role:
+  - Ensure there is a vendor dashboard entry associated with this vendor profile.
+  - If needed, create a default vendor dashboard record (e.g. availability = empty, services = empty, etc.), linked to the same `userId` or `vendorId`.
+
+5) Redirect After Onboarding
+- Once the onboarding form is successfully submitted and saved:
+  - Redirect the user to `/vendor/dashboard`.
+- `/vendor/dashboard` should now treat this user as a vendor and show their vendor dashboard view (not the customer view).
+
+6) Access Control & Navbar Behavior
+- After the role changes to vendor:
+  - The navbar/profile dropdown should behave the same as any other vendor account (e.g., show “Switch to Vendor Dashboard” or similar vendor-specific controls).
+- Make sure customer-only options remain available (they can still book vendors), but vendor-specific options are also now visible.
+
+7) Implementation Notes
+- Reuse existing auth hooks / context for getting the current user.
+- Use TypeScript types for `User`, `VendorProfile`, etc.
+- Keep the onboarding UI simple and clean, using the existing Tailwind style system.
+- Organize code so this flow is easy to extend with more vendor questions later.
+
+Please implement:
+- The `/vendor/onboarding` route + component.
+- The “Become a Vendor” dropdown navigation.
+- The logic to:
+  - Save vendor onboarding data,
+  - Upgrade user role to `vendor`,
+  - Create/ensure a vendor dashboard entry,
+  - Redirect to `/vendor/dashboard` on success.
