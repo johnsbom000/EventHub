@@ -1389,32 +1389,40 @@ export async function registerRoutes(app: Express): Promise<Server> {
         .from(vendorListings);
       const totalListings = totalListingsResult.count;
 
-      // Listings by type
+      // Listings by status
+      const [activeListingsResult] = await db
+        .select({ count: count() })
+        .from(vendorListings)
+        .where(eq(vendorListings.status, "active"));
+      const activeListings = activeListingsResult.count;
+
+      const [draftListingsResult] = await db
+        .select({ count: count() })
+        .from(vendorListings)
+        .where(eq(vendorListings.status, "draft"));
+      const draftListings = draftListingsResult.count;
+
+      const [inactiveListingsResult] = await db
+        .select({ count: count() })
+        .from(vendorListings)
+        .where(eq(vendorListings.status, "inactive"));
+      const inactiveListings = inactiveListingsResult.count;
+
+      // Listings by service type (from vendor profiles)
       const listingsByType = await db
         .select({
           serviceType: vendorProfiles.serviceType,
           count: count()
         })
         .from(vendorProfiles)
-        .where(eq(vendorProfiles.active, true))
         .groupBy(vendorProfiles.serviceType);
-
-      // Active vs inactive
-      const [activeCount] = await db
-        .select({ count: count() })
-        .from(vendorProfiles)
-        .where(eq(vendorProfiles.active, true));
-
-      const [inactiveCount] = await db
-        .select({ count: count() })
-        .from(vendorProfiles)
-        .where(eq(vendorProfiles.active, false));
 
       res.json({
         totalListings,
         listingsByType,
-        activeListings: activeCount.count,
-        inactiveListings: inactiveCount.count,
+        activeListings,
+        draftListings,
+        inactiveListings,
       });
     } catch (error: any) {
       res.status(500).json({ error: error.message });

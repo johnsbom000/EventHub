@@ -1,6 +1,8 @@
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card";
 import { Button } from "@/components/ui/button";
+import { Input } from "@/components/ui/input";
 import { Briefcase, Camera, Music, Flower2, Utensils, Scissors, Palette, Video, Package } from "lucide-react";
+import { useState, useEffect } from "react";
 
 const SERVICES = [
   { value: "catering", label: "Catering", icon: Utensils },
@@ -21,6 +23,33 @@ interface Props {
 }
 
 export default function Step1_ServiceSetup({ selectedService, onSelect, onNext }: Props) {
+  const [customService, setCustomService] = useState("");
+  const isOtherSelected = selectedService === "other" || (selectedService && !SERVICES.find(s => s.value === selectedService));
+
+  // Hydrate customService state from selectedService prop when component mounts or prop changes
+  useEffect(() => {
+    if (selectedService && selectedService.startsWith("other:")) {
+      const customText = selectedService.substring(6); // Remove "other:" prefix
+      setCustomService(customText);
+    } else if (selectedService === "other") {
+      setCustomService("");
+    }
+  }, [selectedService]);
+
+  const handleOtherClick = () => {
+    onSelect("other");
+  };
+
+  const handleCustomServiceChange = (e: React.ChangeEvent<HTMLInputElement>) => {
+    const value = e.target.value;
+    setCustomService(value);
+    if (value.trim()) {
+      onSelect(`other:${value}`);
+    } else {
+      onSelect("other");
+    }
+  };
+
   return (
     <Card className="rounded-xl shadow-lg">
       <CardHeader>
@@ -49,10 +78,35 @@ export default function Step1_ServiceSetup({ selectedService, onSelect, onNext }
           })}
         </div>
 
+        <div
+          onClick={handleOtherClick}
+          className={`flex items-center gap-4 p-6 rounded-lg border-2 transition-all cursor-pointer hover:shadow-md ${
+            isOtherSelected
+              ? "border-primary bg-accent"
+              : "border-border hover:border-primary/50"
+          }`}
+          data-testid="service-other"
+        >
+          <div className="flex items-center gap-3 flex-1">
+            <Briefcase className="w-8 h-8 text-primary flex-shrink-0" />
+            <div className="flex-1">
+              <Input
+                type="text"
+                placeholder="Other - Please specify your service type"
+                value={customService}
+                onChange={handleCustomServiceChange}
+                onClick={(e) => e.stopPropagation()}
+                className={`border-0 focus-visible:ring-0 px-0 ${isOtherSelected ? "bg-accent" : "bg-background"}`}
+                data-testid="input-custom-service"
+              />
+            </div>
+          </div>
+        </div>
+
         <div className="flex justify-end">
           <Button
             onClick={onNext}
-            disabled={!selectedService}
+            disabled={Boolean(!selectedService || (isOtherSelected && customService.trim().length === 0))}
             data-testid="button-next"
           >
             Next
