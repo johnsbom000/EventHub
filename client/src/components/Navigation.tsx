@@ -160,7 +160,7 @@ export default function Navigation() {
                   </DropdownMenuTrigger>
                   <DropdownMenuContent
                     align="end"
-                    className="w-56"
+                    className="w-60 shadow-lg"
                     data-testid="dropdown-vendor-menu"
                   >
                     <DropdownMenuLabel>Vendor Account</DropdownMenuLabel>
@@ -246,7 +246,7 @@ export default function Navigation() {
                   </DropdownMenuTrigger>
                   <DropdownMenuContent
                     align="end"
-                    className="w-56"
+                    className="w-60 shadow-lg"
                     data-testid="dropdown-customer-menu"
                   >
                     <DropdownMenuLabel>My Account</DropdownMenuLabel>
