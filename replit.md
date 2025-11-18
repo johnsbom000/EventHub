@@ -41,6 +41,17 @@ Preferred communication style: Simple, everyday language.
 - **Dual-Auth Middleware**: `requireDualAuth` accepts both customer and vendor tokens, setting appropriate `req.customerAuth` or `req.vendorAuth` context
 
 ### Key Features
+- **Airbnb-Style Navigation System**: Role-aware navigation with distinct states:
+  - **Logged Out**: "Login / Sign up" button
+  - **Customer Logged In**: "My Events" link + profile dropdown with "Become a Vendor" option
+  - **Vendor Logged In**: "Switch to Vendor Dashboard" text link (Airbnb "Switch to hosting" pattern) + profile dropdown
+  - **Profile Dropdowns**: Enhanced with shadow styling (`w-60 shadow-lg`), includes Profile, Messages, Notifications, Account settings, Languages & currency, Help Center, and Sign out
+  - **Smart Routing**: All dropdown items route to role-specific dashboard sections
+- **Unified Signup Flow**: Multi-step process with role selection:
+  - **Step 1**: Basic info (name, email, password)
+  - **Step 2**: "Are you a vendor?" choice
+  - **Customer path**: Creates customer account → redirects to homepage
+  - **Vendor path**: Collects business name → creates vendor account → redirects to onboarding wizard
 - **Hero Search Bar**: Prominent search with dynamic category filtering, auto-closing date picker, filter persistence via URL parameters, and smart navigation to `/browse` page.
 - **Multi-Step Event Planning Intake**: Comprehensive questionnaire system (`/planner`) for collecting event details, offering paths for direct vendor browsing or curated recommendations.
 - **Intelligent Vendor Ranking & Recommendation System**: 4-dimension weighted scoring algorithm (Availability, Budget, Service Match, Location) with labels like "Best match" and "Budget friendly". Presents recommendations in a Netflix-style UI.
