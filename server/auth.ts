@@ -9,7 +9,7 @@ export interface JWTPayload {
   id: string;
   email?: string;
   username?: string;
-  type: "customer" | "vendor";
+  type: "customer" | "vendor" | "admin";
 }
 
 // Password hashing
@@ -53,7 +53,7 @@ export function requireVendorAuth(req: Request, res: Response, next: NextFunctio
   next();
 }
 
-// Middleware for customer authentication
+// Middleware for customer authentication (also accepts admin tokens)
 export function requireCustomerAuth(req: Request, res: Response, next: NextFunction) {
   const authHeader = req.headers.authorization;
   
@@ -64,7 +64,7 @@ export function requireCustomerAuth(req: Request, res: Response, next: NextFunct
   const token = authHeader.substring(7);
   const payload = verifyToken(token);
   
-  if (!payload || payload.type !== "customer") {
+  if (!payload || (payload.type !== "customer" && payload.type !== "admin")) {
     return res.status(401).json({ message: "Invalid or expired token" });
   }
   
@@ -87,16 +87,35 @@ export function requireDualAuth(req: Request, res: Response, next: NextFunction)
     return res.status(401).json({ message: "Invalid or expired token" });
   }
   
-  if (payload.type !== "customer" && payload.type !== "vendor") {
+  if (payload.type !== "customer" && payload.type !== "vendor" && payload.type !== "admin") {
     return res.status(401).json({ message: "Invalid token type" });
   }
   
   // Set appropriate auth context based on token type
-  if (payload.type === "customer") {
+  if (payload.type === "customer" || payload.type === "admin") {
     (req as any).customerAuth = payload;
   } else {
     (req as any).vendorAuth = payload;
   }
   
+  next();
+}
+
+// Middleware for admin authentication
+export function requireAdminAuth(req: Request, res: Response, next: NextFunction) {
+  const authHeader = req.headers.authorization;
+  
+  if (!authHeader || !authHeader.startsWith("Bearer ")) {
+    return res.status(401).json({ message: "No token provided" });
+  }
+  
+  const token = authHeader.substring(7);
+  const payload = verifyToken(token);
+  
+  if (!payload || payload.type !== "admin") {
+    return res.status(403).json({ message: "Admin access required" });
+  }
+  
+  (req as any).adminAuth = payload;
   next();
 }

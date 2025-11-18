@@ -1,12 +1,12 @@
 import type { Express } from "express";
 import { createServer, type Server } from "http";
 import { storage } from "./storage";
-import { insertEventSchema, insertVendorAccountSchema, insertVendorProfileSchema, vendorProfiles, vendorAccounts, vendorListings, users, insertUserSchema } from "@shared/schema";
+import { insertEventSchema, insertVendorAccountSchema, insertVendorProfileSchema, vendorProfiles, vendorAccounts, vendorListings, users, insertUserSchema, webTraffic, bookings, vendors } from "@shared/schema";
 import { scoreVendorsForEvent } from "./vendorScoring";
-import { hashPassword, comparePassword, generateToken, requireVendorAuth, requireCustomerAuth, requireDualAuth } from "./auth";
+import { hashPassword, comparePassword, generateToken, requireVendorAuth, requireCustomerAuth, requireDualAuth, requireAdminAuth } from "./auth";
 import { z } from "zod";
 import { db } from "./db";
-import { eq, and } from "drizzle-orm";
+import { eq, and, sql as drizzleSql, count, sum, gte, lte, desc } from "drizzle-orm";
 
 export async function registerRoutes(app: Express): Promise<Server> {
   // Vendor Authentication Routes
@@ -165,21 +165,26 @@ export async function registerRoutes(app: Express): Promise<Server> {
       // Hash password
       const hashedPassword = await hashPassword(password);
 
+      // Auto-assign admin role if email matches ADMIN_EMAIL
+      const adminEmail = process.env.ADMIN_EMAIL;
+      const role = (adminEmail && email.toLowerCase() === adminEmail.toLowerCase()) ? "admin" : "customer";
+
       // Create customer account with role and lastLoginAt
       const [user] = await db.insert(users).values({
         name,
         email,
         password: hashedPassword,
-        role: "customer",
+        role,
         displayName: name,
         lastLoginAt: new Date(),
       }).returning();
 
-      // Generate JWT token
+      // Generate JWT token with appropriate type
+      const tokenType = user.role === "admin" ? "admin" : "customer";
       const token = generateToken({
         id: user.id,
         email: user.email,
-        type: "customer",
+        type: tokenType,
       });
 
       res.json({
@@ -223,11 +228,12 @@ export async function registerRoutes(app: Express): Promise<Server> {
         .set({ lastLoginAt: new Date() })
         .where(eq(users.id, user.id));
 
-      // Generate JWT token
+      // Generate JWT token with appropriate type
+      const tokenType = user.role === "admin" ? "admin" : "customer";
       const token = generateToken({
         id: user.id,
         email: user.email,
-        type: "customer",
+        type: tokenType,
       });
 
       res.json({
@@ -258,6 +264,7 @@ export async function registerRoutes(app: Express): Promise<Server> {
         id: user.id,
         name: user.name,
         email: user.email,
+        role: user.role,
         createdAt: user.createdAt,
       });
     } catch (error: any) {
@@ -319,16 +326,25 @@ export async function registerRoutes(app: Express): Promise<Server> {
           return res.status(401).json({ error: "Invalid password" });
         }
 
-        // Update last login timestamp
+        // Auto-assign admin role if email matches ADMIN_EMAIL (in case role wasn't set on signup)
+        const adminEmail = process.env.ADMIN_EMAIL;
+        const shouldBeAdmin = adminEmail && email.toLowerCase() === adminEmail.toLowerCase();
+        
+        // Update role and last login timestamp
+        const updatedRole = shouldBeAdmin ? "admin" : user.role;
         await db.update(users)
-          .set({ lastLoginAt: new Date() })
+          .set({ 
+            lastLoginAt: new Date(),
+            role: updatedRole,
+          })
           .where(eq(users.id, user.id));
 
-        // Generate customer JWT token
+        // Generate JWT token with appropriate type
+        const tokenType = updatedRole === "admin" ? "admin" : "customer";
         const token = generateToken({
           id: user.id,
           email: user.email,
-          type: "customer",
+          type: tokenType,
         });
 
         return res.json({
@@ -337,7 +353,7 @@ export async function registerRoutes(app: Express): Promise<Server> {
             id: user.id,
             name: user.name,
             email: user.email,
-            role: user.role,
+            role: updatedRole,
           },
         });
       }
@@ -1227,6 +1243,232 @@ export async function registerRoutes(app: Express): Promise<Server> {
       });
 
       res.json({ refund, message: "Booking cancelled and refund processed" });
+    } catch (error: any) {
+      res.status(500).json({ error: error.message });
+    }
+  });
+
+  // ============================================
+  // ADMIN ANALYTICS ENDPOINTS
+  // ============================================
+
+  // Track web traffic (optional authentication - tracks anonymous and authenticated users)
+  app.post("/api/track", async (req, res) => {
+    try {
+      const { path, referrer } = req.body;
+      
+      // Basic input validation
+      if (typeof path !== 'string' || !path.startsWith('/')) {
+        return res.status(400).json({ error: "Invalid path" });
+      }
+
+      // Try to extract user info from token if provided
+      let userId: string | null = null;
+      let userType: string | null = null;
+
+      const authHeader = req.headers.authorization;
+      if (authHeader && authHeader.startsWith("Bearer ")) {
+        const token = authHeader.substring(7);
+        const payload = verifyToken(token);
+        if (payload) {
+          userId = payload.id;
+          userType = payload.type;
+        }
+      }
+
+      await db.insert(webTraffic).values({
+        userId,
+        userType,
+        path,
+        referrer: referrer || null,
+      });
+
+      res.json({ success: true });
+    } catch (error: any) {
+      // Silently fail to not impact user experience
+      res.json({ success: false });
+    }
+  });
+
+  // Get user & vendor metrics
+  app.get("/api/admin/stats/users", requireAdminAuth, async (req, res) => {
+    try {
+      // Total users (customers)
+      const [totalUsersResult] = await db
+        .select({ count: count() })
+        .from(users);
+      const totalUsers = totalUsersResult.count;
+
+      // Total vendors
+      const [totalVendorsResult] = await db
+        .select({ count: count() })
+        .from(vendorAccounts);
+      const totalVendors = totalVendorsResult.count;
+
+      // Vendors by service type
+      const vendorsByType = await db
+        .select({ 
+          serviceType: vendorProfiles.serviceType,
+          count: count()
+        })
+        .from(vendorProfiles)
+        .groupBy(vendorProfiles.serviceType);
+
+      // Get user growth (last 30 days)
+      const thirtyDaysAgo = new Date();
+      thirtyDaysAgo.setDate(thirtyDaysAgo.getDate() - 30);
+      
+      const userGrowth = await db
+        .select({
+          date: drizzleSql<string>`DATE(${users.createdAt})`,
+          count: count()
+        })
+        .from(users)
+        .where(gte(users.createdAt, thirtyDaysAgo))
+        .groupBy(drizzleSql`DATE(${users.createdAt})`)
+        .orderBy(drizzleSql`DATE(${users.createdAt})`);
+
+      res.json({
+        totalUsers,
+        totalVendors,
+        vendorsByType,
+        userGrowth,
+      });
+    } catch (error: any) {
+      res.status(500).json({ error: error.message });
+    }
+  });
+
+  // Get listing metrics
+  app.get("/api/admin/stats/listings", requireAdminAuth, async (req, res) => {
+    try {
+      // Total listings
+      const [totalListingsResult] = await db
+        .select({ count: count() })
+        .from(vendorListings);
+      const totalListings = totalListingsResult.count;
+
+      // Listings by type
+      const listingsByType = await db
+        .select({
+          serviceType: vendorProfiles.serviceType,
+          count: count()
+        })
+        .from(vendorProfiles)
+        .where(eq(vendorProfiles.active, true))
+        .groupBy(vendorProfiles.serviceType);
+
+      // Active vs inactive
+      const [activeCount] = await db
+        .select({ count: count() })
+        .from(vendorProfiles)
+        .where(eq(vendorProfiles.active, true));
+
+      const [inactiveCount] = await db
+        .select({ count: count() })
+        .from(vendorProfiles)
+        .where(eq(vendorProfiles.active, false));
+
+      res.json({
+        totalListings,
+        listingsByType,
+        activeListings: activeCount.count,
+        inactiveListings: inactiveCount.count,
+      });
+    } catch (error: any) {
+      res.status(500).json({ error: error.message });
+    }
+  });
+
+  // Get booking metrics
+  app.get("/api/admin/stats/bookings", requireAdminAuth, async (req, res) => {
+    try {
+      // Total bookings
+      const [totalBookingsResult] = await db
+        .select({ count: count() })
+        .from(bookings);
+      const totalBookings = totalBookingsResult.count;
+
+      // Completed vs incomplete
+      const [completedCount] = await db
+        .select({ count: count() })
+        .from(bookings)
+        .where(eq(bookings.status, "completed"));
+
+      const [pendingCount] = await db
+        .select({ count: count() })
+        .from(bookings)
+        .where(eq(bookings.status, "pending"));
+
+      // Total revenue (sum of totalAmount from bookings)
+      const [revenueResult] = await db
+        .select({ 
+          total: sum(bookings.totalAmount)
+        })
+        .from(bookings);
+
+      const totalRevenue = revenueResult.total || 0;
+
+      res.json({
+        totalBookings,
+        completedBookings: completedCount.count,
+        pendingBookings: pendingCount.count,
+        totalRevenue,
+      });
+    } catch (error: any) {
+      res.status(500).json({ error: error.message });
+    }
+  });
+
+  // Get traffic metrics
+  app.get("/api/admin/stats/traffic", requireAdminAuth, async (req, res) => {
+    try {
+      // Total visits
+      const [totalVisitsResult] = await db
+        .select({ count: count() })
+        .from(webTraffic);
+      const totalVisits = totalVisitsResult.count;
+
+      // Unique visitors (count distinct user IDs, excluding null)
+      const [uniqueVisitorsResult] = await db
+        .select({ 
+          count: drizzleSql<number>`COUNT(DISTINCT ${webTraffic.userId})`
+        })
+        .from(webTraffic)
+        .where(drizzleSql`${webTraffic.userId} IS NOT NULL`);
+      const uniqueVisitors = uniqueVisitorsResult.count;
+
+      // Most visited paths
+      const topPaths = await db
+        .select({
+          path: webTraffic.path,
+          count: count()
+        })
+        .from(webTraffic)
+        .groupBy(webTraffic.path)
+        .orderBy(desc(count()))
+        .limit(10);
+
+      // Daily traffic (last 30 days)
+      const thirtyDaysAgo = new Date();
+      thirtyDaysAgo.setDate(thirtyDaysAgo.getDate() - 30);
+
+      const dailyTraffic = await db
+        .select({
+          date: drizzleSql<string>`DATE(${webTraffic.timestamp})`,
+          count: count()
+        })
+        .from(webTraffic)
+        .where(gte(webTraffic.timestamp, thirtyDaysAgo))
+        .groupBy(drizzleSql`DATE(${webTraffic.timestamp})`)
+        .orderBy(drizzleSql`DATE(${webTraffic.timestamp})`);
+
+      res.json({
+        totalVisits,
+        uniqueVisitors,
+        topPaths,
+        dailyTraffic,
+      });
     } catch (error: any) {
       res.status(500).json({ error: error.message });
     }

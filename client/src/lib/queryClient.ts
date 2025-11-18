@@ -21,7 +21,7 @@ export async function apiRequest(
     if (vendorToken) {
       headers["Authorization"] = `Bearer ${vendorToken}`;
     }
-  } else if (url.includes("/customer/")) {
+  } else if (url.includes("/customer/") || url.includes("/admin/")) {
     if (customerToken) {
       headers["Authorization"] = `Bearer ${customerToken}`;
     }
@@ -61,7 +61,7 @@ export const getQueryFn: <T>(options: {
       if (vendorToken) {
         headers["Authorization"] = `Bearer ${vendorToken}`;
       }
-    } else if (url.includes("/customer/")) {
+    } else if (url.includes("/customer/") || url.includes("/admin/")) {
       if (customerToken) {
         headers["Authorization"] = `Bearer ${customerToken}`;
       }

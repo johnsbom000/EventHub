@@ -112,7 +112,7 @@ export default function AuthModal({ open, onOpenChange }: AuthModalProps) {
         if (userRole === "vendor") {
           setLocation("/vendor/dashboard");
         } else if (userRole === "admin") {
-          setLocation("/admin/dashboard");
+          setLocation("/admin");
         } else {
           setLocation("/dashboard");
         }
@@ -158,12 +158,13 @@ export default function AuthModal({ open, onOpenChange }: AuthModalProps) {
 
       // Successful signup
       if (data.token) {
+        const userRole = data.user?.role || "customer";
+        
         // Clear both tokens first to prevent token mix-ups
         localStorage.removeItem("customerToken");
         localStorage.removeItem("vendorToken");
         
-        // This auth flow is for customers only
-        // Vendors use the separate vendor signup/login flow
+        // Store for both customer and admin roles (vendors use separate signup)
         localStorage.setItem("customerToken", data.token);
         
         toast({
@@ -172,8 +173,12 @@ export default function AuthModal({ open, onOpenChange }: AuthModalProps) {
         });
         onOpenChange(false);
         
-        // Redirect to customer dashboard
-        setLocation("/dashboard");
+        // Redirect based on role
+        if (userRole === "admin") {
+          setLocation("/admin");
+        } else {
+          setLocation("/dashboard");
+        }
       }
     },
     onError: (error: Error) => {

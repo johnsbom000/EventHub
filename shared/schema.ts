@@ -498,3 +498,21 @@ export const insertReviewReplySchema = createInsertSchema(reviewReplies).omit({
 
 export type InsertReviewReply = z.infer<typeof insertReviewReplySchema>;
 export type ReviewReply = typeof reviewReplies.$inferSelect;
+
+// Web Traffic Tracking (for admin analytics)
+export const webTraffic = pgTable("web_traffic", {
+  id: varchar("id").primaryKey().default(sql`gen_random_uuid()`),
+  userId: varchar("user_id"), // nullable - can track anonymous visits
+  userType: text("user_type"), // 'customer', 'vendor', 'admin', or null
+  path: text("path").notNull(),
+  referrer: text("referrer"),
+  timestamp: timestamp("timestamp").defaultNow().notNull(),
+});
+
+export const insertWebTrafficSchema = createInsertSchema(webTraffic).omit({
+  id: true,
+  timestamp: true,
+});
+
+export type InsertWebTraffic = z.infer<typeof insertWebTrafficSchema>;
+export type WebTraffic = typeof webTraffic.$inferSelect;
