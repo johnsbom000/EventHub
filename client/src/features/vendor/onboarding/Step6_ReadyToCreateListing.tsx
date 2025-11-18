@@ -1,6 +1,6 @@
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card";
 import { Button } from "@/components/ui/button";
-import { Check, Sparkles } from "lucide-react";
+import { Check, Sparkles, Lightbulb } from "lucide-react";
 
 interface Props {
   onComplete: (createListing: boolean) => void;
@@ -62,8 +62,9 @@ export default function Step6_ReadyToCreateListing({ onComplete, onBack }: Props
         </div>
 
         <div className="bg-muted rounded-lg p-4">
-          <p className="text-sm text-muted-foreground">
-            💡 <strong>Tip:</strong> You can always update your profile and listings later from your vendor dashboard.
+          <p className="text-sm text-muted-foreground flex items-start gap-2">
+            <Lightbulb className="w-4 h-4 text-primary flex-shrink-0 mt-0.5" />
+            <span><strong>Tip:</strong> You can always update your profile and listings later from your vendor dashboard.</span>
           </p>
         </div>
 
