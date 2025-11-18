@@ -5,10 +5,12 @@ import { Toaster } from "@/components/ui/toaster";
 import { TooltipProvider } from "@/components/ui/tooltip";
 import Home from "@/pages/Home";
 import Login from "@/pages/Login";
+import Signup from "@/pages/Signup";
 import BrowseVendors from "@/pages/BrowseVendors";
 import VendorProfile from "@/pages/VendorProfile";
 import EventPlanner from "@/pages/EventPlanner";
 import CuratedRecommendations from "@/pages/CuratedRecommendations";
+import CustomerDashboard from "@/pages/CustomerDashboard";
 import VendorDashboard from "@/pages/VendorDashboard";
 import VendorLogin from "@/pages/VendorLogin";
 import VendorSignup from "@/pages/VendorSignup";
@@ -30,10 +32,11 @@ function Router() {
     <Switch>
       <Route path="/" component={Home} />
       <Route path="/login" component={Login} />
-      <Route path="/signup" component={Login} />
+      <Route path="/signup" component={Signup} />
+      <Route path="/dashboard" component={CustomerDashboard} />
       <Route path="/browse" component={BrowseVendors} />
       <Route path="/vendor/login" component={VendorLogin} />
-      <Route path="/vendor/signup" component={VendorSignup} />
+      <Route path="/vendor/signup" component={Signup} />
       <Route path="/vendor/onboarding" component={VendorOnboarding} />
       <Route path="/vendor/dashboard" component={VendorDashboard} />
       <Route path="/vendor/bookings" component={VendorBookings} />

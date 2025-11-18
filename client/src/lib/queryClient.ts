@@ -13,10 +13,25 @@ export async function apiRequest(
   data?: unknown | undefined,
 ): Promise<Response> {
   const vendorToken = localStorage.getItem("vendorToken");
+  const customerToken = localStorage.getItem("customerToken");
   const headers: HeadersInit = data ? { "Content-Type": "application/json" } : {};
   
-  if (vendorToken) {
-    headers["Authorization"] = `Bearer ${vendorToken}`;
+  // Add appropriate Authorization header based on route
+  if (url.includes("/vendor/")) {
+    if (vendorToken) {
+      headers["Authorization"] = `Bearer ${vendorToken}`;
+    }
+  } else if (url.includes("/customer/")) {
+    if (customerToken) {
+      headers["Authorization"] = `Bearer ${customerToken}`;
+    }
+  } else {
+    // For non-specific routes, try vendor token first, then customer
+    if (vendorToken) {
+      headers["Authorization"] = `Bearer ${vendorToken}`;
+    } else if (customerToken) {
+      headers["Authorization"] = `Bearer ${customerToken}`;
+    }
   }
 
   const res = await fetch(url, {
@@ -37,13 +52,29 @@ export const getQueryFn: <T>(options: {
   ({ on401: unauthorizedBehavior }) =>
   async ({ queryKey }) => {
     const vendorToken = localStorage.getItem("vendorToken");
+    const customerToken = localStorage.getItem("customerToken");
+    const url = queryKey.join("/") as string;
     const headers: HeadersInit = {};
     
-    if (vendorToken) {
-      headers["Authorization"] = `Bearer ${vendorToken}`;
+    // Add appropriate Authorization header based on route
+    if (url.includes("/vendor/")) {
+      if (vendorToken) {
+        headers["Authorization"] = `Bearer ${vendorToken}`;
+      }
+    } else if (url.includes("/customer/")) {
+      if (customerToken) {
+        headers["Authorization"] = `Bearer ${customerToken}`;
+      }
+    } else {
+      // For non-specific routes, try vendor token first, then customer
+      if (vendorToken) {
+        headers["Authorization"] = `Bearer ${vendorToken}`;
+      } else if (customerToken) {
+        headers["Authorization"] = `Bearer ${customerToken}`;
+      }
     }
 
-    const res = await fetch(queryKey.join("/") as string, {
+    const res = await fetch(url, {
       credentials: "include",
       headers,
     });

@@ -1,9 +1,9 @@
 import type { Express } from "express";
 import { createServer, type Server } from "http";
 import { storage } from "./storage";
-import { insertEventSchema, insertVendorAccountSchema, insertVendorProfileSchema, vendorProfiles, vendorAccounts, vendorListings } from "@shared/schema";
+import { insertEventSchema, insertVendorAccountSchema, insertVendorProfileSchema, vendorProfiles, vendorAccounts, vendorListings, users, insertUserSchema } from "@shared/schema";
 import { scoreVendorsForEvent } from "./vendorScoring";
-import { hashPassword, comparePassword, generateToken, requireVendorAuth } from "./auth";
+import { hashPassword, comparePassword, generateToken, requireVendorAuth, requireCustomerAuth } from "./auth";
 import { z } from "zod";
 import { db } from "./db";
 import { eq, and } from "drizzle-orm";
@@ -39,7 +39,6 @@ export async function registerRoutes(app: Express): Promise<Server> {
         email,
         password: hashedPassword,
         businessName,
-        vendorId: null,
         stripeConnectId: null,
         stripeAccountType: null,
         stripeOnboardingComplete: false,
@@ -58,7 +57,6 @@ export async function registerRoutes(app: Express): Promise<Server> {
         vendorAccount: {
           id: account.id,
           email: account.email,
-          vendorId: account.vendorId,
           stripeOnboardingComplete: account.stripeOnboardingComplete,
         },
       });
@@ -96,7 +94,6 @@ export async function registerRoutes(app: Express): Promise<Server> {
         vendorAccount: {
           id: account.id,
           email: account.email,
-          vendorId: account.vendorId,
           stripeOnboardingComplete: account.stripeOnboardingComplete,
         },
       });
@@ -124,13 +121,122 @@ export async function registerRoutes(app: Express): Promise<Server> {
         id: account.id,
         email: account.email,
         businessName: account.businessName,
-        vendorId: account.vendorId,
         stripeConnectId: account.stripeConnectId,
         stripeAccountType: account.stripeAccountType,
         stripeOnboardingComplete: account.stripeOnboardingComplete,
         active: account.active,
         profileComplete: profile !== undefined,
         profileId: profile?.id || null,
+      });
+    } catch (error: any) {
+      res.status(500).json({ error: error.message });
+    }
+  });
+
+  // Customer Authentication Routes
+  const customerSignupSchema = z.object({
+    name: z.string().min(2),
+    email: z.string().email(),
+    password: z.string().min(8),
+  });
+
+  const customerLoginSchema = z.object({
+    email: z.string().email(),
+    password: z.string(),
+  });
+
+  app.post("/api/customer/signup", async (req, res) => {
+    try {
+      const { name, email, password } = customerSignupSchema.parse(req.body);
+      
+      // Check if customer already exists
+      const existing = await db.select().from(users).where(eq(users.email, email));
+      if (existing.length > 0) {
+        return res.status(400).json({ error: "Email already registered" });
+      }
+
+      // Hash password
+      const hashedPassword = await hashPassword(password);
+
+      // Create customer account
+      const [user] = await db.insert(users).values({
+        name,
+        email,
+        password: hashedPassword,
+      }).returning();
+
+      // Generate JWT token
+      const token = generateToken({
+        id: user.id,
+        email: user.email,
+        type: "customer",
+      });
+
+      res.json({
+        token,
+        user: {
+          id: user.id,
+          name: user.name,
+          email: user.email,
+        },
+      });
+    } catch (error: any) {
+      res.status(400).json({ error: error.message });
+    }
+  });
+
+  app.post("/api/customer/login", async (req, res) => {
+    try {
+      const { email, password } = customerLoginSchema.parse(req.body);
+
+      // Find customer account
+      const userAccounts = await db.select().from(users).where(eq(users.email, email));
+      if (userAccounts.length === 0) {
+        return res.status(401).json({ error: "Invalid credentials" });
+      }
+      const user = userAccounts[0];
+
+      // Verify password
+      const valid = await comparePassword(password, user.password);
+      if (!valid) {
+        return res.status(401).json({ error: "Invalid credentials" });
+      }
+
+      // Generate JWT token
+      const token = generateToken({
+        id: user.id,
+        email: user.email,
+        type: "customer",
+      });
+
+      res.json({
+        token,
+        user: {
+          id: user.id,
+          name: user.name,
+          email: user.email,
+        },
+      });
+    } catch (error: any) {
+      res.status(400).json({ error: error.message });
+    }
+  });
+
+  app.get("/api/customer/me", requireCustomerAuth, async (req, res) => {
+    try {
+      const customerAuth = (req as any).customerAuth;
+      const userAccounts = await db.select().from(users).where(eq(users.id, customerAuth.id));
+      
+      if (userAccounts.length === 0) {
+        return res.status(404).json({ error: "Account not found" });
+      }
+      const user = userAccounts[0];
+
+      res.json({
+        id: user.id,
+        name: user.name,
+        email: user.email,
+        createdAt: user.createdAt,
       });
     } catch (error: any) {
       res.status(500).json({ error: error.message });
