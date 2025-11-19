@@ -24,6 +24,7 @@ import {
   LayoutDashboard,
   Calendar,
   Briefcase,
+  Store,
 } from "lucide-react";
 
 type UserRole = "customer" | "vendor" | null;
@@ -41,7 +42,7 @@ interface Customer {
 }
 
 export default function Navigation() {
-  const [,setLocation] = useLocation();
+  const [location, setLocation] = useLocation();
   const [userRole, setUserRole] = useState<UserRole>(null);
   const [authModalOpen, setAuthModalOpen] = useState(false);
 
@@ -219,16 +220,29 @@ export default function Navigation() {
             {/* Customer Logged In State */}
             {userRole === "customer" && (
               <>
-                <Link href="/dashboard">
-                  <Button
-                    variant="ghost"
-                    size="default"
-                    data-testid="link-my-events"
-                  >
-                    <Calendar className="h-4 w-4 mr-2" />
-                    My Events
-                  </Button>
-                </Link>
+                {location.startsWith("/dashboard") ? (
+                  <Link href="/">
+                    <Button
+                      variant="ghost"
+                      size="default"
+                      data-testid="link-back-to-marketplace"
+                    >
+                      <Store className="h-4 w-4 mr-2" />
+                      Back to Marketplace
+                    </Button>
+                  </Link>
+                ) : (
+                  <Link href="/dashboard">
+                    <Button
+                      variant="ghost"
+                      size="default"
+                      data-testid="link-my-events"
+                    >
+                      <Calendar className="h-4 w-4 mr-2" />
+                      My Events
+                    </Button>
+                  </Link>
+                )}
 
                 <DropdownMenu>
                   <DropdownMenuTrigger asChild>
