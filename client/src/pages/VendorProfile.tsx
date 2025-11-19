@@ -8,6 +8,7 @@ import { Avatar, AvatarFallback, AvatarImage } from "@/components/ui/avatar";
 import { Star, MapPin, Heart, Check, Calendar, DollarSign, Award, Users } from "lucide-react";
 import { useState } from "react";
 import type { VendorPackage, VendorAddOn, VendorReview } from "@shared/schema";
+import Navigation from "@/components/Navigation";
 
 type Vendor = {
   id: string;
@@ -70,6 +71,8 @@ export default function VendorProfile() {
 
   return (
     <div className="min-h-screen bg-background">
+      <Navigation />
+      
       {/* Hero Section */}
       <div className="relative h-[400px] overflow-hidden">
         <div 
