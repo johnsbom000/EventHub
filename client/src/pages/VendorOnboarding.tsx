@@ -4,6 +4,7 @@ import { Check } from "lucide-react";
 import { useMutation } from "@tanstack/react-query";
 import { apiRequest, queryClient } from "@/lib/queryClient";
 import { useToast } from "@/hooks/use-toast";
+import Navigation from "@/components/Navigation";
 import Step1_ServiceSetup from "@/features/vendor/onboarding/Step1_ServiceSetup";
 import Step2_AboutYou from "@/features/vendor/onboarding/Step2_AboutYou";
 import Step3_Location from "@/features/vendor/onboarding/Step3_Location";
@@ -209,51 +210,55 @@ export default function VendorOnboarding() {
   };
 
   return (
-    <div className="min-h-screen bg-white flex">
-      {/* Sidebar */}
-      <div className="w-64 bg-card border-r border-border p-6">
-        <h2 className="text-xl font-bold mb-8">Vendor Profile</h2>
-        <div className="space-y-4">
-          {STEPS.map((step) => (
-            <div
-              key={step.id}
-              className="flex items-center gap-3"
-              data-testid={`sidebar-step-${step.id}`}
-            >
+    <div className="min-h-screen bg-white flex flex-col">
+      <Navigation />
+      
+      <div className="flex flex-1">
+        {/* Sidebar */}
+        <div className="w-64 bg-card border-r border-border p-6">
+          <h2 className="text-xl font-bold mb-8">Vendor Profile</h2>
+          <div className="space-y-4">
+            {STEPS.map((step) => (
               <div
-                className={`flex items-center justify-center w-8 h-8 rounded-full border-2 transition-colors ${
-                  step.id === currentStep
-                    ? "bg-primary border-primary text-primary-foreground"
-                    : step.id < currentStep
-                    ? "bg-primary border-primary text-primary-foreground"
-                    : "border-border bg-background"
-                }`}
+                key={step.id}
+                className="flex items-center gap-3"
+                data-testid={`sidebar-step-${step.id}`}
               >
-                {step.id < currentStep ? (
-                  <Check className="w-4 h-4" />
-                ) : (
-                  <span className="text-sm font-medium">{step.id}</span>
-                )}
+                <div
+                  className={`flex items-center justify-center w-8 h-8 rounded-full border-2 transition-colors ${
+                    step.id === currentStep
+                      ? "bg-primary border-primary text-primary-foreground"
+                      : step.id < currentStep
+                      ? "bg-primary border-primary text-primary-foreground"
+                      : "border-border bg-background"
+                  }`}
+                >
+                  {step.id < currentStep ? (
+                    <Check className="w-4 h-4" />
+                  ) : (
+                    <span className="text-sm font-medium">{step.id}</span>
+                  )}
+                </div>
+                <span
+                  className={`text-sm ${
+                    step.id === currentStep
+                      ? "font-semibold text-foreground"
+                      : step.id < currentStep
+                      ? "text-foreground"
+                      : "text-muted-foreground"
+                  }`}
+                >
+                  {step.label}
+                </span>
               </div>
-              <span
-                className={`text-sm ${
-                  step.id === currentStep
-                    ? "font-semibold text-foreground"
-                    : step.id < currentStep
-                    ? "text-foreground"
-                    : "text-muted-foreground"
-                }`}
-              >
-                {step.label}
-              </span>
-            </div>
-          ))}
+            ))}
+          </div>
         </div>
-      </div>
 
-      {/* Main Content */}
-      <div className="flex-1 overflow-y-auto">
-        <div className="max-w-3xl mx-auto py-12 px-6">{renderStep()}</div>
+        {/* Main Content */}
+        <div className="flex-1 overflow-y-auto">
+          <div className="max-w-3xl mx-auto py-12 px-6">{renderStep()}</div>
+        </div>
       </div>
     </div>
   );
