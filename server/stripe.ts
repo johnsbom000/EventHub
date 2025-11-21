@@ -1,12 +1,25 @@
 import Stripe from "stripe";
 
+// Gracefully handle missing Stripe keys - use a dummy key to prevent crashes
+const STRIPE_KEY = process.env.STRIPE_SECRET_KEY || "sk_test_dummy_key_for_development";
+
 if (!process.env.STRIPE_SECRET_KEY) {
-  throw new Error("Missing STRIPE_SECRET_KEY environment variable");
+  console.warn("⚠️  STRIPE_SECRET_KEY not configured - Stripe features will be disabled");
 }
 
-export const stripe = new Stripe(process.env.STRIPE_SECRET_KEY, {
-  apiVersion: "2023-10-16",
-});
+export const stripe = new Stripe(STRIPE_KEY, { apiVersion: "2023-10-16" });
+
+// Helper to check if Stripe is available
+export function isStripeConfigured(): boolean {
+  return !!process.env.STRIPE_SECRET_KEY;
+}
+
+// Helper to ensure Stripe is configured before operations
+function requireStripeConfig() {
+  if (!isStripeConfigured()) {
+    throw new Error("Stripe is not configured. Please set STRIPE_SECRET_KEY environment variable.");
+  }
+}
 
 export interface CreateConnectAccountParams {
   email: string;
@@ -24,6 +37,7 @@ export interface ConnectAccountOnboardingResult {
 export async function createConnectAccount(
   params: CreateConnectAccountParams
 ): Promise<ConnectAccountOnboardingResult> {
+  requireStripeConfig();
   const { email, businessName, accountType } = params;
 
   if (accountType === "express") {
@@ -78,6 +92,7 @@ export async function createConnectAccount(
 export async function checkAccountOnboardingStatus(
   accountId: string
 ): Promise<{ complete: boolean; detailsSubmitted: boolean; chargesEnabled: boolean }> {
+  requireStripeConfig();
   const account = await stripe.accounts.retrieve(accountId);
 
   return {
@@ -89,6 +104,7 @@ export async function checkAccountOnboardingStatus(
 
 // Create a login link for vendors to access their Stripe Dashboard
 export async function createDashboardLoginLink(accountId: string): Promise<string> {
+  requireStripeConfig();
   const loginLink = await stripe.accounts.createLoginLink(accountId);
   return loginLink.url;
 }
@@ -101,6 +117,7 @@ export async function createBookingPaymentIntent(params: {
   customerId?: string;
   description: string;
 }): Promise<Stripe.PaymentIntent> {
+  requireStripeConfig();
   const { amount, platformFeePercent, vendorStripeAccountId, customerId, description } = params;
 
   const platformFee = Math.round(amount * (platformFeePercent / 100));
@@ -129,6 +146,7 @@ export async function refundBookingPayment(params: {
   amount?: number; // optional, full refund if not provided
   reason?: string;
 }): Promise<Stripe.Refund> {
+  requireStripeConfig();
   const { paymentIntentId, amount, reason } = params;
 
   const refund = await stripe.refunds.create({
@@ -146,6 +164,7 @@ export async function transferToVendor(params: {
   vendorStripeAccountId: string;
   description: string;
 }): Promise<Stripe.Transfer> {
+  requireStripeConfig();
   const { amount, vendorStripeAccountId, description } = params;
 
   const transfer = await stripe.transfers.create({
