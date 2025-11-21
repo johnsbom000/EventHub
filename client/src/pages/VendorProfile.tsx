@@ -9,6 +9,8 @@ import { Star, MapPin, Heart, Check, Calendar, DollarSign, Award, Users } from "
 import { useState } from "react";
 import type { VendorPackage, VendorAddOn, VendorReview } from "@shared/schema";
 import Navigation from "@/components/Navigation";
+import AuthModal from "@/components/AuthModal";
+import BookingPromptModal from "@/components/BookingPromptModal";
 
 type Vendor = {
   id: string;
@@ -34,6 +36,11 @@ export default function VendorProfile() {
   const [, params] = useRoute("/vendor/:id");
   const vendorId = params?.id;
   const [isFavorite, setIsFavorite] = useState(false);
+  const [authModalOpen, setAuthModalOpen] = useState(false);
+  const [bookingPromptOpen, setBookingPromptOpen] = useState(false);
+
+  // Check if user is authenticated
+  const isAuthenticated = !!localStorage.getItem("customerToken") || !!localStorage.getItem("vendorToken");
 
   const { data: vendor, isLoading } = useQuery<Vendor>({
     queryKey: ["/api/vendors", vendorId],
@@ -132,6 +139,13 @@ export default function VendorProfile() {
                   variant="default"
                   size="lg"
                   className="bg-primary text-primary-foreground hover:bg-primary/90"
+                  onClick={() => {
+                    if (isAuthenticated) {
+                      setBookingPromptOpen(true);
+                    } else {
+                      setAuthModalOpen(true);
+                    }
+                  }}
                   data-testid="button-book-now"
                 >
                   <Calendar className="h-5 w-5 mr-2" />
@@ -358,6 +372,30 @@ export default function VendorProfile() {
           </div>
         </div>
       </div>
+
+      {/* Auth Modal */}
+      <AuthModal
+        open={authModalOpen}
+        onOpenChange={setAuthModalOpen}
+        context="bookingAttempt"
+        onAuthSuccess={() => {
+          setBookingPromptOpen(true);
+        }}
+      />
+
+      {/* Booking Prompt Modal */}
+      <BookingPromptModal
+        open={bookingPromptOpen}
+        onOpenChange={setBookingPromptOpen}
+        onBookNow={() => {
+          // TODO: Navigate to checkout/cart
+          console.log("Book Now clicked");
+        }}
+        onMakeAdjustments={() => {
+          // Stay on the page, allow user to tweak selections
+          console.log("Make Adjustments clicked");
+        }}
+      />
     </div>
   );
 }

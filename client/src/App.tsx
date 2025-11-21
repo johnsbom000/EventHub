@@ -12,6 +12,8 @@ import VendorProfile from "@/pages/VendorProfile";
 import EventPlanner from "@/pages/EventPlanner";
 import CuratedRecommendations from "@/pages/CuratedRecommendations";
 import CustomerDashboard from "@/pages/CustomerDashboard";
+import CustomerProfileQuestions from "@/pages/CustomerProfileQuestions";
+import RoleSelection from "@/pages/RoleSelection";
 import VendorDashboard from "@/pages/VendorDashboard";
 import VendorLogin from "@/pages/VendorLogin";
 import VendorSignup from "@/pages/VendorSignup";
@@ -36,6 +38,8 @@ function Router() {
       <Route path="/signup" component={Signup} />
       <Route path="/dashboard" component={CustomerDashboard} />
       <Route path="/dashboard/:section" component={CustomerDashboard} />
+      <Route path="/role-selection" component={RoleSelection} />
+      <Route path="/profile-questions" component={CustomerProfileQuestions} />
       <Route path="/browse" component={BrowseVendors} />
       <Route path="/vendor/login" component={VendorLogin} />
       <Route path="/vendor/signup" component={Signup} />

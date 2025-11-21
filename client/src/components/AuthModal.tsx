@@ -14,6 +14,8 @@ import { Alert, AlertDescription } from "@/components/ui/alert";
 interface AuthModalProps {
   open: boolean;
   onOpenChange: (open: boolean) => void;
+  context?: "generic" | "bookingAttempt";
+  onAuthSuccess?: () => void;
 }
 
 interface SignupResponse {
@@ -40,8 +42,8 @@ interface LoginResponse {
   };
 }
 
-export default function AuthModal({ open, onOpenChange }: AuthModalProps) {
-  const [, setLocation] = useLocation();
+export default function AuthModal({ open, onOpenChange, context = "generic", onAuthSuccess }: AuthModalProps) {
+  const [location, setLocation] = useLocation();
   const { toast } = useToast();
   const [activeTab, setActiveTab] = useState<"login" | "signup">("login");
   
@@ -108,7 +110,15 @@ export default function AuthModal({ open, onOpenChange }: AuthModalProps) {
         });
         onOpenChange(false);
         
-        // Redirect based on role
+        // Handle redirect based on context
+        if (context === "bookingAttempt") {
+          // Keep user on same page, no redirect
+          // Call onAuthSuccess callback to trigger booking prompt
+          onAuthSuccess?.();
+          return;
+        }
+        
+        // Default redirect based on role (for generic login)
         if (userRole === "vendor") {
           setLocation("/vendor/dashboard");
         } else if (userRole === "admin") {
@@ -173,7 +183,21 @@ export default function AuthModal({ open, onOpenChange }: AuthModalProps) {
         });
         onOpenChange(false);
         
-        // Redirect based on role
+        // Handle redirect based on context
+        if (context === "bookingAttempt") {
+          // Keep user on same page, no redirect
+          // Call onAuthSuccess callback to trigger booking prompt
+          onAuthSuccess?.();
+          return;
+        }
+        
+        // For generic signup, navigate to role selection page
+        if (context === "generic") {
+          setLocation("/role-selection");
+          return;
+        }
+        
+        // Default redirect based on role (fallback)
         if (userRole === "admin") {
           setLocation("/admin");
         } else {

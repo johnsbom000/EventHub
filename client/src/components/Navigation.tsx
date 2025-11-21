@@ -121,7 +121,11 @@ export default function Navigation() {
 
           <div className="flex items-center gap-4">
             {/* Auth Modal */}
-            <AuthModal open={authModalOpen} onOpenChange={setAuthModalOpen} />
+            <AuthModal 
+              open={authModalOpen} 
+              onOpenChange={setAuthModalOpen} 
+              context="generic"
+            />
 
             {/* Logged Out State */}
             {!userRole && (
