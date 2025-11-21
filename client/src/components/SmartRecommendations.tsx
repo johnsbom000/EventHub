@@ -3,6 +3,9 @@ import { Link } from "wouter";
 import { Card } from "@/components/ui/card";
 import { Button } from "@/components/ui/button";
 import { MapPin, Star } from "lucide-react";
+// ============ TEMPORARY FAKE DATA - REMOVE THESE IMPORTS ============
+import { USE_FAKE_VENDORS, MOCK_VENDORS, getCategoryImage } from "@/mock/mockVendors";
+// ====================================================================
 import venueImage from "@assets/generated_images/Elegant_venue_category_image_2de26e8e.png";
 import cateringImage from "@assets/generated_images/Catering_service_category_image_cf900d0e.png";
 import photographyImage from "@assets/generated_images/Photography_service_category_image_42830a2e.png";
@@ -10,8 +13,9 @@ import entertainmentImage from "@assets/generated_images/Entertainment_category_
 import planningImage from "@assets/generated_images/Event_planning_category_image_da1b013b.png";
 import decorImage from "@assets/generated_images/Decor_services_category_image_3cd1cabb.png";
 
+// ============ TEMPORARY OLD MOCK DATA - WILL BE REMOVED ============
 // TODO: Replace with actual data from API
-const mockVendorsByCategory = {
+const OLD_mockVendorsByCategory = {
   Venues: [
     { id: "1", name: "Grand Ballroom Events", location: "New York, NY", price: "$5,000", rating: 4.9, image: venueImage },
     { id: "2", name: "Garden Estate", location: "New York, NY", price: "$4,500", rating: 4.8, image: venueImage },
@@ -103,13 +107,48 @@ export default function SmartRecommendations() {
     }
   }, []);
 
+  // ============ TEMPORARY - Group mock vendors by category ============
+  const groupedVendors = USE_FAKE_VENDORS 
+    ? MOCK_VENDORS.reduce((acc, vendor) => {
+        const category = vendor.category;
+        if (!acc[category]) acc[category] = [];
+        acc[category].push({
+          id: vendor.id,
+          name: vendor.name,
+          location: `${vendor.city}, ${vendor.state}`,
+          price: `$${vendor.basePrice.toLocaleString()}`,
+          rating: parseFloat(vendor.rating),
+          image: getCategoryImage(vendor.category),
+        });
+        return acc;
+      }, {} as Record<string, any[]>)
+    : OLD_mockVendorsByCategory;
+  // ====================================================================
+
+  // Display category names in title case
+  const formatCategoryName = (category: string) => {
+    const nameMap: Record<string, string> = {
+      "venues": "Venues",
+      "photography": "Photography",
+      "videography": "Videography",
+      "dj": "DJs",
+      "florist": "Florists",
+      "prop-rental": "Prop Rentals",
+      "catering": "Catering",
+      "hair-styling": "Hair Styling",
+      "makeup": "Makeup Artists",
+      "nails": "Nail Services",
+    };
+    return nameMap[category] || category;
+  };
+
   return (
     <div className="bg-white py-12">
       <div className="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8">
-        {Object.entries(mockVendorsByCategory).map(([category, vendors]) => (
+        {Object.entries(groupedVendors).map(([category, vendors]) => (
           <div key={category} className="mb-12" data-testid={`category-${category.toLowerCase()}`}>
             <h2 className="text-2xl font-semibold mb-6 text-foreground">
-              {category} near {userLocation}
+              {formatCategoryName(category)} near {userLocation}
             </h2>
             
             <div className="overflow-x-auto -mx-4 px-4">
@@ -152,7 +191,7 @@ export default function SmartRecommendations() {
             <div className="mt-4">
               <Link href={`/browse?category=${category.toLowerCase()}`}>
                 <Button variant="outline" className="bg-[#9edbc0] text-[white]" data-testid={`button-view-all-${category.toLowerCase()}`}>
-                  View all {category}
+                  View all {formatCategoryName(category)}
                 </Button>
               </Link>
             </div>
