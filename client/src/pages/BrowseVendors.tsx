@@ -11,9 +11,6 @@ import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { Checkbox } from "@/components/ui/checkbox";
 import { Label } from "@/components/ui/label";
 import { Search, SlidersHorizontal } from "lucide-react";
-// ============ TEMPORARY FAKE DATA - REMOVE THESE IMPORTS ============
-import { USE_FAKE_VENDORS, MOCK_VENDORS, getMockCategories, getCategoryImage } from "@/mock/mockVendors";
-// ====================================================================
 
 type Vendor = {
   id: string;
@@ -45,24 +42,15 @@ export default function BrowseVendors() {
   const [selectedCategories, setSelectedCategories] = useState<string[]>([]);
   const [showFilters, setShowFilters] = useState(false);
 
-  // ============ TEMPORARY FAKE DATA - REMOVE THIS SECTION ============
-  // Fetch vendors from API (or use fake data if enabled)
-  const { data: apiVendors = [], isLoading: apiLoading } = useQuery<Vendor[]>({
+  // Fetch vendors from API
+  const { data: vendors = [], isLoading } = useQuery<Vendor[]>({
     queryKey: ["/api/vendors"],
-    enabled: !USE_FAKE_VENDORS, // Only fetch if not using fake data
   });
-  
-  const vendors = USE_FAKE_VENDORS ? MOCK_VENDORS : apiVendors;
-  const isLoading = USE_FAKE_VENDORS ? false : apiLoading;
 
-  // Fetch vendor categories from API (or use fake data if enabled)
-  const { data: apiCategories = [] } = useQuery<string[]>({
+  // Fetch vendor categories from API
+  const { data: categories = [] } = useQuery<string[]>({
     queryKey: ["/api/vendors/meta/categories"],
-    enabled: !USE_FAKE_VENDORS, // Only fetch if not using fake data
   });
-  
-  const categories = USE_FAKE_VENDORS ? getMockCategories() : apiCategories;
-  // ====================================================================
 
   // Parse URL parameters on mount
   useEffect(() => {
@@ -134,9 +122,7 @@ export default function BrowseVendors() {
     reviewCount: vendor.reviewCount,
     location: `${vendor.city}, ${vendor.state}`,
     startingPrice: `$${vendor.basePrice.toLocaleString()}`,
-    // ============ TEMPORARY - Use getCategoryImage when fake data is enabled ============
-    image: vendor.imageUrl || (USE_FAKE_VENDORS ? getCategoryImage(vendor.category) : categoryImages[vendor.category] || categoryImages["Venues"]),
-    // ====================================================================================
+    image: vendor.imageUrl || categoryImages[vendor.category] || categoryImages["Venues"],
   }));
 
   return (

@@ -678,26 +678,91 @@ export async function registerRoutes(app: Express): Promise<Server> {
     }
   });
 
+  // Update an existing vendor listing
+  app.patch("/api/vendor/listings/:id", requireVendorAuth, async (req, res) => {
+    try {
+      const vendorAuth = (req as any).vendorAuth;
+      const { id } = req.params;
+      const { listingData, status, title } = req.body;
+
+      // Verify ownership
+      const existingListings = await db.select().from(vendorListings).where(
+        and(
+          eq(vendorListings.id, id),
+          eq(vendorListings.accountId, vendorAuth.id)
+        )
+      );
+
+      if (existingListings.length === 0) {
+        return res.status(404).json({ error: "Listing not found" });
+      }
+
+      // Update listing
+      const [updated] = await db.update(vendorListings)
+        .set({
+          listingData,
+          status: status || existingListings[0].status,
+          title: title || existingListings[0].title,
+          updatedAt: new Date(),
+        })
+        .where(eq(vendorListings.id, id))
+        .returning();
+
+      res.json(updated);
+    } catch (error: any) {
+      res.status(500).json({ error: error.message });
+    }
+  });
+
+  // Publish a draft listing (change status to active)
+  app.patch("/api/vendor/listings/:id/publish", requireVendorAuth, async (req, res) => {
+    try {
+      const vendorAuth = (req as any).vendorAuth;
+      const { id } = req.params;
+
+      // Verify ownership and that it's a draft
+      const existingListings = await db.select().from(vendorListings).where(
+        and(
+          eq(vendorListings.id, id),
+          eq(vendorListings.accountId, vendorAuth.id)
+        )
+      );
+
+      if (existingListings.length === 0) {
+        return res.status(404).json({ error: "Listing not found" });
+      }
+
+      // Update status to active
+      const [published] = await db.update(vendorListings)
+        .set({
+          status: "active",
+          updatedAt: new Date(),
+        })
+        .where(eq(vendorListings.id, id))
+        .returning();
+
+      res.json(published);
+    } catch (error: any) {
+      res.status(500).json({ error: error.message });
+    }
+  });
+
   // Get all vendor listings (with optional status filter)
   app.get("/api/vendor/listings", requireVendorAuth, async (req, res) => {
     try {
       const vendorAuth = (req as any).vendorAuth;
       const { status } = req.query;
 
-      // Build where conditions
-      const conditions = [eq(vendorListings.accountId, vendorAuth.id)];
+      let query = db.select().from(vendorListings).where(eq(vendorListings.accountId, vendorAuth.id));
+
       if (status) {
-        conditions.push(eq(vendorListings.status, status as string));
+        query = query.where(and(
+          eq(vendorListings.accountId, vendorAuth.id),
+          eq(vendorListings.status, status as string)
+        )) as any;
       }
 
-      // Use and() only if multiple conditions, otherwise use the single condition
-      const whereClause = conditions.length > 1 ? and(...conditions) : conditions[0];
-
-      const listings = await db
-        .select()
-        .from(vendorListings)
-        .where(whereClause);
-      
+      const listings = await query;
       res.json(listings);
     } catch (error: any) {
       res.status(500).json({ error: error.message });
@@ -722,103 +787,6 @@ export async function registerRoutes(app: Express): Promise<Server> {
       }
 
       res.json(listings[0]);
-    } catch (error: any) {
-      res.status(500).json({ error: error.message });
-    }
-  });
-
-  // Publish a listing (change status from draft to active)
-  app.patch("/api/vendor/listings/:id/publish", requireVendorAuth, async (req, res) => {
-    try {
-      const vendorAuth = (req as any).vendorAuth;
-      const { id } = req.params;
-
-      // Verify listing belongs to this vendor
-      const listings = await db.select().from(vendorListings).where(
-        and(
-          eq(vendorListings.id, id),
-          eq(vendorListings.accountId, vendorAuth.id)
-        )
-      );
-
-      if (listings.length === 0) {
-        return res.status(404).json({ error: "Listing not found" });
-      }
-
-      // Update status to active
-      const [updated] = await db
-        .update(vendorListings)
-        .set({ status: "active", updatedAt: new Date() })
-        .where(eq(vendorListings.id, id))
-        .returning();
-
-      res.json(updated);
-    } catch (error: any) {
-      res.status(500).json({ error: error.message });
-    }
-  });
-
-  // Unpublish a listing (change status from active to inactive)
-  app.patch("/api/vendor/listings/:id/unpublish", requireVendorAuth, async (req, res) => {
-    try {
-      const vendorAuth = (req as any).vendorAuth;
-      const { id } = req.params;
-
-      // Verify listing belongs to this vendor
-      const listings = await db.select().from(vendorListings).where(
-        and(
-          eq(vendorListings.id, id),
-          eq(vendorListings.accountId, vendorAuth.id)
-        )
-      );
-
-      if (listings.length === 0) {
-        return res.status(404).json({ error: "Listing not found" });
-      }
-
-      // Update status to inactive
-      const [updated] = await db
-        .update(vendorListings)
-        .set({ status: "inactive", updatedAt: new Date() })
-        .where(eq(vendorListings.id, id))
-        .returning();
-
-      res.json(updated);
-    } catch (error: any) {
-      res.status(500).json({ error: error.message });
-    }
-  });
-
-  // Update a listing (for draft saves)
-  app.patch("/api/vendor/listings/:id", requireVendorAuth, async (req, res) => {
-    try {
-      const vendorAuth = (req as any).vendorAuth;
-      const { id } = req.params;
-      const { listingData } = req.body;
-
-      // Verify listing belongs to this vendor
-      const listings = await db.select().from(vendorListings).where(
-        and(
-          eq(vendorListings.id, id),
-          eq(vendorListings.accountId, vendorAuth.id)
-        )
-      );
-
-      if (listings.length === 0) {
-        return res.status(404).json({ error: "Listing not found" });
-      }
-
-      // Update listing with new data
-      const [updated] = await db
-        .update(vendorListings)
-        .set({ 
-          listingData: listingData,
-          updatedAt: new Date() 
-        })
-        .where(eq(vendorListings.id, id))
-        .returning();
-
-      res.json(updated);
     } catch (error: any) {
       res.status(500).json({ error: error.message });
     }
@@ -1061,42 +1029,7 @@ export async function registerRoutes(app: Express): Promise<Server> {
 
   app.get("/api/vendors", async (req, res) => {
     try {
-      // Query vendors from database - use vendorProfiles joined with vendorAccounts
-      // Transform into the format expected by BrowseVendors frontend
-      const profiles = await db
-        .select({
-          id: vendorProfiles.id,
-          accountId: vendorProfiles.accountId,
-          serviceType: vendorProfiles.serviceType,
-          city: vendorProfiles.city,
-          address: vendorProfiles.address,
-          photos: vendorProfiles.photos,
-          serviceDescription: vendorProfiles.serviceDescription,
-          businessName: vendorAccounts.businessName,
-        })
-        .from(vendorProfiles)
-        .innerJoin(vendorAccounts, eq(vendorProfiles.accountId, vendorAccounts.id))
-        .where(eq(vendorAccounts.active, true));
-
-      // Transform to match frontend Vendor type
-      const vendors = profiles.map((profile) => {
-        // Parse address to get state
-        const addressParts = profile.address.split(",").map((p) => p.trim());
-        const state = addressParts.length > 1 ? addressParts[1] : "";
-
-        return {
-          id: profile.accountId,
-          name: profile.businessName,
-          category: profile.serviceType,
-          city: profile.city,
-          state: state,
-          basePrice: 0, // TODO: Calculate from listings/offerings
-          rating: "4.8", // TODO: Calculate from reviews
-          reviewCount: 0, // TODO: Count from reviews table
-          imageUrl: profile.photos && profile.photos.length > 0 ? profile.photos[0] : null,
-        };
-      });
-
+      const vendors = await storage.getAllVendors();
       res.json(vendors);
     } catch (error: any) {
       res.status(500).json({ error: error.message });
@@ -1105,18 +1038,8 @@ export async function registerRoutes(app: Express): Promise<Server> {
 
   app.get("/api/vendors/meta/categories", async (req, res) => {
     try {
-      // Get unique service types from vendorProfiles
-      const profiles = await db
-        .selectDistinct({ serviceType: vendorProfiles.serviceType })
-        .from(vendorProfiles)
-        .innerJoin(vendorAccounts, eq(vendorProfiles.accountId, vendorAccounts.id))
-        .where(eq(vendorAccounts.active, true));
-      
-      const categories = profiles
-        .map((p) => p.serviceType)
-        .filter((c) => c)
-        .sort();
-      
+      const vendors = await storage.getAllVendors();
+      const categories = Array.from(new Set(vendors.map(v => v.category))).sort();
       res.json(categories);
     } catch (error: any) {
       res.status(500).json({ error: error.message });
