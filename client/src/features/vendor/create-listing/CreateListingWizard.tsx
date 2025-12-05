@@ -1,10 +1,23 @@
-import { useState, useEffect } from "react";
+import { useState, useEffect, useCallback } from "react";
 import { motion, AnimatePresence } from "framer-motion";
 import { X, Save } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { WizardStep, STEP_METADATA, ListingFormData, DEFAULT_FORM_DATA } from "./types";
 import { useMutation, useQuery } from "@tanstack/react-query";
 import { apiRequest } from "@/lib/queryClient";
+import { useToast } from "@/hooks/use-toast";
+
+// Define API response types
+interface ApiResponse<T> {
+  data?: T;
+  error?: string;
+  success: boolean;
+}
+
+interface ListingResponse {
+  id: string;
+  [key: string]: any;
+}
 import { ServiceTypeStep } from "./steps/ServiceTypeStep";
 import { LocationSelectionStep } from "./steps/LocationSelectionStep";
 import { CreateListingIntroStep } from "./steps/CreateListingIntroStep";
@@ -42,15 +55,35 @@ export function CreateListingWizard({ onClose, initialData, editMode = false, li
 
   const currentStepIndex = STEP_METADATA.findIndex(s => s.id === currentStep);
 
-  // Create draft mutation
-  const createDraft = useMutation({
+  const { toast } = useToast();
+
+  // Create draft mutation with error handling
+  const createDraft = useMutation<ApiResponse<ListingResponse>, Error, ListingFormData>({
     mutationFn: async (data: ListingFormData) => {
-      const response = await apiRequest("POST", "/api/vendor/listings", { listingData: data });
-      return await response.json();
+      try {
+        const response = await apiRequest("POST", "/api/vendor/listings", { listingData: data });
+        const result = await response.json();
+        if (!response.ok) {
+          throw new Error(result.error || 'Failed to create draft');
+        }
+        return result;
+      } catch (error) {
+        console.error('Draft creation failed:', error);
+        throw error;
+      }
     },
-    onSuccess: (data: any) => {
-      setListingId(data.id);
+    onSuccess: (data) => {
+      if (data?.data?.id) {
+        setListingId(data.data.id);
+      }
     },
+    onError: (error) => {
+      toast({
+        title: "Error",
+        description: error.message || "Failed to create draft. Please try again.",
+        variant: "destructive",
+      });
+    }
   });
 
   // Update draft mutation
@@ -66,18 +99,24 @@ export function CreateListingWizard({ onClose, initialData, editMode = false, li
     if (!existingListingId && !listingId && !initialData) {
       createDraft.mutate(DEFAULT_FORM_DATA);
     }
-  }, []);
+    
+    // Cleanup function to cancel any pending API calls
+    return () => {
+      // Optionally cancel any pending requests here if needed
+    };
+  }, [existingListingId, listingId, initialData, createDraft]);
 
   // Auto-save to database when formData changes
   useEffect(() => {
-    if (listingId && !isSavingDraft) {
-      const debounceTimer = setTimeout(() => {
-        updateDraft.mutate({ id: listingId, listingData: formData });
-      }, 1000); // Debounce for 1 second
+    if (!listingId || isSavingDraft) return;
 
-      return () => clearTimeout(debounceTimer);
-    }
-  }, [formData, listingId, isSavingDraft]);
+    const debounceTimer = setTimeout(() => {
+      updateDraft.mutate({ id: listingId, listingData: formData });
+    }, 1000); // Debounce for 1 second
+
+    // Cleanup function to clear the timeout
+    return () => clearTimeout(debounceTimer);
+  }, [formData, listingId, isSavingDraft, updateDraft]);
 
 
   const goNext = () => {
@@ -88,8 +127,15 @@ export function CreateListingWizard({ onClose, initialData, editMode = false, li
     }
   };
 
-  const saveDraft = () => {
-    if (!listingId) return;
+  const saveDraft = useCallback(() => {
+    if (!listingId) {
+      toast({
+        title: "Error",
+        description: "Unable to save draft: No listing ID",
+        variant: "destructive",
+      });
+      return;
+    }
     
     // Save to database and navigate to done
     setIsSavingDraft(true);
@@ -98,6 +144,10 @@ export function CreateListingWizard({ onClose, initialData, editMode = false, li
       {
         onSuccess: () => {
           setIsDraft(true);
+          toast({
+            title: "Draft saved",
+            description: "Your listing has been saved as a draft.",
+          });
           setCurrentStep("done");
           setIsSavingDraft(false);
         },
@@ -106,7 +156,7 @@ export function CreateListingWizard({ onClose, initialData, editMode = false, li
         },
       }
     );
-  };
+  }, [listingId, formData, updateDraft, toast]);
 
   const goBack = () => {
     const prevIndex = currentStepIndex - 1;

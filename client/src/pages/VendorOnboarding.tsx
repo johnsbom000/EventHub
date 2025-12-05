@@ -9,8 +9,7 @@ import Step1_ServiceSetup from "@/features/vendor/onboarding/Step1_ServiceSetup"
 import Step2_AboutYou from "@/features/vendor/onboarding/Step2_AboutYou";
 import Step3_Location from "@/features/vendor/onboarding/Step3_Location";
 import Step4_Portfolio from "@/features/vendor/onboarding/Step4_Portfolio";
-import Step5_ServiceDescription from "@/features/vendor/onboarding/Step5_ServiceDescription";
-import Step6_ReadyToCreateListing from "@/features/vendor/onboarding/Step6_ReadyToCreateListing";
+import Step5_ReadyToCreateListing from "@/features/vendor/onboarding/Step6_ReadyToCreateListing";
 
 export interface VendorOnboardingData {
   serviceType: string;
@@ -35,8 +34,7 @@ const STEPS = [
   { id: 2, label: "About You" },
   { id: 3, label: "Location" },
   { id: 4, label: "Portfolio" },
-  { id: 5, label: "Service Description" },
-  { id: 6, label: "Ready to Create Listing?" },
+  { id: 5, label: "Ready to Create Listing?" },
 ];
 
 export default function VendorOnboarding() {
@@ -190,16 +188,7 @@ export default function VendorOnboarding() {
         );
       case 5:
         return (
-          <Step5_ServiceDescription
-            formData={formData}
-            updateFormData={updateFormData}
-            onNext={handleNext}
-            onBack={handleBack}
-          />
-        );
-      case 6:
-        return (
-          <Step6_ReadyToCreateListing
+          <Step5_ReadyToCreateListing
             onComplete={handleComplete}
             onBack={handleBack}
           />

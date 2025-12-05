@@ -12,51 +12,51 @@ import decorImage from "@assets/generated_images/Decor_services_category_image_3
 
 // TODO: Replace with actual data from API
 const mockVendorsByCategory = {
-  Venues: [
-    { id: "1", name: "Grand Ballroom Events", location: "New York, NY", price: "$5,000", rating: 4.9, image: venueImage },
-    { id: "2", name: "Garden Estate", location: "New York, NY", price: "$4,500", rating: 4.8, image: venueImage },
-    { id: "3", name: "Metropolitan Hall", location: "New York, NY", price: "$6,200", rating: 5.0, image: venueImage },
-    { id: "v4", name: "Riverside Manor", location: "New York, NY", price: "$5,500", rating: 4.9, image: venueImage },
-    { id: "v5", name: "The Plaza Pavilion", location: "New York, NY", price: "$7,000", rating: 4.8, image: venueImage },
-    { id: "v6", name: "Skyline Terrace", location: "New York, NY", price: "$6,800", rating: 4.7, image: venueImage },
-    { id: "v7", name: "Historic Mansion Estate", location: "New York, NY", price: "$8,500", rating: 5.0, image: venueImage },
-    { id: "v8", name: "Lakeside Venue", location: "New York, NY", price: "$5,200", rating: 4.6, image: venueImage },
+  venues: [
+    { id: "venue-1", name: "Grand Ballroom Events", location: "New York, NY", price: "$5,000", rating: 4.9, image: venueImage, category: "venues" },
+    { id: "venue-2", name: "Garden Estate", location: "New York, NY", price: "$4,500", rating: 4.8, image: venueImage, category: "venues" },
+    { id: "venue-3", name: "Metropolitan Hall", location: "New York, NY", price: "$6,200", rating: 5.0, image: venueImage, category: "venues" },
+    { id: "venue-4", name: "Riverside Manor", location: "New York, NY", price: "$5,500", rating: 4.9, image: venueImage, category: "venues" },
+    { id: "venue-5", name: "The Plaza Pavilion", location: "New York, NY", price: "$7,000", rating: 4.8, image: venueImage, category: "venues" },
+    { id: "venue-6", name: "Skyline Terrace", location: "New York, NY", price: "$6,800", rating: 4.7, image: venueImage, category: "venues" },
+    { id: "venue-7", name: "Historic Mansion Estate", location: "New York, NY", price: "$8,500", rating: 5.0, image: venueImage, category: "venues" },
+    { id: "venue-8", name: "Lakeside Venue", location: "New York, NY", price: "$5,200", rating: 4.6, image: venueImage, category: "venues" },
   ],
-  Photographer: [
-    { id: "4", name: "Moments Photography Studio", location: "New York, NY", price: "$1,800", rating: 5.0, image: photographyImage },
-    { id: "5", name: "Artisan Lens", location: "New York, NY", price: "$2,200", rating: 4.9, image: photographyImage },
-    { id: "6", name: "Classic Captures", location: "New York, NY", price: "$1,500", rating: 4.7, image: photographyImage },
-    { id: "p4", name: "Golden Hour Studios", location: "New York, NY", price: "$2,000", rating: 4.8, image: photographyImage },
-    { id: "p5", name: "Perfect Frame Photography", location: "New York, NY", price: "$1,600", rating: 4.9, image: photographyImage },
-    { id: "p6", name: "Timeless Memories", location: "New York, NY", price: "$2,400", rating: 5.0, image: photographyImage },
-    { id: "p7", name: "Natural Light Studio", location: "New York, NY", price: "$1,900", rating: 4.7, image: photographyImage },
-    { id: "p8", name: "Elite Wedding Photography", location: "New York, NY", price: "$2,800", rating: 4.8, image: photographyImage },
+  photographers: [
+    { id: "photo-1", name: "Moments Photography Studio", location: "New York, NY", price: "$1,800", rating: 5.0, image: photographyImage, category: "photographers" },
+    { id: "photo-2", name: "Artisan Lens", location: "New York, NY", price: "$2,200", rating: 4.9, image: photographyImage, category: "photographers" },
+    { id: "photo-3", name: "Classic Captures", location: "New York, NY", price: "$1,500", rating: 4.7, image: photographyImage, category: "photographers" },
+    { id: "photo-4", name: "Golden Hour Studios", location: "New York, NY", price: "$2,000", rating: 4.8, image: photographyImage, category: "photographers" },
+    { id: "photo-5", name: "Perfect Frame Photography", location: "New York, NY", price: "$1,600", rating: 4.9, image: photographyImage, category: "photographers" },
+    { id: "photo-6", name: "Timeless Memories", location: "New York, NY", price: "$2,400", rating: 5.0, image: photographyImage, category: "photographers" },
+    { id: "photo-7", name: "Natural Light Studio", location: "New York, NY", price: "$1,900", rating: 4.7, image: photographyImage, category: "photographers" },
+    { id: "photo-8", name: "Elite Wedding Photography", location: "New York, NY", price: "$2,800", rating: 4.8, image: photographyImage, category: "photographers" },
   ],
-  Videographer: [
-    { id: "vid1", name: "Cinematic Moments", location: "New York, NY", price: "$2,200", rating: 4.9, image: photographyImage },
-    { id: "vid2", name: "Frame by Frame Films", location: "New York, NY", price: "$2,500", rating: 5.0, image: photographyImage },
-    { id: "vid3", name: "Love Story Videography", location: "New York, NY", price: "$1,800", rating: 4.8, image: photographyImage },
-    { id: "vid4", name: "Premiere Wedding Films", location: "New York, NY", price: "$3,000", rating: 4.7, image: photographyImage },
-    { id: "vid5", name: "Artisan Video Productions", location: "New York, NY", price: "$2,400", rating: 4.9, image: photographyImage },
-    { id: "vid6", name: "Epic Events Videography", location: "New York, NY", price: "$2,800", rating: 4.8, image: photographyImage },
-    { id: "vid7", name: "Golden Reel Studios", location: "New York, NY", price: "$3,200", rating: 5.0, image: photographyImage },
-    { id: "vid8", name: "Motion Capture Films", location: "New York, NY", price: "$2,100", rating: 4.7, image: photographyImage },
+  videographers: [
+    { id: "video-1", name: "Cinematic Moments", location: "New York, NY", price: "$2,200", rating: 4.9, image: photographyImage, category: "videographers" },
+    { id: "video-2", name: "Frame by Frame Films", location: "New York, NY", price: "$2,500", rating: 5.0, image: photographyImage, category: "videographers" },
+    { id: "video-3", name: "Love Story Videography", location: "New York, NY", price: "$1,800", rating: 4.8, image: photographyImage, category: "videographers" },
+    { id: "video-4", name: "Premiere Wedding Films", location: "New York, NY", price: "$3,000", rating: 4.7, image: photographyImage, category: "videographers" },
+    { id: "video-5", name: "Artisan Video Productions", location: "New York, NY", price: "$2,400", rating: 4.9, image: photographyImage, category: "videographers" },
+    { id: "video-6", name: "Epic Events Videography", location: "New York, NY", price: "$2,800", rating: 4.8, image: photographyImage, category: "videographers" },
+    { id: "video-7", name: "Golden Reel Studios", location: "New York, NY", price: "$3,200", rating: 5.0, image: photographyImage, category: "videographers" },
+    { id: "video-8", name: "Motion Capture Films", location: "New York, NY", price: "$2,100", rating: 4.7, image: photographyImage, category: "videographers" },
   ],
-  DJs: [
-    { id: "10", name: "Harmony Group", location: "New York, NY", price: "$1,200", rating: 4.7, image: entertainmentImage },
-    { id: "11", name: "Live Music Co", location: "New York, NY", price: "$1,500", rating: 4.8, image: entertainmentImage },
-    { id: "12", name: "Event DJs Pro", location: "New York, NY", price: "$900", rating: 4.6, image: entertainmentImage },
-    { id: "e4", name: "Rhythm & Beats Entertainment", location: "New York, NY", price: "$1,100", rating: 4.9, image: entertainmentImage },
-    { id: "e5", name: "The Party Makers", location: "New York, NY", price: "$1,400", rating: 4.8, image: entertainmentImage },
+  djs: [
+    { id: "dj-1", name: "Harmony Group", location: "New York, NY", price: "$1,200", rating: 4.7, image: entertainmentImage, category: "djs" },
+    { id: "dj-2", name: "Live Music Co", location: "New York, NY", price: "$1,500", rating: 4.8, image: entertainmentImage, category: "djs" },
+    { id: "dj-3", name: "Event DJs Pro", location: "New York, NY", price: "$900", rating: 4.6, image: entertainmentImage, category: "djs" },
+    { id: "dj-4", name: "Rhythm & Beats Entertainment", location: "New York, NY", price: "$1,100", rating: 4.9, image: entertainmentImage, category: "djs" },
+    { id: "dj-5", name: "The Party Makers", location: "New York, NY", price: "$1,400", rating: 4.8, image: entertainmentImage, category: "djs" },
     { id: "e6", name: "Premier DJ Services", location: "New York, NY", price: "$1,600", rating: 5.0, image: entertainmentImage },
     { id: "e7", name: "Soundwave DJs", location: "New York, NY", price: "$1,300", rating: 4.7, image: entertainmentImage },
     { id: "e8", name: "Spin Masters Entertainment", location: "New York, NY", price: "$1,700", rating: 4.9, image: entertainmentImage },
   ],
-  Florists: [
-    { id: "16", name: "Bloom & Decor Studio", location: "New York, NY", price: "$1,500", rating: 4.8, image: decorImage },
-    { id: "17", name: "Elegant Touches", location: "New York, NY", price: "$1,800", rating: 4.9, image: decorImage },
-    { id: "18", name: "Floral Dreams", location: "New York, NY", price: "$1,300", rating: 4.7, image: decorImage },
-    { id: "d4", name: "Petals & Stems", location: "New York, NY", price: "$1,600", rating: 4.8, image: decorImage },
+  florists: [
+    { id: "florist-1", name: "Bloom & Decor Studio", location: "New York, NY", price: "$1,500", rating: 4.8, image: decorImage, category: "florists" },
+    { id: "florist-2", name: "Elegant Touches", location: "New York, NY", price: "$1,800", rating: 4.9, image: decorImage, category: "florists" },
+    { id: "florist-3", name: "Floral Dreams", location: "New York, NY", price: "$1,300", rating: 4.7, image: decorImage, category: "florists" },
+    { id: "florist-4", name: "Petals & Stems", location: "New York, NY", price: "$1,600", rating: 4.8, image: decorImage, category: "florists" },
     { id: "d5", name: "Artistic Florals", location: "New York, NY", price: "$2,000", rating: 4.9, image: decorImage },
     { id: "d6", name: "Garden of Eden Florist", location: "New York, NY", price: "$1,700", rating: 5.0, image: decorImage },
     { id: "d7", name: "Modern Botanicals", location: "New York, NY", price: "$1,900", rating: 4.7, image: decorImage },
@@ -72,16 +72,36 @@ const mockVendorsByCategory = {
     { id: "pr7", name: "Luxury Event Rentals", location: "New York, NY", price: "$1,500", rating: 5.0, image: planningImage },
     { id: "pr8", name: "All Occasions Rentals", location: "New York, NY", price: "$850", rating: 4.6, image: planningImage },
   ],
-  Catering: [
-    { id: "7", name: "Culinary Elegance", location: "New York, NY", price: "$2,500", rating: 4.8, image: cateringImage },
-    { id: "8", name: "Gourmet Events", location: "New York, NY", price: "$3,000", rating: 4.9, image: cateringImage },
-    { id: "9", name: "Savory Selections", location: "New York, NY", price: "$2,200", rating: 4.7, image: cateringImage },
-    { id: "c4", name: "Farm-to-Table Catering", location: "New York, NY", price: "$3,200", rating: 4.9, image: cateringImage },
-    { id: "c5", name: "The Culinary Experience", location: "New York, NY", price: "$2,800", rating: 4.8, image: cateringImage },
-    { id: "c6", name: "Taste of Excellence", location: "New York, NY", price: "$3,500", rating: 5.0, image: cateringImage },
-    { id: "c7", name: "Artisan Cuisine Co.", location: "New York, NY", price: "$2,600", rating: 4.7, image: cateringImage },
-    { id: "c8", name: "Premium Palate Catering", location: "New York, NY", price: "$4,000", rating: 4.8, image: cateringImage },
+  planners: [
+    { id: "planner-1", name: "Perfectly Planned", location: "New York, NY", price: "$3,000", rating: 4.9, image: planningImage, category: "planners" },
+    { id: "planner-2", name: "Dream Day Events", location: "New York, NY", price: "$3,500", rating: 5.0, image: planningImage, category: "planners" },
+    { id: "planner-3", name: "Momentous Occasions", location: "New York, NY", price: "$2,800", rating: 4.8, image: planningImage, category: "planners" },
+    { id: "planner-4", name: "The Wedding Planners", location: "New York, NY", price: "$4,000", rating: 5.0, image: planningImage, category: "planners" },
+    { id: "planner-5", name: "Elegant Affairs", location: "New York, NY", price: "$3,200", rating: 4.9, image: planningImage, category: "planners" },
+    { id: "planner-6", name: "Simply Perfect Events", location: "New York, NY", price: "$2,500", rating: 4.7, image: planningImage, category: "planners" },
+    { id: "planner-7", name: "Aisle Perfect", location: "New York, NY", price: "$3,800", rating: 4.9, image: planningImage, category: "planners" },
+    { id: "planner-8", name: "Once Upon a Time Events", location: "New York, NY", price: "$4,200", rating: 5.0, image: planningImage, category: "planners" },
   ],
+  caterers: [
+    { id: "caterer-1", name: "Gourmet Delights", location: "New York, NY", price: "$2,500", rating: 4.9, image: cateringImage, category: "caterers" },
+    { id: "caterer-2", name: "Feast & Fete", location: "New York, NY", price: "$3,200", rating: 4.8, image: cateringImage, category: "caterers" },
+    { id: "caterer-3", name: "Culinary Creations", location: "New York, NY", price: "$2,100", rating: 4.7, image: cateringImage, category: "caterers" },
+    { id: "caterer-4", name: "The Culinary Experience", location: "New York, NY", price: "$2,800", rating: 4.8, image: cateringImage, category: "caterers" },
+    { id: "caterer-5", name: "Taste of Excellence", location: "New York, NY", price: "$3,500", rating: 5.0, image: cateringImage, category: "caterers" },
+    { id: "caterer-6", name: "Artisan Cuisine Co.", location: "New York, NY", price: "$2,600", rating: 4.7, image: cateringImage, category: "caterers" },
+    { id: "caterer-7", name: "Premium Palate Catering", location: "New York, NY", price: "$4,000", rating: 4.8, image: cateringImage, category: "caterers" },
+  ],
+};
+
+// Map of category display names to their slugs
+const categoryDisplayNames: Record<string, string> = {
+  'Venues': 'venues',
+  'Photographers': 'photographers',
+  'Videographers': 'videographers',
+  'DJs': 'djs',
+  'Florists': 'florists',
+  'Caterers': 'caterers',
+  'Planners': 'planners'
 };
 
 export default function SmartRecommendations() {
@@ -150,8 +170,12 @@ export default function SmartRecommendations() {
             </div>
             
             <div className="mt-4">
-              <Link href={`/browse?category=${category.toLowerCase()}`}>
-                <Button variant="outline" className="bg-[#9edbc0] text-[white]" data-testid={`button-view-all-${category.toLowerCase()}`}>
+              <Link href={`/browse?category=${categoryDisplayNames[category] || category.toLowerCase()}`}>
+                <Button 
+                  variant="outline" 
+                  className="bg-[#9edbc0] text-[white] hover:bg-[#8ec9b0]" 
+                  data-testid={`button-view-all-${categoryDisplayNames[category] || category.toLowerCase()}`}
+                >
                   View all {category}
                 </Button>
               </Link>

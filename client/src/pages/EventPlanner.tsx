@@ -1,90 +1,189 @@
-import { useState } from "react";
+import { useState, useEffect } from "react";
 import { useLocation } from "wouter";
 import { useMutation } from "@tanstack/react-query";
+import { format } from "date-fns";
 import Navigation from "@/components/Navigation";
 import Footer from "@/components/Footer";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
-import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card";
-import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
-import { Checkbox } from "@/components/ui/checkbox";
 import { Textarea } from "@/components/ui/textarea";
 import { RadioGroup, RadioGroupItem } from "@/components/ui/radio-group";
-import { ChevronRight, ChevronLeft, Sparkles, Search } from "lucide-react";
+import { Checkbox } from "@/components/ui/checkbox";
 import { useToast } from "@/hooks/use-toast";
+import { Toaster } from "@/components/ui/toaster";
+import {
+  Card,
+  CardContent,
+  CardDescription,
+  CardHeader,
+  CardTitle,
+} from "@/components/ui/card";
+import {
+  Select,
+  SelectContent,
+  SelectItem,
+  SelectTrigger,
+  SelectValue,
+} from "@/components/ui/select";
+import { ChevronLeft, ChevronRight, Calendar as CalendarIcon, Clock, Search, Sparkles, X } from "lucide-react";
+import { BudgetRangeSlider } from "@/components/BudgetRangeSlider";
+import { MultiDayEvent } from "@/components/MultiDayEvent";
+import {
+  Popover,
+  PopoverContent,
+  PopoverTrigger,
+} from "@/components/ui/popover";
+import { Calendar } from "@/components/ui/calendar";
+import {
+  Command,
+  CommandEmpty,
+  CommandGroup,
+  CommandInput,
+  CommandItem,
+  CommandList,
+} from "@/components/ui/command";
+import { Badge } from "@/components/ui/badge";
 import { apiRequest } from "@/lib/queryClient";
 import type { InsertEvent, PhotographerDetails, VideographerDetails, FloristDetails, CateringDetails, DJDetails, PropDecorDetails } from "@shared/schema";
 
-const vendorTypes = [
-  { id: "photographer", label: "Photographer" },
-  { id: "videographer", label: "Videographer" },
-  { id: "florist", label: "Florist" },
-  { id: "catering", label: "Catering" },
-  { id: "dj", label: "DJ" },
-  { id: "prop-decor", label: "Prop / Décor Rental" },
+const VENDOR_OPTIONS = [
+  { value: 'photographer', label: 'Photographer' },
+  { value: 'videographer', label: 'Videographer' },
+  { value: 'florist', label: 'Florist' },
+  { value: 'catering', label: 'Catering' },
+  { value: 'dj', label: 'DJ/Music' },
+  { value: 'prop-decor', label: 'Prop/Decor Rental' },
+  { value: 'planner', label: 'Planner/Coordinator' },
+  { value: 'hair', label: 'Hair Stylist' },
+  { value: 'makeup', label: 'Makeup Artist' },
+  { value: 'other', label: 'Other' },
 ];
 
-export default function EventPlanner() {
+interface EventDay {
+  date: Date;
+  startTime: string;
+  endTime: string;
+}
+
+const EventPlanner = () => {
   const [, setLocation] = useLocation();
   const { toast } = useToast();
   const [currentStep, setCurrentStep] = useState<'basic' | 'path-selection' | 'curated'>('basic');
-  const [selectedPath, setSelectedPath] = useState<'browse' | 'curated' | null>(null);
+  const [selectedPath, setSelectedPath] = useState<'browse' | 'curated'>();
   const [currentVendorIndex, setCurrentVendorIndex] = useState(0);
-
-  const [eventType, setEventType] = useState("");
-  const [location, setLocationValue] = useState("");
-  const [date, setDate] = useState("");
-  const [startTime, setStartTime] = useState("");
-  const [guestCount, setGuestCount] = useState("");
+  
+  // Basic event details
+  const [eventName, setEventName] = useState('');
+  const [eventType, setEventType] = useState('');
+  const [locationValue, setLocationValue] = useState('');
+  const [isMultiDay, setIsMultiDay] = useState(false);
+  const [singleDate, setSingleDate] = useState<Date>();
+  const [singleStartTime, setSingleStartTime] = useState('');
+  const [singleEndTime, setSingleEndTime] = useState('');
+  const [eventDays, setEventDays] = useState<EventDay[]>([
+    { date: new Date(), startTime: '09:00', endTime: '17:00' }
+  ]);
+  const [guestCount, setGuestCount] = useState('');
+  const [budgetRange, setBudgetRange] = useState<[number, number]>([0, 500000]);
   const [selectedVendors, setSelectedVendors] = useState<string[]>([]);
-
-  const [photographerDetails, setPhotographerDetails] = useState<Partial<PhotographerDetails>>({ 
-    preEventShoots: false 
-  });
-  const [videographerDetails, setVideographerDetails] = useState<Partial<VideographerDetails>>({ 
-    preEventShoots: false 
-  });
-  const [floristDetails, setFloristDetails] = useState<Partial<FloristDetails>>({ 
-    arrangementsNeeded: [],
-    beforeEventNeeds: false,
-    touchUps: false
-  });
-  const [cateringDetails, setCateringDetails] = useState<Partial<CateringDetails>>({ 
-    foodStyle: [],
-    serviceType: [],
-    allergyFriendly: false,
-    beforeEventCatering: false
-  });
-  const [djDetails, setDJDetails] = useState<Partial<DJDetails>>({ 
-    servicesNeeded: [],
-    hasPlaylist: false
-  });
-  const [propDecorDetails, setPropDecorDetails] = useState<Partial<PropDecorDetails>>({ 
-    itemsNeeded: "" 
-  });
-
+  const [otherVendorType, setOtherVendorType] = useState('');
+  const [isVendorDropdownOpen, setIsVendorDropdownOpen] = useState(false);
+  
+  // Vendor details
+  const [photographerDetails, setPhotographerDetails] = useState<Partial<PhotographerDetails>>({});
+  const [videographerDetails, setVideographerDetails] = useState<Partial<VideographerDetails>>({});
+  const [floristDetails, setFloristDetails] = useState<Partial<FloristDetails>>({});
+  const [cateringDetails, setCateringDetails] = useState<Partial<CateringDetails>>({});
+  const [djDetails, setDJDetails] = useState<Partial<DJDetails>>({});
+  const [propDecorDetails, setPropDecorDetails] = useState<Partial<PropDecorDetails>>({});
+  
+  // Load saved state from localStorage on component mount
+  useEffect(() => {
+    const savedState = localStorage.getItem('eventPlannerState');
+    if (savedState) {
+      const state = JSON.parse(savedState);
+      setEventName(state.eventName || '');
+      setEventType(state.eventType || '');
+      setLocationValue(state.locationValue || '');
+      setIsMultiDay(state.isMultiDay || false);
+      setSingleDate(state.singleDate ? new Date(state.singleDate) : undefined);
+      setSingleStartTime(state.singleStartTime || '');
+      setSingleEndTime(state.singleEndTime || '');
+      setEventDays(state.eventDays?.map((day: any) => ({
+        ...day,
+        date: new Date(day.date)
+      })) || [{ date: new Date(), startTime: '09:00', endTime: '17:00' }]);
+      setGuestCount(state.guestCount || '');
+      setBudgetRange(state.budgetRange || [0, 500000]);
+      setSelectedVendors(state.selectedVendors || []);
+      setOtherVendorType(state.otherVendorType || '');
+    }
+  }, []);
+  
+  // Save state to localStorage whenever it changes
+  useEffect(() => {
+    const state = {
+      eventName,
+      eventType,
+      locationValue,
+      isMultiDay,
+      singleDate,
+      singleStartTime,
+      singleEndTime,
+      eventDays: eventDays.map(day => ({
+        ...day,
+        date: day.date.toISOString()
+      })),
+      guestCount,
+      budgetRange,
+      selectedVendors,
+      otherVendorType,
+    };
+    localStorage.setItem('eventPlannerState', JSON.stringify(state));
+  }, [
+    eventName,
+    eventType,
+    locationValue,
+    isMultiDay,
+    singleDate,
+    singleStartTime,
+    singleEndTime,
+    eventDays,
+    guestCount,
+    budgetRange,
+    selectedVendors,
+    otherVendorType,
+  ]); 
+  
   const createEventMutation = useMutation({
     mutationFn: async (eventData: InsertEvent) => {
-      const response = await apiRequest("POST", "/api/events", eventData);
-      return await response.json();
+      const response = await fetch('/api/events', {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/json',
+        },
+        body: JSON.stringify(eventData),
+      });
+      
+      if (!response.ok) {
+        const error = await response.json();
+        throw new Error(error.message || 'Failed to create event');
+      }
+      
+      return response.json();
     },
     onSuccess: (data, variables) => {
-      if (variables.path === 'curated') {
-        toast({
-          title: "Event created successfully!",
-          description: "Showing your curated recommendations...",
-        });
-        setLocation(`/recommendations/${data.id}`);
+      // Clear saved state on successful submission
+      localStorage.removeItem('eventPlannerState');
+      
+      if (variables.path === 'browse') {
+        setLocation(`/browse?eventId=${data.id}`);
       } else {
-        toast({
-          title: "Event created successfully!",
-          description: "Redirecting to browse vendors...",
-        });
-        setLocation("/browse");
+        setLocation(`/recommendations/${data.id}`);
       }
     },
-    onError: (error: any) => {
+    onError: (error) => {
       toast({
         title: "Error creating event",
         description: error.message,
@@ -93,75 +192,182 @@ export default function EventPlanner() {
     },
   });
 
-  const toggleVendor = (id: string) => {
-    setSelectedVendors(prev =>
-      prev.includes(id) ? prev.filter(v => v !== id) : [...prev, id]
-    );
+  const toggleVendor = (vendorId: string) => {
+    if (selectedVendors.includes(vendorId)) {
+      setSelectedVendors(selectedVendors.filter(id => id !== vendorId));
+    } else {
+      setSelectedVendors([...selectedVendors, vendorId]);
+    }
+  };
+  
+  const removeVendor = (vendorId: string) => {
+    setSelectedVendors(selectedVendors.filter(id => id !== vendorId));
+  };
+  
+  const handleVendorSelect = (value: string) => {
+    if (value === 'other') {
+      // If 'Other' is selected, don't add it to the list but show the input
+      setOtherVendorType('');
+      return;
+    }
+    
+    if (!selectedVendors.includes(value)) {
+      setSelectedVendors([...selectedVendors, value]);
+    }
+  };
+  
+  const handleOtherVendorAdd = () => {
+    if (otherVendorType.trim() && !selectedVendors.includes(`other:${otherVendorType}`)) {
+      setSelectedVendors([...selectedVendors, `other:${otherVendorType}`]);
+      setOtherVendorType('');
+    }
   };
 
+  const handleCuratedSubmit = async () => {
+    const eventData: any = {
+      eventName,
+      eventType,
+      location: locationValue,
+      isMultiDay,
+      guestCount: parseInt(guestCount),
+      budgetMin: budgetRange[0],
+      budgetMax: budgetRange[1],
+      selectedVendors,
+      path: 'curated',
+      photographerDetails: selectedVendors.includes('photographer') ? photographerDetails : undefined,
+      videographerDetails: selectedVendors.includes('videographer') ? videographerDetails : undefined,
+      floristDetails: selectedVendors.includes('florist') ? floristDetails : undefined,
+      cateringDetails: selectedVendors.includes('catering') ? cateringDetails : undefined,
+      djDetails: selectedVendors.includes('dj') ? djDetails : undefined,
+      propDecorDetails: selectedVendors.includes('prop-decor') ? propDecorDetails : undefined,
+    };
+
+    if (isMultiDay) {
+      eventData.eventDays = eventDays;
+    } else {
+      eventData.date = singleDate?.toISOString();
+      eventData.startTime = singleStartTime;
+      eventData.endTime = singleEndTime;
+    }
+
+    try {
+      await createEventMutation.mutateAsync(eventData);
+    } catch (error) {
+      console.error('Error creating event:', error);
+    }
+  };
+
+  // Derive primary event date string for questionnaires and summaries
+  const getPrimaryEventDateString = () => {
+    if (isMultiDay && eventDays.length > 0) {
+      return eventDays[0].date.toISOString().split("T")[0];
+    }
+    if (singleDate) {
+      return singleDate.toISOString().split("T")[0];
+    }
+    return undefined;
+  };
+
+  const eventDateString = getPrimaryEventDateString();
+
   const handleBasicSubmit = () => {
-    if (!eventType || !location || !date || !startTime || !guestCount || selectedVendors.length === 0) {
+    if (!eventName.trim() || !eventType || !locationValue.trim()) {
       toast({
-        title: "Please fill all required fields",
+        title: "Missing details",
+        description: "Please fill in event name, type, and location.",
         variant: "destructive",
       });
       return;
     }
+
+    if (!guestCount || Number.isNaN(parseInt(guestCount))) {
+      toast({
+        title: "Guest count required",
+        description: "Please enter how many guests you're expecting.",
+        variant: "destructive",
+      });
+      return;
+    }
+
+    if (!isMultiDay) {
+      if (!singleDate || !singleStartTime || !singleEndTime) {
+        toast({
+          title: "Event timing required",
+          description: "Please select a date, start time, and end time.",
+          variant: "destructive",
+        });
+        return;
+      }
+    } else if (eventDays.length === 0) {
+      toast({
+        title: "Event days required",
+        description: "Please add at least one event day.",
+        variant: "destructive",
+      });
+      return;
+    }
+
+    if (selectedVendors.length === 0) {
+      toast({
+        title: "Select vendors",
+        description: "Choose at least one vendor type you need for your event.",
+        variant: "destructive",
+      });
+      return;
+    }
+
+    setCurrentVendorIndex(0);
     setCurrentStep('path-selection');
   };
 
   const handlePathSelection = (path: 'browse' | 'curated') => {
     setSelectedPath(path);
+
     if (path === 'browse') {
-      const eventData: InsertEvent = {
+      const eventData: any = {
+        eventName,
         eventType,
-        location,
-        date,
-        startTime,
+        location: locationValue,
+        isMultiDay,
         guestCount: parseInt(guestCount),
-        vendorsNeeded: selectedVendors,
+        budgetMin: budgetRange[0],
+        budgetMax: budgetRange[1],
+        selectedVendors,
         path: 'browse',
       };
+
+      if (isMultiDay) {
+        eventData.eventDays = eventDays;
+      } else {
+        eventData.date = singleDate?.toISOString();
+        eventData.startTime = singleStartTime;
+        eventData.endTime = singleEndTime;
+      }
+
       createEventMutation.mutate(eventData);
-    } else {
-      setCurrentStep('curated');
-      setCurrentVendorIndex(0);
+      return;
     }
+
+    // For curated path, start vendor questionnaires
+    setCurrentVendorIndex(0);
+    setCurrentStep('curated');
   };
 
   const handleVendorQuestionnaireNext = () => {
-    if (currentVendorIndex < selectedVendors.length - 1) {
-      setCurrentVendorIndex(currentVendorIndex + 1);
+    if (currentVendorIndex === selectedVendors.length - 1) {
+      // Last vendor – submit curated request
+      void handleCuratedSubmit();
     } else {
-      handleCuratedSubmit();
+      setCurrentVendorIndex((index) => index + 1);
     }
   };
 
   const handleVendorQuestionnaireBack = () => {
-    if (currentVendorIndex > 0) {
-      setCurrentVendorIndex(currentVendorIndex - 1);
-    } else {
+    if (currentVendorIndex === 0) {
       setCurrentStep('path-selection');
+    } else {
+      setCurrentVendorIndex((index) => index - 1);
     }
-  };
-
-  const handleCuratedSubmit = () => {
-    const eventData: InsertEvent = {
-      eventType,
-      location,
-      date,
-      startTime,
-      guestCount: parseInt(guestCount),
-      vendorsNeeded: selectedVendors,
-      path: 'curated',
-      photographerDetails: selectedVendors.includes('photographer') ? photographerDetails as PhotographerDetails : undefined,
-      videographerDetails: selectedVendors.includes('videographer') ? videographerDetails as VideographerDetails : undefined,
-      floristDetails: selectedVendors.includes('florist') ? floristDetails as FloristDetails : undefined,
-      cateringDetails: selectedVendors.includes('catering') ? cateringDetails as CateringDetails : undefined,
-      djDetails: selectedVendors.includes('dj') ? djDetails as DJDetails : undefined,
-      propDecorDetails: selectedVendors.includes('prop-decor') ? propDecorDetails as PropDecorDetails : undefined,
-    };
-    createEventMutation.mutate(eventData);
   };
 
   const currentVendor = selectedVendors[currentVendorIndex];
@@ -177,6 +383,7 @@ export default function EventPlanner() {
               Tell us about your event to get matched with perfect vendors
             </p>
           </div>
+          <Toaster />
 
           {currentStep === 'basic' && (
             <Card>
@@ -186,9 +393,24 @@ export default function EventPlanner() {
               </CardHeader>
               <CardContent className="space-y-6">
                 <div className="space-y-2">
+                  <Label htmlFor="event-name">Event Name *</Label>
+                  <Input
+                    id="event-name"
+                    placeholder="e.g., Sarah & John's Wedding"
+                    value={eventName}
+                    onChange={(e) => setEventName(e.target.value)}
+                    data-testid="input-event-name"
+                  />
+                </div>
+
+                <div className="space-y-2">
                   <Label htmlFor="event-type">Event Type *</Label>
-                  <Select value={eventType} onValueChange={setEventType}>
-                    <SelectTrigger id="event-type" data-testid="select-event-type">
+                  <Select 
+                    value={eventType} 
+                    onValueChange={setEventType}
+                    data-testid="select-event-type"
+                  >
+                    <SelectTrigger id="event-type">
                       <SelectValue placeholder="Select event type" />
                     </SelectTrigger>
                     <SelectContent>
@@ -198,6 +420,8 @@ export default function EventPlanner() {
                       <SelectItem value="anniversary">Anniversary</SelectItem>
                       <SelectItem value="baby-shower">Baby Shower</SelectItem>
                       <SelectItem value="graduation">Graduation</SelectItem>
+                      <SelectItem value="conference">Conference</SelectItem>
+                      <SelectItem value="gala">Gala</SelectItem>
                       <SelectItem value="other">Other</SelectItem>
                     </SelectContent>
                   </Select>
@@ -205,36 +429,99 @@ export default function EventPlanner() {
 
                 <div className="space-y-2">
                   <Label htmlFor="location">Location *</Label>
-                  <Input
-                    id="location"
-                    placeholder="City, State or venue"
-                    value={location}
-                    onChange={(e) => setLocationValue(e.target.value)}
-                    data-testid="input-location"
-                  />
+                  <div className="relative">
+                    <Search className="absolute left-3 top-2.5 h-4 w-4 text-muted-foreground" />
+                    <Input
+                      id="location"
+                      placeholder="City, State or venue name"
+                      value={locationValue}
+                      onChange={(e) => setLocationValue(e.target.value)}
+                      className="pl-10"
+                      data-testid="input-location"
+                    />
+                  </div>
                 </div>
 
-                <div className="grid grid-cols-2 gap-4">
-                  <div className="space-y-2">
-                    <Label htmlFor="date">Date *</Label>
-                    <Input
-                      id="date"
-                      type="date"
-                      value={date}
-                      onChange={(e) => setDate(e.target.value)}
-                      data-testid="input-date"
-                    />
+                <div className="space-y-4">
+                  <div className="flex items-center justify-between">
+                    <Label>Event Timing *</Label>
+                    <div className="flex items-center space-x-2">
+                      <span className="text-sm text-muted-foreground">Single Day</span>
+                      <button
+                        type="button"
+                        className={`relative inline-flex h-6 w-11 items-center rounded-full transition-colors focus:outline-none ${isMultiDay ? 'bg-primary' : 'bg-muted'}`}
+                        onClick={() => setIsMultiDay(!isMultiDay)}
+                        data-testid="toggle-multi-day"
+                      >
+                        <span
+                          className={`inline-block h-5 w-5 transform rounded-full bg-white shadow-md transition-transform ${isMultiDay ? 'translate-x-6' : 'translate-x-1'}`}
+                        />
+                      </button>
+                      <span className="text-sm text-muted-foreground">Multi-Day</span>
+                    </div>
                   </div>
-                  <div className="space-y-2">
-                    <Label htmlFor="start-time">Start Time *</Label>
-                    <Input
-                      id="start-time"
-                      type="time"
-                      value={startTime}
-                      onChange={(e) => setStartTime(e.target.value)}
-                      data-testid="input-start-time"
+
+                  {isMultiDay ? (
+                    <MultiDayEvent
+                      value={eventDays}
+                      onChange={setEventDays}
                     />
-                  </div>
+                  ) : (
+                    <div className="grid grid-cols-1 md:grid-cols-3 gap-4">
+                      <div className="space-y-2">
+                        <Label htmlFor="date">Date *</Label>
+                        <Popover>
+                          <PopoverTrigger asChild>
+                            <Button
+                              variant="outline"
+                              className="w-full justify-start text-left font-normal"
+                              id="date"
+                              data-testid="input-date"
+                            >
+                              <CalendarIcon className="mr-2 h-4 w-4" />
+                              {singleDate ? format(singleDate, "PPP") : <span>Pick a date</span>}
+                            </Button>
+                          </PopoverTrigger>
+                          <PopoverContent className="w-auto p-0">
+                            <Calendar
+                              mode="single"
+                              selected={singleDate}
+                              onSelect={(date) => date && setSingleDate(date)}
+                              initialFocus
+                            />
+                          </PopoverContent>
+                        </Popover>
+                      </div>
+                      <div className="space-y-2">
+                        <Label htmlFor="start-time">Start Time *</Label>
+                        <div className="relative">
+                          <Clock className="absolute left-3 top-2.5 h-4 w-4 text-muted-foreground" />
+                          <Input
+                            id="start-time"
+                            type="time"
+                            value={singleStartTime}
+                            onChange={(e) => setSingleStartTime(e.target.value)}
+                            className="pl-10"
+                            data-testid="input-start-time"
+                          />
+                        </div>
+                      </div>
+                      <div className="space-y-2">
+                        <Label htmlFor="end-time">End Time *</Label>
+                        <div className="relative">
+                          <Clock className="absolute left-3 top-2.5 h-4 w-4 text-muted-foreground" />
+                          <Input
+                            id="end-time"
+                            type="time"
+                            value={singleEndTime}
+                            onChange={(e) => setSingleEndTime(e.target.value)}
+                            className="pl-10"
+                            data-testid="input-end-time"
+                          />
+                        </div>
+                      </div>
+                    </div>
+                  )}
                 </div>
 
                 <div className="space-y-2">
@@ -245,37 +532,70 @@ export default function EventPlanner() {
                     placeholder="e.g., 150"
                     value={guestCount}
                     onChange={(e) => setGuestCount(e.target.value)}
+                    min="1"
                     data-testid="input-guest-count"
                   />
                 </div>
 
-                <div className="space-y-3">
+                <div className="space-y-2">
+                  <Label>Total Budget Range *</Label>
+                  <BudgetRangeSlider
+                    min={0}
+                    max={500000}
+                    step={250}
+                    value={budgetRange}
+                    onChange={setBudgetRange}
+                  />
+                  <p className="text-sm text-muted-foreground">
+                    Selected range: ${budgetRange[0].toLocaleString()} - ${budgetRange[1].toLocaleString()}
+                  </p>
+                </div>
+
+                <div className="space-y-2">
                   <Label>Vendors Needed *</Label>
                   <div className="space-y-2">
-                    {vendorTypes.map((vendor) => (
-                      <div key={vendor.id} className="flex items-center gap-3 p-3 rounded-lg border hover-elevate">
-                        <Checkbox
-                          id={vendor.id}
-                          checked={selectedVendors.includes(vendor.id)}
-                          onCheckedChange={() => toggleVendor(vendor.id)}
-                          data-testid={`checkbox-vendor-${vendor.id}`}
-                        />
-                        <Label htmlFor={vendor.id} className="cursor-pointer flex-1">
-                          {vendor.label}
-                        </Label>
-                      </div>
-                    ))}
+                    {VENDOR_OPTIONS.filter(v => v.value !== 'other').map((vendor) => {
+                      const checked = selectedVendors.includes(vendor.value);
+                      return (
+                        <button
+                          key={vendor.value}
+                          type="button"
+                          onClick={() => toggleVendor(vendor.value)}
+                          className={`w-full flex items-center justify-between px-4 py-3 rounded-md border text-left transition-colors ${
+                            checked ? 'border-primary bg-primary/5' : 'border-input hover:bg-muted'
+                          }`}
+                          data-testid={`vendor-checkbox-${vendor.value}`}
+                        >
+                          <span className="flex items-center gap-3">
+                            <Checkbox
+                              checked={checked}
+                              onCheckedChange={() => toggleVendor(vendor.value)}
+                              className="pointer-events-none"
+                            />
+                            <span>{vendor.label}</span>
+                          </span>
+                        </button>
+                      );
+                    })}
                   </div>
                 </div>
 
-                <Button
-                  className="w-full"
-                  onClick={handleBasicSubmit}
-                  data-testid="button-submit-basic"
-                >
-                  Continue
-                  <ChevronRight className="h-4 w-4 ml-2" />
-                </Button>
+                <div className="flex justify-between pt-4">
+                  <Button
+                    variant="outline"
+                    onClick={() => window.history.back()}
+                    data-testid="button-cancel"
+                  >
+                    Cancel
+                  </Button>
+                  <Button
+                    onClick={handleBasicSubmit}
+                    data-testid="button-continue"
+                  >
+                    Continue
+                    <ChevronRight className="h-4 w-4 ml-2" />
+                  </Button>
+                </div>
               </CardContent>
             </Card>
           )}
@@ -333,7 +653,7 @@ export default function EventPlanner() {
               onBack={handleVendorQuestionnaireBack}
               isLast={currentVendorIndex === selectedVendors.length - 1}
               isPending={createEventMutation.isPending}
-              eventDate={date}
+              eventDate={eventDateString}
             />
           )}
 
@@ -345,7 +665,7 @@ export default function EventPlanner() {
               onBack={handleVendorQuestionnaireBack}
               isLast={currentVendorIndex === selectedVendors.length - 1}
               isPending={createEventMutation.isPending}
-              eventDate={date}
+              eventDate={eventDateString}
             />
           )}
 
@@ -357,7 +677,7 @@ export default function EventPlanner() {
               onBack={handleVendorQuestionnaireBack}
               isLast={currentVendorIndex === selectedVendors.length - 1}
               isPending={createEventMutation.isPending}
-              eventDate={date}
+              eventDate={eventDateString}
             />
           )}
 
@@ -399,6 +719,8 @@ export default function EventPlanner() {
     </div>
   );
 }
+
+export default EventPlanner;
 
 interface QuestionnaireProps<T> {
   details: Partial<T>;

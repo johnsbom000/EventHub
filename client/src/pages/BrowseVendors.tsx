@@ -1,5 +1,5 @@
 import { useState, useEffect, useMemo } from "react";
-import { useSearch } from "wouter";
+import { useSearch, useLocation } from "wouter";
 import { useQuery } from "@tanstack/react-query";
 import Navigation from "@/components/Navigation";
 import Footer from "@/components/Footer";
@@ -10,73 +10,113 @@ import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { Checkbox } from "@/components/ui/checkbox";
 import { Label } from "@/components/ui/label";
-import { Search, SlidersHorizontal } from "lucide-react";
+import { Search, SlidersHorizontal, X } from "lucide-react";
+
+type VendorCategory = 'venues' | 'photographers' | 'videographers' | 'djs' | 'florists' | 'caterers' | 'planners';
+
+const categoryDisplayNames: Record<VendorCategory, string> = {
+  'venues': 'Venues',
+  'photographers': 'Photographers',
+  'videographers': 'Videographers',
+  'djs': 'DJs',
+  'florists': 'Florists',
+  'caterers': 'Caterers',
+  'planners': 'Planners'
+};
 
 type Vendor = {
   id: string;
   name: string;
-  category: string;
-  city: string;
-  state: string;
-  basePrice: number;
-  rating: string;
-  reviewCount: number;
-  imageUrl: string | null;
+  category: VendorCategory;
+  location: string;
+  price: string;
+  rating: number;
+  image: string;
+  reviewCount?: number;
 };
 
-const categoryImages: Record<string, string> = {
-  "Venues": "https://images.unsplash.com/photo-1519167758481-83f29da78c32?w=800",
-  "Catering": "https://images.unsplash.com/photo-1555244162-803834f70033?w=800",
-  "Photography": "https://images.unsplash.com/photo-1606216794074-735e91aa2c92?w=800",
-  "DJ": "https://images.unsplash.com/photo-1571266028243-d220c1ac6e14?w=800",
-  "Florist": "https://images.unsplash.com/photo-1487070183336-b863922373d4?w=800",
-  "Decor": "https://images.unsplash.com/photo-1511578314322-379afb476865?w=800",
-  "Entertainment": "https://images.unsplash.com/photo-1571266028243-d220c1ac6e14?w=800",
-  "Planning": "https://images.unsplash.com/photo-1511578314322-379afb476865?w=800",
+const categoryImages: Record<VendorCategory, string> = {
+  'venues': "https://images.unsplash.com/photo-1519167758481-83f29da78c32?w=800",
+  'photographers': "https://images.unsplash.com/photo-1606216794074-735e91aa2c92?w=800",
+  'videographers': "https://images.unsplash.com/photo-1571266028243-d220c1ac6e14?w=800",
+  'djs': "https://images.unsplash.com/photo-1571266028243-d220c1ac6e14?w=800",
+  'florists': "https://images.unsplash.com/photo-1487070183336-b863922373d4?w=800",
+  'caterers': "https://images.unsplash.com/photo-1555244162-803834f70033?w=800",
+  'planners': "https://images.unsplash.com/photo-1511578314322-379afb476865?w=800"
 };
 
 export default function BrowseVendors() {
+  const [location, setLocation] = useLocation();
   const searchString = useSearch();
   const [searchQuery, setSearchQuery] = useState("");
-  const [sortBy, setSortBy] = useState("rating");
-  const [selectedCategories, setSelectedCategories] = useState<string[]>([]);
+  const [sortBy, setSortBy] = useState<"rating" | "price-asc" | "price-desc">("rating");
+  const [selectedCategories, setSelectedCategories] = useState<VendorCategory[]>([]);
   const [showFilters, setShowFilters] = useState(false);
 
-  // Fetch vendors from API
-  const { data: vendors = [], isLoading } = useQuery<Vendor[]>({
-    queryKey: ["/api/vendors"],
-  });
+  // Mock data - in a real app, this would come from an API
+  const mockVendors: Vendor[] = [
+    // Venues
+    { id: "venue-1", name: "Grand Ballroom Events", location: "New York, NY", price: "$5,000", rating: 4.9, image: "https://images.unsplash.com/photo-1519167758481-83f29da78c32?w=800", category: 'venues' },
+    // Add more mock vendors...
+  ];
 
-  // Fetch vendor categories from API
-  const { data: categories = [] } = useQuery<string[]>({
-    queryKey: ["/api/vendors/meta/categories"],
-  });
-
-  // Parse URL parameters on mount
+  // Parse URL parameters on mount and when they change
   useEffect(() => {
     const params = new URLSearchParams(searchString);
-    const location = params.get('location');
-    const eventType = params.get('eventType');
-    const date = params.get('date');
-    const categoriesParam = params.get('categories');
+    const categoryParam = params.get('category');
     
-    if (location) setSearchQuery(location);
-    if (categoriesParam) {
-      setSelectedCategories(categoriesParam.split(','));
+    if (categoryParam) {
+      // Validate the category against our known categories
+      const validCategories = Object.keys(categoryDisplayNames) as VendorCategory[];
+      const category = validCategories.find(c => c === categoryParam.toLowerCase());
+      
+      if (category) {
+        setSelectedCategories([category]);
+      }
     }
     
-    console.log('Search filters:', { location, eventType, date, categories: categoriesParam });
+    // Optional: Handle search query from URL
+    const search = params.get('q');
+    if (search) {
+      setSearchQuery(search);
+    }
   }, [searchString]);
 
-  const toggleCategory = (category: string) => {
-    setSelectedCategories(prev =>
-      prev.includes(category) ? prev.filter(c => c !== category) : [...prev, category]
-    );
+  const toggleCategory = (category: VendorCategory) => {
+    setSelectedCategories(prev => {
+      const newCategories = prev.includes(category)
+        ? prev.filter(c => c !== category)
+        : [...prev, category];
+      
+      // Update URL with selected categories
+      const params = new URLSearchParams(searchString);
+      if (newCategories.length > 0) {
+        params.set('category', newCategories[0]); // For now, only support one category at a time
+      } else {
+        params.delete('category');
+      }
+      
+      setLocation(`/browse?${params.toString()}`, { replace: true });
+      
+      return newCategories;
+    });
   };
+  
+  const clearFilters = () => {
+    setSelectedCategories([]);
+    setSearchQuery("");
+    setSortBy("rating");
+    setLocation('/browse', { replace: true });
+  };
+
+  // Get all available categories from our display names
+  const allCategories = useMemo(() => {
+    return Object.keys(categoryDisplayNames) as VendorCategory[];
+  }, []);
 
   // Filter and sort vendors
   const filteredVendors = useMemo(() => {
-    let filtered = vendors;
+    let filtered = [...mockVendors]; // Create a copy to avoid mutating the original array
 
     // Filter by category
     if (selectedCategories.length > 0) {
@@ -88,42 +128,60 @@ export default function BrowseVendors() {
       const query = searchQuery.toLowerCase();
       filtered = filtered.filter(v => 
         v.name.toLowerCase().includes(query) ||
-        v.city.toLowerCase().includes(query) ||
-        v.state.toLowerCase().includes(query)
+        v.location.toLowerCase().includes(query)
       );
     }
 
-    // Sort
+    // Sort vendors
     const sorted = [...filtered];
     switch (sortBy) {
       case "rating":
-        sorted.sort((a, b) => parseFloat(b.rating) - parseFloat(a.rating));
+        sorted.sort((a, b) => b.rating - a.rating);
         break;
-      case "price-low":
-        sorted.sort((a, b) => a.basePrice - b.basePrice);
+      case "price-asc":
+        sorted.sort((a, b) => {
+          const priceA = parseFloat(a.price.replace(/[^0-9.-]+/g, ''));
+          const priceB = parseFloat(b.price.replace(/[^0-9.-]+/g, ''));
+          return priceA - priceB;
+        });
         break;
-      case "price-high":
-        sorted.sort((a, b) => b.basePrice - a.basePrice);
-        break;
-      case "popular":
-        sorted.sort((a, b) => b.reviewCount - a.reviewCount);
+      case "price-desc":
+        sorted.sort((a, b) => {
+          const priceA = parseFloat(a.price.replace(/[^0-9.-]+/g, ''));
+          const priceB = parseFloat(b.price.replace(/[^0-9.-]+/g, ''));
+          return priceB - priceA;
+        });
         break;
     }
-
     return sorted;
-  }, [vendors, selectedCategories, searchQuery, sortBy]);
+  }, [mockVendors, selectedCategories, searchQuery, sortBy]);
 
-  // Map vendors to VendorCard props
+  // Group vendors by category for the category filter
+  const vendorsByCategory = useMemo(() => {
+    const groups: Partial<Record<VendorCategory, Vendor[]>> = {};
+    mockVendors.forEach(vendor => {
+      if (!groups[vendor.category]) {
+        groups[vendor.category] = [];
+      }
+      groups[vendor.category]?.push(vendor);
+    });
+    return groups;
+  }, [mockVendors]);
+
+  // Map vendors to VendorCard props with proper types
   const vendorCards = filteredVendors.map(vendor => ({
     id: vendor.id,
     name: vendor.name,
-    category: vendor.category,
-    rating: parseFloat(vendor.rating),
-    reviewCount: vendor.reviewCount,
-    location: `${vendor.city}, ${vendor.state}`,
-    startingPrice: `$${vendor.basePrice.toLocaleString()}`,
-    image: vendor.imageUrl || categoryImages[vendor.category] || categoryImages["Venues"],
+    category: categoryDisplayNames[vendor.category] || vendor.category,
+    rating: vendor.rating,
+    reviewCount: vendor.reviewCount || 0, // Ensure reviewCount is always a number
+    location: vendor.location,
+    startingPrice: vendor.price,
+    image: vendor.image || categoryImages[vendor.category] || categoryImages.venues,
   }));
+
+  // Loading state (in case we switch to API later)
+  const isLoading = false; // Using mock data for now
 
   return (
     <div className="min-h-screen flex flex-col bg-white">
@@ -172,7 +230,7 @@ export default function BrowseVendors() {
                   <div>
                     <h3 className="font-semibold mb-3">Categories</h3>
                     <div className="space-y-2">
-                      {categories.map((category) => (
+                      {allCategories.map((category) => (
                         <div key={category} className="flex items-center gap-2">
                           <Checkbox
                             id={category}
@@ -181,7 +239,7 @@ export default function BrowseVendors() {
                             data-testid={`checkbox-category-${category.toLowerCase()}`}
                           />
                           <Label htmlFor={category} className="cursor-pointer">
-                            {category}
+                            {categoryDisplayNames[category]}
                           </Label>
                         </div>
                       ))}
@@ -196,15 +254,17 @@ export default function BrowseVendors() {
                 <p className="text-sm text-muted-foreground" data-testid="text-results-count">
                   {isLoading ? 'Loading...' : `${vendorCards.length} vendors found`}
                 </p>
-                <Select value={sortBy} onValueChange={setSortBy}>
+                <Select 
+                  value={sortBy} 
+                  onValueChange={(value) => setSortBy(value as "rating" | "price-asc" | "price-desc")}
+                >
                   <SelectTrigger className="w-[180px]" data-testid="select-sort">
                     <SelectValue placeholder="Sort by" />
                   </SelectTrigger>
                   <SelectContent>
                     <SelectItem value="rating">Highest Rated</SelectItem>
-                    <SelectItem value="price-low">Price: Low to High</SelectItem>
-                    <SelectItem value="price-high">Price: High to Low</SelectItem>
-                    <SelectItem value="popular">Most Popular</SelectItem>
+                    <SelectItem value="price-asc">Price: Low to High</SelectItem>
+                    <SelectItem value="price-desc">Price: High to Low</SelectItem>
                   </SelectContent>
                 </Select>
               </div>
