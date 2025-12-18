@@ -28,6 +28,7 @@ export const users = pgTable("users", {
   role: userRoleEnum("role").notNull().default("customer"),
   displayName: text("display_name"),
   lastLoginAt: timestamp("last_login_at"),
+  defaultLocation: jsonb("default_location"),
   createdAt: timestamp("created_at").defaultNow().notNull(),
   updatedAt: timestamp("updated_at").defaultNow().notNull(),
 });

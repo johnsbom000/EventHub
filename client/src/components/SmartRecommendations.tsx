@@ -104,6 +104,17 @@ const categoryDisplayNames: Record<string, string> = {
   'Planners': 'planners'
 };
 
+const categoryTitles: Record<string, string> = {
+  venues: 'Venues',
+  photographers: 'Photographers',
+  videographers: 'Videographers',
+  djs: 'DJs',
+  florists: 'Florists',
+  caterers: 'Caterers',
+  planners: 'Planners',
+  'Prop Rentals': 'Prop Rentals',
+};
+
 export default function SmartRecommendations() {
   const [userLocation, setUserLocation] = useState<string>("New York");
 
@@ -129,7 +140,7 @@ export default function SmartRecommendations() {
         {Object.entries(mockVendorsByCategory).map(([category, vendors]) => (
           <div key={category} className="mb-12" data-testid={`category-${category.toLowerCase()}`}>
             <h2 className="text-2xl font-semibold mb-6 text-foreground">
-              {category} near {userLocation}
+              {categoryTitles[category] || category} Near {userLocation}
             </h2>
             
             <div className="overflow-x-auto -mx-4 px-4">

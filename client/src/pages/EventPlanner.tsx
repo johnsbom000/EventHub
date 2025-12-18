@@ -29,6 +29,9 @@ import {
 import { ChevronLeft, ChevronRight, Calendar as CalendarIcon, Clock, Search, Sparkles, X } from "lucide-react";
 import { BudgetRangeSlider } from "@/components/BudgetRangeSlider";
 import { MultiDayEvent } from "@/components/MultiDayEvent";
+import { LocationPicker } from "@/components/LocationPicker";
+import { useLocationContext } from "@/context/LocationContext";
+import type { LocationResult } from "@/types/location";
 import {
   Popover,
   PopoverContent,
@@ -68,6 +71,7 @@ interface EventDay {
 
 const EventPlanner = () => {
   const [, setLocation] = useLocation();
+  const { selectedLocation, setLocation: setGlobalLocation } = useLocationContext();
   const { toast } = useToast();
   const [currentStep, setCurrentStep] = useState<'basic' | 'path-selection' | 'curated'>('basic');
   const [selectedPath, setSelectedPath] = useState<'browse' | 'curated'>();
@@ -76,7 +80,10 @@ const EventPlanner = () => {
   // Basic event details
   const [eventName, setEventName] = useState('');
   const [eventType, setEventType] = useState('');
+  // String used for validation and payloads
   const [locationValue, setLocationValue] = useState('');
+  // Structured location used with LocationPicker/LocationContext
+  const [locationSelection, setLocationSelection] = useState<LocationResult | null>(null);
   const [isMultiDay, setIsMultiDay] = useState(false);
   const [singleDate, setSingleDate] = useState<Date>();
   const [singleStartTime, setSingleStartTime] = useState('');
@@ -118,6 +125,12 @@ const EventPlanner = () => {
       setBudgetRange(state.budgetRange || [0, 500000]);
       setSelectedVendors(state.selectedVendors || []);
       setOtherVendorType(state.otherVendorType || '');
+    }
+
+    // If we have a global selected location and no local selection yet, seed from it
+    if (selectedLocation && !locationSelection) {
+      setLocationSelection(selectedLocation);
+      setLocationValue(selectedLocation.label);
     }
   }, []);
   

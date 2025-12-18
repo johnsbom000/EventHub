@@ -1,4 +1,4 @@
-import { useState, useCallback, useEffect } from 'react';
+import { useState, useCallback, useEffect } from "react";
 
 interface Position {
   coords: {
@@ -13,7 +13,13 @@ interface Position {
   timestamp: number;
 }
 
-type LocationStatus = 'idle' | 'requesting' | 'granted' | 'denied' | 'error' | 'unsupported';
+type LocationStatus =
+  | "idle"
+  | "requesting"
+  | "granted"
+  | "denied"
+  | "error"
+  | "unsupported";
 
 interface UseUserLocationReturn {
   location: { lat: number; lng: number } | null;
@@ -24,65 +30,45 @@ interface UseUserLocationReturn {
 }
 
 export function useUserLocation(): UseUserLocationReturn {
-  const [location, setLocation] = useState<{ lat: number; lng: number } | null>(null);
-  const [status, setStatus] = useState<LocationStatus>('idle');
+  const [location, setLocation] = useState<{ lat: number; lng: number } | null>(
+    null
+  );
+  const [status, setStatus] = useState<LocationStatus>("idle");
   const [error, setError] = useState<GeolocationPositionError | null>(null);
 
-  // Check for geolocation support
-  const isGeolocationSupported = typeof window !== 'undefined' && 'geolocation' in navigator;
-  const permissionKey = 'eventhub_location_permission';
+  const isGeolocationSupported =
+    typeof window !== "undefined" && "geolocation" in navigator;
+  const permissionKey = "eventhub_location_permission";
 
-  // Load saved permission state on mount
+  // On mount, just detect support + remembered "denied" state.
+  // Do NOT call navigator.geolocation here → no popup on refresh.
   useEffect(() => {
     if (!isGeolocationSupported) {
-      setStatus('unsupported');
+      setStatus("unsupported");
       return;
     }
 
-    // Check if we already have a saved permission state
     const savedPermission = localStorage.getItem(permissionKey);
-    
-    if (savedPermission === 'granted') {
-      // If previously granted, we can try to get the location silently
-      setStatus('requesting');
-      navigator.geolocation.getCurrentPosition(
-        (position) => {
-          setLocation({
-            lat: position.coords.latitude,
-            lng: position.coords.longitude,
-          });
-          setStatus('granted');
-        },
-        (error) => {
-          // If we can't get the location despite having permission,
-          // treat as if permission was denied
-          if (error.code === error.PERMISSION_DENIED) {
-            setStatus('denied');
-            localStorage.setItem(permissionKey, 'denied');
-          } else {
-            setStatus('error');
-          }
-          setError(error);
-        },
-        { enableHighAccuracy: true, timeout: 5000, maximumAge: 5 * 60 * 1000 } // 5 min cache
-      );
-    } else if (savedPermission === 'denied') {
-      setStatus('denied');
+
+    if (savedPermission === "denied") {
+      setStatus("denied");
+    } else {
+      // either "granted" or nothing; we stay idle until user clicks
+      setStatus("idle");
     }
   }, [isGeolocationSupported]);
 
   const requestLocation = useCallback(async (): Promise<void> => {
     if (!isGeolocationSupported) {
-      setStatus('unsupported');
+      setStatus("unsupported");
       return;
     }
 
-    // Don't do anything if we already have permission or it was denied
-    if (status === 'granted' || status === 'denied') {
-      return;
-    }
+    // Avoid overlapping requests
+    if (status === "requesting") return;
 
-    setStatus('requesting');
+    setStatus("requesting");
+    setError(null);
 
     return new Promise((resolve) => {
       navigator.geolocation.getCurrentPosition(
@@ -92,18 +78,18 @@ export function useUserLocation(): UseUserLocationReturn {
             lng: position.coords.longitude,
           };
           setLocation(newLocation);
-          setStatus('granted');
-          localStorage.setItem(permissionKey, 'granted');
+          setStatus("granted");
+          localStorage.setItem(permissionKey, "granted");
           resolve();
         },
-        (error) => {
-          if (error.code === error.PERMISSION_DENIED) {
-            setStatus('denied');
-            localStorage.setItem(permissionKey, 'denied');
+        (err) => {
+          if (err.code === err.PERMISSION_DENIED) {
+            setStatus("denied");
+            localStorage.setItem(permissionKey, "denied");
           } else {
-            setStatus('error');
+            setStatus("error");
           }
-          setError(error);
+          setError(err);
           resolve();
         },
         { enableHighAccuracy: true, timeout: 10000, maximumAge: 0 }
@@ -113,7 +99,7 @@ export function useUserLocation(): UseUserLocationReturn {
 
   const resetLocation = useCallback(() => {
     setLocation(null);
-    setStatus('idle');
+    setStatus("idle");
     setError(null);
     localStorage.removeItem(permissionKey);
   }, []);

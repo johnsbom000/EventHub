@@ -1,6 +1,6 @@
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
-import { useState, useRef } from "react";
+import { useState, useRef, useEffect } from "react";
 import { useLocation } from "wouter";
 import { useQuery } from "@tanstack/react-query";
 import { Calendar, MapPin, Briefcase, Users } from "lucide-react";
@@ -11,20 +11,32 @@ import {
 } from "@/components/ui/popover";
 import { Checkbox } from "@/components/ui/checkbox";
 import { Label } from "@/components/ui/label";
+import { LocationPicker } from "@/components/LocationPicker";
+import { useLocationContext } from "@/context/LocationContext";
+import type { LocationResult } from "@/types/location";
+import { VENDOR_CATEGORIES } from "../lib/vendorCategories";
+
 
 const eventTypes = [
   { value: "wedding", label: "Wedding" },
   { value: "corporate", label: "Corporate Event" },
-  { value: "party", label: "Party" },
+  { value: "birthday", label: "Birthday" },
+  { value: "anniversary", label: "Anniversary" },
+  { value: "baby-shower", label: "Baby Shower" },
+  { value: "graduation", label: "Graduation" },
+  { value: "conference", label: "Conference" },
+  { value: "gala", label: "Gala" },
   { value: "other", label: "Other" },
 ];
 
 export default function Hero() {
   const [, setLocation] = useLocation();
-  const [searchLocation, setSearchLocation] = useState("");
+  const { selectedLocation, setLocation: setGlobalLocation } = useLocationContext();
+  const [searchLocation, setSearchLocation] = useState<LocationResult | null>(null);
   const [eventType, setEventType] = useState("");
   const [eventDate, setEventDate] = useState("");
   const [selectedVendors, setSelectedVendors] = useState<string[]>([]);
+  const [showUnavailable, setShowUnavailable] = useState(false);
   const dateInputRef = useRef<HTMLInputElement>(null);
 
   const { data: vendorCategories = [] } = useQuery<string[]>({
@@ -37,9 +49,15 @@ export default function Hero() {
     );
   };
 
+  useEffect(() => {
+    if (selectedLocation) {
+      setSearchLocation(selectedLocation);
+    }
+  }, [selectedLocation?.id]);
+
   const handleSearch = () => {
     const params = new URLSearchParams();
-    if (searchLocation) params.set('location', searchLocation);
+    if (searchLocation) params.set('location', searchLocation.label);
     if (eventType) params.set('eventType', eventType);
     if (eventDate) params.set('date', eventDate);
     if (selectedVendors.length > 0) params.set('categories', selectedVendors.join(','));
@@ -56,15 +74,15 @@ export default function Hero() {
           <div className="grid grid-cols-1 md:grid-cols-4 gap-2">
             {/* Location */}
             <div className="relative group">
-              <div className="absolute left-3 top-1/2 -translate-y-1/2 z-10">
-                <MapPin className="h-4 w-4 text-muted-foreground" />
-              </div>
-              <Input
-                placeholder="Location"
+              <LocationPicker
                 value={searchLocation}
-                onChange={(e) => setSearchLocation(e.target.value)}
-                className="h-14 pl-10 border-0 focus-visible:ring-0 hover:bg-muted/50 rounded-lg"
-                data-testid="input-location"
+                onChange={(loc) => {
+                  setSearchLocation(loc);
+                  if (loc) {
+                    setGlobalLocation(loc);
+                  }
+                }}
+                placeholder="Location"
               />
             </div>
 
@@ -125,12 +143,16 @@ export default function Hero() {
                 <PopoverContent className="w-64" align="start">
                   <div className="space-y-3">
                     <h4 className="font-medium text-sm">Select vendor types</h4>
-                    {vendorCategories.map((vendor) => (
+
+                    {VENDOR_CATEGORIES.map((vendor) => (
                       <div key={vendor} className="flex items-center gap-2">
                         <Checkbox
                           id={vendor}
                           checked={selectedVendors.includes(vendor)}
-                          onCheckedChange={() => toggleVendor(vendor)}
+                          onCheckedChange={(checked) => {
+                            if (checked) toggleVendor(vendor);
+                            else toggleVendor(vendor);
+                          }}
                           data-testid={`checkbox-vendor-${vendor.toLowerCase()}`}
                         />
                         <Label htmlFor={vendor} className="cursor-pointer text-sm">
@@ -138,7 +160,20 @@ export default function Hero() {
                         </Label>
                       </div>
                     ))}
+
+                    {/* Show unavailable toggle (hybrid pattern) */}
+                    <div className="pt-2 border-t">
+                      <label className="flex items-center gap-2 text-sm cursor-pointer select-none">
+                        <input
+                          type="checkbox"
+                          checked={showUnavailable}
+                          onChange={(e) => setShowUnavailable(e.target.checked)}
+                        />
+                        Show unavailable
+                      </label>
+                    </div>
                   </div>
+
                 </PopoverContent>
               </Popover>
             </div>

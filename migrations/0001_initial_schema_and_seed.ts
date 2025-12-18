@@ -1,8 +1,10 @@
 import { sql } from 'drizzle-orm';
 import { pgTable, text, varchar, timestamp, integer, jsonb, boolean, pgEnum, serial, decimal, date, time, primaryKey } from 'drizzle-orm/pg-core';
 import { drizzle } from 'drizzle-orm/node-postgres';
-import { Pool } from 'pg';
+import pg from 'pg';
+const { Pool } = pg;
 import * as dotenv from 'dotenv';
+import { users, vendorAccounts, vendorListings, bookings } from '../shared/schema.ts';
 
 dotenv.config();
 
@@ -539,7 +541,7 @@ export async function up() {
 
   try {
     // Create new tables
-    await db.run(sql`
+    await db.execute(sql`
       -- Customer profiles
       CREATE TABLE IF NOT EXISTS customer_profiles (
         id VARCHAR PRIMARY KEY REFERENCES users(id) ON DELETE CASCADE,
@@ -554,9 +556,7 @@ export async function up() {
       );
 
       -- Vendor availability
-      CREATE TYPE task_status AS ENUM ('pending', 'in_progress', 'completed');
-      CREATE TYPE contact_source AS ENUM ('marketplace', 'import', 'manual', 'referral');
-
+      
       CREATE TABLE IF NOT EXISTS vendor_availability (
         id SERIAL PRIMARY KEY,
         vendor_id VARCHAR NOT NULL REFERENCES vendor_accounts(id) ON DELETE CASCADE,
@@ -665,9 +665,4 @@ export async function down() {
   } finally {
     await pool.end();
   }
-}
-
-// Run the migration if this file is executed directly
-if (require.main === module) {
-  up().catch(console.error);
 }

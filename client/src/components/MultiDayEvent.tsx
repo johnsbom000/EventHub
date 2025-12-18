@@ -36,11 +36,11 @@ export function MultiDayEvent({ value, onChange }: MultiDayEventProps) {
   };
 
   return (
-    <div className="space-y-4">
+    <div className="space-y-2">
       {value.map((day, index) => (
-        <div key={index} className="grid grid-cols-1 md:grid-cols-3 gap-4 items-end p-4 border rounded-lg">
-          <div className="space-y-2">
-            <Label htmlFor={`day-${index}-date`}>Day {index + 1} Date</Label>
+        <div key={index} className="flex flex-wrap items-end gap-3 p-3 border rounded-lg">
+          <div className="flex-1 min-w-[200px]">
+            <Label htmlFor={`day-${index}-date`} className="text-sm font-medium text-muted-foreground">Day {index + 1}</Label>
             <Popover>
               <PopoverTrigger asChild>
                 <Button
@@ -49,7 +49,7 @@ export function MultiDayEvent({ value, onChange }: MultiDayEventProps) {
                   id={`day-${index}-date`}
                 >
                   <Calendar className="mr-2 h-4 w-4" />
-                  {day.date ? format(day.date, "PPP") : <span>Pick a date</span>}
+                  {day.date ? format(day.date, "MMM d") : <span>Pick date</span>}
                 </Button>
               </PopoverTrigger>
               <PopoverContent className="w-auto p-0">
@@ -63,8 +63,8 @@ export function MultiDayEvent({ value, onChange }: MultiDayEventProps) {
             </Popover>
           </div>
           
-          <div className="space-y-2">
-            <Label htmlFor={`day-${index}-start`}>Start Time</Label>
+          <div className="flex-1 min-w-[120px]">
+            <Label htmlFor={`day-${index}-start`} className="text-sm font-medium text-muted-foreground">Start</Label>
             <div className="relative">
               <Clock className="absolute left-3 top-2.5 h-4 w-4 text-muted-foreground" />
               <Input
@@ -77,8 +77,8 @@ export function MultiDayEvent({ value, onChange }: MultiDayEventProps) {
             </div>
           </div>
           
-          <div className="space-y-2">
-            <Label htmlFor={`day-${index}-end`}>End Time</Label>
+          <div className="flex-1 min-w-[120px]">
+            <Label htmlFor={`day-${index}-end`} className="text-sm font-medium text-muted-foreground">End</Label>
             <div className="relative">
               <Clock className="absolute left-3 top-2.5 h-4 w-4 text-muted-foreground" />
               <Input
@@ -89,15 +89,16 @@ export function MultiDayEvent({ value, onChange }: MultiDayEventProps) {
                 className="pl-10"
               />
             </div>
-            <Button
-              variant="ghost"
-              size="sm"
-              className="text-destructive hover:text-destructive"
-              onClick={() => removeDay(index)}
-            >
-              Remove day
-            </Button>
           </div>
+          
+          <Button
+            variant="ghost"
+            size="sm"
+            className="text-destructive hover:text-destructive h-9"
+            onClick={() => removeDay(index)}
+          >
+            Remove
+          </Button>
         </div>
       ))}
       
@@ -105,7 +106,7 @@ export function MultiDayEvent({ value, onChange }: MultiDayEventProps) {
         type="button"
         variant="outline"
         size="sm"
-        className="mt-2"
+        className="mt-1"
         onClick={addDay}
       >
         Add another day
