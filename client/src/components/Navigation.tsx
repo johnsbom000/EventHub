@@ -1,3 +1,4 @@
+import { useAuth0 } from "@auth0/auth0-react";
 import { Link, useLocation } from "wouter";
 import { Button } from "@/components/ui/button";
 import { useState, useEffect } from "react";
@@ -21,7 +22,6 @@ import {
   Globe,
   HelpCircle,
   LogOut,
-  LayoutDashboard,
   Calendar,
   Briefcase,
   Store,
@@ -45,44 +45,64 @@ export default function Navigation() {
   const [location, setLocation] = useLocation();
   const [userRole, setUserRole] = useState<UserRole>(null);
   const [authModalOpen, setAuthModalOpen] = useState(false);
+  const { isAuthenticated, user, logout: auth0Logout } = useAuth0();
 
-  // Fetch vendor account if vendor token exists
-  const { data: vendorAccount } = useQuery<VendorAccount>({
+  // Fetch vendor account if vendor token exists (legacy)
+const { data: vendorAccount, isError: vendorMeError, isLoading: vendorMeLoading } = useQuery<VendorAccount>({
     queryKey: ["/api/vendor/me"],
-    enabled: !!localStorage.getItem("vendorToken"),
+    enabled: true,
     retry: false,
   });
 
-  // Fetch customer account if customer token exists
+  // Fetch customer account if customer token exists (legacy)
   const { data: customer } = useQuery<Customer>({
     queryKey: ["/api/customer/me"],
     enabled: !!localStorage.getItem("customerToken"),
     retry: false,
   });
 
-  // Update user role based on fetched data
-  useEffect(() => {
-    if (vendorAccount) {
-      setUserRole("vendor");
-    } else if (customer) {
-      setUserRole("customer");
-    } else {
-      setUserRole(null);
-    }
-  }, [vendorAccount, customer]);
+  // Update user role based on fetched data (legacy)
+useEffect(() => {
+  // While vendor /me is loading, don't decide a role yet
+  // (prevents brief customer UI flash)
+  if (vendorMeLoading) return;
+
+  // Vendor wins if vendor account exists
+  if (vendorAccount) {
+    setUserRole("vendor");
+    return;
+  }
+
+  // If vendor /me errored (likely 401), fall back to customer
+  if (vendorMeError) {
+    if (customer) setUserRole("customer");
+    else setUserRole(null);
+    return;
+  }
+
+  // No vendor, no customer
+  setUserRole(null);
+}, [vendorAccount, vendorMeError, vendorMeLoading, customer]);
+
+
+
+  // If Auth0 says you're authenticated but legacy tokens/role aren't set yet,
+  // treat the user as "customer" so the UI doesn't look logged out.
+  // (Later you'll map Auth0 -> vendor/customer via backend.)
 
   const handleLogout = () => {
-    if (userRole === "vendor") {
-      localStorage.removeItem("vendorToken");
-      localStorage.removeItem("vendorAccountId");
-    } else if (userRole === "customer") {
-      localStorage.removeItem("customerToken");
-      localStorage.removeItem("customerId");
-    }
+    // Clear legacy tokens
+    localStorage.removeItem("vendorToken");
+    localStorage.removeItem("vendorAccountId");
+    localStorage.removeItem("customerToken");
+    localStorage.removeItem("customerId");
+
     setUserRole(null);
-    setLocation("/");
-    // Refresh the page to clear all state
-    window.location.reload();
+
+    // Auth0 logout
+    auth0Logout({
+      logoutParams: { returnTo: window.location.origin },
+    });
   };
 
   // Get initials for avatar
@@ -96,15 +116,23 @@ export default function Navigation() {
       .slice(0, 2);
   };
 
-  // Get display name based on role
+  // Get display name based on role (fallback to Auth0)
   const getDisplayName = () => {
     if (userRole === "vendor" && vendorAccount) {
       return vendorAccount.businessName;
     } else if (userRole === "customer" && customer) {
       return customer.name;
     }
-    return "";
+    // Auth0 fallback
+    const auth0Name =
+      (user as any)?.name ||
+      (user as any)?.nickname ||
+      (user as any)?.email ||
+      "";
+    return auth0Name;
   };
+
+  const isLoggedIn = isAuthenticated || !!userRole;
 
   return (
     <nav className="sticky top-0 z-50 bg-white border-b border-border">
@@ -124,7 +152,7 @@ export default function Navigation() {
             <AuthModal open={authModalOpen} onOpenChange={setAuthModalOpen} />
 
             {/* Logged Out State */}
-            {!userRole && (
+            {!isLoggedIn && (
               <Button
                 variant="default"
                 size="default"
@@ -137,13 +165,15 @@ export default function Navigation() {
             )}
 
             {/* Vendor Logged In State */}
-            {userRole === "vendor" && (
+            {isLoggedIn && userRole === "vendor" && (
               <>
                 <Link
                   href="/vendor/dashboard"
                   className="text-sm font-medium hover:underline cursor-pointer"
                   data-testid="link-vendor-dashboard"
-                >Vendor Dashboard</Link>
+                >
+                  Vendor Dashboard
+                </Link>
 
                 <DropdownMenu>
                   <DropdownMenuTrigger asChild>
@@ -218,7 +248,7 @@ export default function Navigation() {
             )}
 
             {/* Customer Logged In State */}
-            {userRole === "customer" && (
+            {isLoggedIn && userRole !== "vendor" && (
               <>
                 {location.startsWith("/dashboard") ? (
                   <Link href="/">

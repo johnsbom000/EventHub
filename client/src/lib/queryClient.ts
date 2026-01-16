@@ -1,5 +1,61 @@
 import { QueryClient, QueryFunction } from "@tanstack/react-query";
 
+/**
+ * Try to retrieve an Auth0 access token from localStorage.
+ * This supports:
+ *  - direct storage keys you may have set (auth0_access_token, access_token)
+ *  - Auth0 SPA SDK cache entries (keys that include "@@auth0spajs@@")
+ */
+function getAuth0AccessToken(): string | null {
+  try {
+    for (let i = 0; i < localStorage.length; i++) {
+      const key = localStorage.key(i);
+      if (!key) continue;
+
+      // Auth0 SPA SDK cache keys
+      if (!key.startsWith("@@auth0spajs@@")) continue;
+
+      const raw = localStorage.getItem(key);
+      if (!raw) continue;
+
+      const parsed = JSON.parse(raw);
+
+      // This is the exact structure Auth0 uses
+      const token = parsed?.body?.access_token;
+
+      if (typeof token === "string" && token.length > 0) {
+        return token;
+      }
+    }
+  } catch (err) {
+    console.warn("Failed to read Auth0 access token from storage", err);
+  }
+
+  return null;
+}
+
+
+function buildHeaders(url: string, data?: unknown): HeadersInit {
+  const headers: Record<string, string> = {};
+
+  if (data !== undefined) {
+    headers["Content-Type"] = "application/json";
+  }
+
+  // Only attach auth header for API calls (your server routes)
+  // (This keeps it from accidentally attaching to external URLs)
+  if (url.startsWith("/api/") || url.includes("/api/")) {
+    const token = getAuth0AccessToken();
+    console.log("[api auth] url:", url, "token?", Boolean(token));
+    if (token) {
+      headers["Authorization"] = `Bearer ${token}`;
+    }
+  }
+
+
+  return headers;
+}
+
 async function throwIfResNotOk(res: Response) {
   if (!res.ok) {
     const text = (await res.text()) || res.statusText;
@@ -10,34 +66,14 @@ async function throwIfResNotOk(res: Response) {
 export async function apiRequest(
   method: string,
   url: string,
-  data?: unknown | undefined,
+  data?: unknown | undefined
 ): Promise<Response> {
-  const vendorToken = localStorage.getItem("vendorToken");
-  const customerToken = localStorage.getItem("customerToken");
-  const headers: HeadersInit = data ? { "Content-Type": "application/json" } : {};
-  
-  // Add appropriate Authorization header based on route
-  if (url.includes("/vendor/")) {
-    if (vendorToken) {
-      headers["Authorization"] = `Bearer ${vendorToken}`;
-    }
-  } else if (url.includes("/customer/") || url.includes("/admin/")) {
-    if (customerToken) {
-      headers["Authorization"] = `Bearer ${customerToken}`;
-    }
-  } else {
-    // For non-specific routes, try vendor token first, then customer
-    if (vendorToken) {
-      headers["Authorization"] = `Bearer ${vendorToken}`;
-    } else if (customerToken) {
-      headers["Authorization"] = `Bearer ${customerToken}`;
-    }
-  }
+  const headers = buildHeaders(url, data);
 
   const res = await fetch(url, {
     method,
     headers,
-    body: data ? JSON.stringify(data) : undefined,
+    body: data !== undefined ? JSON.stringify(data) : undefined,
     credentials: "include",
   });
 
@@ -46,33 +82,14 @@ export async function apiRequest(
 }
 
 type UnauthorizedBehavior = "returnNull" | "throw";
+
 export const getQueryFn: <T>(options: {
   on401: UnauthorizedBehavior;
 }) => QueryFunction<T> =
   ({ on401: unauthorizedBehavior }) =>
   async ({ queryKey }) => {
-    const vendorToken = localStorage.getItem("vendorToken");
-    const customerToken = localStorage.getItem("customerToken");
     const url = queryKey.join("/") as string;
-    const headers: HeadersInit = {};
-    
-    // Add appropriate Authorization header based on route
-    if (url.includes("/vendor/")) {
-      if (vendorToken) {
-        headers["Authorization"] = `Bearer ${vendorToken}`;
-      }
-    } else if (url.includes("/customer/") || url.includes("/admin/")) {
-      if (customerToken) {
-        headers["Authorization"] = `Bearer ${customerToken}`;
-      }
-    } else {
-      // For non-specific routes, try vendor token first, then customer
-      if (vendorToken) {
-        headers["Authorization"] = `Bearer ${vendorToken}`;
-      } else if (customerToken) {
-        headers["Authorization"] = `Bearer ${customerToken}`;
-      }
-    }
+    const headers = buildHeaders(url);
 
     const res = await fetch(url, {
       credentials: "include",
@@ -80,7 +97,7 @@ export const getQueryFn: <T>(options: {
     });
 
     if (unauthorizedBehavior === "returnNull" && res.status === 401) {
-      return null;
+      return null as any;
     }
 
     await throwIfResNotOk(res);

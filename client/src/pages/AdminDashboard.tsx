@@ -3,7 +3,58 @@ import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/com
 import { BarChart, Bar, LineChart, Line, XAxis, YAxis, CartesianGrid, Tooltip, ResponsiveContainer } from "recharts";
 import { Users, Building2, Calendar, DollarSign, TrendingUp, Eye } from "lucide-react";
 import { useLocation } from "wouter";
+
+interface UserGrowthData {
+  date: string;
+  count: number;
+}
+
+interface VendorByTypeData {
+  serviceType: string;
+  count: number;
+}
+
+interface UserStats {
+  totalUsers: number;
+  totalVendors: number;
+  userGrowth: UserGrowthData[];
+  vendorsByType: VendorByTypeData[];
+}
+
+interface BookingStats {
+  totalBookings: number;
+  completedBookings: number;
+  totalRevenue: number;
+  // Add other properties if they exist in your API response
+}
+
+interface TrafficStats {
+  totalVisits: number;
+  uniqueVisitors: number;
+  dailyTraffic: Array<{
+    date: string;
+    count: number;
+  }>;
+  topPaths: Array<{
+    path: string;
+    visits: number;
+  }>;
+}
+
+interface ListingStats {
+  totalListings: number;
+  activeListings: number;
+  inactiveListings: number;
+  // Add other properties that your listing stats might have
+}
+
 import { useEffect } from "react";
+
+interface User {
+  role: string;
+  // Add other user properties here if needed
+  [key: string]: any; // For any additional properties that might exist
+}
 
 interface StatsCardProps {
   title: string;
@@ -33,7 +84,7 @@ export default function AdminDashboard() {
   const [, setLocation] = useLocation();
 
   // Verify user is admin by checking their role from /api/customer/me
-  const { data: currentUser, isLoading: loadingUser } = useQuery({
+  const { data: currentUser, isLoading: loadingUser } = useQuery<User>({
     queryKey: ["/api/customer/me"],
     enabled: !!localStorage.getItem("customerToken"),
   });
@@ -48,29 +99,28 @@ export default function AdminDashboard() {
 
     // Wait for user data to load
     if (!loadingUser && currentUser) {
-      // @ts-ignore - currentUser has role field
       if (currentUser.role !== "admin") {
         setLocation("/dashboard");
       }
     }
   }, [setLocation, currentUser, loadingUser]);
 
-  const { data: userStats } = useQuery({
+  const { data: userStats } = useQuery<UserStats>({
     queryKey: ["/api/admin/stats/users"],
     enabled: !!localStorage.getItem("customerToken") && currentUser?.role === "admin",
   });
 
-  const { data: listingStats } = useQuery({
+  const { data: listingStats } = useQuery<ListingStats>({
     queryKey: ["/api/admin/stats/listings"],
     enabled: !!localStorage.getItem("customerToken") && currentUser?.role === "admin",
   });
 
-  const { data: bookingStats } = useQuery({
+  const { data: bookingStats } = useQuery<BookingStats>({
     queryKey: ["/api/admin/stats/bookings"],
     enabled: !!localStorage.getItem("customerToken") && currentUser?.role === "admin",
   });
 
-  const { data: trafficStats } = useQuery({
+  const { data: trafficStats } = useQuery<TrafficStats>({
     queryKey: ["/api/admin/stats/traffic"],
     enabled: !!localStorage.getItem("customerToken") && currentUser?.role === "admin",
   });
@@ -86,9 +136,9 @@ export default function AdminDashboard() {
 
   // Don't render if not admin (will redirect)
   // @ts-ignore
-  if (!currentUser || currentUser.role !== "admin") {
-    return null;
-  }
+  if (!currentUser) return <div className="p-8">Please log in.</div>;
+  if (currentUser.role !== "admin") return <div className="p-8">Not authorized.</div>;
+
 
   const formatCurrency = (value: number) => {
     return new Intl.NumberFormat("en-US", {

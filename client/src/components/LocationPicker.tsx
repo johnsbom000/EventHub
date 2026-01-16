@@ -58,7 +58,7 @@ export function LocationPicker({
     return () => clearTimeout(handle);
   }, [query]);
 
-  // Fetch suggestions when debounced query changes
+  // Fetch suggestions
   useEffect(() => {
     const fetchSuggestions = async () => {
       if (!debouncedQuery || debouncedQuery.length < 2) {
@@ -124,7 +124,6 @@ export function LocationPicker({
         }
       }
 
-      // Fallback if no reverse result
       const currentLocation: LocationResult = {
         id: `current-${Date.now()}`,
         label: "Current location",
@@ -155,7 +154,6 @@ export function LocationPicker({
               onChange(null);
             }
           }}
-          onFocus={() => setQuery(query || "")}
           placeholder={placeholder}
           className="h-12 pl-10 pr-20 w-full text-base"
           autoComplete="off"
@@ -166,8 +164,7 @@ export function LocationPicker({
           <button
             type="button"
             onClick={handleClear}
-            className="absolute right-12 text-muted-foreground hover:text-foreground transition-colors"
-            aria-label="Clear search"
+            className="absolute right-12 text-muted-foreground hover:text-foreground"
           >
             <X className="h-4 w-4" />
           </button>
@@ -181,13 +178,30 @@ export function LocationPicker({
 
         <div className="absolute right-2">
           <LocationButton
-            onLocationChange={handleUseMyLocation}
+            onLocationFound={handleUseMyLocation}
             variant="ghost"
             size="icon"
             className="h-8 w-8"
           />
         </div>
       </div>
+
+      {/* ✅ Suggestions Dropdown */}
+      {isOpen && suggestions.length > 0 && (
+        <div className="absolute z-50 mt-1 w-full rounded-md border bg-white shadow-lg">
+          <ul className="max-h-60 overflow-auto py-1">
+            {suggestions.map((item) => (
+              <li
+                key={item.id}
+                className="cursor-pointer px-4 py-2 text-sm hover:bg-muted"
+                onClick={() => handleSelect(item)}
+              >
+                {item.label}
+              </li>
+            ))}
+          </ul>
+        </div>
+      )}
     </div>
   );
 }

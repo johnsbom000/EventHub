@@ -1,5 +1,5 @@
 #!/usr/bin/env node
-import { up } from '../migrations/0001_initial_schema_and_seed';
+import { up } from '../migrations/0001_initial_schema_and_seed.ts';
 import * as dotenv from 'dotenv';
 import { Command } from 'commander';
 
@@ -33,7 +33,7 @@ program
   .action(async () => {
     try {
       console.log('Rolling back migrations...');
-      const { down } = await import('../migrations/0001_initial_schema_and_seed');
+      const { down } = await import('../migrations/0001_initial_schema_and_seed.ts');
       await down();
       console.log('Rollback completed successfully');
       process.exit(0);

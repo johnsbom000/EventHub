@@ -253,20 +253,21 @@ function titleCaseNoSymbols(raw: string, maxLen: number) {
     .join(" ");
 }
 
-export type CreateListingWizardProps = {
-  onClose: () => void;
-  editMode?: boolean;
-  initialData?: any;
-};
-
-export function CreateListingWizard({ onClose, editMode, initialData }: CreateListingWizardProps) {
+export function CreateListingWizard({ onClose }: { onClose: () => void }) {
   const { toast } = useToast();
 
-  // Vendor profile (Auth0 Bearer automatically attached by queryClient default queryFn)
+  // Vendor profile
   const { data: me } = useQuery({
     queryKey: ["/api/vendor/me"],
+    queryFn: async () => {
+      const token = localStorage.getItem("vendorToken");
+      const res = await fetch("/api/vendor/me", {
+        headers: token ? { Authorization: `Bearer ${token}` } : undefined,
+      });
+      if (!res.ok) throw new Error("Failed to load vendor profile");
+      return res.json();
+    },
   });
-
 
   const vendorType = (me?.vendorType || "unspecified") as string;
 
@@ -299,6 +300,14 @@ export function CreateListingWizard({ onClose, editMode, initialData }: CreateLi
     },
   });
 
+  // Create draft once when wizard opens
+  useEffect(() => {
+    if (hasCreatedDraftRef.current) return;
+    hasCreatedDraftRef.current = true;
+    createDraft.mutate();
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, []);
+
   const updateDraft = useMutation({
     mutationFn: async (payload: any) => {
       if (!listingId) return;
@@ -313,27 +322,10 @@ export function CreateListingWizard({ onClose, editMode, initialData }: CreateLi
 
   // Autosave listingData (serializable only)
   useEffect(() => {
-    // Only create a draft after the user has actually started entering data
-    const hasMeaningfulData =
-      (draft.listingTitle || "").trim().length > 0 ||
-      (draft.listingDescription || "").trim().length > 0 ||
-      (draft.propTypes?.length || 0) > 0 ||
-      (draft.photoPreviews?.length || 0) > 0 ||
-      (draft.rate && String(draft.rate).trim().length > 0);
+    if (!listingId) return;
 
-    // If user hasn't done anything yet, do nothing (prevents empty shell drafts)
-    if (!hasMeaningfulData) return;
-
-    // If we don't have a listing yet, create ONE draft, then autosave will kick in on next change
-    if (!listingId) {
-      if (hasCreatedDraftRef.current) return;
-      hasCreatedDraftRef.current = true;
-      createDraft.mutate();
-      return;
-    }
-
-  const t = setTimeout(() => {
-    updateDraft.mutate({
+    const t = setTimeout(() => {
+      updateDraft.mutate({
         vendorType,
         pricingMode: draft.pricingMode,
 
@@ -382,7 +374,7 @@ export function CreateListingWizard({ onClose, editMode, initialData }: CreateLi
           setupFeeAmount: draft.setupFlatFee ? Number(draft.setupFlatFee) : null,
         },
       });
-    }, 1200);
+    }, 600);
 
     return () => clearTimeout(t);
     // eslint-disable-next-line react-hooks/exhaustive-deps

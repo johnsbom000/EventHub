@@ -137,7 +137,7 @@ export default function SmartRecommendations() {
   return (
     <div className="bg-white py-12">
       <div className="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8">
-        {Object.entries(mockVendorsByCategory).map(([category, vendors]) => (
+        {Object.entries({ "Prop Rentals": mockVendorsByCategory["Prop Rentals"] }).map(([category, vendors]) => (
           <div key={category} className="mb-12" data-testid={`category-${category.toLowerCase()}`}>
             <h2 className="text-2xl font-semibold mb-6 text-foreground">
               {categoryTitles[category] || category} Near {userLocation}

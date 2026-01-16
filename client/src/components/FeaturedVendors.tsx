@@ -3,35 +3,40 @@ import venueImage from "@assets/generated_images/Elegant_venue_category_image_2d
 import cateringImage from "@assets/generated_images/Catering_service_category_image_cf900d0e.png";
 import photographyImage from "@assets/generated_images/Photography_service_category_image_42830a2e.png";
 
+const LANDING_CATEGORY = "prop-decor";
+
 const vendors = [
   {
-    id: "1",
-    name: "Grand Ballroom Events",
-    category: "Venues",
+    id: "pd-1",
+    name: "Modern Event Props",
+    categoryId: "prop-decor",
+    category: "Prop & Decor Rentals",
     rating: 4.9,
-    reviewCount: 127,
+    reviewCount: 84,
     location: "New York, NY",
-    startingPrice: "$5,000",
-    image: venueImage,
+    startingPrice: "$750",
+    image: venueImage, // replace later with a prop/decor-specific image if you want
   },
   {
-    id: "2",
-    name: "Culinary Elegance Catering",
-    category: "Catering",
+    id: "pd-2",
+    name: "Styled Spaces Co.",
+    categoryId: "prop-decor",
+    category: "Prop & Decor Rentals",
     rating: 4.8,
-    reviewCount: 93,
+    reviewCount: 61,
     location: "Los Angeles, CA",
-    startingPrice: "$2,500",
+    startingPrice: "$1,100",
     image: cateringImage,
   },
   {
-    id: "3",
-    name: "Moments Photography Studio",
-    category: "Photography",
+    id: "pd-3",
+    name: "Signature Event Decor",
+    categoryId: "prop-decor",
+    category: "Prop & Decor Rentals",
     rating: 5.0,
-    reviewCount: 156,
+    reviewCount: 102,
     location: "Chicago, IL",
-    startingPrice: "$1,800",
+    startingPrice: "$900",
     image: photographyImage,
   },
 ];
@@ -50,9 +55,11 @@ export default function FeaturedVendors() {
         </div>
 
         <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-6">
-          {vendors.map((vendor) => (
-            <VendorCard key={vendor.id} {...vendor} />
-          ))}
+          {vendors
+            .filter((vendor) => vendor.categoryId === LANDING_CATEGORY)
+            .map((vendor) => (
+              <VendorCard key={vendor.id} {...vendor} />
+            ))}
         </div>
       </div>
     </section>

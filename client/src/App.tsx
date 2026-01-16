@@ -28,6 +28,7 @@ import VendorNotifications from "@/pages/VendorNotifications";
 import AdminDashboard from "@/pages/AdminDashboard";
 import UIDemo from "@/pages/UIDemo";
 import NotFound from "@/pages/not-found";
+import AuthTest from "@/pages/AuthTest";
 
 function Router() {
   return (
@@ -57,6 +58,7 @@ function Router() {
       <Route path="/recommendations/:eventId" component={CuratedRecommendations} />
       <Route path="/admin" component={AdminDashboard} />
       <Route path="/ui-demo" component={UIDemo} />
+      <Route path="/auth-test" component={AuthTest} />
         <Route component={NotFound} />
       </Switch>
     </>

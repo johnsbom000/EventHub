@@ -1,167 +1,259 @@
-import { useState } from "react";
+import { apiRequest } from "@/lib/queryClient";
+import { useEffect, useState } from "react";
 import { useLocation } from "wouter";
 import { Check } from "lucide-react";
 import { useMutation } from "@tanstack/react-query";
-import { apiRequest, queryClient } from "@/lib/queryClient";
+import { queryClient } from "@/lib/queryClient";
 import { useToast } from "@/hooks/use-toast";
 import Navigation from "@/components/Navigation";
-import Step1_ServiceSetup from "@/features/vendor/onboarding/Step1_ServiceSetup";
-import Step2_AboutYou from "@/features/vendor/onboarding/Step2_AboutYou";
-import Step3_Location from "@/features/vendor/onboarding/Step3_Location";
-import Step4_Portfolio from "@/features/vendor/onboarding/Step4_Portfolio";
-import Step5_ReadyToCreateListing from "@/features/vendor/onboarding/Step6_ReadyToCreateListing";
+import { useAuth0 } from "@auth0/auth0-react";
+
+
+// Step components
+import Step2_BusinessDetails from "@/features/vendor/onboarding/Step2_BusinessDetails";
+import Step3_Market from "@/features/vendor/onboarding/Step3_Market";
+import Step4_Confirm from "@/features/vendor/onboarding/Step4_Confirm";
+
+// Temporary: hide vendor type selection while we are Prop/Decor-only.
+// Flip to false when we re-enable multi-vendor onboarding.
+const SINGLE_VENDOR_MODE = true;
+
+// Canonical vendorType value for Decor Rental in your current onboarding options
+const SINGLE_VENDOR_TYPE = "prop-decor";
+
+/* -----------------------------
+   Types
+------------------------------ */
 
 export interface VendorOnboardingData {
-  serviceType: string;
+  // Step 1 (hidden in single-vendor mode)
+  vendorType: string;
+
+  // Business Details
   businessName: string;
-  contactName: string;
-  bio: string;
-  website?: string;
-  instagram?: string;
-  tiktok?: string;
-  introVideoUrl?: string;
+  streetAddress: string;
   city: string;
-  state?: string;
-  serviceRadius?: string;
-  portfolioImages: string[];
-  coverImageIndex: number;
-  serviceHeadline: string;
-  serviceDescription: string;
+  state: string;
+  zipCode: string;
+  businessPhone: string;
+
+  // Derived
+  homeBaseLocation?: {
+    lat: number;
+    lng: number;
+  };
+
+  // Market
+  serviceRadiusMiles: number; // 0, 15, 30, ...
+  chargesTravelFee: boolean;
 }
 
-const STEPS = [
-  { id: 1, label: "Service Type" },
-  { id: 2, label: "About You" },
-  { id: 3, label: "Location" },
-  { id: 4, label: "Portfolio" },
-  { id: 5, label: "Ready to Create Listing?" },
-];
+/* -----------------------------
+   Steps
+------------------------------ */
+
+const STEPS = SINGLE_VENDOR_MODE
+  ? [
+      { id: 1, label: "Business Details" },
+      { id: 2, label: "Market" },
+      { id: 3, label: "Confirm" },
+    ]
+  : [
+      { id: 1, label: "Vendor Type" },
+      { id: 2, label: "Business Details" },
+      { id: 3, label: "Market" },
+      { id: 4, label: "Confirm" },
+    ];
+
+const STORAGE_KEY = "vendorOnboarding:v1";
+
+const DEFAULT_ONBOARDING_DATA: VendorOnboardingData = {
+  vendorType: SINGLE_VENDOR_MODE ? SINGLE_VENDOR_TYPE : "",
+  businessName: "",
+  streetAddress: "",
+  city: "",
+  state: "",
+  zipCode: "",
+  businessPhone: "",
+  serviceRadiusMiles: 0,
+  chargesTravelFee: false,
+};
 
 export default function VendorOnboarding() {
   const [, setLocation] = useLocation();
-  const [currentStep, setCurrentStep] = useState(1);
-  const [formData, setFormData] = useState<VendorOnboardingData>({
-    serviceType: "",
-    businessName: "",
-    contactName: "",
-    bio: "",
-    website: "",
-    instagram: "",
-    tiktok: "",
-    introVideoUrl: "",
-    city: "",
-    state: "",
-    serviceRadius: "",
-    portfolioImages: [],
-    coverImageIndex: 0,
-    serviceHeadline: "",
-    serviceDescription: "",
+  const { toast } = useToast();
+  const { getAccessTokenSilently } = useAuth0();
+
+  // If the user leaves the onboarding page entirely, start fresh next time.
+  useEffect(() => {
+    return () => {
+      localStorage.removeItem(STORAGE_KEY);
+    };
+  }, []);
+
+  const [currentStep, setCurrentStep] = useState<number>(() => {
+    try {
+      const raw = localStorage.getItem(STORAGE_KEY);
+      if (!raw) return 1;
+      const parsed = JSON.parse(raw);
+      const step = Number(parsed?.currentStep);
+      return step >= 1 && step <= STEPS.length ? step : 1;
+    } catch {
+      return 1;
+    }
+  });
+
+  const [formData, setFormData] = useState<VendorOnboardingData>(() => {
+    try {
+      const raw = localStorage.getItem(STORAGE_KEY);
+      if (!raw) return DEFAULT_ONBOARDING_DATA;
+      const parsed = JSON.parse(raw);
+
+      const merged: VendorOnboardingData = {
+        ...DEFAULT_ONBOARDING_DATA,
+        ...(parsed?.formData || {}),
+      };
+
+      // Enforce vendorType in single vendor mode (even if older localStorage had something else)
+      if (SINGLE_VENDOR_MODE) merged.vendorType = SINGLE_VENDOR_TYPE;
+
+      return merged;
+    } catch {
+      return DEFAULT_ONBOARDING_DATA;
+    }
   });
 
   const updateFormData = (updates: Partial<VendorOnboardingData>) => {
     setFormData((prev) => ({ ...prev, ...updates }));
   };
 
-  const handleNext = () => {
-    if (currentStep < STEPS.length) {
-      setCurrentStep(currentStep + 1);
+  // Enforce vendorType at runtime as well (handles hot reload / toggles)
+  useEffect(() => {
+    if (SINGLE_VENDOR_MODE && formData.vendorType !== SINGLE_VENDOR_TYPE) {
+      setFormData((prev) => ({ ...prev, vendorType: SINGLE_VENDOR_TYPE }));
     }
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, []);
+
+  useEffect(() => {
+    const t = setTimeout(() => {
+      localStorage.setItem(STORAGE_KEY, JSON.stringify({ currentStep, formData }));
+    }, 250);
+
+    return () => clearTimeout(t);
+  }, [currentStep, formData]);
+
+  const handleNext = () => {
+    if (currentStep < STEPS.length) setCurrentStep((s) => s + 1);
   };
 
   const handleBack = () => {
-    if (currentStep > 1) {
-      setCurrentStep(currentStep - 1);
-    }
+    if (currentStep > 1) setCurrentStep((s) => s - 1);
   };
 
-  const { toast } = useToast();
+  /* -----------------------------
+     Submit
+  ------------------------------ */
 
   const completeOnboardingMutation = useMutation({
-    mutationFn: async (data: VendorOnboardingData) => {
-      // Try vendor token first, then customer token
-      const vendorToken = localStorage.getItem("vendorToken");
-      const customerToken = localStorage.getItem("customerToken");
-      const token = vendorToken || customerToken;
+  mutationFn: async (data: VendorOnboardingData) => {
+    const token = await getAccessTokenSilently();
+    
+    const res = await fetch("/api/vendor/onboarding/complete", {
+      method: "POST",
+      headers: {
+        "Content-Type": "application/json",
+        Authorization: `Bearer ${token}`,
+      },
+      body: JSON.stringify(data),
+    });
 
-      if (!token) {
-        throw new Error("No authentication token found");
-      }
+    if (!res.ok) {
+      const err = await res.json().catch(() => ({} as any));
+      throw new Error(err?.error || err?.message || "Failed to complete onboarding");
+    }
 
-      // Convert serviceRadius to number for API
-      const payload = {
-        ...data,
-        serviceRadius: data.serviceRadius ? parseInt(data.serviceRadius) : 25,
-      };
+    return res.json();
+  },
 
-      const response = await fetch("/api/vendor/onboarding/complete", {
-        method: "POST",
-        headers: {
-          "Content-Type": "application/json",
-          "Authorization": `Bearer ${token}`,
-        },
-        body: JSON.stringify(payload),
-      });
 
-      if (!response.ok) {
-        const error = await response.json();
-        throw new Error(error.error || "Failed to complete onboarding");
-      }
 
-      return response.json();
-    },
+
     onSuccess: (data) => {
-      // If this was a customer upgrade, store the vendor token
-      if (data.isUpgrade && data.vendorToken) {
-        localStorage.setItem("vendorToken", data.vendorToken);
-        localStorage.setItem("vendorAccountId", data.vendorAccountId);
-      }
+      if (data.vendorAccountId) localStorage.setItem("vendorAccountId", data.vendorAccountId);
+      if (data.profileId) localStorage.setItem("vendorProfileId", data.profileId);
 
-      // Invalidate queries to refresh user state
       queryClient.invalidateQueries({ queryKey: ["/api/vendor/me"] });
       queryClient.invalidateQueries({ queryKey: ["/api/customer/me"] });
 
-      toast({
-        title: "Success!",
-        description: "Your vendor profile has been created.",
-      });
-    },
-    onError: (error: Error) => {
-      toast({
-        title: "Error",
-        description: error.message,
-        variant: "destructive",
-      });
+      toast({ title: "Vendor profile created" });
     },
   });
 
   const handleComplete = async (createListing: boolean) => {
     try {
       await completeOnboardingMutation.mutateAsync(formData);
-      
-      // Redirect based on user choice
-      if (createListing) {
-        setLocation("/vendor/listings/new");
-      } else {
-        setLocation("/vendor/dashboard");
-      }
-    } catch (error) {
-      // Error already handled in mutation onError
+      localStorage.removeItem(STORAGE_KEY);
+      setLocation(createListing ? "/vendor/listings/new" : "/vendor/dashboard");
+    } catch (e: any) {
+      toast({
+        title: "Onboarding failed",
+        description: e?.message || "Please try again.",
+        variant: "destructive",
+      });
     }
   };
 
+
+  /* -----------------------------
+     Render step
+  ------------------------------ */
+
   const renderStep = () => {
+    // In single-vendor mode:
+    // 1 = Business Details, 2 = Market, 3 = Confirm
+    if (SINGLE_VENDOR_MODE) {
     switch (currentStep) {
       case 1:
         return (
-          <Step1_ServiceSetup
-            selectedService={formData.serviceType}
-            onSelect={(serviceType) => updateFormData({ serviceType })}
+            <Step2_BusinessDetails
+              formData={formData}
+              updateFormData={updateFormData}
+              onNext={handleNext}
+              onBack={handleBack}
+            />
+          );
+        case 2:
+          return (
+            <Step3_Market
+              formData={formData}
+              updateFormData={updateFormData}
             onNext={handleNext}
+              onBack={handleBack}
+            />
+          );
+        case 3:
+          return (
+            <Step4_Confirm
+              formData={formData}
+              onBack={handleBack}
+              onComplete={handleComplete}
           />
         );
+        default:
+          return null;
+      }
+    }
+
+    // Multi-vendor mode (kept for later)
+    switch (currentStep) {
+      case 1:
+        // vendor type step is intentionally disabled right now in this file
+        // (when you re-enable it, re-add Step1_VendorType import + component here)
+        return null;
       case 2:
         return (
-          <Step2_AboutYou
+          <Step2_BusinessDetails
             formData={formData}
             updateFormData={updateFormData}
             onNext={handleNext}
@@ -170,7 +262,7 @@ export default function VendorOnboarding() {
         );
       case 3:
         return (
-          <Step3_Location
+          <Step3_Market
             formData={formData}
             updateFormData={updateFormData}
             onNext={handleNext}
@@ -179,18 +271,10 @@ export default function VendorOnboarding() {
         );
       case 4:
         return (
-          <Step4_Portfolio
+          <Step4_Confirm
             formData={formData}
-            updateFormData={updateFormData}
-            onNext={handleNext}
             onBack={handleBack}
-          />
-        );
-      case 5:
-        return (
-          <Step5_ReadyToCreateListing
             onComplete={handleComplete}
-            onBack={handleBack}
           />
         );
       default:
@@ -198,44 +282,34 @@ export default function VendorOnboarding() {
     }
   };
 
+  /* -----------------------------
+     Layout
+  ------------------------------ */
+
   return (
     <div className="min-h-screen bg-white flex flex-col">
       <Navigation />
       
       <div className="flex flex-1">
         {/* Sidebar */}
-        <div className="w-64 bg-card border-r border-border p-6">
-          <h2 className="text-xl font-bold mb-8">Vendor Profile</h2>
+        <div className="w-64 border-r p-6">
+          <h2 className="text-xl font-bold mb-8">Vendor Onboarding</h2>
           <div className="space-y-4">
             {STEPS.map((step) => (
-              <div
-                key={step.id}
-                className="flex items-center gap-3"
-                data-testid={`sidebar-step-${step.id}`}
-              >
+              <div key={step.id} className="flex items-center gap-3">
                 <div
-                  className={`flex items-center justify-center w-8 h-8 rounded-full border-2 transition-colors ${
-                    step.id === currentStep
-                      ? "bg-primary border-primary text-primary-foreground"
-                      : step.id < currentStep
-                      ? "bg-primary border-primary text-primary-foreground"
-                      : "border-border bg-background"
+                  className={`w-8 h-8 flex items-center justify-center rounded-full border ${
+                    step.id <= currentStep
+                      ? "bg-primary text-primary-foreground border-primary"
+                      : "border-muted"
                   }`}
                 >
-                  {step.id < currentStep ? (
-                    <Check className="w-4 h-4" />
-                  ) : (
-                    <span className="text-sm font-medium">{step.id}</span>
-                  )}
+                  {step.id < currentStep ? <Check className="w-4 h-4" /> : step.id}
                 </div>
                 <span
-                  className={`text-sm ${
-                    step.id === currentStep
-                      ? "font-semibold text-foreground"
-                      : step.id < currentStep
-                      ? "text-foreground"
-                      : "text-muted-foreground"
-                  }`}
+                  className={
+                    step.id === currentStep ? "font-semibold" : "text-muted-foreground"
+                  }
                 >
                   {step.label}
                 </span>
@@ -244,7 +318,7 @@ export default function VendorOnboarding() {
           </div>
         </div>
 
-        {/* Main Content */}
+        {/* Main */}
         <div className="flex-1 overflow-y-auto">
           <div className="max-w-3xl mx-auto py-12 px-6">{renderStep()}</div>
         </div>

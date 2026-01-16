@@ -38,7 +38,7 @@ export default function VendorLogin() {
       const { token, vendorAccount} = await response.json();
       
       // Store token in localStorage
-      localStorage.setItem("vendorToken", token);
+      // localStorage.setItem("vendorToken", token);
       localStorage.setItem("vendorAccountId", vendorAccount.id);
 
       toast({

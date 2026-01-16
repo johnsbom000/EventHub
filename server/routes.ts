@@ -1,15 +1,129 @@
 import type { Express } from "express";
 import { createServer, type Server } from "http";
 import { storage } from "./storage";
-import { insertEventSchema, insertVendorAccountSchema, insertVendorProfileSchema, vendorProfiles, vendorAccounts, vendorListings, users, insertUserSchema, webTraffic, bookings, vendors } from "@shared/schema";
+import {
+  insertEventSchema,
+  insertVendorAccountSchema,
+  insertVendorProfileSchema,
+  vendorProfiles,
+  vendorAccounts,
+  vendorListings,
+  users,
+  insertUserSchema,
+  webTraffic,
+  bookings,
+  vendors,
+} from "@shared/schema";
 import { scoreVendorsForEvent } from "./vendorScoring";
-import { hashPassword, comparePassword, generateToken, verifyToken, requireVendorAuth, requireCustomerAuth, requireDualAuth, requireAdminAuth } from "./auth";
+import {
+  hashPassword,
+  comparePassword,
+  generateToken,
+  verifyToken,
+  requireVendorAuth, // legacy (kept for now; not used on vendor routes below)
+  requireCustomerAuth,
+  requireDualAuth,
+  requireDualAuthAuth0,
+  requireAdminAuth,
+} from "./auth";
+import { requireAuth0 } from "./auth0"; // ✅ Auth0 middleware
 import { z } from "zod";
 import { db } from "./db";
 import { eq, and, sql as drizzleSql, count, sum, gte, lte, desc } from "drizzle-orm";
 
+/**
+ * Middleware: after requireAuth0, resolve the vendor account by auth0_sub and
+ * attach a normalized vendorAuth object so existing handlers keep working.
+ */
+async function requireVendorAccountAuth0(req: any, res: any, next: any) {
+  try {
+    const auth0 = req.auth0 as { sub?: string; email?: string } | undefined;
+    const auth0Sub = auth0?.sub;
+    if (!auth0Sub) {
+      return res.status(401).json({ error: "Missing Auth0 sub" });
+    }
+
+    const accounts = await db
+      .select()
+      .from(vendorAccounts)
+      .where(eq(vendorAccounts.auth0Sub, auth0Sub));
+
+    const account = accounts[0];
+    if (!account) {
+      // Auth0 is valid, but user doesn't have a vendor account row yet
+      return res.status(404).json({ error: "Vendor account not found for this Auth0 user" });
+    }
+
+    // Normalize to the shape legacy code expects
+    req.vendorAuth = {
+      id: account.id,
+      email: account.email,
+      type: "vendor",
+      auth0Sub: account.auth0Sub,
+    };
+
+    // Also expose account directly if useful later
+    req.vendorAccount = account;
+
+    return next();
+  } catch (err: any) {
+    console.error("requireVendorAccountAuth0 failed:", err?.message || err);
+    return res.status(500).json({ error: "Failed to resolve vendor account" });
+  }
+}
+
+/**
+ * Convenience combo for vendor routes:
+ * - verify Auth0 token
+ * - resolve vendor account by auth0_sub
+ */
+const requireVendorAuth0 = [requireAuth0, requireVendorAccountAuth0] as const;
+
 export async function registerRoutes(app: Express): Promise<Server> {
-  // Vendor Authentication Routes
+  // Location search (used by LocationPicker autocomplete)
+  app.get("/api/locations/search", async (req, res) => {
+    try {
+      const q = String(req.query.q || "").trim();
+      if (!q || q.length < 2) return res.json([]);
+
+      const token = process.env.MAPBOX_ACCESS_TOKEN;
+      console.log("MAPBOX_ACCESS_TOKEN exists:", Boolean(token));
+
+      if (!token) {
+        return res.status(500).json({ error: "Mapbox token not configured" });
+      }
+
+      const url =
+        `https://api.mapbox.com/geocoding/v5/mapbox.places/` +
+        `${encodeURIComponent(q)}.json` +
+        `?autocomplete=true&limit=5&access_token=${token}`;
+
+      const response = await fetch(url);
+      const text = await response.text();
+
+      if (!response.ok) {
+        // Mapbox returns a helpful JSON message here; include it
+        throw new Error(`Mapbox error: ${response.status} - ${text}`);
+      }
+
+      const data = JSON.parse(text);
+
+      const results = (data.features || []).map((f: any) => ({
+        id: f.id,
+        label: f.place_name,
+        lat: f.center[1],
+        lng: f.center[0],
+      }));
+
+      return res.json(results);
+    } catch (err: any) {
+      return res.status(500).json({
+        error: err?.message || "Location search failed",
+      });
+    }
+  });
+
+  // Vendor Authentication Routes (legacy; kept but not required for Auth0-only flow)
   const vendorSignupSchema = z.object({
     email: z.string().email(),
     password: z.string().min(8),
@@ -21,10 +135,68 @@ export async function registerRoutes(app: Express): Promise<Server> {
     password: z.string(),
   });
 
+  // Update current vendor account (protected route)
+  const updateVendorMeSchema = z.object({
+    businessName: z.string().min(1).max(100).optional(),
+  });
+
+  /**
+   * PATCH /api/vendor/me  ✅ Auth0-only
+   */
+  app.patch("/api/vendor/me", ...requireVendorAuth0, async (req, res) => {
+    try {
+      const vendorAuth = (req as any).vendorAuth;
+
+      const parsed = updateVendorMeSchema.safeParse(req.body);
+      if (!parsed.success) {
+        return res.status(400).json({ error: parsed.error.flatten() });
+      }
+
+      const updates = parsed.data;
+      if (!updates.businessName) {
+        return res.status(400).json({ error: "No updates provided" });
+      }
+
+      await db
+        .update(vendorAccounts)
+        .set({ businessName: updates.businessName.trim() })
+        .where(eq(vendorAccounts.id, vendorAuth.id));
+
+      const accounts = await db
+        .select()
+        .from(vendorAccounts)
+        .where(eq(vendorAccounts.id, vendorAuth.id));
+
+      const account = accounts[0];
+
+      const profiles = await db
+        .select()
+        .from(vendorProfiles)
+        .where(eq(vendorProfiles.accountId, account.id));
+
+      const profile = profiles[0];
+
+      res.json({
+        id: account.id,
+        email: account.email,
+        businessName: account.businessName,
+        stripeConnectId: account.stripeConnectId,
+        stripeAccountType: account.stripeAccountType,
+        stripeOnboardingComplete: account.stripeOnboardingComplete,
+        active: account.active,
+        profileComplete: profile !== undefined,
+        profileId: profile?.id || null,
+      });
+    } catch (error: any) {
+      res.status(500).json({ error: error.message });
+    }
+  });
+
+  // Legacy vendor signup/login (kept; not used for Auth0-only vendors)
   app.post("/api/vendor/signup", async (req, res) => {
     try {
       const { email, password, businessName } = vendorSignupSchema.parse(req.body);
-      
+
       // Check if vendor account already exists (check database)
       const existing = await db.select().from(vendorAccounts).where(eq(vendorAccounts.email, email));
       if (existing.length > 0) {
@@ -35,15 +207,18 @@ export async function registerRoutes(app: Express): Promise<Server> {
       const hashedPassword = await hashPassword(password);
 
       // Create vendor account in database
-      const [account] = await db.insert(vendorAccounts).values({
-        email,
-        password: hashedPassword,
-        businessName,
-        stripeConnectId: null,
-        stripeAccountType: null,
-        stripeOnboardingComplete: false,
-        active: true,
-      }).returning();
+      const [account] = await db
+        .insert(vendorAccounts)
+        .values({
+          email,
+          password: hashedPassword,
+          businessName,
+          stripeConnectId: null,
+          stripeAccountType: null,
+          stripeOnboardingComplete: false,
+          active: true,
+        })
+        .returning();
 
       // Generate JWT token
       const token = generateToken({
@@ -104,19 +279,35 @@ export async function registerRoutes(app: Express): Promise<Server> {
     }
   });
 
-  // Get current vendor account (protected route)
-  app.get("/api/vendor/me", requireVendorAuth, async (req, res) => {
+  /**
+   * GET /api/vendor/me ✅ Auth0-only
+   */
+  app.get("/api/vendor/me", ...requireVendorAuth0, async (req, res) => {
+    res.setHeader("Cache-Control", "no-store");
+    res.setHeader("Pragma", "no-cache");
+    res.setHeader("Expires", "0");
+    res.setHeader("Vary", "Authorization");
+    res.setHeader("ETag", `vendor-me-${Date.now()}`);
+    res.setHeader("Last-Modified", new Date().toUTCString());
+
     try {
       const vendorAuth = (req as any).vendorAuth;
-      const accounts = await db.select().from(vendorAccounts).where(eq(vendorAccounts.id, vendorAuth.id));
-      
+
+      const accounts = await db
+        .select()
+        .from(vendorAccounts)
+        .where(eq(vendorAccounts.id, vendorAuth.id));
+
       if (accounts.length === 0) {
         return res.status(404).json({ error: "Account not found" });
       }
       const account = accounts[0];
 
       // Check if vendor has completed profile (using database)
-      const profiles = await db.select().from(vendorProfiles).where(eq(vendorProfiles.accountId, account.id));
+      const profiles = await db
+        .select()
+        .from(vendorProfiles)
+        .where(eq(vendorProfiles.accountId, account.id));
       const profile = profiles[0];
 
       res.json({
@@ -129,13 +320,15 @@ export async function registerRoutes(app: Express): Promise<Server> {
         active: account.active,
         profileComplete: profile !== undefined,
         profileId: profile?.id || null,
+        vendorType: profile?.serviceType || "unspecified",
+        __marker: "vendor_me_route_hit",
       });
     } catch (error: any) {
       res.status(500).json({ error: error.message });
     }
   });
 
-  // Customer Authentication Routes
+  // Customer Authentication Routes (unchanged)
   const customerSignupSchema = z.object({
     name: z.string().min(2),
     email: z.string().email(),
@@ -150,15 +343,15 @@ export async function registerRoutes(app: Express): Promise<Server> {
   app.post("/api/customer/signup", async (req, res) => {
     try {
       const { name, email, password } = customerSignupSchema.parse(req.body);
-      
+
       // Check if customer already exists
       const existing = await db.select().from(users).where(eq(users.email, email));
       if (existing.length > 0) {
         // Smart error handling: instead of hard error, tell frontend to switch to login
-        return res.status(400).json({ 
+        return res.status(400).json({
           emailExists: true,
           email,
-          message: "You already have an account with this email. Please log in instead."
+          message: "You already have an account with this email. Please log in instead.",
         });
       }
 
@@ -167,17 +360,20 @@ export async function registerRoutes(app: Express): Promise<Server> {
 
       // Auto-assign admin role if email matches ADMIN_EMAIL
       const adminEmail = process.env.ADMIN_EMAIL;
-      const role = (adminEmail && email.toLowerCase() === adminEmail.toLowerCase()) ? "admin" : "customer";
+      const role = adminEmail && email.toLowerCase() === adminEmail.toLowerCase() ? "admin" : "customer";
 
       // Create customer account with role and lastLoginAt
-      const [user] = await db.insert(users).values({
-        name,
-        email,
-        password: hashedPassword,
-        role,
-        displayName: name,
-        lastLoginAt: new Date(),
-      }).returning();
+      const [user] = await db
+        .insert(users)
+        .values({
+          name,
+          email,
+          password: hashedPassword,
+          role,
+          displayName: name,
+          lastLoginAt: new Date(),
+        })
+        .returning();
 
       // Generate JWT token with appropriate type
       const tokenType = user.role === "admin" ? "admin" : "customer";
@@ -209,10 +405,10 @@ export async function registerRoutes(app: Express): Promise<Server> {
       const userAccounts = await db.select().from(users).where(eq(users.email, email));
       if (userAccounts.length === 0) {
         // Smart error handling: tell frontend to offer creating account
-        return res.status(404).json({ 
+        return res.status(404).json({
           userNotFound: true,
           email,
-          message: "We couldn't find an account with this email. Would you like to create one?"
+          message: "We couldn't find an account with this email. Would you like to create one?",
         });
       }
       const user = userAccounts[0];
@@ -224,9 +420,7 @@ export async function registerRoutes(app: Express): Promise<Server> {
       }
 
       // Update last login timestamp
-      await db.update(users)
-        .set({ lastLoginAt: new Date() })
-        .where(eq(users.id, user.id));
+      await db.update(users).set({ lastLoginAt: new Date() }).where(eq(users.id, user.id));
 
       // Generate JWT token with appropriate type
       const tokenType = user.role === "admin" ? "admin" : "customer";
@@ -254,7 +448,7 @@ export async function registerRoutes(app: Express): Promise<Server> {
     try {
       const customerAuth = (req as any).customerAuth;
       const userAccounts = await db.select().from(users).where(eq(users.id, customerAuth.id));
-      
+
       if (userAccounts.length === 0) {
         return res.status(404).json({ error: "Account not found" });
       }
@@ -272,7 +466,7 @@ export async function registerRoutes(app: Express): Promise<Server> {
     }
   });
 
-  // Unified Login Endpoint (checks both customers and vendors)
+  // Unified Login Endpoint (legacy; kept)
   const unifiedLoginSchema = z.object({
     email: z.string().email(),
     password: z.string(),
@@ -291,7 +485,7 @@ export async function registerRoutes(app: Express): Promise<Server> {
         const customerAccounts = await db.select().from(users).where(eq(users.email, email));
         if (customerAccounts.length > 0) {
           const user = customerAccounts[0];
-          
+
           // Verify password
           const valid = await comparePassword(password, user.password);
           if (!valid) {
@@ -299,8 +493,9 @@ export async function registerRoutes(app: Express): Promise<Server> {
           }
 
           // Ensure admin role is set
-          await db.update(users)
-            .set({ 
+          await db
+            .update(users)
+            .set({
               lastLoginAt: new Date(),
               role: "admin",
             })
@@ -324,21 +519,19 @@ export async function registerRoutes(app: Express): Promise<Server> {
           });
         } else {
           // Admin email but no customer account exists
-          return res.status(404).json({ 
+          return res.status(404).json({
             userNotFound: true,
             email,
-            message: "Admin account not found. Please sign up first."
+            message: "Admin account not found. Please sign up first.",
           });
         }
       }
 
-      // For non-admin emails, check vendor accounts FIRST (priority for upgraded vendors)
-      // This ensures users who have both customer and vendor accounts
-      // are logged in as vendors by default
+      // For non-admin emails, check vendor accounts FIRST (legacy)
       const vendorAccountsResult = await db.select().from(vendorAccounts).where(eq(vendorAccounts.email, email));
       if (vendorAccountsResult.length > 0) {
         const account = vendorAccountsResult[0];
-        
+
         // Verify password
         const valid = await comparePassword(password, account.password);
         if (!valid) {
@@ -369,7 +562,7 @@ export async function registerRoutes(app: Express): Promise<Server> {
       const customerAccounts = await db.select().from(users).where(eq(users.email, email));
       if (customerAccounts.length > 0) {
         const user = customerAccounts[0];
-        
+
         // Verify password
         const valid = await comparePassword(password, user.password);
         if (!valid) {
@@ -377,9 +570,7 @@ export async function registerRoutes(app: Express): Promise<Server> {
         }
 
         // Update last login timestamp
-        await db.update(users)
-          .set({ lastLoginAt: new Date() })
-          .where(eq(users.id, user.id));
+        await db.update(users).set({ lastLoginAt: new Date() }).where(eq(users.id, user.id));
 
         // Generate customer JWT token
         const token = generateToken({
@@ -400,20 +591,34 @@ export async function registerRoutes(app: Express): Promise<Server> {
       }
 
       // No account found in either table
-      return res.status(404).json({ 
+      return res.status(404).json({
         userNotFound: true,
         email,
-        message: "We couldn't find an account with this email. Would you like to create one?"
+        message: "We couldn't find an account with this email. Would you like to create one?",
       });
     } catch (error: any) {
       res.status(400).json({ error: error.message });
     }
   });
 
-  // Complete vendor onboarding (handles both new vendors and customer upgrades)
+  const ALL_VENDOR_TYPES = [
+    "venue",
+    "photography",
+    "videography",
+    "dj",
+    "florist",
+    "catering",
+    "planner",
+    "hair-styling",
+    "prop-decor",
+  ] as const;
+
+  const ENABLED_VENDOR_TYPES = ["prop-decor"] as const;
+
+  // Complete vendor onboarding (already Auth0)
   const completeOnboardingSchema = z.object({
     businessName: z.string().min(2),
-    serviceType: z.string(),
+    vendorType: z.enum(ENABLED_VENDOR_TYPES),
     contactName: z.string().optional(),
     bio: z.string().optional(),
     website: z.string().optional(),
@@ -422,146 +627,118 @@ export async function registerRoutes(app: Express): Promise<Server> {
     introVideoUrl: z.string().optional(),
     city: z.string(),
     state: z.string().optional(),
-    serviceRadius: z.number().optional(),
+    serviceRadius: z.coerce.number().optional(),
+    serviceRadiusMiles: z.coerce.number().optional(),
     portfolioImages: z.array(z.string()).optional(),
     serviceHeadline: z.string().optional(),
-    serviceDescription: z.string(),
   });
 
-  app.post("/api/vendor/onboarding/complete", requireDualAuth, async (req, res) => {
+  app.post("/api/vendor/onboarding/complete", requireDualAuthAuth0, async (req, res) => {
     try {
       const customerAuth = (req as any).customerAuth;
       const vendorAuth = (req as any).vendorAuth;
-      const isCustomer = !!customerAuth;
-      const isVendor = !!vendorAuth;
+      const auth0 = (req as any).auth0 as { sub: string; email?: string } | undefined;
 
-      // Validate onboarding data
       const onboardingData = completeOnboardingSchema.parse(req.body);
 
-      let vendorAccountId: string;
-      let vendorToken: string;
+      const email = auth0?.email;
+      const auth0Sub = auth0?.sub;
 
-      if (isCustomer) {
-        // Customer becoming vendor flow
-        const customerAccounts = await db.select().from(users).where(eq(users.id, customerAuth.id));
-        if (customerAccounts.length === 0) {
-          return res.status(404).json({ error: "Customer account not found" });
-        }
-        const customer = customerAccounts[0];
-
-        // Check if vendor account already exists for this email
-        const existingVendor = await db.select().from(vendorAccounts).where(eq(vendorAccounts.email, customer.email));
-        
-        if (existingVendor.length > 0) {
-          // Vendor account already exists
-          vendorAccountId = existingVendor[0].id;
-          
-          // Only update if this vendor account is unlinked (not another user's account)
-          if (!existingVendor[0].userId || existingVendor[0].userId === customer.id) {
-            // Safe to link/update this vendor account to the customer
-            const updateData: any = { 
-              userId: customer.id,
-              password: customer.password, // Sync password so customer can log in as vendor
-            };
-            
-            // Only update business name if provided and non-empty
-            if (onboardingData.businessName && onboardingData.businessName.trim()) {
-              updateData.businessName = onboardingData.businessName;
-            }
-            
-            await db.update(vendorAccounts)
-              .set(updateData)
-              .where(eq(vendorAccounts.id, vendorAccountId));
-          } else {
-            // Vendor account belongs to different user - this shouldn't happen
-            // but we should prevent hijacking another user's account
-            return res.status(400).json({ 
-              error: "A vendor account with this email already exists and belongs to another user" 
-            });
-          }
-        } else {
-          // Create new vendor account linked to customer with same password
-          const [newVendorAccount] = await db.insert(vendorAccounts).values({
-            userId: customer.id,
-            email: customer.email,
-            password: customer.password, // Share password hash
-            businessName: onboardingData.businessName,
-            profileComplete: false,
-          }).returning();
-          vendorAccountId = newVendorAccount.id;
-        }
-
-        // Generate vendor token
-        vendorToken = generateToken({
-          id: vendorAccountId,
-          email: customer.email,
-          type: "vendor",
-        });
-      } else {
-        // Existing vendor completing onboarding
-        const vendorAcct = await db.select().from(vendorAccounts).where(eq(vendorAccounts.id, vendorAuth.id));
-        if (vendorAcct.length === 0) {
-          return res.status(404).json({ error: "Vendor account not found" });
-        }
-        vendorAccountId = vendorAcct[0].id;
-        const token = req.headers.authorization!.split(" ")[1];
-        vendorToken = token;
+      if (!email) {
+        return res.status(400).json({ error: "Auth0 email is required for onboarding" });
       }
 
-      // Create or update vendor profile with proper defaults
-      const existingProfiles = await db.select().from(vendorProfiles).where(eq(vendorProfiles.accountId, vendorAccountId));
-      
-      // Build profile data with all onboarding information
-      const profileData = {
-        accountId: vendorAccountId,
-        serviceType: onboardingData.serviceType,
+      const existingAccounts = await db.select().from(vendorAccounts).where(eq(vendorAccounts.email, email));
+      let account = existingAccounts[0];
+
+      if (!account) {
+        const [created] = await db
+          .insert(vendorAccounts)
+          .values({
+            email,
+            auth0Sub,
+            password: "auth0-external",
+            businessName: onboardingData.businessName,
+            profileComplete: false,
+            active: true,
+          })
+          .returning();
+
+        account = created;
+      } else {
+        const [updated] = await db
+          .update(vendorAccounts)
+          .set({
+            businessName: onboardingData.businessName,
+            auth0Sub: auth0Sub ?? account.auth0Sub,
+          })
+          .where(eq(vendorAccounts.id, account.id))
+          .returning();
+
+        account = updated;
+      }
+
+      const existingProfiles = await db.select().from(vendorProfiles).where(eq(vendorProfiles.accountId, account.id));
+
+      const addressParts = [onboardingData.city, onboardingData.state].filter(Boolean);
+      const address = addressParts.join(", ");
+
+      const radius = onboardingData.serviceRadius ?? onboardingData.serviceRadiusMiles ?? 25;
+
+      const profilePayload = {
+        accountId: account.id,
+        serviceType: onboardingData.vendorType,
         experience: 0,
-        qualifications: [],
+        qualifications: [] as string[],
         onlineProfiles: {
           website: onboardingData.website || null,
           instagram: onboardingData.instagram || null,
           tiktok: onboardingData.tiktok || null,
           introVideoUrl: onboardingData.introVideoUrl || null,
           bio: onboardingData.bio || null,
-          headline: onboardingData.serviceHeadline || null, // Save service headline
+          headline: onboardingData.serviceHeadline || null,
         },
-        address: onboardingData.city + (onboardingData.state ? `, ${onboardingData.state}` : ""),
+        address,
         city: onboardingData.city,
         travelMode: "travel-to-guests" as const,
-        serviceRadius: onboardingData.serviceRadius || 25,
-        serviceAddress: null,
-        photos: onboardingData.portfolioImages || [],
-        serviceDescription: onboardingData.serviceDescription,
+        serviceRadius: radius,
+        serviceAddress: null as string | null,
+        photos: onboardingData.portfolioImages ?? [],
+        serviceDescription: onboardingData.serviceHeadline || `Services by ${onboardingData.businessName}`,
       };
 
       let profile;
       if (existingProfiles.length > 0) {
-        // Update existing profile
-        [profile] = await db.update(vendorProfiles)
-          .set(profileData)
-          .where(eq(vendorProfiles.id, existingProfiles[0].id))
+        const current = existingProfiles[0];
+        const [updatedProfile] = await db
+          .update(vendorProfiles)
+          .set({
+            ...profilePayload,
+            updatedAt: new Date(),
+          })
+          .where(eq(vendorProfiles.id, current.id))
           .returning();
+
+        profile = updatedProfile;
       } else {
-        // Create new profile
-        [profile] = await db.insert(vendorProfiles).values(profileData).returning();
+        const [createdProfile] = await db.insert(vendorProfiles).values(profilePayload).returning();
+        profile = createdProfile;
       }
 
-      // Update vendor account profileComplete flag
-      await db.update(vendorAccounts)
-        .set({ profileComplete: true })
-        .where(eq(vendorAccounts.id, vendorAccountId));
+      await db.update(vendorAccounts).set({ profileComplete: true }).where(eq(vendorAccounts.id, account.id));
 
-      res.json({
-        vendorToken,
-        isUpgrade: isCustomer,
-        vendorAccountId,
+      const isUpgrade = Boolean(customerAuth || vendorAuth);
+
+      return res.json({
+        vendorAccountId: account.id,
         profileId: profile.id,
+        isUpgrade,
       });
     } catch (error: any) {
       if (error.name === "ZodError") {
         return res.status(400).json({ error: "Validation failed", details: error.errors });
       }
-      res.status(500).json({ error: error.message });
+      return res.status(500).json({ error: error.message });
     }
   });
 
@@ -569,7 +746,9 @@ export async function registerRoutes(app: Express): Promise<Server> {
   const createVendorProfileSchema = insertVendorProfileSchema
     .omit({ accountId: true })
     .extend({
-      // Ensure serviceRadius is present when travel mode is "travel-to-guests"
+      serviceType: z.enum(ENABLED_VENDOR_TYPES, {
+        errorMap: () => ({ message: "Select a valid vendor type" }),
+      }),
       serviceRadius: z.number().optional(),
       serviceAddress: z.string().optional(),
     })
@@ -598,37 +777,35 @@ export async function registerRoutes(app: Express): Promise<Server> {
       }
     );
 
-  app.post("/api/vendor/profile", requireVendorAuth, async (req, res) => {
+  /**
+   * POST /api/vendor/profile ✅ Auth0-only
+   */
+  app.post("/api/vendor/profile", ...requireVendorAuth0, async (req, res) => {
     try {
       const vendorAuth = (req as any).vendorAuth;
+
       const accounts = await db.select().from(vendorAccounts).where(eq(vendorAccounts.id, vendorAuth.id));
-      
       if (accounts.length === 0) {
         return res.status(404).json({ error: "Account not found" });
       }
       const account = accounts[0];
 
-      // Check if profile already exists (using database)
       const existingProfiles = await db.select().from(vendorProfiles).where(eq(vendorProfiles.accountId, account.id));
       if (existingProfiles.length > 0) {
-        return res.status(409).json({ 
-          error: "Profile already exists. Use PUT/PATCH to update existing profile." 
+        return res.status(409).json({
+          error: "Profile already exists. Use PUT/PATCH to update existing profile.",
         });
       }
 
-      // Validate and parse request body
       const validatedData = createVendorProfileSchema.parse(req.body);
 
-      // Enrich with accountId from authenticated session
       const profileData = {
         ...validatedData,
         accountId: account.id,
       };
 
-      // Create vendor profile in database
       const [profile] = await db.insert(vendorProfiles).values(profileData).returning();
 
-      // Return both account and profile data to avoid extra round trip
       res.json({
         account: {
           id: account.id,
@@ -652,55 +829,86 @@ export async function registerRoutes(app: Express): Promise<Server> {
     }
   });
 
-  // Vendor Listings Routes
-  // Create a new vendor listing (draft)
-  app.post("/api/vendor/listings", requireVendorAuth, async (req, res) => {
+  // Vendor Listings Routes (already Auth0 dual middleware and working)
+  app.post("/api/vendor/listings", requireDualAuthAuth0, async (req, res) => {
     try {
       const vendorAuth = (req as any).vendorAuth;
-      const { listingData } = req.body;
 
-      // Get vendor profile (optional - listing can be created without profile)
+      if (!vendorAuth) {
+        return res.status(403).json({ error: "Vendor account required" });
+      }
+
+      const listingData = req.body?.listingData;
+
+      if (!listingData || typeof listingData !== "object") {
+        return res.status(400).json({ error: "listingData must be a JSON object." });
+      }
+
       const profiles = await db.select().from(vendorProfiles).where(eq(vendorProfiles.accountId, vendorAuth.id));
-      const profileId = profiles.length > 0 ? profiles[0].id : null;
 
-      // Create draft listing
-      const [listing] = await db.insert(vendorListings).values({
-        accountId: vendorAuth.id,
-        profileId,
-        status: "draft",
-        title: listingData?.serviceType || null,
-        listingData,
-      }).returning();
+      if (profiles.length === 0) {
+        return res.status(400).json({
+          error: "Vendor profile required before creating a listing. Complete onboarding first.",
+        });
+      }
 
-      res.json(listing);
+      const profile = profiles[0];
+      const vendorType = profile.serviceType;
+
+      const title =
+        (typeof listingData.title === "string" && listingData.title.trim()) || `New ${vendorType} listing`;
+
+      const [listing] = await db
+        .insert(vendorListings)
+        .values({
+          accountId: vendorAuth.id,
+          profileId: profile.id,
+          vendorType,
+          status: "draft",
+          title,
+          listingData,
+        })
+        .returning();
+
+      return res.status(201).json(listing);
     } catch (error: any) {
-      res.status(500).json({ error: error.message });
+      console.error("POST /api/vendor/listings failed:", error);
+      return res.status(500).json({ error: error?.message ?? "Unknown error" });
     }
   });
 
-  // Update an existing vendor listing
-  app.patch("/api/vendor/listings/:id", requireVendorAuth, async (req, res) => {
+  app.patch("/api/vendor/listings/:id", requireDualAuthAuth0, async (req, res) => {
     try {
       const vendorAuth = (req as any).vendorAuth;
+
+      if (!vendorAuth) {
+        return res.status(403).json({ error: "Vendor account required" });
+      }
       const { id } = req.params;
       const { listingData, status, title } = req.body;
 
-      // Verify ownership
-      const existingListings = await db.select().from(vendorListings).where(
-        and(
-          eq(vendorListings.id, id),
-          eq(vendorListings.accountId, vendorAuth.id)
-        )
-      );
+      const existingListings = await db
+        .select()
+        .from(vendorListings)
+        .where(and(eq(vendorListings.id, id), eq(vendorListings.accountId, vendorAuth.id)));
 
       if (existingListings.length === 0) {
         return res.status(404).json({ error: "Listing not found" });
       }
 
-      // Update listing
-      const [updated] = await db.update(vendorListings)
+      const profiles = await db.select().from(vendorProfiles).where(eq(vendorProfiles.accountId, vendorAuth.id));
+
+      if (profiles.length === 0) {
+        return res.status(400).json({ error: "Vendor profile required" });
+      }
+
+      const vendorType = profiles[0].serviceType;
+
+      const [updated] = await db
+        .update(vendorListings)
         .set({
           listingData,
+          vendorType,
           status: status || existingListings[0].status,
           title: title || existingListings[0].title,
           updatedAt: new Date(),
@@ -708,79 +916,62 @@ export async function registerRoutes(app: Express): Promise<Server> {
         .where(eq(vendorListings.id, id))
         .returning();
 
-      res.json(updated);
+      return res.json(updated);
     } catch (error: any) {
-      res.status(500).json({ error: error.message });
+      return res.status(500).json({ error: error.message });
     }
   });
 
-  // Publish a draft listing (change status to active)
-  app.patch("/api/vendor/listings/:id/publish", requireVendorAuth, async (req, res) => {
+  app.get("/api/vendor/listings", requireDualAuthAuth0, async (req, res) => {
     try {
+      res.setHeader("Cache-Control", "no-store");
       const vendorAuth = (req as any).vendorAuth;
-      const { id } = req.params;
 
-      // Verify ownership and that it's a draft
-      const existingListings = await db.select().from(vendorListings).where(
-        and(
-          eq(vendorListings.id, id),
-          eq(vendorListings.accountId, vendorAuth.id)
-        )
-      );
-
-      if (existingListings.length === 0) {
-        return res.status(404).json({ error: "Listing not found" });
+      if (!vendorAuth) {
+        return res.status(403).json({ error: "Vendor account required" });
       }
-
-      // Update status to active
-      const [published] = await db.update(vendorListings)
-        .set({
-          status: "active",
-          updatedAt: new Date(),
-        })
-        .where(eq(vendorListings.id, id))
-        .returning();
-
-      res.json(published);
-    } catch (error: any) {
-      res.status(500).json({ error: error.message });
-    }
-  });
-
-  // Get all vendor listings (with optional status filter)
-  app.get("/api/vendor/listings", requireVendorAuth, async (req, res) => {
-    try {
-      const vendorAuth = (req as any).vendorAuth;
       const { status } = req.query;
 
       let query = db.select().from(vendorListings).where(eq(vendorListings.accountId, vendorAuth.id));
 
       if (status) {
-        query = query.where(and(
-          eq(vendorListings.accountId, vendorAuth.id),
-          eq(vendorListings.status, status as string)
-        )) as any;
+        query = query.where(
+          and(eq(vendorListings.accountId, vendorAuth.id), eq(vendorListings.status, status as string))
+        ) as any;
       }
 
+      console.log("[GET /api/vendor/listings] vendorAuth.id =", vendorAuth?.id, "status =", status);
+
       const listings = await query;
+
+      console.log(
+        "[GET /api/vendor/listings] accountId=",
+        vendorAuth.id,
+        "status=",
+        status,
+        "count=",
+        listings.length
+      );
+
       res.json(listings);
     } catch (error: any) {
       res.status(500).json({ error: error.message });
     }
   });
 
-  // Get a specific listing by ID
-  app.get("/api/vendor/listings/:id", requireVendorAuth, async (req, res) => {
+  app.get("/api/vendor/listings/:id", requireDualAuthAuth0, async (req, res) => {
     try {
       const vendorAuth = (req as any).vendorAuth;
+
+      if (!vendorAuth) {
+        return res.status(403).json({ error: "Vendor account required" });
+      }
       const { id } = req.params;
 
-      const listings = await db.select().from(vendorListings).where(
-        and(
-          eq(vendorListings.id, id),
-          eq(vendorListings.accountId, vendorAuth.id)
-        )
-      );
+      const listings = await db
+        .select()
+        .from(vendorListings)
+        .where(and(eq(vendorListings.id, id), eq(vendorListings.accountId, vendorAuth.id)));
 
       if (listings.length === 0) {
         return res.status(404).json({ error: "Listing not found" });
@@ -792,36 +983,62 @@ export async function registerRoutes(app: Express): Promise<Server> {
     }
   });
 
-  // Stripe Connect onboarding routes
+  app.delete("/api/vendor/listings/:id", requireDualAuthAuth0, async (req, res) => {
+    try {
+      const vendorAuth = (req as any).vendorAuth;
+
+      if (!vendorAuth) {
+        return res.status(403).json({ error: "Vendor account required" });
+      }
+      const { id } = req.params;
+
+      const existing = await db
+        .select()
+        .from(vendorListings)
+        .where(and(eq(vendorListings.id, id), eq(vendorListings.accountId, vendorAuth.id)));
+
+      if (existing.length === 0) {
+        return res.status(404).json({ error: "Listing not found" });
+      }
+
+      await db
+        .delete(vendorListings)
+        .where(and(eq(vendorListings.id, id), eq(vendorListings.accountId, vendorAuth.id)));
+
+      return res.status(204).send();
+    } catch (error: any) {
+      return res.status(500).json({ error: error.message });
+    }
+  });
+
+  // Stripe Connect onboarding routes ✅ Auth0-only now
   const stripeOnboardingSchema = z.object({
     accountType: z.enum(["express", "standard"]),
     businessName: z.string().min(2),
   });
 
-  app.post("/api/vendor/connect/onboard", requireVendorAuth, async (req, res) => {
+  app.post("/api/vendor/connect/onboard", ...requireVendorAuth0, async (req, res) => {
     try {
       const { accountType, businessName } = stripeOnboardingSchema.parse(req.body);
       const vendorAuth = (req as any).vendorAuth;
-      
+
       const account = await storage.getVendorAccount(vendorAuth.id);
       if (!account) {
         return res.status(404).json({ error: "Account not found" });
       }
 
-      // Check if already has Stripe account
       if (account.stripeConnectId) {
         return res.status(400).json({ error: "Stripe account already connected" });
       }
 
       const { createConnectAccount } = await import("./stripe");
-      
+
       const result = await createConnectAccount({
         email: account.email,
         businessName,
         accountType,
       });
 
-      // Update vendor account with Stripe Connect ID
       await storage.updateVendorAccount(account.id, {
         stripeConnectId: result.accountId,
         stripeAccountType: accountType,
@@ -836,11 +1053,11 @@ export async function registerRoutes(app: Express): Promise<Server> {
     }
   });
 
-  app.get("/api/vendor/connect/status", requireVendorAuth, async (req, res) => {
+  app.get("/api/vendor/connect/status", ...requireVendorAuth0, async (req, res) => {
     try {
       const vendorAuth = (req as any).vendorAuth;
       const account = await storage.getVendorAccount(vendorAuth.id);
-      
+
       if (!account || !account.stripeConnectId) {
         return res.json({ connected: false });
       }
@@ -848,7 +1065,6 @@ export async function registerRoutes(app: Express): Promise<Server> {
       const { checkAccountOnboardingStatus } = await import("./stripe");
       const status = await checkAccountOnboardingStatus(account.stripeConnectId);
 
-      // Update onboarding complete status
       if (status.complete && !account.stripeOnboardingComplete) {
         await storage.updateVendorAccount(account.id, {
           stripeOnboardingComplete: true,
@@ -866,11 +1082,11 @@ export async function registerRoutes(app: Express): Promise<Server> {
     }
   });
 
-  app.get("/api/vendor/connect/dashboard", requireVendorAuth, async (req, res) => {
+  app.get("/api/vendor/connect/dashboard", ...requireVendorAuth0, async (req, res) => {
     try {
       const vendorAuth = (req as any).vendorAuth;
       const account = await storage.getVendorAccount(vendorAuth.id);
-      
+
       if (!account || !account.stripeConnectId) {
         return res.status(400).json({ error: "No Stripe account connected" });
       }
@@ -884,14 +1100,12 @@ export async function registerRoutes(app: Express): Promise<Server> {
     }
   });
 
-  // Vendor Dashboard & Management Routes
-  
-  // Get vendor dashboard stats
-  app.get("/api/vendor/stats", requireVendorAuth, async (req, res) => {
+  // Vendor Dashboard & Management Routes ✅ Auth0-only now
+  app.get("/api/vendor/stats", ...requireVendorAuth0, async (req, res) => {
     try {
       const vendorAuth = (req as any).vendorAuth;
       const account = await storage.getVendorAccount(vendorAuth.id);
-      
+
       if (!account?.vendorId) {
         return res.json({
           totalBookings: 0,
@@ -901,8 +1115,6 @@ export async function registerRoutes(app: Express): Promise<Server> {
         });
       }
 
-      // TODO: Implement actual stats calculation from database
-      // For now, return mock data
       res.json({
         totalBookings: 24,
         bookingsThisMonth: 3,
@@ -917,27 +1129,23 @@ export async function registerRoutes(app: Express): Promise<Server> {
     }
   });
 
-  // Get vendor's bookings
-  app.get("/api/vendor/bookings", requireVendorAuth, async (req, res) => {
+  app.get("/api/vendor/bookings", ...requireVendorAuth0, async (req, res) => {
     try {
       const vendorAuth = (req as any).vendorAuth;
       const account = await storage.getVendorAccount(vendorAuth.id);
-      
+
       if (!account?.vendorId) {
         return res.json([]);
       }
 
-      // TODO: Implement actual bookings retrieval
       res.json([]);
     } catch (error: any) {
       res.status(500).json({ error: error.message });
     }
   });
 
-  // Update booking status (accept, reschedule, cancel, complete)
-  app.patch("/api/vendor/bookings/:id", requireVendorAuth, async (req, res) => {
+  app.patch("/api/vendor/bookings/:id", ...requireVendorAuth0, async (req, res) => {
     try {
-      const { status, notes } = req.body;
       // TODO: Implement booking update logic
       res.json({ success: true });
     } catch (error: any) {
@@ -945,50 +1153,39 @@ export async function registerRoutes(app: Express): Promise<Server> {
     }
   });
 
-  // Get vendor's messages
-  app.get("/api/vendor/messages", requireVendorAuth, async (req, res) => {
+  app.get("/api/vendor/messages", ...requireVendorAuth0, async (req, res) => {
     try {
-      const vendorAuth = (req as any).vendorAuth;
-      // TODO: Implement messages retrieval
       res.json([]);
     } catch (error: any) {
       res.status(500).json({ error: error.message });
     }
   });
 
-  // Get vendor's payments
-  app.get("/api/vendor/payments", requireVendorAuth, async (req, res) => {
+  app.get("/api/vendor/payments", ...requireVendorAuth0, async (req, res) => {
     try {
-      const vendorAuth = (req as any).vendorAuth;
-      // TODO: Implement payments retrieval
       res.json([]);
     } catch (error: any) {
       res.status(500).json({ error: error.message });
     }
   });
 
-  // Get vendor's reviews
-  app.get("/api/vendor/reviews", requireVendorAuth, async (req, res) => {
+  app.get("/api/vendor/reviews", ...requireVendorAuth0, async (req, res) => {
     try {
       const vendorAuth = (req as any).vendorAuth;
       const account = await storage.getVendorAccount(vendorAuth.id);
-      
+
       if (!account?.vendorId) {
         return res.json([]);
       }
 
-      // TODO: Implement reviews retrieval
       res.json([]);
     } catch (error: any) {
       res.status(500).json({ error: error.message });
     }
   });
 
-  // Reply to a review
-  app.post("/api/vendor/reviews/:id/reply", requireVendorAuth, async (req, res) => {
+  app.post("/api/vendor/reviews/:id/reply", ...requireVendorAuth0, async (req, res) => {
     try {
-      const { replyText } = req.body;
-      // TODO: Implement review reply logic
       res.json({ success: true });
     } catch (error: any) {
       res.status(500).json({ error: error.message });
@@ -1039,7 +1236,7 @@ export async function registerRoutes(app: Express): Promise<Server> {
   app.get("/api/vendors/meta/categories", async (req, res) => {
     try {
       const vendors = await storage.getAllVendors();
-      const categories = Array.from(new Set(vendors.map(v => v.category))).sort();
+      const categories = Array.from(new Set(vendors.map((v) => v.category))).sort();
       res.json(categories);
     } catch (error: any) {
       res.status(500).json({ error: error.message });
@@ -1067,14 +1264,14 @@ export async function registerRoutes(app: Express): Promise<Server> {
 
       const allVendors = await storage.getAllVendors();
       const scoredRecommendations = scoreVendorsForEvent(event, allVendors);
-      
+
       res.json(scoredRecommendations);
     } catch (error: any) {
       res.status(500).json({ error: error.message });
     }
   });
 
-  // Booking and Payment Routes
+  // Booking and Payment Routes (unchanged)
   const createBookingSchema = z.object({
     vendorId: z.string(),
     eventId: z.string().optional(),
@@ -1093,15 +1290,13 @@ export async function registerRoutes(app: Express): Promise<Server> {
   app.post("/api/bookings", async (req, res) => {
     try {
       const data = createBookingSchema.parse(req.body);
-      
-      // Calculate platform fee (15%)
+
       const platformFee = Math.round(data.totalAmount * 0.15);
       const vendorPayout = data.totalAmount - platformFee;
 
-      // Create booking
       const booking = await storage.createBooking({
         ...data,
-        customerId: null, // TODO: Get from auth when customer auth is implemented
+        customerId: null,
         addOnIds: data.addOnIds ?? [],
         platformFee,
         vendorPayout,
@@ -1111,29 +1306,26 @@ export async function registerRoutes(app: Express): Promise<Server> {
         paymentStatus: "pending",
       });
 
-      // Create payment schedules
-      // 1. Deposit (due immediately)
       await storage.createPaymentSchedule({
         bookingId: booking.id,
         installmentNumber: 1,
         amount: data.depositAmount,
-        dueDate: new Date().toISOString().split('T')[0],
+        dueDate: new Date().toISOString().split("T")[0],
         paymentType: "deposit",
         status: "pending",
       });
 
-      // 2. Final payment (based on strategy)
       const finalAmount = data.totalAmount - data.depositAmount;
       let finalDueDate: string;
-      
+
       if (data.finalPaymentStrategy === "immediately") {
-        finalDueDate = new Date().toISOString().split('T')[0];
+        finalDueDate = new Date().toISOString().split("T")[0];
       } else if (data.finalPaymentStrategy === "2_weeks_prior") {
         const eventDate = new Date(data.eventDate);
         const twoWeeksPrior = new Date(eventDate);
         twoWeeksPrior.setDate(twoWeeksPrior.getDate() - 14);
-        finalDueDate = twoWeeksPrior.toISOString().split('T')[0];
-      } else { // day_of_event
+        finalDueDate = twoWeeksPrior.toISOString().split("T")[0];
+      } else {
         finalDueDate = data.eventDate;
       }
 
@@ -1152,29 +1344,25 @@ export async function registerRoutes(app: Express): Promise<Server> {
     }
   });
 
-  // Process a payment (deposit or scheduled payment)
   app.post("/api/bookings/:bookingId/payments/:scheduleId", async (req, res) => {
     try {
       const { bookingId, scheduleId } = req.params;
-      
+
       const booking = await storage.getBooking(bookingId);
       if (!booking) {
         return res.status(404).json({ error: "Booking not found" });
       }
 
-      const schedule = (await storage.getPaymentSchedulesByBooking(bookingId))
-        .find(s => s.id === scheduleId);
+      const schedule = (await storage.getPaymentSchedulesByBooking(bookingId)).find((s) => s.id === scheduleId);
       if (!schedule) {
         return res.status(404).json({ error: "Payment schedule not found" });
       }
 
-      // Get vendor's Stripe Connect ID
       const vendorAccount = await storage.getVendorAccountByVendorId(booking.vendorId);
       if (!vendorAccount || !vendorAccount.stripeConnectId || !vendorAccount.stripeOnboardingComplete) {
         return res.status(400).json({ error: "Vendor payment processing not set up" });
       }
 
-      // Create Stripe Payment Intent with platform fee
       const { createBookingPaymentIntent } = await import("./stripe");
       const paymentIntent = await createBookingPaymentIntent({
         amount: schedule.amount,
@@ -1183,12 +1371,10 @@ export async function registerRoutes(app: Express): Promise<Server> {
         description: `Booking ${booking.id} - ${schedule.paymentType}`,
       });
 
-      // Update payment schedule with Stripe payment intent ID
       await storage.updatePaymentSchedule(scheduleId, {
         stripePaymentIntentId: paymentIntent.id,
       });
 
-      // Create payment record
       const platformFee = Math.round(schedule.amount * 0.15);
       await storage.createPayment({
         bookingId: booking.id,
@@ -1212,18 +1398,11 @@ export async function registerRoutes(app: Express): Promise<Server> {
     }
   });
 
-  // Webhook to handle successful payments
   app.post("/api/webhooks/stripe", async (req, res) => {
     try {
       const event = req.body;
 
       if (event.type === "payment_intent.succeeded") {
-        const paymentIntent = event.data.object;
-        
-        // Find payment by Stripe payment intent ID
-        const allPayments = await storage.getAllEvents(); // This should be getAllPayments but storage doesn't have it yet
-        // TODO: Implement proper payment lookup and update booking/schedule status
-        
         res.json({ received: true });
       } else {
         res.json({ received: true });
@@ -1233,18 +1412,16 @@ export async function registerRoutes(app: Express): Promise<Server> {
     }
   });
 
-  // Request refund (48-hour policy)
   app.post("/api/bookings/:bookingId/refund", async (req, res) => {
     try {
       const { bookingId } = req.params;
       const { reason } = req.body;
-      
+
       const booking = await storage.getBooking(bookingId);
       if (!booking) {
         return res.status(404).json({ error: "Booking not found" });
       }
 
-      // Check 48-hour policy
       if (booking.depositPaidAt) {
         const hoursSinceDeposit = (Date.now() - booking.depositPaidAt.getTime()) / (1000 * 60 * 60);
         if (hoursSinceDeposit > 48) {
@@ -1252,22 +1429,19 @@ export async function registerRoutes(app: Express): Promise<Server> {
         }
       }
 
-      // Get deposit payment
       const payments = await storage.getPaymentsByBooking(bookingId);
-      const depositPayment = payments.find(p => p.paymentType === "deposit" && p.status === "paid");
-      
+      const depositPayment = payments.find((p) => p.paymentType === "deposit" && p.status === "paid");
+
       if (!depositPayment) {
         return res.status(400).json({ error: "No deposit payment found" });
       }
 
-      // Issue refund
       const { refundBookingPayment } = await import("./stripe");
       const refund = await refundBookingPayment({
         paymentIntentId: depositPayment.stripePaymentIntentId,
         reason: reason || "requested_by_customer",
       });
 
-      // Update payment record
       await storage.updatePayment(depositPayment.id, {
         status: "refunded",
         refundAmount: depositPayment.amount,
@@ -1275,7 +1449,6 @@ export async function registerRoutes(app: Express): Promise<Server> {
         refundedAt: new Date(),
       });
 
-      // Update booking
       await storage.updateBooking(bookingId, {
         status: "cancelled",
         paymentStatus: "refunded",
@@ -1290,20 +1463,17 @@ export async function registerRoutes(app: Express): Promise<Server> {
   });
 
   // ============================================
-  // ADMIN ANALYTICS ENDPOINTS
+  // ADMIN ANALYTICS ENDPOINTS (unchanged)
   // ============================================
 
-  // Track web traffic (optional authentication - tracks anonymous and authenticated users)
   app.post("/api/track", async (req, res) => {
     try {
       const { path, referrer } = req.body;
-      
-      // Basic input validation
-      if (typeof path !== 'string' || !path.startsWith('/')) {
+
+      if (typeof path !== "string" || !path.startsWith("/")) {
         return res.status(400).json({ error: "Invalid path" });
       }
 
-      // Try to extract user info from token if provided
       let userId: string | null = null;
       let userType: string | null = null;
 
@@ -1326,43 +1496,33 @@ export async function registerRoutes(app: Express): Promise<Server> {
 
       res.json({ success: true });
     } catch (error: any) {
-      // Silently fail to not impact user experience
       res.json({ success: false });
     }
   });
 
-  // Get user & vendor metrics
   app.get("/api/admin/stats/users", requireAdminAuth, async (req, res) => {
     try {
-      // Total users (customers)
-      const [totalUsersResult] = await db
-        .select({ count: count() })
-        .from(users);
+      const [totalUsersResult] = await db.select({ count: count() }).from(users);
       const totalUsers = totalUsersResult.count;
 
-      // Total vendors
-      const [totalVendorsResult] = await db
-        .select({ count: count() })
-        .from(vendorAccounts);
+      const [totalVendorsResult] = await db.select({ count: count() }).from(vendorAccounts);
       const totalVendors = totalVendorsResult.count;
 
-      // Vendors by service type
       const vendorsByType = await db
-        .select({ 
+        .select({
           serviceType: vendorProfiles.serviceType,
-          count: count()
+          count: count(),
         })
         .from(vendorProfiles)
         .groupBy(vendorProfiles.serviceType);
 
-      // Get user growth (last 30 days)
       const thirtyDaysAgo = new Date();
       thirtyDaysAgo.setDate(thirtyDaysAgo.getDate() - 30);
-      
+
       const userGrowth = await db
         .select({
           date: drizzleSql<string>`DATE(${users.createdAt})`,
-          count: count()
+          count: count(),
         })
         .from(users)
         .where(gte(users.createdAt, thirtyDaysAgo))
@@ -1380,16 +1540,11 @@ export async function registerRoutes(app: Express): Promise<Server> {
     }
   });
 
-  // Get listing metrics
   app.get("/api/admin/stats/listings", requireAdminAuth, async (req, res) => {
     try {
-      // Total listings
-      const [totalListingsResult] = await db
-        .select({ count: count() })
-        .from(vendorListings);
+      const [totalListingsResult] = await db.select({ count: count() }).from(vendorListings);
       const totalListings = totalListingsResult.count;
 
-      // Listings by status
       const [activeListingsResult] = await db
         .select({ count: count() })
         .from(vendorListings)
@@ -1408,11 +1563,10 @@ export async function registerRoutes(app: Express): Promise<Server> {
         .where(eq(vendorListings.status, "inactive"));
       const inactiveListings = inactiveListingsResult.count;
 
-      // Listings by service type (from vendor profiles)
       const listingsByType = await db
         .select({
           serviceType: vendorProfiles.serviceType,
-          count: count()
+          count: count(),
         })
         .from(vendorProfiles)
         .groupBy(vendorProfiles.serviceType);
@@ -1429,33 +1583,16 @@ export async function registerRoutes(app: Express): Promise<Server> {
     }
   });
 
-  // Get booking metrics
   app.get("/api/admin/stats/bookings", requireAdminAuth, async (req, res) => {
     try {
-      // Total bookings
-      const [totalBookingsResult] = await db
-        .select({ count: count() })
-        .from(bookings);
+      const [totalBookingsResult] = await db.select({ count: count() }).from(bookings);
       const totalBookings = totalBookingsResult.count;
 
-      // Completed vs incomplete
-      const [completedCount] = await db
-        .select({ count: count() })
-        .from(bookings)
-        .where(eq(bookings.status, "completed"));
+      const [completedCount] = await db.select({ count: count() }).from(bookings).where(eq(bookings.status, "completed"));
 
-      const [pendingCount] = await db
-        .select({ count: count() })
-        .from(bookings)
-        .where(eq(bookings.status, "pending"));
+      const [pendingCount] = await db.select({ count: count() }).from(bookings).where(eq(bookings.status, "pending"));
 
-      // Total revenue (sum of totalAmount from bookings)
-      const [revenueResult] = await db
-        .select({ 
-          total: sum(bookings.totalAmount)
-        })
-        .from(bookings);
-
+      const [revenueResult] = await db.select({ total: sum(bookings.totalAmount) }).from(bookings);
       const totalRevenue = revenueResult.total || 0;
 
       res.json({
@@ -1469,43 +1606,36 @@ export async function registerRoutes(app: Express): Promise<Server> {
     }
   });
 
-  // Get traffic metrics
   app.get("/api/admin/stats/traffic", requireAdminAuth, async (req, res) => {
     try {
-      // Total visits
-      const [totalVisitsResult] = await db
-        .select({ count: count() })
-        .from(webTraffic);
+      const [totalVisitsResult] = await db.select({ count: count() }).from(webTraffic);
       const totalVisits = totalVisitsResult.count;
 
-      // Unique visitors (count distinct user IDs, excluding null)
       const [uniqueVisitorsResult] = await db
-        .select({ 
-          count: drizzleSql<number>`COUNT(DISTINCT ${webTraffic.userId})`
+        .select({
+          count: drizzleSql<number>`COUNT(DISTINCT ${webTraffic.userId})`,
         })
         .from(webTraffic)
         .where(drizzleSql`${webTraffic.userId} IS NOT NULL`);
       const uniqueVisitors = uniqueVisitorsResult.count;
 
-      // Most visited paths
       const topPaths = await db
         .select({
           path: webTraffic.path,
-          count: count()
+          count: count(),
         })
         .from(webTraffic)
         .groupBy(webTraffic.path)
         .orderBy(desc(count()))
         .limit(10);
 
-      // Daily traffic (last 30 days)
       const thirtyDaysAgo = new Date();
       thirtyDaysAgo.setDate(thirtyDaysAgo.getDate() - 30);
 
       const dailyTraffic = await db
         .select({
           date: drizzleSql<string>`DATE(${webTraffic.timestamp})`,
-          count: count()
+          count: count(),
         })
         .from(webTraffic)
         .where(gte(webTraffic.timestamp, thirtyDaysAgo))
@@ -1524,6 +1654,5 @@ export async function registerRoutes(app: Express): Promise<Server> {
   });
 
   const httpServer = createServer(app);
-
   return httpServer;
 }

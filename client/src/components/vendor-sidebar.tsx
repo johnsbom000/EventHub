@@ -16,6 +16,12 @@ import { Button } from "@/components/ui/button";
 import { Avatar, AvatarFallback } from "@/components/ui/avatar";
 import { useQuery } from "@tanstack/react-query";
 
+interface VendorAccount {
+  businessName: string;
+  email: string;
+  // Add other vendor account properties as needed
+}
+
 const menuItems = [
   {
     title: "Dashboard",
@@ -62,7 +68,7 @@ const menuItems = [
 export function VendorSidebar() {
   const [location] = useLocation();
   
-  const { data: vendorAccount } = useQuery({
+  const { data: vendorAccount } = useQuery<VendorAccount>({
     queryKey: ["/api/vendor/me"],
     retry: false,
   });

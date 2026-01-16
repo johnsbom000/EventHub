@@ -199,7 +199,7 @@ const generateDummyUsers = async (db: any) => {
   }));
 
   const insertedVendorProfiles = await db
-    .insert(vendorProfiles)
+    .insert(vendorAccounts)
     .values(vendorProfilesData)
     .returning();
 
@@ -335,10 +335,10 @@ const generateDummyUsers = async (db: any) => {
   
   // First, ensure each category has at least one listing
   const categories = ['Photography', 'Videography', 'Catering', 'Venue', 'Florist', 'DJ', 'Band', 'Makeup Artist', 'Event Planner', 'Rentals'];
-  const categoryVendors = {};
+  const categoryVendors: { [key: string]: any[] } = {};
   
   // Group vendors by category
-  vendorData.forEach((vendor, index) => {
+  insertedVendorAccounts.forEach((vendor: { id: string }, index: number) => {
     const category = categories[index % categories.length];
     if (!categoryVendors[category]) {
       categoryVendors[category] = [];
@@ -378,9 +378,9 @@ const generateDummyUsers = async (db: any) => {
   });
   
   // Add some additional listings for variety
-  const additionalListings = Math.min(5, vendorData.length - Object.keys(categoryVendors).length);
+  const additionalListings = Math.min(5, insertedVendorAccounts.length - Object.keys(categoryVendors).length);
   for (let i = 0; i < additionalListings; i++) {
-    const vendor = vendorData.find(v => !usedVendorIds.has(v.id));
+    const vendor = insertedVendorAccounts.find((v: { id: string }) => !usedVendorIds.has(v.id));
     if (!vendor) break;
     
     const category = categories[Math.floor(Math.random() * categories.length)];

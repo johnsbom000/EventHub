@@ -1,10 +1,23 @@
-console.log(">>> RUNNING server/index.ts from:", import.meta.url);
-console.log(">>> PORT in code is:", process.env.PORT);
+import dotenv from "dotenv";
+import path from "path";
+import { fileURLToPath } from "url";
 
-import "dotenv/config";
+const __filename = fileURLToPath(import.meta.url);
+const __dirname = path.dirname(__filename);
+
+// Force-load the repo-root .env (one level above /server)
+dotenv.config({ path: path.resolve(__dirname, "../.env") });
+
+console.log(">>> DATABASE_URL loaded?", Boolean(process.env.DATABASE_URL));
+console.log(">>> DB HOST:", process.env.DATABASE_URL?.split("@")[1]?.split("/")[0] || "(missing)");
+console.log(">>> DB NAME:", process.env.DATABASE_URL?.split("/").pop()?.split("?")[0] || "(missing)");
+
 import express, { type Request, Response, NextFunction } from "express";
 import { registerRoutes } from "./routes";
 import { setupVite, serveStatic, log } from "./vite";
+
+console.log(">>> RUNNING server/index.ts from:", import.meta.url);
+console.log(">>> PORT in code is:", process.env.PORT);
 
 const app = express();
 

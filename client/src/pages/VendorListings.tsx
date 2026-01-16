@@ -1,3 +1,4 @@
+import { apiRequest } from "@/lib/queryClient";
 import { useState } from "react";
 import { SidebarProvider, SidebarTrigger } from "@/components/ui/sidebar";
 import { VendorSidebar } from "@/components/vendor-sidebar";
@@ -89,54 +90,36 @@ export default function VendorListings() {
   const { data: draftListings = [], isLoading: loadingDrafts } = useQuery({
     queryKey: ["/api/vendor/listings", "draft"],
     queryFn: async () => {
-      const response = await fetch("/api/vendor/listings?status=draft", {
-        headers: {
-          "Authorization": `Bearer ${localStorage.getItem("vendorToken")}`,
-        },
-      });
-      if (!response.ok) throw new Error("Failed to fetch draft listings");
-      return response.json();
+      const res = await apiRequest("GET", "/api/vendor/listings?status=draft");
+      return res.json();
     },
+
   });
 
   // Fetch active listings from API
   const { data: activeListings = [], isLoading: loadingActive } = useQuery({
     queryKey: ["/api/vendor/listings", "active"],
     queryFn: async () => {
-      const response = await fetch("/api/vendor/listings?status=active", {
-        headers: {
-          "Authorization": `Bearer ${localStorage.getItem("vendorToken")}`,
-        },
-      });
-      if (!response.ok) throw new Error("Failed to fetch active listings");
-      return response.json();
+      const res = await apiRequest("GET", "/api/vendor/listings?status=active");
+      return res.json();
     },
+
   });
 
   // Fetch inactive listings from API
   const { data: inactiveListings = [], isLoading: loadingInactive } = useQuery({
     queryKey: ["/api/vendor/listings", "inactive"],
     queryFn: async () => {
-      const response = await fetch("/api/vendor/listings?status=inactive", {
-        headers: {
-          "Authorization": `Bearer ${localStorage.getItem("vendorToken")}`,
-        },
-      });
-      if (!response.ok) throw new Error("Failed to fetch inactive listings");
-      return response.json();
+      const res = await apiRequest("GET", "/api/vendor/listings?status=inactive");
+      return res.json();
     },
+
   });
 
   // Mutation for publishing a listing
   const publishMutation = useMutation({
     mutationFn: async (listingId: string) => {
-      const response = await fetch(`/api/vendor/listings/${listingId}/publish`, {
-        method: "PATCH",
-        headers: {
-          "Authorization": `Bearer ${localStorage.getItem("vendorToken")}`,
-          "Content-Type": "application/json",
-        },
-      });
+      const response = await apiRequest("PATCH", `/api/vendor/listings/${listingId}/publish`);
       
       if (!response.ok) throw new Error("Failed to publish listing");
       return response.json();
@@ -162,6 +145,27 @@ export default function VendorListings() {
     "--sidebar-width": "16rem",
     "--sidebar-width-icon": "3rem",
   };
+
+  const visibleDraftListings = (draftListings || []).filter((l: any) => {
+    const title = (l?.title || "").trim();
+    const data = l?.listingData || {};
+
+    const photosCount =
+      data?.photos?.count ??
+      (Array.isArray(data?.photos?.names) ? data.photos.names.length : 0);
+
+    const propTypesCount = Array.isArray(data?.propTypes) ? data.propTypes.length : 0;
+
+    const rate = data?.pricing?.rate;
+    const hasRate = rate !== null && rate !== undefined && `${rate}`.trim() !== "";
+
+    const desc = (data?.listingDescription || "").trim();
+    const hasAnyContent = photosCount > 0 || propTypesCount > 0 || hasRate || desc.length > 0;
+
+    const isEmptyShell = title === "New prop-decor listing" && !hasAnyContent;
+    return !isEmptyShell;
+  });
+
 
   const convertToFormData = (listing: any) => {
     // Convert mock listing to ListingFormData format
@@ -233,9 +237,31 @@ export default function VendorListings() {
     publishMutation.mutate(listingId);
   };
 
-  const ListingCard = ({ listing, status }: { listing: any; status: string }) => {
-    const isDraft = status === "draft";
-    
+    const ListingCard = ({ listing, status }: { listing: any; status: string }) => {
+        const isDraft = status === "draft";
+        const visibleDraftListings = (draftListings || []).filter((l: any) => {
+      const title = (l?.title || "").trim();
+      const data = l?.listingData || {};
+
+      const photosCount =
+        data?.photos?.count ??
+        (Array.isArray(data?.photos?.names) ? data.photos.names.length : 0);
+
+      const propTypesCount = Array.isArray(data?.propTypes) ? data.propTypes.length : 0;
+
+      const rate = data?.pricing?.rate;
+      const hasRate = rate !== null && rate !== undefined && `${rate}`.trim() !== "";
+
+      const desc = (data?.listingDescription || "").trim();
+      const hasAnyContent = photosCount > 0 || propTypesCount > 0 || hasRate || desc.length > 0;
+
+      // hide empty shells (default title + no content)
+      const isEmptyShell = title === "New prop-decor listing" && !hasAnyContent;
+
+      // show real drafts
+      return !isEmptyShell;
+    });
+
     return (
       <Card 
         className={`w-[320px] shrink-0 overflow-hidden ${!isDraft ? 'hover-elevate cursor-pointer' : ''} group`}
@@ -399,7 +425,7 @@ export default function VendorListings() {
 
                 <ListingSection
                   title="Draft Listings"
-                  listings={draftListings}
+                  listings={visibleDraftListings}
                   status="draft"
                   emptyMessage="No draft listings. Start creating a new listing to save it as a draft."
                   isLoading={loadingDrafts}

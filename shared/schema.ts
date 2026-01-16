@@ -278,6 +278,7 @@ export const vendorAccounts = pgTable("vendor_accounts", {
   id: varchar("id").primaryKey().default(sql`gen_random_uuid()`),
   userId: varchar("user_id").references(() => users.id), // Links to customer account if upgraded
   email: text("email").notNull().unique(),
+  auth0Sub: text("auth0_sub"),
   password: text("password").notNull(),
   businessName: text("business_name").notNull(),
   stripeConnectId: text("stripe_connect_id"),
