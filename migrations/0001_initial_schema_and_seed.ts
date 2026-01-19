@@ -630,9 +630,18 @@ export async function up() {
       );
     `);
 
-    // Generate and insert dummy data
-    await generateDummyUsers(db);
-    
+    // Generate and insert dummy data (only in non-production or when explicitly enabled)
+    const shouldSeed =
+      process.env.SEED_DATA === 'true' ||
+      (process.env.NODE_ENV && process.env.NODE_ENV !== 'production');
+
+    if (shouldSeed) {
+      await generateDummyUsers(db);
+      console.log('Dummy data seeded via generateDummyUsers');
+    } else {
+      console.log('Skipping dummy data seed in this environment');
+    }
+
     console.log('Migration completed successfully');
   } catch (error) {
     console.error('Migration failed:', error);

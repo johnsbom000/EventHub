@@ -39,19 +39,52 @@ async function requireVendorAccountAuth0(req: any, res: any, next: any) {
   try {
     const auth0 = req.auth0 as { sub?: string; email?: string } | undefined;
     const auth0Sub = auth0?.sub;
-    if (!auth0Sub) {
-      return res.status(401).json({ error: "Missing Auth0 sub" });
+    const rawEmail = auth0?.email;
+    const emailNormalized = rawEmail ? rawEmail.toLowerCase().trim() : undefined;
+
+    if (!auth0Sub && !emailNormalized) {
+      return res.status(401).json({ error: "Missing Auth0 identity (sub/email)" });
     }
 
-    const accounts = await db
-      .select()
-      .from(vendorAccounts)
-      .where(eq(vendorAccounts.auth0Sub, auth0Sub));
+    let account: any | undefined;
 
-    const account = accounts[0];
+    // 1) Prefer lookup by normalized email to avoid duplicate accounts per email
+    if (emailNormalized) {
+      const byEmail = await db
+        .select()
+        .from(vendorAccounts)
+        .where(drizzleSql`lower(${vendorAccounts.email}) = ${emailNormalized}`);
+
+      if (byEmail.length > 0) {
+        account = byEmail[0];
+      }
+    }
+
+    // 2) Fallback: lookup by auth0Sub if still not found
+    if (!account && auth0Sub) {
+      const bySub = await db
+        .select()
+        .from(vendorAccounts)
+        .where(eq(vendorAccounts.auth0Sub, auth0Sub));
+
+      if (bySub.length > 0) {
+        account = bySub[0];
+      }
+    }
+
     if (!account) {
       // Auth0 is valid, but user doesn't have a vendor account row yet
       return res.status(404).json({ error: "Vendor account not found for this Auth0 user" });
+    }
+
+    // Ensure auth0Sub is stored/kept in sync on the vendor account
+    if (auth0Sub && account.auth0Sub !== auth0Sub) {
+      const [updated] = await db
+        .update(vendorAccounts)
+        .set({ auth0Sub })
+        .where(eq(vendorAccounts.id, account.id))
+        .returning();
+      account = updated;
     }
 
     // Normalize to the shape legacy code expects
@@ -633,7 +666,7 @@ export async function registerRoutes(app: Express): Promise<Server> {
     serviceHeadline: z.string().optional(),
   });
 
-  app.post("/api/vendor/onboarding/complete", requireDualAuthAuth0, async (req, res) => {
+  app.post("/api/vendor/onboarding/complete", requireAuth0, async (req, res) => {
     try {
       const customerAuth = (req as any).customerAuth;
       const vendorAuth = (req as any).vendorAuth;
@@ -641,14 +674,18 @@ export async function registerRoutes(app: Express): Promise<Server> {
 
       const onboardingData = completeOnboardingSchema.parse(req.body);
 
-      const email = auth0?.email;
+      const rawEmail = auth0?.email;
+      const email = rawEmail ? rawEmail.toLowerCase().trim() : undefined;
       const auth0Sub = auth0?.sub;
 
       if (!email) {
         return res.status(400).json({ error: "Auth0 email is required for onboarding" });
       }
 
-      const existingAccounts = await db.select().from(vendorAccounts).where(eq(vendorAccounts.email, email));
+      const existingAccounts = await db
+        .select()
+        .from(vendorAccounts)
+        .where(drizzleSql`lower(${vendorAccounts.email}) = ${email}`);
       let account = existingAccounts[0];
 
       if (!account) {
@@ -913,7 +950,7 @@ export async function registerRoutes(app: Express): Promise<Server> {
           title: title || existingListings[0].title,
           updatedAt: new Date(),
         })
-        .where(eq(vendorListings.id, id))
+        .where(and(eq(vendorListings.id, id), eq(vendorListings.accountId, vendorAuth.id)))
         .returning();
 
       return res.json(updated);
