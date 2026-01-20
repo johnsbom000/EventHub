@@ -1,7 +1,6 @@
 import dotenv from "dotenv";
 import path from "path";
 import { fileURLToPath } from "url";
-
 const __filename = fileURLToPath(import.meta.url);
 const __dirname = path.dirname(__filename);
 
@@ -21,6 +20,10 @@ console.log(">>> PORT in code is:", process.env.PORT);
 
 const app = express();
 
+// Serve uploaded files
+app.use("/uploads", express.static(path.join(process.cwd(), "server/uploads")));
+
+
 declare module 'http' {
   interface IncomingMessage {
     rawBody: unknown
@@ -35,7 +38,7 @@ app.use(express.urlencoded({ extended: false }));
 
 app.use((req, res, next) => {
   const start = Date.now();
-  const path = req.path;
+  const reqPath = req.path;
   let capturedJsonResponse: Record<string, any> | undefined = undefined;
 
   const originalResJson = res.json;
@@ -46,8 +49,9 @@ app.use((req, res, next) => {
 
   res.on("finish", () => {
     const duration = Date.now() - start;
-    if (path.startsWith("/api")) {
-      let logLine = `${req.method} ${path} ${res.statusCode} in ${duration}ms`;
+    if (reqPath.startsWith("/api")) {
+      let logLine = `${req.method} ${reqPath} ${res.statusCode} in ${duration}ms`;
+
       if (capturedJsonResponse) {
         logLine += ` :: ${JSON.stringify(capturedJsonResponse)}`;
       }
@@ -67,12 +71,17 @@ app.use((req, res, next) => {
   const server = await registerRoutes(app);
 
   app.use((err: any, _req: Request, res: Response, _next: NextFunction) => {
-    const status = err.status || err.statusCode || 500;
-    const message = err.message || "Internal Server Error";
+    const status = err?.status || err?.statusCode || 500;
+    const message = err?.message || "Internal Server Error";
 
-    res.status(status).json({ message });
-    throw err;
+    console.error("UNHANDLED ERROR:", err?.stack || err);
+    if (!res.headersSent) {
+      res.status(status).json({ error: message });
+    }
+    // do NOT rethrow here — it can crash the server / hide logs
   });
+
+
 
   // importantly only setup vite in development and after
   // setting up all the other routes so the catch-all route

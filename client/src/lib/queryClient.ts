@@ -1,41 +1,7 @@
 import { QueryClient, QueryFunction } from "@tanstack/react-query";
+import { getFreshAccessToken } from "@/lib/authToken";
 
-/**
- * Try to retrieve an Auth0 access token from localStorage.
- * This supports:
- *  - direct storage keys you may have set (auth0_access_token, access_token)
- *  - Auth0 SPA SDK cache entries (keys that include "@@auth0spajs@@")
- */
-function getAuth0AccessToken(): string | null {
-  try {
-    for (let i = 0; i < localStorage.length; i++) {
-      const key = localStorage.key(i);
-      if (!key) continue;
-
-      // Auth0 SPA SDK cache keys
-      if (!key.startsWith("@@auth0spajs@@")) continue;
-
-      const raw = localStorage.getItem(key);
-      if (!raw) continue;
-
-      const parsed = JSON.parse(raw);
-
-      // This is the exact structure Auth0 uses
-      const token = parsed?.body?.access_token;
-
-      if (typeof token === "string" && token.length > 0) {
-        return token;
-      }
-    }
-  } catch (err) {
-    console.warn("Failed to read Auth0 access token from storage", err);
-  }
-
-  return null;
-}
-
-
-function buildHeaders(url: string, data?: unknown): HeadersInit {
+async function buildHeaders(url: string, data?: unknown): Promise<HeadersInit> {
   const headers: Record<string, string> = {};
 
   if (data !== undefined) {
@@ -45,11 +11,9 @@ function buildHeaders(url: string, data?: unknown): HeadersInit {
   // Only attach auth header for API calls (your server routes)
   // (This keeps it from accidentally attaching to external URLs)
   if (url.startsWith("/api/") || url.includes("/api/")) {
-    const token = getAuth0AccessToken();
+    const token = await getFreshAccessToken();
     console.log("[api auth] url:", url, "token?", Boolean(token));
-    if (token) {
-      headers["Authorization"] = `Bearer ${token}`;
-    }
+    if (token) headers["Authorization"] = `Bearer ${token}`;
   }
 
 
@@ -68,7 +32,7 @@ export async function apiRequest(
   url: string,
   data?: unknown | undefined
 ): Promise<Response> {
-  const headers = buildHeaders(url, data);
+const headers = await buildHeaders(url, data);
 
   const res = await fetch(url, {
     method,
@@ -89,7 +53,7 @@ export const getQueryFn: <T>(options: {
   ({ on401: unauthorizedBehavior }) =>
   async ({ queryKey }) => {
     const url = queryKey.join("/") as string;
-    const headers = buildHeaders(url);
+    const headers = await buildHeaders(url);
 
     const res = await fetch(url, {
       credentials: "include",

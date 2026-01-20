@@ -13,17 +13,59 @@ interface ListingCardProps {
 }
 
 export default function ListingCard({ listing, onAddToEvent }: ListingCardProps) {
-  const cover =
-    listing.coverPhoto ??
-    (Array.isArray(listing.photos) && listing.photos.length > 0
-      ? typeof listing.photos[0] === "string"
-        ? listing.photos[0]
+  const listingAny = listing as any;
+
+const rawCover =
+    listingAny.coverPhoto ??
+    (Array.isArray(listingAny.photos) && listingAny.photos.length > 0
+      ? typeof listingAny.photos[0] === "string"
+        ? listingAny.photos[0]
         : undefined
+      : undefined) ??
+    // If draft stored real URLs
+    listingAny.listingData?.photos?.urls?.[0] ??
+    // If draft stored filenames, convert to served upload URL
+    (listingAny.listingData?.photos?.names?.[0]
+      ? `/uploads/listings/${listingAny.listingData.photos.names[0]}`
       : undefined);
 
+  // Only use cover if it looks like a real browser-loadable URL/path
+  // AND avoid HEIC (most browsers won't render it)
+  const cover =
+    typeof rawCover === "string" &&
+    (rawCover.startsWith("http://") || rawCover.startsWith("https://") || rawCover.startsWith("/")) &&
+    !rawCover.toLowerCase().endsWith(".heic")
+      ? rawCover
+      : undefined;
+
+
+  const title =
+    listingAny.listingData?.listingTitle ??
+    listingAny.title ??
+    listing.serviceType ??
+    "Service";
+
+  const locationLabel =
+    listingAny.city ??
+    listingAny.location?.city ??
+    listingAny.listingData?.location?.city ??
+    "Location not set";
+
+    const ds = listingAny.listingData?.deliverySetup || {};
+  const serviceAreaLabel =
+    ds?.serviceAreaMode === "global"
+      ? "Globally"
+      : ds?.serviceAreaMode === "nationwide"
+      ? "Nationally"
+      : typeof ds?.serviceRadiusMiles === "number"
+      ? `Within ${ds.serviceRadiusMiles} miles`
+      : null;
+
+
   const startingPrice =
-    listing.startingPrice ??
-    (listing.offerings?.length ? Math.min(...listing.offerings.map((o) => o.price)) : undefined);
+    listingAny.startingPrice ??
+    listingAny.listingData?.pricing?.rate ??
+    (listingAny.offerings?.length ? Math.min(...listingAny.offerings.map((o) => o.price)) : undefined);
 
   return (
     <Card className="overflow-hidden hover-elevate group" data-testid={`card-listing-${listing.id}`}>
@@ -31,7 +73,7 @@ export default function ListingCard({ listing, onAddToEvent }: ListingCardProps)
         {cover ? (
           <img
             src={cover}
-            alt={listing.serviceType || "Listing"}
+            alt={title}
             className="w-full h-full object-cover transition-transform duration-300 group-hover:scale-105"
           />
         ) : (
@@ -45,7 +87,7 @@ export default function ListingCard({ listing, onAddToEvent }: ListingCardProps)
         <div className="flex items-start justify-between gap-2">
           <div className="min-w-0">
             <h3 className="font-semibold text-lg leading-tight truncate">
-              {listing.serviceType || "Service"}
+              {title}
             </h3>
             {listing.vendorName && (
               <p className="text-sm text-muted-foreground truncate">
@@ -60,8 +102,15 @@ export default function ListingCard({ listing, onAddToEvent }: ListingCardProps)
 
         <div className="flex items-center gap-1 text-sm text-muted-foreground">
           <MapPin className="h-4 w-4" />
-          <span className="truncate">{listing.city || "—"}</span>
+          <span className="truncate">{locationLabel}</span>
         </div>
+
+        {serviceAreaLabel && (
+          <div className="flex items-center gap-1 text-sm text-muted-foreground">
+            <span className="truncate">{serviceAreaLabel}</span>
+          </div>
+        )}
+
 
         <div className="flex items-center justify-between pt-2">
           <div>

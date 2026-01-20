@@ -4,6 +4,8 @@ import App from "./App";
 import "./index.css";
 import { LocationProvider } from "./context/LocationContext";
 import { Auth0Provider } from "@auth0/auth0-react";
+import { useAuth0 } from "@auth0/auth0-react";
+import { setTokenGetter } from "@/lib/authToken";
 
 // Simple error boundary to catch runtime errors
 class ErrorBoundary extends Component<{ children: ReactNode }, { hasError: boolean }> {
@@ -33,6 +35,31 @@ class ErrorBoundary extends Component<{ children: ReactNode }, { hasError: boole
     return this.props.children;
   }
 }
+function AuthTokenBridge() {
+  const { getAccessTokenSilently, isAuthenticated } = useAuth0();
+
+  React.useEffect(() => {
+    setTokenGetter(async () => {
+      try {
+        // Always attempt; Auth0 will handle refresh if needed.
+        // Include audience/scope to ensure we get the API access token.
+        const token = await getAccessTokenSilently({
+          authorizationParams: {
+            audience: "https://eventhub-api",
+            scope: "openid profile email",
+          },
+        });
+        return token || null;
+      } catch (e) {
+        // If not logged in yet (or any transient Auth0 issue), return null
+        return null;
+      }
+    });
+  }, [getAccessTokenSilently, isAuthenticated]);
+
+  return null;
+}
+
 
 const rootElement = document.getElementById("root");
 if (!rootElement) {
@@ -47,11 +74,11 @@ root.render(
         domain="dev-u831fugzvigrqe8g.us.auth0.com"
         clientId="gris26WuQ5P9me2vXPJBSuzKNpJrR5nW"
         cacheLocation="localstorage"
-        useRefreshTokens={true}
+        useRefreshTokens={false}
         authorizationParams={{
           redirect_uri: window.location.origin,
           audience: "https://eventhub-api",
-          scope: "openid profile email offline_access",
+          scope: "openid profile email",
         }}
 
 
@@ -60,6 +87,7 @@ root.render(
           window.location.assign(target);
         }}
       >
+        <AuthTokenBridge />
         <LocationProvider>
           <App />
         </LocationProvider>

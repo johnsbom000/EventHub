@@ -8,6 +8,7 @@ import { Switch } from "@/components/ui/switch";
 import { Label } from "@/components/ui/label";
 import { LocationPicker } from "@/components/LocationPicker";
 import type { LocationResult } from "@/types/location";
+
 import {
   Select,
   SelectContent,
@@ -15,33 +16,6 @@ import {
   SelectTrigger,
   SelectValue,
 } from "@/components/ui/select";
-
-const MAPBOX_TOKEN = import.meta.env.VITE_MAPBOX_TOKEN as string | undefined;
-
-type ServiceAreaMode = "radius" | "nationwide" | "global";
-
-interface Step3MarketProps {
-  formData: {
-    // from onboarding
-    streetAddress: string;
-    city: string;
-    state: string;
-    zipCode: string;
-
-    homeBaseLocation?: { lat: number; lng: number };
-    serviceRadiusMiles: number;
-    chargesTravelFee: boolean;
-
-    // new: service area mode
-    serviceAreaMode?: ServiceAreaMode;
-
-    // (optional) we’ll store a richer selected location for map later
-    marketLocation?: LocationResult | null;
-  };
-  updateFormData: (updates: Partial<Step3MarketProps["formData"]>) => void;
-  onNext: () => void;
-  onBack: () => void;
-}
 
 // Provider-agnostic circle polygon generator (GeoJSON)
 function makeCircleGeoJSON(
@@ -85,6 +59,34 @@ function makeCircleGeoJSON(
       coordinates: [coords],
     },
   };
+}
+
+
+const MAPBOX_TOKEN = import.meta.env.VITE_MAPBOX_TOKEN as string | undefined;
+
+type ServiceAreaMode = "radius" | "nationwide" | "global";
+
+interface Step3MarketProps {
+  formData: {
+    // from onboarding
+    streetAddress: string;
+    city: string;
+    state: string;
+    zipCode: string;
+
+    homeBaseLocation?: { lat: number; lng: number };
+    serviceRadiusMiles: number;
+    chargesTravelFee: boolean;
+
+    // new: service area mode
+    serviceAreaMode?: ServiceAreaMode;
+
+    // (optional) we’ll store a richer selected location for map later
+    marketLocation?: LocationResult | null;
+  };
+  updateFormData: (updates: Partial<Step3MarketProps["formData"]>) => void;
+  onNext: () => void;
+  onBack: () => void;
 }
 
 function boundsFromCircleFeature(feature: any) {

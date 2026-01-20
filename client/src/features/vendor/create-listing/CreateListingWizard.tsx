@@ -3,6 +3,11 @@ import { useEffect, useMemo, useRef, useState } from "react";
 import { useMutation, useQuery } from "@tanstack/react-query";
 import { X, Save, Upload } from "lucide-react";
 
+import mapboxgl from "mapbox-gl";
+import "mapbox-gl/dist/mapbox-gl.css";
+import { Slider } from "@/components/ui/slider";
+import { LocationPicker } from "@/components/LocationPicker";
+
 import { Button } from "@/components/ui/button";
 import { Card } from "@/components/ui/card";
 import { Input } from "@/components/ui/input";
@@ -11,6 +16,82 @@ import { Label } from "@/components/ui/label";
 
 import { useToast } from "@/hooks/use-toast";
 import { apiRequest } from "@/lib/queryClient";
+
+import {
+  Select,
+  SelectContent,
+  SelectItem,
+  SelectTrigger,
+  SelectValue,
+} from "@/components/ui/select";
+
+const MAPBOX_TOKEN = (import.meta.env.VITE_MAPBOX_TOKEN as string | undefined) ?? "";
+
+function boundsFromCircleFeature(feature: any) {
+  const ring: [number, number][] | undefined =
+    feature?.geometry?.type === "Polygon"
+      ? feature.geometry.coordinates?.[0]
+      : undefined;
+
+  if (!ring || ring.length === 0) return null;
+
+  let minLng = ring[0][0],
+    maxLng = ring[0][0];
+  let minLat = ring[0][1],
+    maxLat = ring[0][1];
+
+  for (const [lng, lat] of ring) {
+    if (lng < minLng) minLng = lng;
+    if (lng > maxLng) maxLng = lng;
+    if (lat < minLat) minLat = lat;
+    if (lat > maxLat) maxLat = lat;
+  }
+
+  return new mapboxgl.LngLatBounds([minLng, minLat], [maxLng, maxLat]);
+}
+
+// Provider-agnostic circle polygon generator (GeoJSON)
+function makeCircleGeoJSON(
+  center: { lat: number; lng: number },
+  radiusMiles: number,
+  points = 64
+) {
+  const radiusKm = radiusMiles * 1.60934;
+  const earthRadiusKm = 6371;
+
+  const coords: [number, number][] = [];
+  const lat = (center.lat * Math.PI) / 180;
+  const lng = (center.lng * Math.PI) / 180;
+
+  for (let i = 0; i <= points; i++) {
+    const bearing = (2 * Math.PI * i) / points;
+    const lat2 = Math.asin(
+      Math.sin(lat) * Math.cos(radiusKm / earthRadiusKm) +
+        Math.cos(lat) *
+          Math.sin(radiusKm / earthRadiusKm) *
+          Math.cos(bearing)
+    );
+    const lng2 =
+      lng +
+      Math.atan2(
+        Math.sin(bearing) *
+          Math.sin(radiusKm / earthRadiusKm) *
+          Math.cos(lat),
+        Math.cos(radiusKm / earthRadiusKm) - Math.sin(lat) * Math.sin(lat2)
+      );
+
+    coords.push([lng2 * (180 / Math.PI), lat2 * (180 / Math.PI)]);
+  }
+
+  return {
+    type: "Feature" as const,
+    properties: { radiusMiles },
+    geometry: {
+      type: "Polygon" as const,
+      coordinates: [coords],
+    },
+  };
+}
 
 function YesNoButtons({
   value,
@@ -107,9 +188,18 @@ type ListingDraft = {
   pricingByPropType: Record<string, PerPropPricing>;
 
   // Delivery / Setup
+  serviceAreaMode: "radius" | "nationwide" | "global";
+  serviceRadiusMiles: number;
+
+  serviceCenter?: { lat: number; lng: number };
+  serviceLocation?: LocationResult | null;
+
+  // Delivery
   deliveryIncluded: boolean;
   deliveryFeeEnabled: boolean;
   deliveryPerMile: string; // (used as amount input in UI)
+  
+  // Setup
   setupIncluded: boolean;
   setupFeeEnabled: boolean;
   setupFlatFee: string;
@@ -140,6 +230,9 @@ const DEFAULT_DRAFT: ListingDraft = {
   rate: "",
   minimumHours: "",
   pricingByPropType: {},
+
+  serviceAreaMode: "radius",
+  serviceRadiusMiles: 30,
 
   deliveryIncluded: false,
   deliveryFeeEnabled: false,
@@ -262,22 +355,274 @@ export type CreateListingWizardProps = {
 export function CreateListingWizard({ onClose, editMode, initialData }: CreateListingWizardProps) {
   const { toast } = useToast();
 
-  // Vendor profile (Auth0 Bearer automatically attached by queryClient default queryFn)
-  const { data: me } = useQuery({
-    queryKey: ["/api/vendor/me"],
-  });
+// Vendor profile (Auth0 Bearer automatically attached by queryClient default queryFn)
+const { data: me } = useQuery({
+  queryKey: ["/api/vendor/me"],
+});
+
+const { data: vendorProfile } = useQuery({
+  queryKey: ["/api/vendor/profile"],
+});
+
+// Wizard state
+const vendorType = (me?.vendorType || "unspecified") as string;
+const [currentStep, setCurrentStep] = useState<StepId>("listingType");
+const [draft, setDraft] = useState<ListingDraft>(DEFAULT_DRAFT);
+
+  // Default listing service center from vendor onboarding address (one-time per listing)
+  useEffect(() => {
+    if (!vendorProfile) return;
+
+    // Don’t overwrite if listing already has a center/location
+    if (draft.serviceCenter || draft.serviceLocation) return;
+
+    const addr = (vendorProfile as any)?.address || "";
+    const city = (vendorProfile as any)?.city || "";
+    const state = (vendorProfile as any)?.state || "";
+    const zip =
+      (vendorProfile as any)?.zipCode || (vendorProfile as any)?.postalCode || "";
+
+    const q = [addr, city, state, zip].filter(Boolean).join(", ").trim();
+    if (!q) return;
+
+    (async () => {
+      try {
+        const res = await fetch(`/api/locations/search?q=${encodeURIComponent(q)}`);
+        if (!res.ok) return;
+
+        const results: LocationResult[] = await res.json();
+        const top = results?.[0];
+        if (!top) return;
+
+        setDraft((d) => {
+          if (d.serviceCenter || d.serviceLocation) return d; // async safety
+          return {
+            ...d,
+            serviceLocation: top,                 // <- makes LocationPicker show text
+            serviceCenter: { lat: top.lat, lng: top.lng },
+          };
+        });
+      } catch {
+        // ignore
+      }
+    })();
+  }, [vendorProfile, draft.serviceCenter, draft.serviceLocation]);
 
 
-  const vendorType = (me?.vendorType || "unspecified") as string;
 
-  const [currentStep, setCurrentStep] = useState<StepId>("listingType");
-  const [draft, setDraft] = useState<ListingDraft>(DEFAULT_DRAFT);
+  useEffect(() => {
+    console.log("[CreateListingWizard] vendorProfile =", vendorProfile);
+  }, [vendorProfile]);
+
 
   // Track the furthest step the user reached using Next (prevents “jumping forward” via sidebar)
+  // -------- Step 7: Service area map state (listing-specific) --------
+  const mode = draft.serviceAreaMode ?? "radius";
+  const radius = draft.serviceRadiusMiles ?? 0;
+
+  // Center derived from selected location first, then stored coords
+  const center =
+    draft.serviceLocation
+      ? { lat: draft.serviceLocation.lat, lng: draft.serviceLocation.lng }
+      : draft.serviceCenter
+      ? draft.serviceCenter
+      : null;
+
+  const circleFeature = useMemo(() => {
+    if (!center) return null;
+    return makeCircleGeoJSON(center, radius);
+  }, [center, radius]);
+
+  const radiusFeatureCollection = useMemo(() => {
+    return {
+      type: "FeatureCollection" as const,
+      features: circleFeature ? [circleFeature] : [],
+    };
+  }, [circleFeature]);
+
+  const centerFeatureCollection = useMemo(() => {
+    return {
+      type: "FeatureCollection" as const,
+      features: center
+        ? [
+            {
+              type: "Feature" as const,
+              properties: {},
+              geometry: {
+                type: "Point" as const,
+                coordinates: [center.lng, center.lat],
+              },
+            },
+          ]
+        : [],
+    };
+  }, [center]);
+
+  const [isMapReady, setIsMapReady] = useState(false);
+  const [errorMsg, setErrorMsg] = useState<string | null>(null);
+
+  const mapContainerRef = useRef<HTMLDivElement | null>(null);
+  const mapRef = useRef<mapboxgl.Map | null>(null);
+  // Initialize the map once (Step 7)
+  useEffect(() => {
+    if (currentStep !== "deliverySetup") return;
+    if (!mapContainerRef.current) return;
+    if (mapRef.current) return;
+
+    if (!MAPBOX_TOKEN) {
+      console.error("Missing VITE_MAPBOX_TOKEN");
+      setErrorMsg("Missing Mapbox token. Please set VITE_MAPBOX_TOKEN.");
+      return;
+    }
+
+    mapboxgl.accessToken = MAPBOX_TOKEN;
+
+    const initialCenter: [number, number] = center
+      ? [center.lng, center.lat]
+      : [-111.891, 40.7608]; // fallback (UT)
+
+    const map = new mapboxgl.Map({
+      container: mapContainerRef.current,
+      style: "mapbox://styles/mapbox/streets-v12",
+      center: initialCenter,
+      zoom: 10,
+    });
+
+    mapRef.current = map;
+
+    map.on("load", () => {
+      setIsMapReady(true);
+
+      map.addSource("radius", {
+        type: "geojson",
+        data: { type: "FeatureCollection", features: [] },
+      });
+
+      map.addLayer({
+        id: "radius-fill",
+        type: "fill",
+        source: "radius",
+        paint: {
+          "fill-color": "#9EDBC0",
+          "fill-opacity": 0.25,
+        },
+      });
+
+      map.addLayer({
+        id: "radius-outline",
+        type: "line",
+        source: "radius",
+        paint: {
+          "line-color": "#2B7A67",
+          "line-width": 2,
+        },
+      });
+
+      map.addSource("center", {
+        type: "geojson",
+        data: { type: "FeatureCollection", features: [] },
+      });
+
+      map.addLayer({
+        id: "center-point",
+        type: "circle",
+        source: "center",
+        paint: {
+          "circle-radius": 6,
+          "circle-color": "#2B7A67",
+          "circle-stroke-width": 2,
+          "circle-stroke-color": "#ffffff",
+        },
+      });
+
+      requestAnimationFrame(() => {
+        try {
+          map.resize();
+        } catch {}
+      });
+    });
+
+    return () => {
+      map.remove();
+      mapRef.current = null;
+    };
+    // init once
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [currentStep]);
+
+  // ResizeObserver: fixes “blank map” when container size changes
+  useEffect(() => {
+    const map = mapRef.current;
+    const el = mapContainerRef.current;
+    if (!map || !el) return;
+
+    const ro = new ResizeObserver(() => {
+      try {
+        map.resize();
+      } catch {}
+    });
+
+    ro.observe(el);
+
+    requestAnimationFrame(() => {
+      try {
+        map.resize();
+      } catch {}
+    });
+
+    return () => ro.disconnect();
+  }, [currentStep]);
+
+  // Update sources + camera whenever center/radius changes (and after map is ready)
+  useEffect(() => {
+    const map = mapRef.current;
+    if (!map) return;
+    if (!isMapReady) return;
+
+    const radiusSrc = map.getSource("radius") as mapboxgl.GeoJSONSource | undefined;
+    if (radiusSrc) radiusSrc.setData(radiusFeatureCollection as any);
+
+    const centerSrc = map.getSource("center") as mapboxgl.GeoJSONSource | undefined;
+    if (centerSrc) centerSrc.setData(centerFeatureCollection as any);
+
+    if (center) {
+      // If using radius mode, fit the viewport to show the whole circle
+      if (mode === "radius" && circleFeature && radius >= 15) {
+        const b = boundsFromCircleFeature(circleFeature);
+        if (b) {
+          map.fitBounds(b, {
+            padding: 24,
+            duration: 600,
+            maxZoom: 11,
+          });
+          return;
+        }
+      }
+
+      // Fallback
+      map.easeTo({
+        center: [center.lng, center.lat],
+        zoom: 10,
+        duration: 500,
+      });
+    }
+  }, [
+    isMapReady,
+    center,
+    radius,
+    mode,
+    circleFeature,
+    radiusFeatureCollection,
+    centerFeatureCollection,
+  ]);
+
+
   const [maxStepReached, setMaxStepReached] = useState<number>(0);
 
   const [listingId, setListingId] = useState<string | null>(null);
   const hasCreatedDraftRef = useRef(false);
+
+  const pendingSaveRef = useRef<any | null>(null);
 
   const createDraft = useMutation({
     mutationFn: async () => {
@@ -288,8 +633,17 @@ export function CreateListingWizard({ onClose, editMode, initialData }: CreateLi
     },
     onSuccess: (data: any) => {
       const id = data?.data?.id || data?.id;
-      if (id) setListingId(id);
+      if (id) {
+        setListingId(id);
+
+        // Flush any autosave that fired before the draft existed
+        if (pendingSaveRef.current) {
+          updateDraft.mutate(pendingSaveRef.current);
+          pendingSaveRef.current = null;
+        }
+      }
     },
+
     onError: (err: any) => {
       toast({
         title: "Error",
@@ -324,64 +678,69 @@ export function CreateListingWizard({ onClose, editMode, initialData }: CreateLi
     // If user hasn't done anything yet, do nothing (prevents empty shell drafts)
     if (!hasMeaningfulData) return;
 
+    const payload = {
+  vendorType,
+  pricingMode: draft.pricingMode,
+
+  propTypes: draft.propTypes,
+  quantitiesByPropType: draft.quantitiesByPropType,
+
+  listingTitle: draft.listingTitle,
+  listingDescription: draft.listingDescription,
+  perPropDetails: draft.perPropDetails,
+
+  tagsByPropType: draft.tagsByPropType,
+  popularFor: draft.popularFor,
+
+  pricing: {
+    unit: draft.pricingUnit,
+    rate: draft.rate ? Number(draft.rate) : null,
+    minimumHours: draft.minimumHours ? Number(draft.minimumHours) : null,
+    pricingByPropType: Object.fromEntries(
+      Object.entries(draft.pricingByPropType).map(([k, v]) => [
+        k,
+        {
+          rate: v.rate ? Number(v.rate) : null,
+          minimumHours: v.minimumHours ? Number(v.minimumHours) : null,
+        },
+      ])
+    ),
+  },
+
+  photos: {
+    count: draft.photoPreviews.length,
+    names: draft.photoNames,
+    byPropType: Object.fromEntries(
+      Object.entries(draft.photosByPropType).map(([k, v]) => [
+        k,
+        { count: v.previews.length, names: v.names },
+      ])
+    ),
+  },
+
+  deliverySetup: {
+    serviceAreaMode: draft.serviceAreaMode,
+    serviceRadiusMiles: draft.serviceRadiusMiles ? Number(draft.serviceRadiusMiles) : null,
+    deliveryIncluded: draft.deliveryIncluded,
+    deliveryFeeEnabled: draft.deliveryFeeEnabled,
+    deliveryFeeAmount: draft.deliveryPerMile ? Number(draft.deliveryPerMile) : null,
+    setupIncluded: draft.setupIncluded,
+    setupFeeEnabled: draft.setupFeeEnabled,
+    setupFeeAmount: draft.setupFlatFee ? Number(draft.setupFlatFee) : null,
+  },
+};
+
     // If we don't have a listing yet, create ONE draft, then autosave will kick in on next change
     if (!listingId) {
       if (hasCreatedDraftRef.current) return;
       hasCreatedDraftRef.current = true;
+      pendingSaveRef.current = payload;
       createDraft.mutate();
       return;
     }
 
   const t = setTimeout(() => {
-    updateDraft.mutate({
-        vendorType,
-        pricingMode: draft.pricingMode,
-
-        propTypes: draft.propTypes,
-        quantitiesByPropType: draft.quantitiesByPropType,
-
-        listingTitle: draft.listingTitle,
-        listingDescription: draft.listingDescription,
-        perPropDetails: draft.perPropDetails,
-
-        tagsByPropType: draft.tagsByPropType,
-        popularFor: draft.popularFor,
-
-        pricing: {
-          unit: draft.pricingUnit,
-          rate: draft.rate ? Number(draft.rate) : null,
-          minimumHours: draft.minimumHours ? Number(draft.minimumHours) : null,
-          pricingByPropType: Object.fromEntries(
-            Object.entries(draft.pricingByPropType).map(([k, v]) => [
-              k,
-              {
-                rate: v.rate ? Number(v.rate) : null,
-                minimumHours: v.minimumHours ? Number(v.minimumHours) : null,
-              },
-            ])
-          ),
-        },
-
-        photos: {
-          count: draft.photoPreviews.length,
-          names: draft.photoNames,
-          byPropType: Object.fromEntries(
-            Object.entries(draft.photosByPropType).map(([k, v]) => [
-              k,
-              { count: v.previews.length, names: v.names },
-            ])
-          ),
-        },
-
-        deliverySetup: {
-          deliveryIncluded: draft.deliveryIncluded,
-          deliveryFeeEnabled: draft.deliveryFeeEnabled,
-          deliveryFeeAmount: draft.deliveryPerMile ? Number(draft.deliveryPerMile) : null,
-          setupIncluded: draft.setupIncluded,
-          setupFeeEnabled: draft.setupFeeEnabled,
-          setupFeeAmount: draft.setupFlatFee ? Number(draft.setupFlatFee) : null,
-        },
-      });
+    updateDraft.mutate(payload);
     }, 1200);
 
     return () => clearTimeout(t);
@@ -675,10 +1034,34 @@ export function CreateListingWizard({ onClose, editMode, initialData }: CreateLi
   const [photoFilesByProp, setPhotoFilesByProp] = useState<Record<string, File[]>>({});
   const fileInputRefsByProp = useRef<Record<string, HTMLInputElement | null>>({});
 
-  const onPickPhotosForProp = (propType: string, files: FileList | null) => {
+    const onPickPhotosForProp = (propType: string, files: FileList | null) => {
     if (!files || files.length === 0) return;
 
-    const picked = Array.from(files).filter((f) => f.type.startsWith("image/"));
+    const allowed = new Set(["image/jpeg", "image/png", "image/webp"]);
+    const all = Array.from(files);
+    console.log(
+      "[photo pick]",
+      all.map((f) => ({ name: f.name, type: f.type, size: f.size }))
+    );
+
+
+    const rejectedHeic = all.filter(
+      (f) =>
+        f.type === "image/heic" ||
+        f.type === "image/heif" ||
+        f.name.toLowerCase().endsWith(".heic") ||
+        f.name.toLowerCase().endsWith(".heif")
+    );
+
+    if (rejectedHeic.length) {
+      toast({
+        title: "Unsupported image format",
+        description: "Please upload JPG, PNG, or WebP (HEIC/HEIF not supported yet).",
+        variant: "destructive",
+      });
+    }
+
+    const picked = all.filter((f) => allowed.has(f.type));
     if (picked.length === 0) return;
 
     const previews = picked.map((f) => URL.createObjectURL(f));
@@ -706,6 +1089,7 @@ export function CreateListingWizard({ onClose, editMode, initialData }: CreateLi
     const input = fileInputRefsByProp.current[propType];
     if (input) input.value = "";
   };
+
 
   const removePhotoForPropAt = (propType: string, idx: number) => {
     setDraft((d) => {
@@ -735,10 +1119,34 @@ export function CreateListingWizard({ onClose, editMode, initialData }: CreateLi
     });
   };
 
-  const onPickPhotos = (files: FileList | null) => {
+    const onPickPhotos = (files: FileList | null) => {
     if (!files || files.length === 0) return;
 
-    const picked = Array.from(files).filter((f) => f.type.startsWith("image/"));
+    const allowed = new Set(["image/jpeg", "image/png", "image/webp"]);
+    const all = Array.from(files);
+    console.log(
+      "[photo pick]",
+      all.map((f) => ({ name: f.name, type: f.type, size: f.size }))
+    );
+
+
+    const rejectedHeic = all.filter(
+      (f) =>
+        f.type === "image/heic" ||
+        f.type === "image/heif" ||
+        f.name.toLowerCase().endsWith(".heic") ||
+        f.name.toLowerCase().endsWith(".heif")
+    );
+
+    if (rejectedHeic.length) {
+      toast({
+        title: "Unsupported image format",
+        description: "Please upload JPG, PNG, or WebP (HEIC/HEIF not supported yet).",
+        variant: "destructive",
+      });
+    }
+
+    const picked = all.filter((f) => allowed.has(f.type));
     if (picked.length === 0) return;
 
     const previews = picked.map((f) => URL.createObjectURL(f));
@@ -1404,7 +1812,7 @@ export function CreateListingWizard({ onClose, editMode, initialData }: CreateLi
               <input
                 ref={fileInputRef}
                 type="file"
-                accept="image/*"
+                accept="image/jpeg,image/png,image/webp"
                 multiple
                 className="hidden"
                 onChange={(e) => onPickPhotos(e.target.files)}
@@ -1462,7 +1870,93 @@ export function CreateListingWizard({ onClose, editMode, initialData }: CreateLi
 
               <Card className="p-6 space-y-5">
                 <div className="text-xl font-semibold">Delivery</div>
+                  <div className="space-y-2">
+                    <div className="space-y-2">
+                      <Label>Service area center (listing-specific)</Label>
+                      <LocationPicker
+                        value={draft.serviceLocation ?? null}
+                        onChange={(loc) => {
+                          setErrorMsg(null);
+                          setDraft((d) => ({
+                            ...d,
+                            serviceLocation: loc,
+                            serviceCenter: loc ? { lat: loc.lat, lng: loc.lng } : d.serviceCenter,
+                          }));
+                        }}
+                        placeholder="Search the center point for this listing..."
+                      />
+                      <p className="text-xs text-muted-foreground">
+                        Default comes from your vendor onboarding address, but you can override it per listing.
+                      </p>
+                    </div>
 
+                    {/* Map preview */}
+                    <div className="relative rounded-xl border overflow-hidden h-64">
+                      <div ref={mapContainerRef} className="w-full h-full" />
+
+                      {!center && (
+                        <div className="absolute inset-0 flex items-center justify-center text-sm text-muted-foreground pointer-events-none bg-background/40">
+                          Choose a location to preview your service radius.
+                        </div>
+                      )}
+
+                      {!isMapReady && (
+                        <div className="absolute inset-0 flex items-center justify-center text-sm text-muted-foreground bg-background/50">
+                          Loading map…
+                        </div>
+                      )}
+                    </div>
+
+                    <Label>Where do you provide these services?</Label>
+                    <Select
+                      value={draft.serviceAreaMode}
+                      onValueChange={(v) => {
+                        const next = v as "radius" | "nationwide" | "global";
+                        setDraft((d) => ({
+                          ...d,
+                          serviceAreaMode: next,
+                          ...(next === "radius" ? {} : { serviceRadiusMiles: 500 }),
+                        }));
+                      }}
+
+                    >
+                      <SelectTrigger>
+                        <SelectValue placeholder="Select service area" />
+                      </SelectTrigger>
+                      <SelectContent>
+                        <SelectItem value="radius">Set Radius</SelectItem>
+                        <SelectItem value="nationwide">Nationally</SelectItem>
+                        <SelectItem value="global">Globally</SelectItem>
+                      </SelectContent>
+                    </Select>
+
+                    {draft.serviceAreaMode === "radius" && (
+                    <div className="space-y-2">
+                      <div className="flex items-center justify-between">
+                        <Label>Service radius</Label>
+                        <span className="text-sm text-muted-foreground">
+                          {draft.serviceRadiusMiles} miles
+                        </span>
+                      </div>
+
+                      <Slider
+                        value={[draft.serviceRadiusMiles]}
+                        min={0}
+                        max={500}
+                        step={15}
+                        onValueChange={(vals) => {
+                          const value = vals?.[0] ?? 0;
+                          setDraft((d) => ({ ...d, serviceRadiusMiles: value }));
+                        }}
+                        disabled={!center}
+                      />
+
+                      <p className="text-xs text-muted-foreground">
+                        Adjust in 15-mile increments. (Max 500 miles)
+                      </p>
+                    </div>
+                  )}
+                  </div>
                 <div className="flex items-center justify-between gap-6">
                   <Label>Do you deliver?</Label>
                   <YesNoButtons

@@ -1,231 +1,83 @@
 import { apiRequest } from "@/lib/queryClient";
-import { useState } from "react";
+import React, { useMemo, useState } from "react";
 import { SidebarProvider, SidebarTrigger } from "@/components/ui/sidebar";
 import { VendorSidebar } from "@/components/vendor-sidebar";
 import { Card } from "@/components/ui/card";
 import { Button } from "@/components/ui/button";
 import { Badge } from "@/components/ui/badge";
-import { Plus, Edit, MapPin, DollarSign, Eye } from "lucide-react";
+import { Plus, Edit, MapPin, Eye } from "lucide-react";
 import { CreateListingWizard } from "@/features/vendor/create-listing/CreateListingWizard";
 import { useQuery, useMutation } from "@tanstack/react-query";
 import { queryClient } from "@/lib/queryClient";
 import { useToast } from "@/hooks/use-toast";
+import { useLocation } from "wouter";
 
-// Mock listing data - TODO: Replace with API data
-const mockListings = {
-  active: [
-    {
-      id: "1",
-      title: "Premium Wedding Photography",
-      category: "Photography",
-      location: "New York, NY",
-      price: "$2,500",
-      image: "https://via.placeholder.com/300x200?text=Wedding+Photography",
-      views: 248,
-      bookings: 12,
-    },
-    {
-      id: "2",
-      title: "Luxury Event Catering",
-      category: "Catering",
-      location: "Brooklyn, NY",
-      price: "$3,500",
-      image: "https://via.placeholder.com/300x200?text=Event+Catering",
-      views: 532,
-      bookings: 28,
-    },
-    {
-      id: "3",
-      title: "Professional DJ Services",
-      category: "Entertainment",
-      location: "Manhattan, NY",
-      price: "$1,200",
-      image: "https://via.placeholder.com/300x200?text=DJ+Services",
-      views: 412,
-      bookings: 19,
-    },
-  ],
-  inactive: [
-    {
-      id: "4",
-      title: "Seasonal Floral Arrangements",
-      category: "Florist",
-      location: "Queens, NY",
-      price: "$800",
-      image: "https://via.placeholder.com/300x200?text=Floral+Arrangements",
-      views: 156,
-      bookings: 5,
-    },
-  ],
-  draft: [
-    {
-      id: "5",
-      title: "Event Videography Package",
-      category: "Videography",
-      location: "New York, NY",
-      price: "$2,000",
-      image: "https://via.placeholder.com/300x200?text=Videography",
-      views: 0,
-      bookings: 0,
-    },
-    {
-      id: "6",
-      title: "Corporate Event Planning",
-      category: "Planning",
-      location: "Manhattan, NY",
-      price: "$5,000",
-      image: "https://via.placeholder.com/300x200?text=Event+Planning",
-      views: 0,
-      bookings: 0,
-    },
-  ],
-};
+type AnyListing = any;
 
 export default function VendorListings() {
   const [showCreateWizard, setShowCreateWizard] = useState(false);
   const [editingListing, setEditingListing] = useState<any | null>(null);
+  const [, setLocation] = useLocation();
   const { toast } = useToast();
-  
-  // Fetch draft listings from API
+
+  // Draft listings
   const { data: draftListings = [], isLoading: loadingDrafts } = useQuery({
     queryKey: ["/api/vendor/listings", "draft"],
     queryFn: async () => {
       const res = await apiRequest("GET", "/api/vendor/listings?status=draft");
       return res.json();
     },
-
   });
 
-  // Fetch active listings from API
+  // Active listings
   const { data: activeListings = [], isLoading: loadingActive } = useQuery({
     queryKey: ["/api/vendor/listings", "active"],
     queryFn: async () => {
       const res = await apiRequest("GET", "/api/vendor/listings?status=active");
       return res.json();
     },
-
   });
 
-  // Fetch inactive listings from API
+  // Inactive listings
   const { data: inactiveListings = [], isLoading: loadingInactive } = useQuery({
     queryKey: ["/api/vendor/listings", "inactive"],
     queryFn: async () => {
       const res = await apiRequest("GET", "/api/vendor/listings?status=inactive");
       return res.json();
     },
-
   });
 
-  // Mutation for publishing a listing
-  const publishMutation = useMutation({
-    mutationFn: async (listingId: string) => {
-      const response = await apiRequest("PATCH", `/api/vendor/listings/${listingId}/publish`);
-      
-      if (!response.ok) throw new Error("Failed to publish listing");
-      return response.json();
-    },
-    onSuccess: () => {
-      // Invalidate all listing queries to refetch updated data
-      queryClient.invalidateQueries({ queryKey: ["/api/vendor/listings"] });
-      toast({
-        title: "Listing published!",
-        description: "Your listing is now live and visible to customers.",
-      });
-    },
-    onError: (error) => {
-      toast({
-        title: "Failed to publish",
-        description: error.message,
-        variant: "destructive",
-      });
-    },
-  });
-  
   const sidebarStyle = {
     "--sidebar-width": "16rem",
     "--sidebar-width-icon": "3rem",
-  };
+  } as React.CSSProperties;
 
-  const visibleDraftListings = (draftListings || []).filter((l: any) => {
-    const title = (l?.title || "").trim();
-    const data = l?.listingData || {};
+  // Hide empty shell drafts (default title + no meaningful data)
+  const visibleDraftListings = useMemo(() => {
+    return (draftListings || []).filter((l: AnyListing) => {
+      const title = String(l?.title || "").trim();
+      const data = l?.listingData || {};
 
-    const photosCount =
-      data?.photos?.count ??
-      (Array.isArray(data?.photos?.names) ? data.photos.names.length : 0);
+      const photosCount =
+        data?.photos?.count ??
+        (Array.isArray(data?.photos?.names) ? data.photos.names.length : 0) ??
+        (Array.isArray(data?.photos) ? data.photos.length : 0);
 
-    const propTypesCount = Array.isArray(data?.propTypes) ? data.propTypes.length : 0;
+      const propTypesCount = Array.isArray(data?.propTypes) ? data.propTypes.length : 0;
 
-    const rate = data?.pricing?.rate;
-    const hasRate = rate !== null && rate !== undefined && `${rate}`.trim() !== "";
+      const rate = data?.pricing?.rate;
+      const hasRate = rate !== null && rate !== undefined && `${rate}`.trim() !== "";
 
-    const desc = (data?.listingDescription || "").trim();
-    const hasAnyContent = photosCount > 0 || propTypesCount > 0 || hasRate || desc.length > 0;
+      const desc = String(data?.listingDescription || "").trim();
+      const hasAnyContent = photosCount > 0 || propTypesCount > 0 || hasRate || desc.length > 0;
 
-    const isEmptyShell = title === "New prop-decor listing" && !hasAnyContent;
-    return !isEmptyShell;
-  });
-
-
-  const convertToFormData = (listing: any) => {
-    // Convert mock listing to ListingFormData format
-    // In production, this would come from API with full structure
-    // Generate enough photos to meet minimum requirement
-    const photos = Array(15).fill(listing.image);
-    
-    return {
-      serviceType: listing.category.toLowerCase(),
-      city: listing.location.split(',')[0].trim(),
-      experience: 5,
-      qualifications: ["Professional certification", "Years of experience"],
-      onlineProfiles: [
-        { platform: "Instagram", url: "https://instagram.com/vendor" }
-      ],
-      address: listing.location,
-      travelMode: "travel-to-guests" as const,
-      serviceRadius: 25,
-      serviceAddress: listing.location,
-      photos,
-      serviceDescription: `${listing.title} - Professional ${listing.category} services with extensive experience and dedication to quality.`,
-      offerings: [
-        {
-          id: "1",
-          title: listing.title,
-          description: `${listing.title} package with all amenities`,
-          price: parseInt(listing.price.replace(/[$,]/g, '')) || 1000,
-          duration: 4,
-        }
-      ],
-      businessHours: [
-        { day: "Monday", enabled: true, timeRanges: [{ start: "09:00", end: "17:00" }] },
-        { day: "Tuesday", enabled: true, timeRanges: [{ start: "09:00", end: "17:00" }] },
-        { day: "Wednesday", enabled: true, timeRanges: [{ start: "09:00", end: "17:00" }] },
-        { day: "Thursday", enabled: true, timeRanges: [{ start: "09:00", end: "17:00" }] },
-        { day: "Friday", enabled: true, timeRanges: [{ start: "09:00", end: "17:00" }] },
-        { day: "Saturday", enabled: true, timeRanges: [{ start: "10:00", end: "16:00" }] },
-        { day: "Sunday", enabled: false, timeRanges: [] },
-      ],
-      discounts: [
-        { type: "limited-time" as const, percentage: 10, enabled: true },
-        { type: "early-bird" as const, percentage: 15, enabled: true },
-        { type: "large-group" as const, percentage: 20, enabled: true },
-      ],
-      agreeToTerms: true,
-      agreeToGuidelines: true,
-    };
-  };
+      const isEmptyShell = title === "New prop-decor listing" && !hasAnyContent;
+      return !isEmptyShell;
+    });
+  }, [draftListings]);
 
   const handleEditListing = (listingId: string) => {
-    // Find the listing from all segments
-    const allListings = [...mockListings.active, ...mockListings.inactive, ...mockListings.draft];
-    const listing = allListings.find(l => l.id === listingId);
-    
-    if (listing) {
-      console.log("Editing listing:", listing);
-      const formData = convertToFormData(listing);
-      setEditingListing(formData);
-      setShowCreateWizard(true);
-    }
+    setLocation(`/vendor/listings/${listingId}`);
   };
 
   const handleCloseWizard = () => {
@@ -233,142 +85,296 @@ export default function VendorListings() {
     setEditingListing(null);
   };
 
+  // Publish mutation
+  const publishMutation = useMutation({
+    mutationFn: async (listingId: string) => {
+      const response = await apiRequest("PATCH", `/api/vendor/listings/${listingId}/publish`);
+      if (!response.ok) throw new Error("Failed to publish listing");
+      return response.json();
+    },
+    onSuccess: () => {
+      queryClient.invalidateQueries({ queryKey: ["/api/vendor/listings", "draft"] });
+      queryClient.invalidateQueries({ queryKey: ["/api/vendor/listings", "active"] });
+      queryClient.invalidateQueries({ queryKey: ["/api/vendor/listings", "inactive"] });
+
+      toast({
+        title: "Listing published!",
+        description: "Your listing is now live and visible to customers.",
+      });
+    },
+    onError: (error: any) => {
+      toast({
+        title: "Failed to publish",
+        description: error?.message || "Unknown error",
+        variant: "destructive",
+      });
+    },
+  });
+
   const handlePublishListing = (listingId: string) => {
     publishMutation.mutate(listingId);
   };
 
-    const ListingCard = ({ listing, status }: { listing: any; status: string }) => {
-        const isDraft = status === "draft";
-        const visibleDraftListings = (draftListings || []).filter((l: any) => {
-      const title = (l?.title || "").trim();
-      const data = l?.listingData || {};
+    // Unpublish mutation (active -> inactive)
+  const unpublishMutation = useMutation({
+    mutationFn: async (listingId: string) => {
+      const response = await apiRequest("PATCH", `/api/vendor/listings/${listingId}/unpublish`);
+      if (!response.ok) throw new Error("Failed to unpublish listing");
+      return response.json();
+    },
+    onSuccess: () => {
+      queryClient.invalidateQueries({ queryKey: ["/api/vendor/listings", "draft"] });
+      queryClient.invalidateQueries({ queryKey: ["/api/vendor/listings", "active"] });
+      queryClient.invalidateQueries({ queryKey: ["/api/vendor/listings", "inactive"] });
 
-      const photosCount =
-        data?.photos?.count ??
-        (Array.isArray(data?.photos?.names) ? data.photos.names.length : 0);
+      toast({
+        title: "Listing unpublished",
+        description: "Your listing is now inactive and hidden from customers.",
+      });
+    },
+    onError: (error: any) => {
+      toast({
+        title: "Failed to unpublish",
+        description: error?.message || "Unknown error",
+        variant: "destructive",
+      });
+    },
+  });
 
-      const propTypesCount = Array.isArray(data?.propTypes) ? data.propTypes.length : 0;
+  const handleUnpublishListing = (listingId: string) => {
+    unpublishMutation.mutate(listingId);
+  };
 
-      const rate = data?.pricing?.rate;
-      const hasRate = rate !== null && rate !== undefined && `${rate}`.trim() !== "";
+  // Delete mutation (any listing)
+  const deleteMutation = useMutation({
+    mutationFn: async (listingId: string) => {
+      const response = await apiRequest("DELETE", `/api/vendor/listings/${listingId}`);
+      if (!response.ok && response.status !== 204) throw new Error("Failed to delete listing");
+      return true;
+    },
+    onSuccess: () => {
+      queryClient.invalidateQueries({ queryKey: ["/api/vendor/listings", "draft"] });
+      queryClient.invalidateQueries({ queryKey: ["/api/vendor/listings", "active"] });
+      queryClient.invalidateQueries({ queryKey: ["/api/vendor/listings", "inactive"] });
 
-      const desc = (data?.listingDescription || "").trim();
-      const hasAnyContent = photosCount > 0 || propTypesCount > 0 || hasRate || desc.length > 0;
+      toast({
+        title: "Listing deleted",
+        description: "This listing was permanently removed.",
+      });
+    },
+    onError: (error: any) => {
+      toast({
+        title: "Failed to delete",
+        description: error?.message || "Unknown error",
+        variant: "destructive",
+      });
+    },
+  });
 
-      // hide empty shells (default title + no content)
-      const isEmptyShell = title === "New prop-decor listing" && !hasAnyContent;
+  const handleDeleteListing = (listingId: string) => {
+    const ok = window.confirm("Delete this listing? This cannot be undone.");
+    if (!ok) return;
+    deleteMutation.mutate(listingId);
+  };
 
-      // show real drafts
-      return !isEmptyShell;
-    });
+  const ListingCardRow = ({ listing, status }: { listing: AnyListing; status: string }) => {
+    const isDraft = status === "draft";
+    const isActive = status === "active";
+    const isInactive = status === "inactive";
+
+    const title =
+      listing?.listingData?.listingTitle ??
+      listing?.title ??
+      listing?.listingData?.serviceType ??
+      "Untitled Listing";
+
+    const category = listing?.category || listing?.listingData?.serviceType || "";
+
+    const location =
+      listing?.city ??
+      listing?.location?.city ??
+      listing?.listingData?.location?.city ??
+      "Location not set";
+
+    const price =
+      listing?.price ||
+      (listing?.listingData?.pricing?.rate ? `$${listing.listingData.pricing.rate}` : null) ||
+      (listing?.listingData?.offerings?.[0]?.price ? `$${listing.listingData.offerings[0].price}` : "Price not set");
+
+    const rawImage =
+      listing?.image ||
+      (Array.isArray(listing?.listingData?.photos?.names) ? listing.listingData.photos.names[0] : undefined);
+
+    const image =
+      typeof rawImage === "string" &&
+      (rawImage.startsWith("http://") || rawImage.startsWith("https://") || rawImage.startsWith("/")) &&
+      !rawImage.toLowerCase().endsWith(".heic")
+        ? rawImage
+        : null;
+
+    const statusLabel = isDraft ? "Draft" : isActive ? "Active" : "Inactive";
 
     return (
-      <Card 
-        className={`w-[320px] shrink-0 overflow-hidden ${!isDraft ? 'hover-elevate cursor-pointer' : ''} group`}
-        onClick={!isDraft ? () => handleEditListing(listing.id) : undefined}
+      <Card
+        className="w-[320px] shrink-0 overflow-hidden hover-elevate cursor-pointer group"
+        onClick={() => handleEditListing(listing.id)}
         data-testid={`card-listing-${listing.id}`}
       >
         <div className="aspect-[4/3] overflow-hidden relative">
-          <img
-            src={listing.image || "https://via.placeholder.com/300x200?text=No+Image"}
-            alt={listing.title}
-            className="w-full h-full object-cover transition-transform duration-300 group-hover:scale-105"
-          />
-          {!isDraft && (
-            <div className="absolute top-3 right-3">
-              <Badge variant="secondary" className="bg-white/90 hover:bg-white" style={{ borderColor: '#9EDBC0' }}>
-                <Edit className="w-3 h-3 mr-1" style={{ color: '#9EDBC0' }} />
-                <span style={{ color: '#9EDBC0' }}>Edit</span>
-              </Badge>
+          {image ? (
+            <img
+              src={image}
+              alt={title}
+              className="w-full h-full object-cover transition-transform duration-300 group-hover:scale-105"
+            />
+          ) : (
+            <div className="w-full h-full flex items-center justify-center text-muted-foreground text-sm bg-muted">
+              No photo yet
             </div>
           )}
-          {isDraft && (
-            <div className="absolute top-3 left-3">
-              <Badge style={{ backgroundColor: '#9EDBC0', color: 'white', borderColor: '#8CCBB0' }}>
-                Draft
+
+          <div className="absolute top-3 left-3">
+            {isDraft ? (
+              <Badge style={{ backgroundColor: "#9EDBC0", color: "white", borderColor: "#8CCBB0" }}>
+                {statusLabel}
               </Badge>
-            </div>
-          )}
+            ) : (
+              <Badge variant="secondary" className="bg-white/90 hover:bg-white" style={{ borderColor: "#9EDBC0" }}>
+                <Edit className="w-3 h-3 mr-1" style={{ color: "#9EDBC0" }} />
+                <span style={{ color: "#9EDBC0" }}>{statusLabel}</span>
+              </Badge>
+            )}
+          </div>
         </div>
+
         <div className="p-4">
           <div className="flex items-start justify-between mb-2">
             <div className="flex-1">
               <h3 className="font-semibold text-base mb-1 line-clamp-1" data-testid={`text-title-${listing.id}`}>
-                {listing.title || listing.listingData?.serviceType || "Untitled Listing"}
+                {title}
               </h3>
-              <p className="text-sm text-muted-foreground">{listing.category || listing.listingData?.serviceType}</p>
+              <p className="text-sm text-muted-foreground">{category}</p>
             </div>
           </div>
+
           <div className="flex items-center gap-2 text-sm text-muted-foreground mb-3">
             <MapPin className="w-4 h-4" />
-            <span>{listing.location || listing.listingData?.city || "Location not set"}</span>
+            <span>{location}</span>
           </div>
+
           <div className="flex items-center justify-between">
             <div className="flex items-center gap-1">
-              <span className="font-semibold" style={{ color: '#9EDBC0' }}>
-                {listing.price || (listing.listingData?.offerings?.[0]?.price ? `$${listing.listingData.offerings[0].price}` : "Price not set")}
+              <span className="font-semibold" style={{ color: "#9EDBC0" }}>
+                {price}
               </span>
             </div>
+
             {!isDraft && (
               <div className="flex items-center gap-3 text-sm text-muted-foreground">
                 <div className="flex items-center gap-1">
                   <Eye className="w-4 h-4" />
-                  <span>{listing.views || 0}</span>
+                  <span>{listing?.views || 0}</span>
                 </div>
                 <div className="flex items-center gap-1">
-                  <span className="font-medium">{listing.bookings || 0}</span>
+                  <span className="font-medium">{listing?.bookings || 0}</span>
                   <span>bookings</span>
                 </div>
               </div>
             )}
           </div>
-          
-          {isDraft && (
-            <div className="flex gap-2 mt-4 pt-4 border-t">
+
+          <div className="flex gap-2 mt-4 pt-4 border-t">
+            <Button
+              variant="outline"
+              className="flex-1"
+              onClick={(e) => {
+                e.stopPropagation();
+                handleEditListing(listing.id);
+              }}
+              data-testid={`button-edit-${listing.id}`}
+            >
+              Edit
+            </Button>
+
+            {(isDraft || isInactive) && (
               <Button
-                variant="outline"
                 className="flex-1"
-                onClick={(e) => {
-                  e.stopPropagation();
-                  handleEditListing(listing.id);
-                }}
-                data-testid={`button-edit-${listing.id}`}
-              >
-                Edit
-              </Button>
-              <Button
-                className="flex-1"
-                style={{ backgroundColor: '#9EDBC0', color: 'white' }}
+                style={{ backgroundColor: "#9EDBC0", color: "white" }}
                 onClick={(e) => {
                   e.stopPropagation();
                   handlePublishListing(listing.id);
                 }}
                 data-testid={`button-publish-${listing.id}`}
+                disabled={publishMutation.isPending}
               >
-                Publish
+                {publishMutation.isPending ? "Publishing..." : "Publish"}
               </Button>
-            </div>
-          )}
+            )}
+
+            {isActive && (
+              <Button
+                variant="outline"
+                className="flex-1"
+                onClick={(e) => {
+                  e.stopPropagation();
+                  handleUnpublishListing(listing.id);
+                }}
+                data-testid={`button-unpublish-${listing.id}`}
+                disabled={unpublishMutation.isPending}
+              >
+                Unpublish
+              </Button>
+            )}
+
+
+            <Button
+              variant="destructive"
+              className="flex-1"
+              onClick={(e) => {
+                e.stopPropagation();
+                handleDeleteListing(listing.id);
+              }}
+              data-testid={`button-delete-${listing.id}`}
+              disabled={deleteMutation.isPending}
+            >
+              {deleteMutation.isPending ? "Deleting..." : "Delete"}
+            </Button>
+          </div>
         </div>
       </Card>
     );
   };
 
-  const ListingSection = ({ title, listings, status, emptyMessage }: any) => (
+  const ListingSection = ({
+    title,
+    listings,
+    status,
+    emptyMessage,
+    isLoading,
+  }: {
+    title: string;
+    listings: AnyListing[];
+    status: "active" | "inactive" | "draft";
+    emptyMessage: string;
+    isLoading?: boolean;
+  }) => (
     <div className="mb-10" data-testid={`section-${status}`}>
       <div className="flex items-center justify-between mb-6">
-        <h2 className="text-2xl font-semibold text-foreground">
-          {title}
-        </h2>
+        <h2 className="text-2xl font-semibold text-foreground">{title}</h2>
         <span className="text-sm text-muted-foreground">
-          {listings.length} {listings.length === 1 ? 'listing' : 'listings'}
+          {listings.length} {listings.length === 1 ? "listing" : "listings"}
         </span>
       </div>
-      {listings.length > 0 ? (
+
+      {isLoading ? (
+        <Card className="p-8 text-center">
+          <p className="text-muted-foreground">Loading...</p>
+        </Card>
+      ) : listings.length > 0 ? (
         <div className="overflow-x-auto -mx-6 px-6">
           <div className="flex gap-4 pb-4">
-            {listings.map((listing: any) => (
-              <ListingCard key={listing.id} listing={listing} status={status} />
+            {listings.map((listing: AnyListing) => (
+              <ListingCardRow key={listing.id} listing={listing} status={status} />
             ))}
           </div>
         </div>
@@ -382,20 +388,18 @@ export default function VendorListings() {
 
   return (
     <>
-      <SidebarProvider style={sidebarStyle as React.CSSProperties}>
+      <SidebarProvider style={sidebarStyle}>
         <div className="flex h-screen w-full">
           <VendorSidebar />
           <div className="flex flex-col flex-1">
             <header className="flex items-center justify-between p-4 border-b">
               <SidebarTrigger data-testid="button-sidebar-toggle" />
-              <Button 
-                onClick={() => setShowCreateWizard(true)}
-                data-testid="button-create-listing"
-              >
+              <Button onClick={() => setShowCreateWizard(true)} data-testid="button-create-listing">
                 <Plus className="w-4 h-4 mr-2" />
                 Create Listing
               </Button>
             </header>
+
             <main className="flex-1 overflow-auto">
               <div className="max-w-7xl mx-auto px-6 py-8">
                 <div className="mb-8">
@@ -437,11 +441,7 @@ export default function VendorListings() {
       </SidebarProvider>
 
       {showCreateWizard && (
-        <CreateListingWizard 
-          onClose={handleCloseWizard}
-          editMode={!!editingListing}
-          initialData={editingListing || undefined}
-        />
+        <CreateListingWizard onClose={handleCloseWizard} editMode={!!editingListing} initialData={editingListing || undefined} />
       )}
     </>
   );

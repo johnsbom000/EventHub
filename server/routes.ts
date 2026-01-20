@@ -30,8 +30,18 @@ import { requireAuth0 } from "./auth0"; // ✅ Auth0 middleware
 import { z } from "zod";
 import { db } from "./db";
 import { eq, and, sql as drizzleSql, count, sum, gte, lte, desc } from "drizzle-orm";
+import multer from "multer";
+import path from "path";
+import fs from "fs";
 
-/**
+/**proxy: {
+  "/api": {
+    target: "http://localhost:5001",
+    changeOrigin: true,
+    secure: false,
+  },
+},
+
  * Middleware: after requireAuth0, resolve the vendor account by auth0_sub and
  * attach a normalized vendorAuth object so existing handlers keep working.
  */
@@ -112,7 +122,49 @@ async function requireVendorAccountAuth0(req: any, res: any, next: any) {
  */
 const requireVendorAuth0 = [requireAuth0, requireVendorAccountAuth0] as const;
 
-export async function registerRoutes(app: Express): Promise<Server> {
+  export async function registerRoutes(app: Express): Promise<Server> {
+    // --- Listing photo uploads (local disk) ---
+  const listingUploadsDir = path.join(process.cwd(), "server/uploads/listings");
+  if (!fs.existsSync(listingUploadsDir)) fs.mkdirSync(listingUploadsDir, { recursive: true });
+
+  const upload = multer({
+    storage: multer.diskStorage({
+      destination: (_req, _file, cb) => cb(null, listingUploadsDir),
+      filename: (_req, file, cb) => {
+        const ext = path.extname(file.originalname || "").toLowerCase();
+        const safeExt = ext && ext.length <= 8 ? ext : ".jpg";
+        const base = `${Date.now()}-${Math.random().toString(16).slice(2)}`;
+        cb(null, `${base}${safeExt}`);
+      },
+    }),
+    limits: { fileSize: 10 * 1024 * 1024 }, // 10MB
+    fileFilter: (_req, file, cb) => {
+      const ok = ["image/jpeg", "image/png", "image/webp"].includes(file.mimetype);
+      if (!ok) return cb(null, false); // silently reject
+      return cb(null, true);
+    },
+
+  });
+
+  // Upload one listing photo. Returns a public URL under /uploads/...
+app.post(
+  "/api/uploads/listing-photo",
+  requireDualAuthAuth0,
+  upload.single("photo"),
+  async (req: any, res) => {
+    console.log(">>> HIT /api/uploads/listing-photo", req.method, req.path);
+    // multer rejected the file OR no file was provided
+    if (!req.file) {
+      return res.status(400).json({ error: "Only JPG, PNG, or WebP allowed (max 10MB)." });
+    }
+
+    return res.json({
+      url: `/uploads/listings/${req.file.filename}`,
+      filename: req.file.filename,
+    });
+  }
+);
+
   // Location search (used by LocationPicker autocomplete)
   app.get("/api/locations/search", async (req, res) => {
     try {
@@ -848,7 +900,6 @@ export async function registerRoutes(app: Express): Promise<Server> {
           id: account.id,
           email: account.email,
           businessName: account.businessName,
-          vendorId: account.vendorId,
           stripeConnectId: account.stripeConnectId,
           stripeAccountType: account.stripeAccountType,
           stripeOnboardingComplete: account.stripeOnboardingComplete,
@@ -863,6 +914,30 @@ export async function registerRoutes(app: Express): Promise<Server> {
         return res.status(400).json({ error: "Validation failed", details: error.errors });
       }
       res.status(500).json({ error: error.message });
+    }
+  });
+
+    /**
+   * GET /api/vendor/profile ✅ Auth0-only
+   * Returns the current vendor's profile (created during onboarding)
+   */
+  app.get("/api/vendor/profile", ...requireVendorAuth0, async (req, res) => {
+    try {
+      const vendorAuth = (req as any).vendorAuth;
+
+      const profiles = await db
+        .select()
+        .from(vendorProfiles)
+        .where(eq(vendorProfiles.accountId, vendorAuth.id));
+
+      if (profiles.length === 0) {
+        return res.status(404).json({ error: "Vendor profile not found" });
+      }
+
+      return res.json(profiles[0]);
+    } catch (error: any) {
+      console.error("GET /api/vendor/profile failed:", error);
+      return res.status(500).json({ error: error?.message ?? "Unknown error" });
     }
   });
 
@@ -892,15 +967,16 @@ export async function registerRoutes(app: Express): Promise<Server> {
       const profile = profiles[0];
       const vendorType = profile.serviceType;
 
-      const title =
-        (typeof listingData.title === "string" && listingData.title.trim()) || `New ${vendorType} listing`;
+      const safeVendorType =
+        typeof vendorType === "string" && vendorType.trim() ? vendorType.trim() : "vendor";
 
+      const title =
+        (typeof listingData.title === "string" && listingData.title.trim()) || `New ${safeVendorType} listing`;
       const [listing] = await db
         .insert(vendorListings)
         .values({
           accountId: vendorAuth.id,
           profileId: profile.id,
-          vendorType,
           status: "draft",
           title,
           listingData,
@@ -939,14 +1015,18 @@ export async function registerRoutes(app: Express): Promise<Server> {
         return res.status(400).json({ error: "Vendor profile required" });
       }
 
-      const vendorType = profiles[0].serviceType;
+      const normalizedStatus =
+        status === "active" ? "published" :
+        status === "published" ? "published" :
+        status === "inactive" ? "inactive" :
+        status === "draft" ? "draft" :
+        undefined;
 
       const [updated] = await db
         .update(vendorListings)
         .set({
           listingData,
-          vendorType,
-          status: status || existingListings[0].status,
+          status: normalizedStatus ?? existingListings[0].status,
           title: title || existingListings[0].title,
           updatedAt: new Date(),
         })
@@ -956,6 +1036,76 @@ export async function registerRoutes(app: Express): Promise<Server> {
       return res.json(updated);
     } catch (error: any) {
       return res.status(500).json({ error: error.message });
+    }
+  });
+
+  app.patch("/api/vendor/listings/:id/publish", requireDualAuthAuth0, async (req, res) => {
+    try {
+      const vendorAuth = (req as any).vendorAuth;
+
+      if (!vendorAuth) {
+        return res.status(403).json({ error: "Vendor account required" });
+      }
+
+      const { id } = req.params;
+
+      const existing = await db
+        .select()
+        .from(vendorListings)
+        .where(and(eq(vendorListings.id, id), eq(vendorListings.accountId, vendorAuth.id)));
+
+      if (existing.length === 0) {
+        return res.status(404).json({ error: "Listing not found" });
+      }
+
+      const [updated] = await db
+        .update(vendorListings)
+        .set({
+          status: "published",
+          updatedAt: new Date(),
+        })
+        .where(and(eq(vendorListings.id, id), eq(vendorListings.accountId, vendorAuth.id)))
+        .returning();
+
+      return res.json(updated);
+    } catch (error: any) {
+      console.error("PATCH /api/vendor/listings/:id/publish failed:", error);
+      return res.status(500).json({ error: error?.message ?? "Unknown error" });
+    }
+  });
+
+    app.patch("/api/vendor/listings/:id/unpublish", requireDualAuthAuth0, async (req, res) => {
+    try {
+      const vendorAuth = (req as any).vendorAuth;
+
+      if (!vendorAuth) {
+        return res.status(403).json({ error: "Vendor account required" });
+      }
+
+      const { id } = req.params;
+
+      const existing = await db
+        .select()
+        .from(vendorListings)
+        .where(and(eq(vendorListings.id, id), eq(vendorListings.accountId, vendorAuth.id)));
+
+      if (existing.length === 0) {
+        return res.status(404).json({ error: "Listing not found" });
+      }
+
+      const [updated] = await db
+        .update(vendorListings)
+        .set({
+          status: "inactive",
+          updatedAt: new Date(),
+        })
+        .where(and(eq(vendorListings.id, id), eq(vendorListings.accountId, vendorAuth.id)))
+        .returning();
+
+      return res.json(updated);
+    } catch (error: any) {
+      console.error("PATCH /api/vendor/listings/:id/unpublish failed:", error);
+      return res.status(500).json({ error: error?.message ?? "Unknown error" });
     }
   });
 
@@ -969,17 +1119,19 @@ export async function registerRoutes(app: Express): Promise<Server> {
       }
       const { status } = req.query;
 
-      let query = db.select().from(vendorListings).where(eq(vendorListings.accountId, vendorAuth.id));
+      // Map UI bucket names to DB status values
+      const normalizedStatus =
+        status === "active" ? "published" :
+        status === "published" ? "published" :
+        status === "inactive" ? "inactive" :
+        status === "draft" ? "draft" :
+        undefined;
 
-      if (status) {
-        query = query.where(
-          and(eq(vendorListings.accountId, vendorAuth.id), eq(vendorListings.status, status as string))
-        ) as any;
-      }
+      const whereClause = normalizedStatus
+        ? and(eq(vendorListings.accountId, vendorAuth.id), eq(vendorListings.status, normalizedStatus))
+        : eq(vendorListings.accountId, vendorAuth.id);
 
-      console.log("[GET /api/vendor/listings] vendorAuth.id =", vendorAuth?.id, "status =", status);
-
-      const listings = await query;
+      const listings = await db.select().from(vendorListings).where(whereClause);
 
       console.log(
         "[GET /api/vendor/listings] accountId=",
@@ -1143,7 +1295,7 @@ export async function registerRoutes(app: Express): Promise<Server> {
       const vendorAuth = (req as any).vendorAuth;
       const account = await storage.getVendorAccount(vendorAuth.id);
 
-      if (!account?.vendorId) {
+      if (!account?.id) {
         return res.json({
           totalBookings: 0,
           revenue: 0,
@@ -1171,7 +1323,7 @@ export async function registerRoutes(app: Express): Promise<Server> {
       const vendorAuth = (req as any).vendorAuth;
       const account = await storage.getVendorAccount(vendorAuth.id);
 
-      if (!account?.vendorId) {
+      if (!account?.id) {
         return res.json([]);
       }
 
@@ -1211,7 +1363,7 @@ export async function registerRoutes(app: Express): Promise<Server> {
       const vendorAuth = (req as any).vendorAuth;
       const account = await storage.getVendorAccount(vendorAuth.id);
 
-      if (!account?.vendorId) {
+      if (!account?.id) {
         return res.json([]);
       }
 
