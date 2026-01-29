@@ -46,6 +46,11 @@ export default function Hero() {
     params.set("category", LANDING_CATEGORY_KEY);
 
     if (searchLocation) params.set("location", searchLocation.label);
+    if (searchLocation?.lat != null && searchLocation?.lng != null) {
+      params.set("lat", String(searchLocation.lat));
+      params.set("lng", String(searchLocation.lng));
+      params.set("sr", "15"); // default search radius miles
+    }
     if (eventDate) params.set("date", eventDate);
     if (eventType) params.set("eventType", eventType);
     

@@ -25,6 +25,9 @@ import {
   SelectValue,
 } from "@/components/ui/select";
 
+import { getFreshAccessToken } from "@/lib/authToken";
+
+
 const MAPBOX_TOKEN = (import.meta.env.VITE_MAPBOX_TOKEN as string | undefined) ?? "";
 
 function boundsFromCircleFeature(feature: any) {
@@ -1030,11 +1033,33 @@ const [draft, setDraft] = useState<ListingDraft>(DEFAULT_DRAFT);
   const [photoFiles, setPhotoFiles] = useState<File[]>([]);
   const fileInputRef = useRef<HTMLInputElement | null>(null);
 
+  type UploadedListingPhoto = { filename: string; url: string };
+
+  async function uploadListingPhoto(file: File): Promise<UploadedListingPhoto> {
+    const token = await getFreshAccessToken();
+    const form = new FormData();
+    form.append("photo", file);
+
+    const res = await fetch("/api/uploads/listing-photo", {
+      method: "POST",
+      headers: token ? { Authorization: `Bearer ${token}` } : undefined,
+      body: form,
+      credentials: "include",
+    });
+
+    if (!res.ok) {
+      const text = (await res.text()) || res.statusText;
+      throw new Error(`${res.status}: ${text}`);
+    }
+
+    return await res.json();
+  }
+
   // A La Carte photos (per prop)
   const [photoFilesByProp, setPhotoFilesByProp] = useState<Record<string, File[]>>({});
   const fileInputRefsByProp = useRef<Record<string, HTMLInputElement | null>>({});
 
-    const onPickPhotosForProp = (propType: string, files: FileList | null) => {
+    const onPickPhotosForProp = async (propType: string, files: FileList | null) => {
     if (!files || files.length === 0) return;
 
     const allowed = new Set(["image/jpeg", "image/png", "image/webp"]);
@@ -1065,13 +1090,13 @@ const [draft, setDraft] = useState<ListingDraft>(DEFAULT_DRAFT);
     if (picked.length === 0) return;
 
     const previews = picked.map((f) => URL.createObjectURL(f));
-    const names = picked.map((f) => f.name);
 
     setPhotoFilesByProp((prev) => ({
       ...prev,
       [propType]: [...(prev[propType] ?? []), ...picked],
     }));
 
+    // show previews immediately
     setDraft((d) => {
       const existing = d.photosByPropType[propType] ?? { previews: [], names: [] };
       return {
@@ -1080,11 +1105,53 @@ const [draft, setDraft] = useState<ListingDraft>(DEFAULT_DRAFT);
           ...d.photosByPropType,
           [propType]: {
             previews: [...existing.previews, ...previews],
-            names: [...existing.names, ...names],
+            names: [...existing.names],
           },
         },
       };
     });
+
+    try {
+      const uploaded = await Promise.all(picked.map(uploadListingPhoto));
+      const uploadedNames = uploaded.map((u) => u.filename);
+
+      setDraft((d) => {
+        const existing = d.photosByPropType[propType] ?? { previews: [], names: [] };
+        return {
+          ...d,
+          photosByPropType: {
+            ...d.photosByPropType,
+            [propType]: {
+              previews: [...existing.previews],
+              names: [...existing.names, ...uploadedNames],
+            },
+          },
+        };
+      });
+    } catch (err: any) {
+      // rollback previews we just created for this pick
+      previews.forEach((u) => URL.revokeObjectURL(u));
+
+      setDraft((d) => {
+        const existing = d.photosByPropType[propType] ?? { previews: [], names: [] };
+        return {
+          ...d,
+          photosByPropType: {
+            ...d.photosByPropType,
+            [propType]: {
+              previews: existing.previews.slice(0, existing.previews.length - previews.length),
+              names: existing.names,
+            },
+          },
+        };
+      });
+
+      toast({
+        title: "Photo upload failed",
+        description: err?.message || "Please try again.",
+        variant: "destructive",
+      });
+    }
 
     const input = fileInputRefsByProp.current[propType];
     if (input) input.value = "";
@@ -1119,7 +1186,7 @@ const [draft, setDraft] = useState<ListingDraft>(DEFAULT_DRAFT);
     });
   };
 
-    const onPickPhotos = (files: FileList | null) => {
+    const onPickPhotos = async (files: FileList | null) => {
     if (!files || files.length === 0) return;
 
     const allowed = new Set(["image/jpeg", "image/png", "image/webp"]);
@@ -1150,14 +1217,34 @@ const [draft, setDraft] = useState<ListingDraft>(DEFAULT_DRAFT);
     if (picked.length === 0) return;
 
     const previews = picked.map((f) => URL.createObjectURL(f));
-    const names = picked.map((f) => f.name);
-
     setPhotoFiles((prev) => [...prev, ...picked]);
     setDraft((d) => ({
       ...d,
       photoPreviews: [...d.photoPreviews, ...previews],
-      photoNames: [...d.photoNames, ...names],
     }));
+
+    try {
+      const uploaded = await Promise.all(picked.map(uploadListingPhoto));
+      const uploadedNames = uploaded.map((u) => u.filename);
+
+      setDraft((d) => ({
+        ...d,
+        photoNames: [...d.photoNames, ...uploadedNames],
+      }));
+    } catch (err: any) {
+      // rollback previews we just created
+      previews.forEach((u) => URL.revokeObjectURL(u));
+      setDraft((d) => ({
+        ...d,
+        photoPreviews: d.photoPreviews.slice(0, d.photoPreviews.length - previews.length),
+      }));
+
+      toast({
+        title: "Photo upload failed",
+        description: err?.message || "Please try again.",
+        variant: "destructive",
+      });
+    }
 
     if (fileInputRef.current) fileInputRef.current.value = "";
   };

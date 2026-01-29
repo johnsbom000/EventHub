@@ -2,44 +2,49 @@ import ListingCard from "@/components/ListingCard";
 import type { ListingPublic } from "@/types/listing";
 import { useState, useEffect, useMemo } from "react";
 import { useSearch, useLocation } from "wouter";
+import { useQuery } from "@tanstack/react-query";
+import { apiRequest } from "@/lib/queryClient";
 import Navigation from "@/components/Navigation";
 import Footer from "@/components/Footer";
 import { Input } from "@/components/ui/input";
 import { Button } from "@/components/ui/button";
-import {
-  Select,
-  SelectContent,
-  SelectItem,
-  SelectTrigger,
-  SelectValue,
-} from "@/components/ui/select";
+import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { Search, SlidersHorizontal } from "lucide-react";
 
 const ENABLED_VENDOR_CATEGORIES = ["prop-rentals"] as const;
 type VendorCategory = (typeof ENABLED_VENDOR_CATEGORIES)[number];
 
-const categoryDisplayNames: Record<VendorCategory, string> = {
-  "prop-rentals": "Props & Decor Rentals",
-};
-
-// very lightweight mapping so your existing category filter can work on listings
-// (since ListingPublic doesn’t currently have a category field)
 const listingMatchesCategory = (listing: ListingPublic, category: VendorCategory) => {
   if (category !== "prop-rentals") return false;
-
   const haystack = `${listing.serviceType} ${listing.vendorName}`.toLowerCase();
-  return (
-    haystack.includes("prop") ||
-    haystack.includes("decor") ||
-    haystack.includes("rental")
-  );
+  return haystack.includes("prop") || haystack.includes("decor") || haystack.includes("rental");
 };
-
 
 const getMinOfferingPrice = (listing: ListingPublic) => {
   if (!listing.offerings || listing.offerings.length === 0) return Number.POSITIVE_INFINITY;
   return Math.min(...listing.offerings.map((o) => o.price ?? Number.POSITIVE_INFINITY));
+};
+
+const milesBetween = (
+  lat1: number,
+  lng1: number,
+  lat2: number,
+  lng2: number
+) => {
+  const R = 3958.8; // Earth radius in miles
+  const toRad = (d: number) => (d * Math.PI) / 180;
+
+  const dLat = toRad(lat2 - lat1);
+  const dLng = toRad(lng2 - lng1);
+
+  const a =
+    Math.sin(dLat / 2) ** 2 +
+    Math.cos(toRad(lat1)) *
+      Math.cos(toRad(lat2)) *
+      Math.sin(dLng / 2) ** 2;
+
+  return R * 2 * Math.atan2(Math.sqrt(a), Math.sqrt(1 - a));
 };
 
 export default function BrowseVendors() {
@@ -47,58 +52,58 @@ export default function BrowseVendors() {
   const searchString = useSearch();
 
   const [searchQuery, setSearchQuery] = useState("");
-  const [sortBy, setSortBy] = useState<"recommended" | "price-asc" | "price-desc">(
-    "recommended"
-  );
+  const [sortBy, setSortBy] = useState<"recommended" | "price-asc" | "price-desc">("recommended");
   const [selectedCategories, setSelectedCategories] = useState<VendorCategory[]>(["prop-rentals"]);
   const [showFilters, setShowFilters] = useState(false);
+  const [locationQuery, setLocationQuery] = useState("");
+  const [eventTypeQuery, setEventTypeQuery] = useState("");
+  const [dateQuery, setDateQuery] = useState("");
+  const [searchLat, setSearchLat] = useState<number | null>(null);
+  const [searchLng, setSearchLng] = useState<number | null>(null);
+  const [searchRadiusMiles, setSearchRadiusMiles] = useState<number>(15);
+  const [searchLocationLabel, setSearchLocationLabel] = useState<string>("");
 
-  // Mock listings (matches vendor listing creation data shape)
-  const mockListings: ListingPublic[] = [
-  {
-    id: "listing-1",
-    vendorId: "vendor-1",
-    vendorName: "Peak Party Props",
-    serviceType: "Props & Decor Rentals",
-    city: "Salt Lake City, UT",
-    travelMode: "travel-to-guests",
-    serviceRadius: 50,
-    photos: ["https://images.unsplash.com/photo-1522335789203-aabd1fc54bc9?w=800"],
-    serviceDescription:
-      "Curated event decor + prop rentals. Delivery, setup, and pickup available.",
-    offerings: [
-      { id: "o1", title: "Backdrop Bundle", description: "", price: 250, duration: 60 },
-      { id: "o2", title: "Full Decor Package", description: "", price: 850, duration: 180 },
-    ],
-    businessHours: [],
-    discounts: [],
-  },
-];
+  const { data: publicListings = [], isLoading } = useQuery<ListingPublic[]>({
+    queryKey: ["/api/listings/public"],
+    queryFn: async () => {
+      const res = await apiRequest("GET", "/api/listings/public");
+      return res.json();
+    },
+  });
+
+  // Temporary Effect for debugging
+  useEffect(() => {
+    if (!publicListings || publicListings.length === 0) return;
+    console.log("[publicListings sample]", publicListings[0]);
+  }, [publicListings]);
 
 
-  // Parse URL parameters on mount and when they change
   useEffect(() => {
     const params = new URLSearchParams(searchString);
+
     const search = params.get("q");
-    if (search) setSearchQuery(search);
+    const location = params.get("location");
+    const eventType = params.get("eventType");
+    const date = params.get("date");
+    const searchLat = params.get("lat");
+    const searchLng = params.get("lng");
+    const searchRadiusMiles = params.get("sr");
+
+    if (search !== null) setSearchQuery(search);
+    if (location !== null) {
+      const raw = location.trim();
+      setSearchLocationLabel(raw);
+
+      // If it's "City, ST" use City. If it's "City State" also use City.
+      const cityOnly = raw.includes(",") ? raw.split(",")[0].trim() : raw.split(" ")[0].trim();
+      setLocationQuery(cityOnly);
+    }
+    if (searchLat !== null) setSearchLat(Number(searchLat));
+    if (searchLng !== null) setSearchLng(Number(searchLng));
+    if (searchRadiusMiles !== null) setSearchRadiusMiles(Number(searchRadiusMiles));
+    if (eventType !== null) setEventTypeQuery(eventType);
+    if (date !== null) setDateQuery(date);
   }, [searchString]);
-
-
-
-  const toggleCategory = (category: VendorCategory) => {
-    setSelectedCategories((prev) => {
-      const newCategories = prev.includes(category)
-        ? prev.filter((c) => c !== category)
-        : [...prev, category];
-
-      const params = new URLSearchParams(searchString);
-      if (newCategories.length > 0) params.set("category", newCategories[0]);
-      else params.delete("category");
-
-      setLocation(`/browse?${params.toString()}`, { replace: true });
-      return newCategories;
-    });
-  };
 
   const clearFilters = () => {
     setSearchQuery("");
@@ -106,49 +111,125 @@ export default function BrowseVendors() {
     setLocation("/browse", { replace: true });
   };
 
+const filteredListings = useMemo(() => {
+  let filtered = [...publicListings];
 
-  const allCategories = useMemo(() => [...ENABLED_VENDOR_CATEGORIES], []);
+  if (selectedCategories.length > 0) {
+    filtered = filtered.filter((l) =>
+      selectedCategories.some((cat) => listingMatchesCategory(l, cat))
+    );
+  }
 
-  // Filter + sort listings
-  const filteredListings = useMemo(() => {
-    let filtered = [...mockListings];
+  if (searchQuery.trim()) {
+    const q = searchQuery.trim().toLowerCase();
+    filtered = filtered.filter((l) => {
+      const haystack = `${l.vendorName} ${l.serviceType} ${l.city}`.toLowerCase();
+      return haystack.includes(q);
+    });
+  }
 
-    // category filter
-    if (selectedCategories.length > 0) {
-      filtered = filtered.filter((l) =>
-        selectedCategories.some((cat) => listingMatchesCategory(l, cat))
-      );
-    }
+    // Hero filters
+    if (locationQuery.trim()) {
+      const loc = locationQuery.trim().toLowerCase();
 
-    // search filter
-    if (searchQuery.trim()) {
-      const q = searchQuery.trim().toLowerCase();
       filtered = filtered.filter((l) => {
-        const haystack = `${l.vendorName} ${l.serviceType} ${l.city}`.toLowerCase();
-        return haystack.includes(q);
+        const listingLocLabel = String((l as any)?.listingData?.serviceLocation?.label || "").toLowerCase();
+        const listingCityOnly = listingLocLabel.split(",")[0].trim();
+
+        // Prefer listing-specific location; fall back to vendor city if listing location missing
+        const haystack = (listingCityOnly || String(l.city || "")).toLowerCase();
+
+        return haystack.includes(loc);
       });
     }
 
-    // sorting
-    const sorted = [...filtered];
-    if (sortBy === "price-asc") {
-      sorted.sort((a, b) => getMinOfferingPrice(a) - getMinOfferingPrice(b));
-    } else if (sortBy === "price-desc") {
-      sorted.sort((a, b) => getMinOfferingPrice(b) - getMinOfferingPrice(a));
+    if (eventTypeQuery.trim()) {
+      const et = eventTypeQuery.trim().toLowerCase();
+      filtered = filtered.filter((l) =>
+        `${l.serviceType || ""}`.toLowerCase().includes(et)
+      );
     }
 
-    return sorted;
-  }, [mockListings, selectedCategories, searchQuery, sortBy]);
+    // dateQuery captured for future availability logic
+        // Radius / service area filtering (listing-specific)
+    if (searchLat != null && searchLng != null) {
+      filtered = filtered.filter((l) => {
+        const ld: any = (l as any).listingData || {};
+        const mode = ld.serviceAreaMode;
 
-  // Loading state (switch to API later)
-  const isLoading = false;
+        // Global listings always visible
+        if (mode === "nationwide") {
+          const searchLabel = searchLocationLabel.toLowerCase();
+          const searchCountry = searchLabel.split(",").pop()?.trim();
+
+          // Prefer listing-specific location
+          let listingCountry = ld?.serviceLocation?.label
+            ? ld.serviceLocation.label.toLowerCase().split(",").pop()?.trim()
+            : null;
+
+          // Fallback: vendor-based listings are assumed US
+          if (!listingCountry && l.city) {
+            listingCountry = "united states";
+          }
+
+          return Boolean(
+            listingCountry &&
+            searchCountry &&
+            listingCountry === searchCountry
+          );
+        }
+
+        // Radius-based listings
+        if (mode === "radius") {
+          const center = ld.serviceCenter;
+          const listingRadius = Number(ld.serviceRadiusMiles ?? 0);
+
+          if (center?.lat == null || center?.lng == null) return false;
+
+          const distance = milesBetween(
+            searchLat,
+            searchLng,
+            Number(center.lat),
+            Number(center.lng)
+          );
+
+          return distance <= listingRadius + searchRadiusMiles;
+        }
+
+        // Unknown mode: hide
+        return false;
+      });
+    }
+
+    const sorted = [...filtered];
+    if (sortBy === "price-asc")
+      sorted.sort((a, b) => getMinOfferingPrice(a) - getMinOfferingPrice(b));
+    else if (sortBy === "price-desc")
+      sorted.sort((a, b) => getMinOfferingPrice(b) - getMinOfferingPrice(a));
+
+    return sorted;
+  }, [
+    publicListings,
+    selectedCategories,
+    searchQuery,
+    locationQuery,
+    eventTypeQuery,
+    searchLat,
+    searchLng,
+    searchRadiusMiles,
+    searchLocationLabel,
+    sortBy,
+  ]);
 
   return (
     <div className="min-h-screen flex flex-col bg-white">
       <Navigation />
+
       <main className="flex-1 bg-background">
+        {/* Header */}
         <div className="bg-white border-b py-8">
-          <div className="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8">
+          {/* ✅ spacing clarified: smaller, consistent left/right padding */}
+          <div className="w-full px-8 lg:px-12">
             <h1
               className="text-3xl md:text-4xl font-bold mb-4 text-foreground"
               data-testid="text-page-title"
@@ -189,42 +270,53 @@ export default function BrowseVendors() {
           </div>
         </div>
 
-        <div className="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8 py-8">
-          <div className="flex gap-8">
-            <aside
-              className={`${showFilters ? "block" : "hidden"} md:block w-full md:w-64 shrink-0`}
-            >
-              <Card>
-                <CardHeader>
-                  <CardTitle className="text-lg">Filters</CardTitle>
-                </CardHeader>
-                <CardContent className="space-y-6">
-                
-                </CardContent>
-              </Card>
+        {/* Body */}
+        {/* ✅ spacing clarified: match “gap between cards” vibe — not huge margins */}
+        <div className="w-full px-8 lg:px-12 py-8">
+          <div className="flex gap-6 lg:gap-8">
+            {/* Left rail */}
+            <aside className={`${showFilters ? "block" : "hidden"} md:block w-full md:w-80 shrink-0`}>
+              <div className="sticky top-24 space-y-4">
+                <Card>
+                  <CardHeader>
+                    <CardTitle className="text-lg">Sort</CardTitle>
+                  </CardHeader>
+                  <CardContent>
+                    <Select
+                      value={sortBy}
+                      onValueChange={(value) =>
+                        setSortBy(value as "recommended" | "price-asc" | "price-desc")
+                      }
+                    >
+                      <SelectTrigger className="w-full" data-testid="select-sort">
+                        <SelectValue placeholder="Sort by" />
+                      </SelectTrigger>
+                      <SelectContent>
+                        <SelectItem value="recommended">Recommended</SelectItem>
+                        <SelectItem value="price-asc">Price: Low to High</SelectItem>
+                        <SelectItem value="price-desc">Price: High to Low</SelectItem>
+                      </SelectContent>
+                    </Select>
+                  </CardContent>
+                </Card>
+
+                <Card>
+                  <CardHeader>
+                    <CardTitle className="text-lg">Filters</CardTitle>
+                  </CardHeader>
+                  <CardContent className="space-y-6">
+                    {/* placeholder - keep for future */}
+                  </CardContent>
+                </Card>
+              </div>
             </aside>
 
-            <div className="flex-1">
-              <div className="flex justify-between items-center mb-6">
+            {/* Results */}
+            <div className="flex-1 min-w-0">
+              <div className="flex items-center mb-4">
                 <p className="text-sm text-muted-foreground" data-testid="text-results-count">
                   {isLoading ? "Loading..." : `${filteredListings.length} listings found`}
                 </p>
-
-                <Select
-                  value={sortBy}
-                  onValueChange={(value) =>
-                    setSortBy(value as "recommended" | "price-asc" | "price-desc")
-                  }
-                >
-                  <SelectTrigger className="w-[220px]" data-testid="select-sort">
-                    <SelectValue placeholder="Sort by" />
-                  </SelectTrigger>
-                  <SelectContent>
-                    <SelectItem value="recommended">Recommended</SelectItem>
-                    <SelectItem value="price-asc">Price: Low to High</SelectItem>
-                    <SelectItem value="price-desc">Price: High to Low</SelectItem>
-                  </SelectContent>
-                </Select>
               </div>
 
               {isLoading ? (
@@ -236,20 +328,18 @@ export default function BrowseVendors() {
                 </div>
               ) : filteredListings.length === 0 ? (
                 <div className="text-center py-12">
-                  <p className="text-muted-foreground">
-                    No listings found matching your criteria.
-                  </p>
+                  <p className="text-muted-foreground">No listings found matching your criteria.</p>
                 </div>
               ) : (
-                <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-6">
+                // Masonry with fixed column width (cards keep size; columns drop as screen shrinks)
+                <div className="w-full columns-1 sm:columns-2 md:columns-3 lg:columns-4 xl:columns-5 [column-gap:1rem]">
                   {filteredListings.map((listing) => (
-                    <ListingCard
+                    <div
                       key={listing.id}
-                      listing={listing}
-                      onAddToEvent={(listingId: string) => {
-                        console.log("Add listing to event:", listingId);
-                      }}
-                    />
+                      className="mb-4 break-inside-avoid inline-block w-full relative hover:z-10"
+                    >
+                      <ListingCard listing={listing} />
+                    </div>
                   ))}
                 </div>
               )}
@@ -257,6 +347,7 @@ export default function BrowseVendors() {
           </div>
         </div>
       </main>
+
       <Footer />
     </div>
   );

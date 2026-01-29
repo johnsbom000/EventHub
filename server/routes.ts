@@ -68,6 +68,17 @@ async function requireVendorAccountAuth0(req: any, res: any, next: any) {
       if (byEmail.length > 0) {
         account = byEmail[0];
       }
+
+      // Backfill auth0Sub onto the vendor account so future logins work even if email is missing
+      if (account && auth0Sub && !account.auth0Sub) {
+        const [updated] = await db
+          .update(vendorAccounts)
+          .set({ auth0Sub })
+          .where(eq(vendorAccounts.id, account.id))
+          .returning();
+
+        account = updated;
+      }
     }
 
     // 2) Fallback: lookup by auth0Sub if still not found
@@ -261,6 +272,31 @@ app.post(
 
       const profile = profiles[0];
 
+            // ---- Seed listing defaults from vendor profile (so new listings are valid-by-default) ----
+      const profileAddress = String((profile as any)?.address || "").trim();
+      const profileCity = String((profile as any)?.city || "").trim();
+      const profileState = String((profile as any)?.state || "").trim();
+      const profileZip = String((profile as any)?.zipCode || (profile as any)?.postalCode || "").trim();
+
+      const radius =
+        Number((profile as any)?.serviceRadius ?? 25) || 25;
+
+      // Build a geocode query (best-effort)
+      const geoQ = [profileAddress, profileCity, profileState, profileZip].filter(Boolean).join(", ").trim();
+
+      let seededLocation: any = null;
+      if (geoQ) {
+        try {
+          const geoRes = await fetch(`http://127.0.0.1:5001/api/locations/search?q=${encodeURIComponent(geoQ)}`);
+          if (geoRes.ok) {
+            const results: any[] = await geoRes.json();
+            if (results?.[0]) seededLocation = results[0];
+          }
+        } catch {
+          // ignore geocode failures; listing can be edited later
+        }
+      }
+
       res.json({
         id: account.id,
         email: account.email,
@@ -368,6 +404,7 @@ app.post(
    * GET /api/vendor/me ✅ Auth0-only
    */
   app.get("/api/vendor/me", ...requireVendorAuth0, async (req, res) => {
+    console.log("HIT /api/vendor/me");
     res.setHeader("Cache-Control", "no-store");
     res.setHeader("Pragma", "no-cache");
     res.setHeader("Expires", "0");
@@ -966,6 +1003,23 @@ app.post(
 
       const profile = profiles[0];
       const vendorType = profile.serviceType;
+      const seededListingData = {
+        ...listingData,
+
+        // Service area mode (listing-owned)
+        serviceAreaMode: listingData?.serviceAreaMode ?? "radius",
+
+        // Radius: listing → legacy field → default
+        serviceRadiusMiles:
+          listingData?.serviceRadiusMiles ??
+          listingData?.serviceRadius ??
+          25,
+
+        // Location MUST come from listing UI (map picker)
+        // Do NOT infer lat/lng from vendor profile
+        serviceLocation: listingData?.serviceLocation ?? null,
+        serviceCenter: listingData?.serviceCenter ?? null,
+      };
 
       const safeVendorType =
         typeof vendorType === "string" && vendorType.trim() ? vendorType.trim() : "vendor";
@@ -979,7 +1033,7 @@ app.post(
           profileId: profile.id,
           status: "draft",
           title,
-          listingData,
+          listingData: seededListingData,
         })
         .returning();
 
@@ -1058,6 +1112,58 @@ app.post(
         return res.status(404).json({ error: "Listing not found" });
       }
 
+      const ld: any = existing[0]?.listingData || {};
+
+      // ---- Publish validation (hard requirements) ----
+      const mode = String(ld.serviceAreaMode || "").trim(); // radius | nationwide | global
+      const loc = ld.serviceLocation;
+
+      const hasLoc =
+        loc &&
+        typeof loc === "object" &&
+        typeof loc.label === "string" &&
+        Number.isFinite(Number(loc.lat)) &&
+        Number.isFinite(Number(loc.lng)) &&
+        typeof loc.country === "string" &&
+        loc.country.trim().length > 0;
+
+      const titleOk =
+        typeof ld.listingTitle === "string" && ld.listingTitle.trim().length >= 2;
+
+      const descOk =
+        typeof ld.listingDescription === "string" && ld.listingDescription.trim().length >= 10;
+
+      const photosOk =
+        Array.isArray(ld?.photos?.names) && ld.photos.names.length > 0;
+
+      // service area checks
+      const modeOk = mode === "radius" || mode === "nationwide" || mode === "global";
+
+      const center = ld.serviceCenter;
+      const hasCenter =
+        center &&
+        typeof center === "object" &&
+        Number.isFinite(Number(center.lat)) &&
+        Number.isFinite(Number(center.lng));
+
+      const radiusMiles = ld.serviceRadiusMiles ?? ld.serviceRadius ?? null;
+      const radiusOk =
+        mode !== "radius" ? true : Number.isFinite(Number(radiusMiles)) && Number(radiusMiles) > 0;
+
+      if (!modeOk || !hasLoc || !titleOk || !descOk || !photosOk || !radiusOk || (mode === "radius" && !hasCenter)) {
+        return res.status(400).json({
+          error: "Listing incomplete — cannot publish",
+          missing: {
+            serviceAreaMode: !modeOk,
+            serviceLocation: !hasLoc,
+            listingTitle: !titleOk,
+            listingDescription: !descOk,
+            photos: !photosOk,
+            serviceCenter: mode === "radius" ? !hasCenter : false,
+            serviceRadiusMiles: mode === "radius" ? !radiusOk : false,
+          },
+        });
+      }
       const [updated] = await db
         .update(vendorListings)
         .set({
@@ -1106,6 +1212,83 @@ app.post(
     } catch (error: any) {
       console.error("PATCH /api/vendor/listings/:id/unpublish failed:", error);
       return res.status(500).json({ error: error?.message ?? "Unknown error" });
+    }
+  });
+
+  // Public Listings (guest browsing)
+  // Returns only published listings. No auth.
+  app.get("/api/listings/public", async (req, res) => {
+    try {
+      res.setHeader("Cache-Control", "no-store");
+      const listings = await db
+        .select({
+          id: vendorListings.id,
+          title: vendorListings.title,
+          listingData: vendorListings.listingData,
+
+          serviceType: vendorProfiles.serviceType,
+          city: vendorProfiles.city,
+          vendorId: vendorAccounts.id,
+          vendorName: vendorAccounts.businessName,
+        })
+        .from(vendorListings)
+        .innerJoin(vendorProfiles, eq(vendorListings.profileId, vendorProfiles.id))
+        .innerJoin(vendorAccounts, eq(vendorProfiles.accountId, vendorAccounts.id))
+        .where(eq(vendorListings.status, "published"));
+      return res.json(listings);
+    } catch (error: any) {
+      console.error("GET /api/listings/public failed:", error);
+      return res.status(500).json({
+        error: error?.message ?? "Unknown error",
+        stack: error?.stack,
+      });
+    }
+
+  });
+
+    // Public Listing Detail (guest browsing) added 1/22/26
+  // Returns one published listing by id. No auth.
+  app.get("/api/listings/public/:id", async (req, res) => {
+    try {
+      res.setHeader("Cache-Control", "no-store");
+
+      // Listing IDs are UUID strings (not numbers)
+      const id = String(req.params.id || "").trim();
+
+      const isUuid =
+        /^[0-9a-f]{8}-[0-9a-f]{4}-[1-5][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i.test(id);
+
+      if (!isUuid) {
+        return res.status(400).json({ error: "Invalid listing id" });
+      }
+
+      const rows = await db
+        .select({
+          id: vendorListings.id,
+          title: vendorListings.title,
+          listingData: vendorListings.listingData,
+
+          serviceType: vendorProfiles.serviceType,
+          city: vendorProfiles.city,
+          vendorId: vendorAccounts.id,
+          vendorName: vendorAccounts.businessName,
+        })
+        .from(vendorListings)
+        .innerJoin(vendorProfiles, eq(vendorListings.profileId, vendorProfiles.id))
+        .innerJoin(vendorAccounts, eq(vendorProfiles.accountId, vendorAccounts.id))
+        .where(and(eq(vendorListings.status, "published"), eq(vendorListings.id, id)))
+        .limit(1);
+
+      const listing = rows[0];
+      if (!listing) return res.status(404).json({ error: "Not found" });
+
+      return res.json(listing);
+    } catch (error: any) {
+      console.error("GET /api/listings/public/:id failed:", error);
+      return res.status(500).json({
+        error: error?.message ?? "Unknown error",
+        stack: error?.stack,
+      });
     }
   });
 

@@ -43,12 +43,18 @@ function AuthTokenBridge() {
       try {
         // Always attempt; Auth0 will handle refresh if needed.
         // Include audience/scope to ensure we get the API access token.
-        const token = await getAccessTokenSilently({
-          authorizationParams: {
-            audience: "https://eventhub-api",
-            scope: "openid profile email",
-          },
-        });
+        const token = await Promise.race([
+          getAccessTokenSilently({
+            authorizationParams: {
+              audience: "https://eventhub-api",
+              scope: "openid profile email",
+            },
+          }),
+          new Promise<string>((_, reject) =>
+            setTimeout(() => reject(new Error("getAccessTokenSilently timeout")), 2000)
+          ),
+        ]);
+
         return token || null;
       } catch (e) {
         // If not logged in yet (or any transient Auth0 issue), return null

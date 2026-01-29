@@ -1,6 +1,10 @@
+// server/auth0.ts
 import jwt from "jsonwebtoken";
 import jwksClient from "jwks-rsa";
 import type { Request, Response, NextFunction } from "express";
+
+import { db } from "./db";
+import { sql as drizzleSql } from "drizzle-orm";
 
 const AUTH0_DOMAIN = process.env.AUTH0_DOMAIN!;
 const AUTH0_AUDIENCE = process.env.AUTH0_AUDIENCE!;
@@ -8,17 +12,21 @@ const AUTH0_AUDIENCE = process.env.AUTH0_AUDIENCE!;
 // JWKS client to fetch Auth0 public keys
 const client = jwksClient({
   jwksUri: `https://${AUTH0_DOMAIN}/.well-known/jwks.json`,
+  timeout: 2000,          // ✅ fail fast (ms)
+  cache: true,
+  cacheMaxEntries: 5,
+  cacheMaxAge: 10 * 60 * 1000, // 10 minutes
+  rateLimit: true,
+  jwksRequestsPerMinute: 10,
 });
+
 
 // Get signing key from Auth0
 function getKey(header: any, callback: any) {
   client.getSigningKey(header.kid, function (err, key) {
-    if (err) {
-      callback(err);
-    } else {
-      const signingKey = key?.getPublicKey();
-      callback(null, signingKey);
-    }
+    if (err) return callback(err);
+    const signingKey = key?.getPublicKey();
+    callback(null, signingKey);
   });
 }
 
@@ -59,15 +67,19 @@ export function verifyAuth0Token(token: string): Promise<Auth0Payload> {
 }
 
 /**
- * If the access token payload is missing email (common for API audience tokens),
+ * Optional: If the access token payload is missing email (common for API audience tokens),
  * call Auth0 /userinfo using the same access token to resolve it.
+ *
+ * IMPORTANT: This MUST be time-bounded to avoid hanging protected routes.
  */
 async function fetchUserInfoEmail(accessToken: string): Promise<string | undefined> {
+  const controller = new AbortController();
+  const t = setTimeout(() => controller.abort(), 2000);
+
   try {
     const resp = await fetch(`https://${AUTH0_DOMAIN}/userinfo`, {
-      headers: {
-        Authorization: `Bearer ${accessToken}`,
-      },
+      headers: { Authorization: `Bearer ${accessToken}` },
+      signal: controller.signal,
     });
 
     if (!resp.ok) {
@@ -84,15 +96,18 @@ async function fetchUserInfoEmail(accessToken: string): Promise<string | undefin
     const data = (await resp.json()) as { email?: string };
     return data?.email;
   } catch (e: any) {
-    console.warn("AUTH0 /userinfo exception:", e?.message || e);
+    // AbortError or network errors should not block auth
+    console.warn("AUTH0 /userinfo exception:", e?.name || "", e?.message || e);
     return undefined;
+  } finally {
+    clearTimeout(t);
   }
 }
 
 /**
  * Express middleware: requires a valid Auth0 Bearer token.
  * Attaches payload to (req as any).auth0
- * If email is missing from token payload, fetch it from /userinfo.
+ * If email is missing from token payload, tries /userinfo (with timeout).
  */
 export async function requireAuth0(req: Request, res: Response, next: NextFunction) {
   try {
@@ -104,7 +119,6 @@ export async function requireAuth0(req: Request, res: Response, next: NextFuncti
     const token = authHeader.slice("Bearer ".length).trim();
     const payload = await verifyAuth0Token(token);
 
-    // Build req.auth0 (always include sub)
     const auth0: Auth0Payload = {
       sub: payload.sub,
       email: payload.email,
@@ -117,13 +131,30 @@ export async function requireAuth0(req: Request, res: Response, next: NextFuncti
       if (email) auth0.email = email;
     }
 
+    // Attach to request for downstream middleware/routes
     (req as any).auth0 = auth0;
 
-    // Optional debug to confirm
-    console.log("AUTH0 req.auth0 attached:", {
-      sub: auth0.sub,
-      hasEmail: Boolean(auth0.email),
-    });
+    // Update last_login_at (non-blocking)
+    // NOTE: This assumes users.auth0_sub and users.last_login_at exist.
+    // If not, this will warn but will NOT block auth.
+    void (async () => {
+      try {
+        if (!auth0.sub && !auth0.email) return;
+
+        await db.execute(
+          drizzleSql`
+            UPDATE users
+            SET last_login_at = NOW()
+            WHERE
+              ( ${auth0.sub ?? null} IS NOT NULL AND auth0_sub = ${auth0.sub ?? ""} )
+              OR
+              ( ${auth0.email ?? null} IS NOT NULL AND lower(email) = lower(${auth0.email ?? ""}) )
+          `
+        );
+      } catch (e: any) {
+        console.warn("AUTH0 last_login_at update failed:", e?.message || e);
+      }
+    })();
 
     return next();
   } catch (err: any) {

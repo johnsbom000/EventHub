@@ -30,13 +30,14 @@ import AdminDashboard from "@/pages/AdminDashboard";
 import UIDemo from "@/pages/UIDemo";
 import NotFound from "@/pages/not-found";
 import AuthTest from "@/pages/AuthTest";
+import ListingDetail from "@/pages/ListingDetail";
 
 function Router() {
   return (
     <>
       <ScrollToTop />
       <Switch>
-        <Route path="/" component={Home} />
+      <Route path="/" component={Home} />
       <Route path="/login" component={Login} />
       <Route path="/signup" component={Signup} />
       <Route path="/dashboard" component={CustomerDashboard} />
@@ -50,6 +51,7 @@ function Router() {
       <Route path="/vendor/listings" component={VendorListings} />
       <Route path="/vendor/listings/new" component={VendorCreateListing} />
       <Route path="/vendor/listings/:id" component={VendorListingEdit} />
+      <Route path="/listing/:id" component={ListingDetail} />
       <Route path="/vendor/messages" component={VendorMessages} />
       <Route path="/vendor/calendar" component={VendorCalendar} />
       <Route path="/vendor/payments" component={VendorPayments} />

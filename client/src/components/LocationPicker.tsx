@@ -22,6 +22,7 @@ export function LocationPicker({
   const [suggestions, setSuggestions] = useState<LocationResult[]>([]);
   const [isLoading, setIsLoading] = useState(false);
   const [isOpen, setIsOpen] = useState(false);
+  const [hasInteracted, setHasInteracted] = useState(false);
   const [debouncedQuery, setDebouncedQuery] = useState("");
   const inputRef = useRef<HTMLInputElement>(null);
   const containerRef = useRef<HTMLDivElement>(null);
@@ -77,7 +78,7 @@ export function LocationPicker({
 
         const data = await res.json();
         setSuggestions(data || []);
-        setIsOpen(true);
+        setIsOpen(hasInteracted);
       } catch (error) {
         console.error("Error fetching locations:", error);
         setSuggestions([]);
@@ -148,6 +149,7 @@ export function LocationPicker({
           ref={inputRef}
           type="text"
           value={query}
+          onFocus={() => setHasInteracted(true)}
           onChange={(e) => {
             setQuery(e.target.value);
             if (e.target.value === "") {

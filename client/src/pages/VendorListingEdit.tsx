@@ -20,6 +20,8 @@ import {
   SelectValue,
 } from "@/components/ui/select";
 
+import { getFreshAccessToken } from "@/lib/authToken";
+
 import { LocationPicker } from "@/components/LocationPicker";
 import mapboxgl from "mapbox-gl";
 
@@ -253,9 +255,18 @@ export default function VendorListingEdit() {
       // Photos (persist in ld.photos.names for now; also keep previews locally)
       photos: {
         names: Array.isArray(ld?.photos?.names) ? ld.photos.names : [],
-        count: ld?.photos?.count ?? (Array.isArray(ld?.photos?.names) ? ld.photos.names.length : 0),
+        count: Array.isArray(ld?.photos?.names) ? ld.photos.names.length : 0,
       },
-      _photoPreviews: [] as string[],
+
+      _photoPreviewsByName: (Array.isArray(ld?.photos?.names) ? ld.photos.names : []).reduce(
+        (acc: Record<string, string>, name: string) => {
+          const isHeic = String(name).toLowerCase().endsWith(".heic") || String(name).toLowerCase().endsWith(".heif");
+          if (!isHeic) acc[name] = `/uploads/listings/${name}`;
+          return acc;
+        },
+        {}
+      ),
+
 
       // Delivery / Setup
       deliverySetup: ld?.deliverySetup || {},
@@ -372,50 +383,213 @@ export default function VendorListingEdit() {
   const mapContainerRef = useRef<HTMLDivElement | null>(null);
   const mapRef = useRef<mapboxgl.Map | null>(null);
 
+  type UploadedListingPhoto = { filename: string; url: string };
 
-  const addPhotos = (files: FileList | null) => {
+  async function uploadListingPhoto(file: File): Promise<{ url: string; filename: string }> {
+    // IMPORTANT: For FormData uploads, do NOT use apiRequest() (it sets JSON headers)
+    const token = await getFreshAccessToken();
+    if (!token) throw new Error("Not authenticated");
+
+    const fd = new FormData();
+    fd.append("photo", file);
+
+    const res = await fetch("/api/uploads/listing-photo", {
+      method: "POST",
+      headers: {
+        Authorization: `Bearer ${token}`,
+        // DO NOT set Content-Type; browser will set the multipart boundary
+      },
+      body: fd,
+      credentials: "include",
+    });
+
+    if (!res.ok) {
+      const text = await res.text();
+      throw new Error(`${res.status}: ${text}`);
+    }
+
+    return await res.json();
+  }
+
+  const addPhotos = async (files: FileList | null) => {
     if (!files || !draft) return;
 
+    const allowed = new Set(["image/jpeg", "image/png", "image/webp"]);
     const fileArr = Array.from(files);
-    const previews = fileArr.map((f) => URL.createObjectURL(f));
-    const names = fileArr.map((f) => f.name);
 
+    console.log(
+      "[upload debug]",
+      fileArr.map((f) => ({
+        name: f.name,
+        type: f.type,
+        sizeMB: Math.round((f.size / 1024 / 1024) * 100) / 100,
+      }))
+    );
+
+    // Reject obvious HEIC/HEIF and unsupported types up front
+    const rejected = fileArr.filter((f) => {
+      const n = (f.name || "").toLowerCase();
+      const isHeic =
+        f.type === "image/heic" ||
+        f.type === "image/heif" ||
+        n.endsWith(".heic") ||
+        n.endsWith(".heif");
+      const nameOk =
+        n.endsWith(".jpg") || n.endsWith(".jpeg") || n.endsWith(".png") || n.endsWith(".webp");
+      const isAllowed = allowed.has(f.type) || nameOk;
+      return isHeic || !isAllowed;
+    });
+
+    if (rejected.length) {
+      toast({
+        title: "Some files were skipped",
+        description: "Only JPG, PNG, or WebP are supported right now. (HEIC/HEIF not supported.)",
+        variant: "destructive",
+      });
+    }
+
+    const picked = fileArr.filter((f) => {
+      const name = (f.name || "").toLowerCase();
+      const extOk = name.endsWith(".jpg") || name.endsWith(".jpeg") || name.endsWith(".png") || name.endsWith(".webp");
+      const typeOk = allowed.has(f.type);
+      return typeOk || extOk; // allow Safari empty/odd MIME if extension looks valid
+    });
+
+    if (picked.length === 0) return;
+
+    // Create temp “names” so the UI has something stable to render immediately
+    const tempEntries = picked.map((f) => {
+      const ext = (f.name.split(".").pop() || "jpg").toLowerCase();
+      const tempName = `__uploading__-${Date.now()}-${Math.random().toString(16).slice(2)}.${ext}`;
+      const preview = URL.createObjectURL(f);
+      return { file: f, tempName, preview };
+    });
+
+    // 1) Show immediately (tempName -> preview)
     setDraft((d: any) => {
       const existingNames: string[] = Array.isArray(d?.photos?.names) ? d.photos.names : [];
+      const nextNames = [...existingNames, ...tempEntries.map((x) => x.tempName)];
+      const nextMap = { ...(d._photoPreviewsByName || {}) };
+
+      tempEntries.forEach((x) => {
+        nextMap[x.tempName] = x.preview;
+      });
+
       return {
         ...d,
-        photos: {
-          names: [...existingNames, ...names],
-          count: [...existingNames, ...names].length,
-        },
-        _photoPreviews: [...(d._photoPreviews || []), ...previews],
+        photos: { names: nextNames, count: nextNames.length },
+        _photoPreviewsByName: nextMap,
       };
     });
+
+    try {
+      // 2) Upload; then replace tempName with real server filename (and keep preview)
+      const uploaded = await Promise.all(tempEntries.map((x) => uploadListingPhoto(x.file)));
+
+    let payloadForPatch: any = null;
+
+    setDraft((d: any) => {
+      const names: string[] = Array.isArray(d?.photos?.names) ? d.photos.names : [];
+      const map = { ...(d._photoPreviewsByName || {}) };
+
+      let nextNames = [...names];
+
+      uploaded.forEach((u, i) => {
+        const tempName = tempEntries[i].tempName;
+        const blobPreview = map[tempName];
+
+        // swap temp -> real filename
+        nextNames = nextNames.map((n) => (n === tempName ? u.filename : n));
+
+        // move preview mapping temp -> real filename
+        delete map[tempName];
+        map[u.filename] = `/uploads/listings/${u.filename}`;
+
+        // revoke blob later (Safari-safe)
+        if (blobPreview && blobPreview.startsWith("blob:")) {
+          setTimeout(() => {
+            try {
+              URL.revokeObjectURL(blobPreview);
+            } catch {}
+          }, 30_000); // 30s delay
+        }
+      });
+
+      const nextDraft = {
+        ...d,
+        photos: { names: nextNames, count: nextNames.length },
+        _photoPreviewsByName: map,
+      };
+
+      // capture a snapshot to PATCH (outside setDraft)
+      payloadForPatch = nextDraft;
+
+      return nextDraft;
+    });
+
+    // Persist to DB (must be OUTSIDE setDraft)
+    await apiRequest("PATCH", `/api/vendor/listings/${listingId}`, {
+      listingData: payloadForPatch,
+    });
+
+    } catch (err: any) {
+      // Rollback anything we just added
+      tempEntries.forEach((x) => {
+        try {
+          URL.revokeObjectURL(x.preview);
+        } catch {}
+      });
+
+      setDraft((d: any) => {
+        const names: string[] = Array.isArray(d?.photos?.names) ? d.photos.names : [];
+        const map = { ...(d._photoPreviewsByName || {}) };
+
+        const tempNames = new Set(tempEntries.map((x) => x.tempName));
+        const nextNames = names.filter((n) => !tempNames.has(n));
+
+        tempEntries.forEach((x) => delete map[x.tempName]);
+
+        return {
+          ...d,
+          photos: { names: nextNames, count: nextNames.length },
+          _photoPreviewsByName: map,
+        };
+      });
+
+      toast({
+        title: "Photo upload failed",
+        description: err?.message || "Please try again.",
+        variant: "destructive",
+      });
+    } finally {
+      if (photoInputRef.current) photoInputRef.current.value = "";
+    }
   };
+
 
   const removePhotoAt = (idx: number) => {
     setDraft((d: any) => {
       if (!d) return d;
+
       const names: string[] = Array.isArray(d?.photos?.names) ? d.photos.names : [];
-      const previews: string[] = Array.isArray(d?._photoPreviews) ? d._photoPreviews : [];
+      const map: Record<string, string> =
+        d?._photoPreviewsByName && typeof d._photoPreviewsByName === "object" ? { ...d._photoPreviewsByName } : {};
 
+      const name = names[idx];
       const nextNames = names.filter((_: any, i: number) => i !== idx);
-      const nextPreviews = previews.filter((_: any, i: number) => i !== idx);
 
-      // revoke removed preview URL if present
-      const removed = previews[idx];
-      if (removed) {
+      const preview = name ? map[String(name)] : undefined;
+      if (preview) {
         try {
-          URL.revokeObjectURL(removed);
-        } catch {
-          // ignore
-        }
+          URL.revokeObjectURL(preview);
+        } catch {}
+        delete map[String(name)];
       }
 
       return {
         ...d,
         photos: { names: nextNames, count: nextNames.length },
-        _photoPreviews: nextPreviews,
+        _photoPreviewsByName: map,
       };
     });
   };
@@ -465,7 +639,17 @@ export default function VendorListingEdit() {
         serviceAreaMode: draft.serviceAreaMode,
         serviceRadiusMiles: draft.serviceRadiusMiles,
         serviceCenter: draft.serviceCenter,
-        serviceLocation: draft.serviceLocation,
+        serviceLocation: draft.serviceLocation
+        ? {
+            ...draft.serviceLocation,
+            country:
+              draft.serviceLocation.country ||
+              // fallback from label if missing
+              (draft.serviceLocation.label?.includes("United States")
+                ? "United States"
+                : null),
+          }
+        : null,
       };
 
       const res = await apiRequest("PATCH", `/api/vendor/listings/${listingId}`, {
@@ -1019,17 +1203,34 @@ export default function VendorListingEdit() {
                       {Array.isArray(draft?.photos?.names) && draft.photos.names.length > 0 ? (
                         <div className="grid grid-cols-2 sm:grid-cols-3 gap-3">
                           {draft.photos.names.map((name: string, idx: number) => {
-                            const preview = draft._photoPreviews?.[idx];
+                            const preview = draft._photoPreviewsByName?.[name];
                             const isHeic = String(name).toLowerCase().endsWith(".heic");
 
                             return (
                               <div key={`${name}-${idx}`} className="rounded-lg border overflow-hidden bg-background">
                                 <div className="aspect-square bg-muted flex items-center justify-center">
-                                  {preview && !isHeic ? (
-                                    <img src={preview} alt={name} className="w-full h-full object-cover" />
+                                  {!isHeic ? (
+                                    <img
+                                      src={preview || `/uploads/listings/${name}`}
+                                      alt={name}
+                                      className="w-full h-full object-cover"
+                                      onError={(e) => {
+                                        // if neither preview nor server file works, show the fallback text
+                                        const img = e.currentTarget;
+                                        img.style.display = "none";
+                                        const parent = img.parentElement;
+                                        if (parent && !parent.querySelector("[data-fallback='1']")) {
+                                          const div = document.createElement("div");
+                                          div.setAttribute("data-fallback", "1");
+                                          div.className = "text-xs text-muted-foreground px-3 text-center";
+                                          div.innerHTML = `No preview<br/><span style="word-break:break-all">${String(name)}</span>`;
+                                          parent.appendChild(div);
+                                        }
+                                      }}
+                                    />
                                   ) : (
                                     <div className="text-xs text-muted-foreground px-3 text-center">
-                                      {isHeic ? "HEIC preview not supported" : "No preview"} <br />
+                                      HEIC preview not supported <br />
                                       <span className="break-all">{name}</span>
                                     </div>
                                   )}

@@ -201,9 +201,26 @@ export default function VendorListings() {
       (listing?.listingData?.pricing?.rate ? `$${listing.listingData.pricing.rate}` : null) ||
       (listing?.listingData?.offerings?.[0]?.price ? `$${listing.listingData.offerings[0].price}` : "Price not set");
 
+    const photosArr: any[] = Array.isArray(listing?.photos) ? listing.photos : [];
+
+    const coverCandidate =
+      photosArr.find((p) => p && typeof p === "object" && p.isCover === true) ??
+      photosArr[0] ??
+      listing?.image ??
+      (Array.isArray(listing?.listingData?.photos?.names)
+        ? { name: listing.listingData.photos.names[0] }
+        : undefined);
+
     const rawImage =
-      listing?.image ||
-      (Array.isArray(listing?.listingData?.photos?.names) ? listing.listingData.photos.names[0] : undefined);
+      typeof coverCandidate === "string"
+        ? coverCandidate
+        : coverCandidate && typeof coverCandidate === "object"
+        ? typeof coverCandidate.url === "string"
+          ? coverCandidate.url
+          : typeof coverCandidate.name === "string"
+          ? `/uploads/listings/${coverCandidate.name}`
+          : undefined
+        : undefined;
 
     const image =
       typeof rawImage === "string" &&
@@ -211,6 +228,7 @@ export default function VendorListings() {
       !rawImage.toLowerCase().endsWith(".heic")
         ? rawImage
         : null;
+
 
     const statusLabel = isDraft ? "Draft" : isActive ? "Active" : "Inactive";
 
@@ -220,7 +238,7 @@ export default function VendorListings() {
         onClick={() => handleEditListing(listing.id)}
         data-testid={`card-listing-${listing.id}`}
       >
-        <div className="aspect-[4/3] overflow-hidden relative">
+        <div className="overflow-hidden relative">
           {image ? (
             <img
               src={image}

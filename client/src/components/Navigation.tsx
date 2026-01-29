@@ -46,6 +46,9 @@ export default function Navigation() {
   const [userRole, setUserRole] = useState<UserRole>(null);
   const [authModalOpen, setAuthModalOpen] = useState(false);
   const { isAuthenticated, user, logout: auth0Logout } = useAuth0();
+  useEffect(() => {
+    if (user) console.log("AUTH0 USER OBJECT:", user);
+  }, [user]);
 
   // Fetch vendor account if vendor token exists (legacy)
 const { data: vendorAccount, isError: vendorMeError, isLoading: vendorMeLoading } = useQuery<VendorAccount>({
@@ -136,7 +139,7 @@ useEffect(() => {
 
   return (
     <nav className="sticky top-0 z-50 bg-white border-b border-border">
-      <div className="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8">
+      <div className="w-full px-6 lg:px-10">
         <div className="flex justify-between items-center h-16">
           <Link
             href="/"

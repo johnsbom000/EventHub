@@ -1,75 +1,93 @@
 import { Card, CardContent } from "@/components/ui/card";
-import { Badge } from "@/components/ui/badge";
-import { Button } from "@/components/ui/button";
-import { MapPin } from "lucide-react";
 import type { ListingPublic } from "@/types/listing";
-import { Link } from "wouter";
+import { useLocation } from "wouter";
 
 interface ListingCardProps {
   listing: ListingPublic;
-
-  // Temporary: we’ll wire real events later
-  onAddToEvent?: (listingId: string) => void;
 }
 
-export default function ListingCard({ listing, onAddToEvent }: ListingCardProps) {
+function isLoadablePath(s: unknown): s is string {
+  return (
+    typeof s === "string" &&
+    (s.startsWith("http://") || s.startsWith("https://") || s.startsWith("/")) &&
+    !s.toLowerCase().endsWith(".heic")
+  );
+}
+
+function normalizePhotoToUrl(photo: any): string | undefined {
+  if (typeof photo === "string") {
+    return isLoadablePath(photo) ? photo : undefined;
+  }
+  if (photo && typeof photo === "object") {
+    const url = photo.url;
+    if (isLoadablePath(url)) return url;
+
+    const name = photo.name || photo.filename;
+    if (typeof name === "string") return `/uploads/listings/${name}`;
+  }
+  return undefined;
+}
+
+export default function ListingCard({ listing }: ListingCardProps) {
+  const [, setLocation] = useLocation();
   const listingAny = listing as any;
 
-const rawCover =
-    listingAny.coverPhoto ??
-    (Array.isArray(listingAny.photos) && listingAny.photos.length > 0
-      ? typeof listingAny.photos[0] === "string"
-        ? listingAny.photos[0]
-        : undefined
-      : undefined) ??
-    // If draft stored real URLs
-    listingAny.listingData?.photos?.urls?.[0] ??
-    // If draft stored filenames, convert to served upload URL
-    (listingAny.listingData?.photos?.names?.[0]
-      ? `/uploads/listings/${listingAny.listingData.photos.names[0]}`
-      : undefined);
-
-  // Only use cover if it looks like a real browser-loadable URL/path
-  // AND avoid HEIC (most browsers won't render it)
-  const cover =
-    typeof rawCover === "string" &&
-    (rawCover.startsWith("http://") || rawCover.startsWith("https://") || rawCover.startsWith("/")) &&
-    !rawCover.toLowerCase().endsWith(".heic")
-      ? rawCover
-      : undefined;
-
-
+  // Title
   const title =
     listingAny.listingData?.listingTitle ??
     listingAny.title ??
     listing.serviceType ??
     "Service";
 
-  const locationLabel =
-    listingAny.city ??
-    listingAny.location?.city ??
-    listingAny.listingData?.location?.city ??
-    "Location not set";
-
-    const ds = listingAny.listingData?.deliverySetup || {};
-  const serviceAreaLabel =
-    ds?.serviceAreaMode === "global"
-      ? "Globally"
-      : ds?.serviceAreaMode === "nationwide"
-      ? "Nationally"
-      : typeof ds?.serviceRadiusMiles === "number"
-      ? `Within ${ds.serviceRadiusMiles} miles`
-      : null;
-
-
-  const startingPrice =
+  // Price
+  const priceValue =
     listingAny.startingPrice ??
     listingAny.listingData?.pricing?.rate ??
-    (listingAny.offerings?.length ? Math.min(...listingAny.offerings.map((o) => o.price)) : undefined);
+    (listingAny.offerings?.length
+      ? Math.min(...listingAny.offerings.map((o: any) => o.price))
+      : undefined);
+
+  // Cover photo resolution
+  const photosArr: any[] = Array.isArray(listingAny.photos) ? listingAny.photos : [];
+
+  const coverCandidate =
+    photosArr.find((p) => p && typeof p === "object" && (p as any).isCover === true) ??
+    photosArr[0] ??
+    listingAny.coverPhoto ??
+    listingAny.listingData?.photos?.urls?.[0] ??
+    (listingAny.listingData?.photos?.names?.[0]
+      ? { name: listingAny.listingData.photos.names[0] }
+      : undefined);
+
+  const cover = normalizePhotoToUrl(coverCandidate);
+
+    const handleClick = () => {
+      const id =
+        listingAny.id ??
+        listingAny.listingId ??
+        listingAny.listing?.id ??
+        listingAny.vendorListingId;
+
+      setLocation(`/listing/${id}`);
+    };
+
 
   return (
-    <Card className="overflow-hidden hover-elevate group" data-testid={`card-listing-${listing.id}`}>
-      <div className="aspect-square overflow-hidden bg-muted">
+    <Card
+      className="overflow-hidden hover-elevate group cursor-pointer"
+      data-testid={`card-listing-${listingAny.id ?? listingAny.listingId ?? listingAny.listing?.id ?? listingAny.vendorListingId ?? "unknown"}`}
+      role="link"
+      tabIndex={0}
+      onClick={handleClick}
+      onKeyDown={(e) => {
+        if (e.key === "Enter" || e.key === " ") {
+          e.preventDefault();
+          handleClick();
+        }
+      }}
+    >
+      {/* Image */}
+      <div className="overflow-hidden bg-muted">
         {cover ? (
           <img
             src={cover}
@@ -83,59 +101,18 @@ const rawCover =
         )}
       </div>
 
-      <CardContent className="p-4 space-y-3">
-        <div className="flex items-start justify-between gap-2">
-          <div className="min-w-0">
-            <h3 className="font-semibold text-lg leading-tight truncate">
-              {title}
-            </h3>
-            {listing.vendorName && (
-              <p className="text-sm text-muted-foreground truncate">
-                {listing.vendorName}
-              </p>
-            )}
-          </div>
-          <Badge variant="secondary" className="shrink-0">
-            Listing
-          </Badge>
-        </div>
+      {/* Title + Price */}
+      <CardContent className="p-3 md:p-4">
+        <div className="flex items-start justify-between gap-3">
+          <h3 className="font-semibold leading-tight line-clamp-2 text-[clamp(1rem,2.2vw,1.9rem)]">
+            {title}
+          </h3>
 
-        <div className="flex items-center gap-1 text-sm text-muted-foreground">
-          <MapPin className="h-4 w-4" />
-          <span className="truncate">{locationLabel}</span>
-        </div>
-
-        {serviceAreaLabel && (
-          <div className="flex items-center gap-1 text-sm text-muted-foreground">
-            <span className="truncate">{serviceAreaLabel}</span>
-          </div>
-        )}
-
-
-        <div className="flex items-center justify-between pt-2">
-          <div>
-            <span className="text-xs text-muted-foreground">Starting at</span>
-            <p className="font-semibold text-lg">
-              {typeof startingPrice === "number" ? `$${startingPrice.toLocaleString()}` : "—"}
-            </p>
-          </div>
-
-          <div className="flex gap-2">
-            <Link href={`/vendor/${listing.vendorId}`}>
-              <Button variant="outline" size="sm" data-testid={`button-about-vendor-${listing.id}`}>
-                Get to know
-              </Button>
-            </Link>
-
-            <Button
-              size="sm"
-              className="bg-primary hover:bg-primary/90 text-white"
-              onClick={() => onAddToEvent?.(listing.id)}
-              data-testid={`button-add-to-event-${listing.id}`}
-            >
-              Add to event
-            </Button>
-          </div>
+          <p className="shrink-0 font-semibold text-foreground text-[clamp(1rem,2.2vw,1.9rem)]">
+            {typeof priceValue === "number"
+              ? `$${priceValue.toLocaleString()}`
+              : "—"}
+          </p>
         </div>
       </CardContent>
     </Card>
