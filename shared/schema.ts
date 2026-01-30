@@ -1,5 +1,14 @@
 import { sql } from "drizzle-orm";
-import { pgTable, text, varchar, timestamp, integer, jsonb, boolean, numeric, pgEnum } from "drizzle-orm/pg-core";
+import {
+  pgTable,
+  text,
+  varchar,
+  timestamp,
+  integer,
+  jsonb,
+  boolean,
+  pgEnum,
+} from "drizzle-orm/pg-core";
 import { createInsertSchema } from "drizzle-zod";
 import { z } from "zod";
 
@@ -12,12 +21,12 @@ export const listingStatusEnum = pgEnum("listing_status", ["draft", "pending", "
 export const notificationTypeEnum = pgEnum("notification_type", [
   "new_booking",
   "booking_confirmed",
-  "booking_cancelled", 
+  "booking_cancelled",
   "booking_rescheduled",
   "new_message",
   "payment_received",
   "review_received",
-  "payout_processed"
+  "payout_processed",
 ]);
 
 export const users = pgTable("users", {
@@ -141,137 +150,22 @@ export const events = pgTable("events", {
   createdAt: timestamp("created_at").defaultNow(),
 });
 
-export const insertEventSchema = createInsertSchema(events).omit({
-  id: true,
-  createdAt: true,
-}).extend({
-  photographerDetails: photographerDetailsSchema.optional(),
-  videographerDetails: videographerDetailsSchema.optional(),
-  floristDetails: floristDetailsSchema.optional(),
-  cateringDetails: cateringDetailsSchema.optional(),
-  djDetails: djDetailsSchema.optional(),
-  propDecorDetails: propDecorDetailsSchema.optional(),
-});
+export const insertEventSchema = createInsertSchema(events)
+  .omit({
+    id: true,
+    createdAt: true,
+  })
+  .extend({
+    photographerDetails: photographerDetailsSchema.optional(),
+    videographerDetails: videographerDetailsSchema.optional(),
+    floristDetails: floristDetailsSchema.optional(),
+    cateringDetails: cateringDetailsSchema.optional(),
+    djDetails: djDetailsSchema.optional(),
+    propDecorDetails: propDecorDetailsSchema.optional(),
+  });
 
 export type InsertEvent = z.infer<typeof insertEventSchema>;
 export type Event = typeof events.$inferSelect;
-
-export const vendorServiceOfferingsSchema = z.object({
-  photographer: z.object({
-    preEventShoots: z.boolean().optional(),
-    eventDayCoverage: z.boolean().optional(),
-    engagementShoots: z.boolean().optional(),
-    bridalPortraits: z.boolean().optional(),
-  }).optional(),
-  videographer: z.object({
-    preEventVideos: z.boolean().optional(),
-    eventDayCoverage: z.boolean().optional(),
-    highlightReel: z.boolean().optional(),
-    fullCeremony: z.boolean().optional(),
-  }).optional(),
-  florist: z.object({
-    bridalBouquet: z.boolean().optional(),
-    bridesmaidBouquets: z.boolean().optional(),
-    boutonnieres: z.boolean().optional(),
-    centerpieces: z.boolean().optional(),
-    archInstall: z.boolean().optional(),
-    aisleFlorals: z.boolean().optional(),
-    setup: z.boolean().optional(),
-    touchUps: z.boolean().optional(),
-  }).optional(),
-  catering: z.object({
-    buffet: z.boolean().optional(),
-    plated: z.boolean().optional(),
-    cocktail: z.boolean().optional(),
-    dessertOnly: z.boolean().optional(),
-    glutenFree: z.boolean().optional(),
-    dairyFree: z.boolean().optional(),
-    vegetarian: z.boolean().optional(),
-    vegan: z.boolean().optional(),
-  }).optional(),
-  dj: z.object({
-    ceremonyMusic: z.boolean().optional(),
-    cocktailHour: z.boolean().optional(),
-    reception: z.boolean().optional(),
-    mcServices: z.boolean().optional(),
-  }).optional(),
-  propDecor: z.object({
-    tables: z.boolean().optional(),
-    chairs: z.boolean().optional(),
-    linens: z.boolean().optional(),
-    backdrops: z.boolean().optional(),
-    lighting: z.boolean().optional(),
-  }).optional(),
-});
-
-export type VendorServiceOfferings = z.infer<typeof vendorServiceOfferingsSchema>;
-
-export const vendorPackageSchema = z.object({
-  name: z.string(),
-  description: z.string(),
-  price: z.number(),
-  inclusions: z.array(z.string()),
-  popular: z.boolean().optional(),
-});
-
-export const vendorAddOnSchema = z.object({
-  name: z.string(),
-  description: z.string(),
-  price: z.number(),
-});
-
-export const vendorReviewSchema = z.object({
-  reviewerName: z.string(),
-  rating: z.number(),
-  date: z.string(),
-  comment: z.string(),
-  eventType: z.string().optional(),
-});
-
-export type VendorPackage = z.infer<typeof vendorPackageSchema>;
-export type VendorAddOn = z.infer<typeof vendorAddOnSchema>;
-export type VendorReview = z.infer<typeof vendorReviewSchema>;
-
-export const vendors = pgTable("vendors", {
-  id: varchar("id").primaryKey().default(sql`gen_random_uuid()`),
-  name: text("name").notNull(),
-  category: text("category").notNull(),
-  city: text("city").notNull(),
-  state: text("state").notNull(),
-  metro: text("metro"),
-  latitude: numeric("latitude"),
-  longitude: numeric("longitude"),
-  basePrice: integer("base_price").notNull(),
-  priceRangeMax: integer("price_range_max"),
-  rating: numeric("rating").notNull(),
-  reviewCount: integer("review_count").notNull().default(0),
-  bookingCount: integer("booking_count").notNull().default(0),
-  verified: boolean("verified").notNull().default(false),
-  blockedDates: text("blocked_dates").array().default(sql`'{}'`),
-  serviceOfferings: jsonb("service_offerings").$type<VendorServiceOfferings | null>(),
-  serviceArea: text("service_area").array().default(sql`'{}'`),
-  imageUrl: text("image_url"),
-  description: text("description"),
-  travelFeeRequired: boolean("travel_fee_required").default(false),
-  packages: jsonb("packages").$type<VendorPackage[] | null>(),
-  addOns: jsonb("add_ons").$type<VendorAddOn[] | null>(),
-  reviews: jsonb("reviews").$type<VendorReview[] | null>(),
-  aboutSection: text("about_section"),
-  createdAt: timestamp("created_at").defaultNow(),
-});
-
-export const insertVendorSchema = createInsertSchema(vendors).omit({
-  id: true,
-  createdAt: true,
-}).extend({
-  serviceOfferings: vendorServiceOfferingsSchema.optional(),
-  packages: z.array(vendorPackageSchema).optional(),
-  addOns: z.array(vendorAddOnSchema).optional(),
-  reviews: z.array(vendorReviewSchema).optional(),
-});
-
-export type InsertVendor = z.infer<typeof insertVendorSchema>;
-export type Vendor = typeof vendors.$inferSelect;
 
 // Vendor Accounts (authentication only)
 export const vendorAccounts = pgTable("vendor_accounts", {
@@ -343,12 +237,14 @@ export const insertVendorListingSchema = createInsertSchema(vendorListings).omit
   updatedAt: true,
 });
 
-export const updateVendorListingSchema = createInsertSchema(vendorListings).omit({
-  id: true,
-  createdAt: true,
-  updatedAt: true,
-  accountId: true,
-}).partial();
+export const updateVendorListingSchema = createInsertSchema(vendorListings)
+  .omit({
+    id: true,
+    createdAt: true,
+    updatedAt: true,
+    accountId: true,
+  })
+  .partial();
 
 export type InsertVendorListing = z.infer<typeof insertVendorListingSchema>;
 export type UpdateVendorListing = z.infer<typeof updateVendorListingSchema>;
@@ -358,7 +254,10 @@ export type VendorListing = typeof vendorListings.$inferSelect;
 export const bookings = pgTable("bookings", {
   id: varchar("id").primaryKey().default(sql`gen_random_uuid()`),
   customerId: varchar("customer_id").references(() => users.id),
-  vendorId: varchar("vendor_id").references(() => vendors.id).notNull(),
+
+  // ✅ migrated from legacy vendors -> vendor_accounts
+  vendorAccountId: varchar("vendor_account_id").references(() => vendorAccounts.id),
+
   eventId: varchar("event_id").references(() => events.id),
   packageId: text("package_id"), // reference to selected package
   addOnIds: text("add_on_ids").array().default(sql`'{}'`),
@@ -440,7 +339,10 @@ export const payments = pgTable("payments", {
   bookingId: varchar("booking_id").references(() => bookings.id).notNull(),
   scheduleId: varchar("schedule_id").references(() => paymentSchedules.id),
   customerId: varchar("customer_id").references(() => users.id),
-  vendorId: varchar("vendor_id").references(() => vendors.id).notNull(),
+
+  // ✅ migrated from legacy vendors -> vendor_accounts
+  vendorAccountId: varchar("vendor_account_id").references(() => vendorAccounts.id),
+
   stripePaymentIntentId: text("stripe_payment_intent_id").notNull(),
   stripeTransferId: text("stripe_transfer_id"), // transfer to vendor via Stripe Connect
   amount: integer("amount").notNull(), // in cents
@@ -487,8 +389,11 @@ export type Notification = typeof notifications.$inferSelect;
 // Review Replies (vendors can reply to reviews)
 export const reviewReplies = pgTable("review_replies", {
   id: varchar("id").primaryKey().default(sql`gen_random_uuid()`),
-  vendorId: varchar("vendor_id").references(() => vendors.id).notNull(),
-  reviewIndex: integer("review_index").notNull(), // index in vendor.reviews array
+
+  // ✅ migrated from legacy vendors -> vendor_accounts
+  vendorAccountId: varchar("vendor_account_id").references(() => vendorAccounts.id),
+
+  reviewIndex: integer("review_index").notNull(), // index in vendor.reviews array (legacy concept; ok for now)
   reply: text("reply").notNull(),
   createdAt: timestamp("created_at").defaultNow(),
 });

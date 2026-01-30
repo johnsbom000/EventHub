@@ -12,7 +12,6 @@ import {
   insertUserSchema,
   webTraffic,
   bookings,
-  vendors,
 } from "@shared/schema";
 import { scoreVendorsForEvent } from "./vendorScoring";
 import {
@@ -1070,8 +1069,7 @@ app.post(
       }
 
       const normalizedStatus =
-        status === "active" ? "published" :
-        status === "published" ? "published" :
+        status === "active" ? "active" :
         status === "inactive" ? "inactive" :
         status === "draft" ? "draft" :
         undefined;
@@ -1167,7 +1165,7 @@ app.post(
       const [updated] = await db
         .update(vendorListings)
         .set({
-          status: "published",
+          status: "draft",
           updatedAt: new Date(),
         })
         .where(and(eq(vendorListings.id, id), eq(vendorListings.accountId, vendorAuth.id)))
@@ -1216,7 +1214,7 @@ app.post(
   });
 
   // Public Listings (guest browsing)
-  // Returns only published listings. No auth.
+  // Returns only active listings. No auth.
   app.get("/api/listings/public", async (req, res) => {
     try {
       res.setHeader("Cache-Control", "no-store");
@@ -1234,7 +1232,7 @@ app.post(
         .from(vendorListings)
         .innerJoin(vendorProfiles, eq(vendorListings.profileId, vendorProfiles.id))
         .innerJoin(vendorAccounts, eq(vendorProfiles.accountId, vendorAccounts.id))
-        .where(eq(vendorListings.status, "published"));
+        .where(eq(vendorListings.status, "active"));
       return res.json(listings);
     } catch (error: any) {
       console.error("GET /api/listings/public failed:", error);
@@ -1247,7 +1245,7 @@ app.post(
   });
 
     // Public Listing Detail (guest browsing) added 1/22/26
-  // Returns one published listing by id. No auth.
+  // Returns one active listing by id. No auth.
   app.get("/api/listings/public/:id", async (req, res) => {
     try {
       res.setHeader("Cache-Control", "no-store");
@@ -1276,7 +1274,7 @@ app.post(
         .from(vendorListings)
         .innerJoin(vendorProfiles, eq(vendorListings.profileId, vendorProfiles.id))
         .innerJoin(vendorAccounts, eq(vendorProfiles.accountId, vendorAccounts.id))
-        .where(and(eq(vendorListings.status, "published"), eq(vendorListings.id, id)))
+        .where(and(eq(vendorListings.status, "active"), eq(vendorListings.id, id)))
         .limit(1);
 
       const listing = rows[0];
@@ -1304,8 +1302,7 @@ app.post(
 
       // Map UI bucket names to DB status values
       const normalizedStatus =
-        status === "active" ? "published" :
-        status === "published" ? "published" :
+        status === "active" ? "active" :
         status === "inactive" ? "inactive" :
         status === "draft" ? "draft" :
         undefined;
@@ -1596,37 +1593,6 @@ app.post(
     }
   });
 
-  app.get("/api/vendors", async (req, res) => {
-    try {
-      const vendors = await storage.getAllVendors();
-      res.json(vendors);
-    } catch (error: any) {
-      res.status(500).json({ error: error.message });
-    }
-  });
-
-  app.get("/api/vendors/meta/categories", async (req, res) => {
-    try {
-      const vendors = await storage.getAllVendors();
-      const categories = Array.from(new Set(vendors.map((v) => v.category))).sort();
-      res.json(categories);
-    } catch (error: any) {
-      res.status(500).json({ error: error.message });
-    }
-  });
-
-  app.get("/api/vendors/:id", async (req, res) => {
-    try {
-      const vendor = await storage.getVendor(req.params.id);
-      if (!vendor) {
-        return res.status(404).json({ error: "Vendor not found" });
-      }
-      res.json(vendor);
-    } catch (error: any) {
-      res.status(500).json({ error: error.message });
-    }
-  });
-
   app.get("/api/events/:eventId/recommendations", async (req, res) => {
     try {
       const event = await storage.getEvent(req.params.eventId);
@@ -1634,10 +1600,20 @@ app.post(
         return res.status(404).json({ error: "Event not found" });
       }
 
-      const allVendors = await storage.getAllVendors();
-      const scoredRecommendations = scoreVendorsForEvent(event, allVendors);
+      // Real recommendations: return active listings for now (scoring can be added later)
+      const listings = await db
+        .select({
+          id: vendorListings.id,
+          title: vendorListings.title,
+          listingData: vendorListings.listingData,
+          vendorProfileId: vendorListings.profileId,
+          vendorAccountId: vendorListings.accountId,
+        })
+        .from(vendorListings)
+        .where(eq(vendorListings.status, "active"))
+        .limit(50);
 
-      res.json(scoredRecommendations);
+      res.json(listings);
     } catch (error: any) {
       res.status(500).json({ error: error.message });
     }

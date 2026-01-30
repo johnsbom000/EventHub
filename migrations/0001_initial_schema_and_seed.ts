@@ -13,18 +13,6 @@ export const taskStatusEnum = pgEnum('task_status', ['pending', 'in_progress', '
 export const contactSourceEnum = pgEnum('contact_source', ['marketplace', 'import', 'manual', 'referral']);
 
 // New tables
-export const customerProfiles = pgTable('customer_profiles', {
-  id: varchar('id').primaryKey().references(() => users.id),
-  firstName: text('first_name').notNull(),
-  lastName: text('last_name').notNull(),
-  phone: varchar('phone', { length: 20 }),
-  avatarUrl: text('avatar_url'),
-  bio: text('bio'),
-  location: text('location'),
-  createdAt: timestamp('created_at').defaultNow(),
-  updatedAt: timestamp('updated_at').defaultNow(),
-});
-
 export const vendorAvailability = pgTable('vendor_availability', {
   id: serial('id').primaryKey(),
   vendorId: varchar('vendor_id').notNull().references(() => vendorAccounts.id, { onDelete: 'cascade' }),
@@ -32,63 +20,6 @@ export const vendorAvailability = pgTable('vendor_availability', {
   startTime: time('start_time'),
   endTime: time('end_time'),
   isAvailable: boolean('is_available').default(true),
-  createdAt: timestamp('created_at').defaultNow(),
-  updatedAt: timestamp('updated_at').defaultNow(),
-});
-
-export const listingPackages = pgTable('listing_packages', {
-  id: varchar('id').primaryKey().default(sql`gen_random_uuid()`),
-  listingId: varchar('listing_id').notNull().references(() => vendorListings.id, { onDelete: 'cascade' }),
-  name: text('name').notNull(),
-  description: text('description'),
-  price: decimal('price', { precision: 10, scale: 2 }).notNull(),
-  currency: varchar('currency', { length: 3 }).default('USD'),
-  isMostPopular: boolean('is_most_popular').default(false),
-  features: text('features').array(),
-  createdAt: timestamp('created_at').defaultNow(),
-  updatedAt: timestamp('updated_at').defaultNow(),
-});
-
-export const listingAddons = pgTable('listing_addons', {
-  id: varchar('id').primaryKey().default(sql`gen_random_uuid()`),
-  listingId: varchar('listing_id').notNull().references(() => vendorListings.id, { onDelete: 'cascade' }),
-  name: text('name').notNull(),
-  description: text('description'),
-  price: decimal('price', { precision: 10, scale: 2 }).notNull(),
-  currency: varchar('currency', { length: 3 }).default('USD'),
-  isRequired: boolean('is_required').default(false),
-  minQuantity: integer('min_quantity').default(0),
-  maxQuantity: integer('max_quantity'),
-  createdAt: timestamp('created_at').defaultNow(),
-  updatedAt: timestamp('updated_at').defaultNow(),
-});
-
-export const crmContacts = pgTable('crm_contacts', {
-  id: varchar('id').primaryKey().default(sql`gen_random_uuid()`),
-  vendorId: varchar('vendor_id').notNull().references(() => vendorAccounts.id, { onDelete: 'cascade' }),
-  userId: varchar('user_id').references(() => users.id),
-  name: text('name').notNull(),
-  email: text('email'),
-  phone: varchar('phone', { length: 20 }),
-  company: text('company'),
-  notes: text('notes'),
-  source: contactSourceEnum('source').notNull().default('marketplace'),
-  tags: text('tags').array(),
-  lastContacted: timestamp('last_contacted'),
-  createdAt: timestamp('created_at').defaultNow(),
-  updatedAt: timestamp('updated_at').defaultNow(),
-});
-
-export const crmTasks = pgTable('crm_tasks', {
-  id: varchar('id').primaryKey().default(sql`gen_random_uuid()`),
-  vendorId: varchar('vendor_id').notNull().references(() => vendorAccounts.id, { onDelete: 'cascade' }),
-  contactId: varchar('contact_id').references(() => crmContacts.id, { onDelete: 'cascade' }),
-  title: text('title').notNull(),
-  description: text('description'),
-  dueDate: timestamp('due_date'),
-  status: taskStatusEnum('status').notNull().default('pending'),
-  priority: integer('priority').default(2), // 1: High, 2: Medium, 3: Low
-  completedAt: timestamp('completed_at'),
   createdAt: timestamp('created_at').defaultNow(),
   updatedAt: timestamp('updated_at').defaultNow(),
 });
@@ -138,17 +69,6 @@ const generateDummyUsers = async (db: any) => {
     .returning();
 
   // Insert customer profiles
-  const customerProfilesData = insertedCustomers.map((user: any, i: number) => ({
-    id: user.id,
-    firstName: `Customer`,
-    lastName: `${i + 1}`,
-    phone: `+123456789${i}`,
-    bio: `I'm customer number ${i + 1} looking for amazing event services!`,
-    location: ['New York', 'Los Angeles', 'Chicago', 'Houston', 'Phoenix'][i % 5],
-  }));
-
-  await db.insert(customerProfiles).values(customerProfilesData);
-
   // Insert sample vendors
   const vendorUsers = [
     { name: 'Elite Photography', email: 'elite@example.com' },
@@ -453,8 +373,6 @@ const generateDummyUsers = async (db: any) => {
       },
     ];
 
-    await db.insert(listingPackages).values(packages);
-    await db.insert(listingAddons).values(addons);
   }
 
   // Insert availability for vendors
@@ -492,44 +410,7 @@ const generateDummyUsers = async (db: any) => {
   const insertedBookings = await db
     .insert(bookings)
     .values(bookingData)
-    .returning();
-
-  // Insert sample CRM contacts
-  const contactData = insertedCustomers.slice(0, 3).map((customer: any, i: number) => ({
-    vendorId: insertedVendorAccounts[0].id,
-    userId: customer.id,
-    name: `Customer ${i + 1}`,
-    email: `customer${i + 1}@example.com`,
-    tags: ['high-value', 'repeat-customer'],
-  }));
-
-  const insertedContacts = await db
-    .insert(crmContacts)
-    .values(contactData)
-    .returning();
-
-  // Insert sample CRM tasks
-  const taskData = [
-    {
-      vendorId: insertedVendorAccounts[0].id,
-      contactId: insertedContacts[0].id,
-      title: 'Follow up on inquiry',
-      description: 'Customer asked about wedding package pricing',
-      dueDate: new Date(Date.now() + 2 * 24 * 60 * 60 * 1000), // 2 days from now
-      priority: 1, // High
-    },
-    {
-      vendorId: insertedVendorAccounts[0].id,
-      contactId: insertedContacts[1].id,
-      title: 'Send contract',
-      description: 'Send contract for upcoming event',
-      dueDate: new Date(Date.now() + 5 * 24 * 60 * 60 * 1000), // 5 days from now
-      priority: 2, // Medium
-    },
-  ];
-
-  await db.insert(crmTasks).values(taskData);
-};
+    .returning();};
 
 // Run the migration
 export async function up() {
@@ -542,19 +423,6 @@ export async function up() {
   try {
     // Create new tables
     await db.execute(sql`
-      -- Customer profiles
-      CREATE TABLE IF NOT EXISTS customer_profiles (
-        id VARCHAR PRIMARY KEY REFERENCES users(id) ON DELETE CASCADE,
-        first_name TEXT NOT NULL,
-        last_name TEXT NOT NULL,
-        phone VARCHAR(20),
-        avatar_url TEXT,
-        bio TEXT,
-        location TEXT,
-        created_at TIMESTAMP WITH TIME ZONE DEFAULT NOW(),
-        updated_at TIMESTAMP WITH TIME ZONE DEFAULT NOW()
-      );
-
       -- Vendor availability
       
       CREATE TABLE IF NOT EXISTS vendor_availability (
@@ -566,71 +434,7 @@ export async function up() {
         is_available BOOLEAN DEFAULT true,
         created_at TIMESTAMP WITH TIME ZONE DEFAULT NOW(),
         updated_at TIMESTAMP WITH TIME ZONE DEFAULT NOW()
-      );
-
-      -- Listing packages
-      CREATE TABLE IF NOT EXISTS listing_packages (
-        id VARCHAR PRIMARY KEY DEFAULT gen_random_uuid(),
-        listing_id VARCHAR NOT NULL REFERENCES vendor_listings(id) ON DELETE CASCADE,
-        name TEXT NOT NULL,
-        description TEXT,
-        price DECIMAL(10,2) NOT NULL,
-        currency VARCHAR(3) DEFAULT 'USD',
-        is_most_popular BOOLEAN DEFAULT false,
-        features TEXT[],
-        created_at TIMESTAMP WITH TIME ZONE DEFAULT NOW(),
-        updated_at TIMESTAMP WITH TIME ZONE DEFAULT NOW()
-      );
-
-      -- Listing addons
-      CREATE TABLE IF NOT EXISTS listing_addons (
-        id VARCHAR PRIMARY KEY DEFAULT gen_random_uuid(),
-        listing_id VARCHAR NOT NULL REFERENCES vendor_listings(id) ON DELETE CASCADE,
-        name TEXT NOT NULL,
-        description TEXT,
-        price DECIMAL(10,2) NOT NULL,
-        currency VARCHAR(3) DEFAULT 'USD',
-        is_required BOOLEAN DEFAULT false,
-        min_quantity INTEGER DEFAULT 0,
-        max_quantity INTEGER,
-        created_at TIMESTAMP WITH TIME ZONE DEFAULT NOW(),
-        updated_at TIMESTAMP WITH TIME ZONE DEFAULT NOW()
-      );
-
-      -- CRM contacts
-      CREATE TABLE IF NOT EXISTS crm_contacts (
-        id VARCHAR PRIMARY KEY DEFAULT gen_random_uuid(),
-        vendor_id VARCHAR NOT NULL REFERENCES vendor_accounts(id) ON DELETE CASCADE,
-        user_id VARCHAR REFERENCES users(id) ON DELETE SET NULL,
-        name TEXT NOT NULL,
-        email TEXT,
-        phone VARCHAR(20),
-        company TEXT,
-        notes TEXT,
-        source contact_source NOT NULL DEFAULT 'marketplace',
-        tags TEXT[],
-        last_contacted TIMESTAMP WITH TIME ZONE,
-        created_at TIMESTAMP WITH TIME ZONE DEFAULT NOW(),
-        updated_at TIMESTAMP WITH TIME ZONE DEFAULT NOW()
-      );
-
-      -- CRM tasks
-      CREATE TABLE IF NOT EXISTS crm_tasks (
-        id VARCHAR PRIMARY KEY DEFAULT gen_random_uuid(),
-        vendor_id VARCHAR NOT NULL REFERENCES vendor_accounts(id) ON DELETE CASCADE,
-        contact_id VARCHAR REFERENCES crm_contacts(id) ON DELETE CASCADE,
-        title TEXT NOT NULL,
-        description TEXT,
-        due_date TIMESTAMP WITH TIME ZONE,
-        status task_status NOT NULL DEFAULT 'pending',
-        priority INTEGER DEFAULT 2,
-        completed_at TIMESTAMP WITH TIME ZONE,
-        created_at TIMESTAMP WITH TIME ZONE DEFAULT NOW(),
-        updated_at TIMESTAMP WITH TIME ZONE DEFAULT NOW()
-      );
-    `);
-
-    // Generate and insert dummy data (only in non-production or when explicitly enabled)
+      );    // Generate and insert dummy data (only in non-production or when explicitly enabled)
     const shouldSeed =
       process.env.SEED_DATA === 'true' ||
       (process.env.NODE_ENV && process.env.NODE_ENV !== 'production');
@@ -658,12 +462,7 @@ export async function down() {
 
   try {
     await pool.query(`
-      DROP TABLE IF EXISTS crm_tasks;
-      DROP TABLE IF EXISTS crm_contacts;
-      DROP TABLE IF EXISTS listing_addons;
-      DROP TABLE IF EXISTS listing_packages;
       DROP TABLE IF EXISTS vendor_availability;
-      DROP TABLE IF EXISTS customer_profiles;
       DROP TYPE IF EXISTS task_status;
       DROP TYPE IF EXISTS contact_source;
     `);
