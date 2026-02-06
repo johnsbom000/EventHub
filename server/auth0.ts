@@ -141,16 +141,24 @@ export async function requireAuth0(req: Request, res: Response, next: NextFuncti
       try {
         if (!auth0.sub && !auth0.email) return;
 
-        await db.execute(
-          drizzleSql`
-            UPDATE users
-            SET last_login_at = NOW()
-            WHERE
-              ( ${auth0.sub ?? null} IS NOT NULL AND auth0_sub = ${auth0.sub ?? ""} )
-              OR
-              ( ${auth0.email ?? null} IS NOT NULL AND lower(email) = lower(${auth0.email ?? ""}) )
-          `
-        );
+        // Prefer matching by auth0_sub when present; fall back to email
+        if (auth0.sub) {
+          await db.execute(
+            drizzleSql`
+              UPDATE users
+              SET last_login_at = NOW()
+              WHERE auth0_sub = ${auth0.sub}
+            `
+          );
+        } else if (auth0.email) {
+          await db.execute(
+            drizzleSql`
+              UPDATE users
+              SET last_login_at = NOW()
+              WHERE lower(email) = lower(${auth0.email})
+            `
+          );
+        }
       } catch (e: any) {
         console.warn("AUTH0 last_login_at update failed:", e?.message || e);
       }

@@ -51,41 +51,37 @@ export default function Navigation() {
   }, [user]);
 
   // Fetch vendor account if vendor token exists (legacy)
-const { data: vendorAccount, isError: vendorMeError, isLoading: vendorMeLoading } = useQuery<VendorAccount>({
-    queryKey: ["/api/vendor/me"],
-    enabled: true,
+  const { getAccessTokenSilently } = useAuth0();
+
+  const {
+    data: vendorAccount,
+    isLoading: vendorMeLoading,
+    isError: vendorMeError,
+  } = useQuery<VendorAccount>({
+    queryKey: ["/api/vendor/me"],     // ✅ MUST be only this
+    enabled: isAuthenticated,
     retry: false,
+    refetchOnMount: "always",
+    staleTime: 0,
   });
 
   // Fetch customer account if customer token exists (legacy)
   const { data: customer } = useQuery<Customer>({
     queryKey: ["/api/customer/me"],
-    enabled: !!localStorage.getItem("customerToken"),
+    enabled: false,
     retry: false,
   });
 
   // Update user role based on fetched data (legacy)
-useEffect(() => {
-  // While vendor /me is loading, don't decide a role yet
-  // (prevents brief customer UI flash)
-  if (vendorMeLoading) return;
-
-  // Vendor wins if vendor account exists
-  if (vendorAccount) {
-    setUserRole("vendor");
-    return;
-  }
-
-  // If vendor /me errored (likely 401), fall back to customer
-  if (vendorMeError) {
-    if (customer) setUserRole("customer");
-    else setUserRole(null);
-    return;
-  }
-
-  // No vendor, no customer
-  setUserRole(null);
-}, [vendorAccount, vendorMeError, vendorMeLoading, customer]);
+  useEffect(() => {
+    if (!isAuthenticated) {
+      setUserRole(null);
+      return;
+    }
+    if (vendorMeLoading) return;
+    if (vendorAccount) setUserRole("vendor");
+    else setUserRole("customer");
+  }, [isAuthenticated, vendorAccount, vendorMeLoading]);
 
 
 

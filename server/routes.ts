@@ -1,6 +1,7 @@
 import type { Express } from "express";
 import { createServer, type Server } from "http";
 import { storage } from "./storage";
+import crypto from "crypto";
 import {
   insertEventSchema,
   insertVendorAccountSchema,
@@ -8,12 +9,14 @@ import {
   vendorProfiles,
   vendorAccounts,
   vendorListings,
+  listingTraffic,
   users,
   insertUserSchema,
   webTraffic,
   bookings,
+  events,
+  rentalTypes,
 } from "@shared/schema";
-import { scoreVendorsForEvent } from "./vendorScoring";
 import {
   hashPassword,
   comparePassword,
@@ -303,7 +306,6 @@ app.post(
         stripeConnectId: account.stripeConnectId,
         stripeAccountType: account.stripeAccountType,
         stripeOnboardingComplete: account.stripeOnboardingComplete,
-        active: account.active,
         profileComplete: profile !== undefined,
         profileId: profile?.id || null,
       });
@@ -336,7 +338,6 @@ app.post(
           stripeConnectId: null,
           stripeAccountType: null,
           stripeOnboardingComplete: false,
-          active: true,
         })
         .returning();
 
@@ -437,9 +438,7 @@ app.post(
         businessName: account.businessName,
         stripeConnectId: account.stripeConnectId,
         stripeAccountType: account.stripeAccountType,
-        stripeOnboardingComplete: account.stripeOnboardingComplete,
-        active: account.active,
-        profileComplete: profile !== undefined,
+        stripeOnboardingComplete: account.stripeOnboardingComplete,        profileComplete: profile !== undefined,
         profileId: profile?.id || null,
         vendorType: profile?.serviceType || "unspecified",
         __marker: "vendor_me_route_hit",
@@ -785,7 +784,6 @@ app.post(
             password: "auth0-external",
             businessName: onboardingData.businessName,
             profileComplete: false,
-            active: true,
           })
           .returning();
 
@@ -938,9 +936,7 @@ app.post(
           businessName: account.businessName,
           stripeConnectId: account.stripeConnectId,
           stripeAccountType: account.stripeAccountType,
-          stripeOnboardingComplete: account.stripeOnboardingComplete,
-          active: account.active,
-          profileComplete: true,
+          stripeOnboardingComplete: account.stripeOnboardingComplete,          profileComplete: true,
           profileId: profile.id,
         },
         profile,
@@ -977,6 +973,47 @@ app.post(
     }
   });
 
+  /**
+   * PATCH /api/vendor/profile ✅ Auth0-only
+   * Updates the current vendor's profile
+   */
+  app.patch("/api/vendor/profile", ...requireVendorAuth0, async (req, res) => {
+    try {
+      const vendorAuth = (req as any).vendorAuth;
+
+      const profiles = await db
+        .select()
+        .from(vendorProfiles)
+        .where(eq(vendorProfiles.accountId, vendorAuth.id));
+
+      if (profiles.length === 0) {
+        return res.status(404).json({ error: "Vendor profile not found" });
+      }
+
+      const existing = profiles[0];
+
+      // Allow partial updates, but validate against the schema by merging
+      const merged = { ...existing, ...req.body };
+      const validated = createVendorProfileSchema.parse(merged);
+
+      const [updated] = await db
+        .update(vendorProfiles)
+        .set({
+          ...validated,
+          accountId: existing.accountId, // never change
+        })
+        .where(eq(vendorProfiles.id, existing.id))
+        .returning();
+
+      return res.json(updated);
+    } catch (error: any) {
+      if (error.name === "ZodError") {
+        return res.status(400).json({ error: "Validation failed", details: error.errors });
+      }
+      return res.status(500).json({ error: error.message });
+    }
+  });
+
   // Vendor Listings Routes (already Auth0 dual middleware and working)
   app.post("/api/vendor/listings", requireDualAuthAuth0, async (req, res) => {
     try {
@@ -987,6 +1024,9 @@ app.post(
       }
 
       const listingData = req.body?.listingData;
+
+      console.log("POST /api/vendor/listings body keys:", Object.keys(req.body ?? {}));
+      console.log("POST /api/vendor/listings req.body.status:", (req.body as any)?.status);
 
       if (!listingData || typeof listingData !== "object") {
         return res.status(400).json({ error: "listingData must be a JSON object." });
@@ -1025,16 +1065,18 @@ app.post(
 
       const title =
         (typeof listingData.title === "string" && listingData.title.trim()) || `New ${safeVendorType} listing`;
-      const [listing] = await db
-        .insert(vendorListings)
-        .values({
-          accountId: vendorAuth.id,
-          profileId: profile.id,
-          status: "draft",
-          title,
-          listingData: seededListingData,
-        })
-        .returning();
+        const [listing] = await db
+          .insert(vendorListings)
+          .values({
+            accountId: vendorAuth.id,
+            profileId: profile.id,
+            status: "draft",
+            title,
+            listingData: seededListingData,
+          })
+          .returning();
+
+        console.log("CREATED listing id=", listing.id, "status=", listing.status);
 
       return res.status(201).json(listing);
     } catch (error: any) {
@@ -1045,6 +1087,7 @@ app.post(
 
   app.patch("/api/vendor/listings/:id", requireDualAuthAuth0, async (req, res) => {
     try {
+      console.log("PATCH ROUTE MARKER v2", new Date().toISOString());
       const vendorAuth = (req as any).vendorAuth;
 
       if (!vendorAuth) {
@@ -1052,6 +1095,7 @@ app.post(
       }
       const { id } = req.params;
       const { listingData, status, title } = req.body;
+      console.log("PATCH /api/vendor/listings/:id req.body.status:", status);
 
       const existingListings = await db
         .select()
@@ -1061,6 +1105,7 @@ app.post(
       if (existingListings.length === 0) {
         return res.status(404).json({ error: "Listing not found" });
       }
+      console.log("PATCH listing status BEFORE:", existingListings[0]?.status, "id=", id);
 
       const profiles = await db.select().from(vendorProfiles).where(eq(vendorProfiles.accountId, vendorAuth.id));
 
@@ -1074,25 +1119,40 @@ app.post(
         status === "draft" ? "draft" :
         undefined;
 
+      const updatePayload: any = {
+        updatedAt: new Date(),
+      };
+
+      // Only overwrite fields if they were sent
+      if (listingData !== undefined) updatePayload.listingData = listingData;
+
+      if (typeof title === "string" && title.trim()) {
+        updatePayload.title = title.trim();
+      }
+
       const [updated] = await db
         .update(vendorListings)
-        .set({
-          listingData,
-          status: normalizedStatus ?? existingListings[0].status,
-          title: title || existingListings[0].title,
-          updatedAt: new Date(),
-        })
+        .set(updatePayload)
         .where(and(eq(vendorListings.id, id), eq(vendorListings.accountId, vendorAuth.id)))
         .returning();
+      
+      console.log("PATCH listing status AFTER:", updated?.status, "id=", id);
 
       return res.json(updated);
     } catch (error: any) {
-      return res.status(500).json({ error: error.message });
+      console.error("PATCH /api/vendor/listings/:id failed:", error);
+      return res.status(500).json({
+        error: error?.message ?? "Unknown error",
+        stack: error?.stack,
+      });
     }
   });
 
   app.patch("/api/vendor/listings/:id/publish", requireDualAuthAuth0, async (req, res) => {
     try {
+
+      console.log("PUBLISH called id=", req.params.id);
+
       const vendorAuth = (req as any).vendorAuth;
 
       if (!vendorAuth) {
@@ -1165,7 +1225,7 @@ app.post(
       const [updated] = await db
         .update(vendorListings)
         .set({
-          status: "draft",
+          status: "active",
           updatedAt: new Date(),
         })
         .where(and(eq(vendorListings.id, id), eq(vendorListings.accountId, vendorAuth.id)))
@@ -1211,6 +1271,15 @@ app.post(
       console.error("PATCH /api/vendor/listings/:id/unpublish failed:", error);
       return res.status(500).json({ error: error?.message ?? "Unknown error" });
     }
+  });
+
+  app.get("/api/rental-types", async (_req, res) => {
+    const rows = await db
+      .select({ slug: rentalTypes.slug, label: rentalTypes.label })
+      .from(rentalTypes)
+      .where(eq(rentalTypes.isActive, true));
+
+    return res.json(rows);
   });
 
   // Public Listings (guest browsing)
@@ -1280,6 +1349,19 @@ app.post(
       const listing = rows[0];
       if (!listing) return res.status(404).json({ error: "Not found" });
 
+      // 🔹 analytics: listing view (non-blocking)
+      try {
+        await db.insert(listingTraffic).values({
+          id: crypto.randomUUID(),
+          listingId: listing.id,
+          eventType: "view",
+          userId: (req as any).user?.id ?? null,
+          occurredAt: new Date(),
+          meta: {},
+        });
+      } catch (err) {
+        console.warn("listing_traffic insert failed", err);
+      }
       return res.json(listing);
     } catch (error: any) {
       console.error("GET /api/listings/public/:id failed:", error);
@@ -1507,7 +1589,33 @@ app.post(
         return res.json([]);
       }
 
-      res.json([]);
+      const rows = await db
+          .select({
+            id: bookings.id,
+            status: bookings.status,
+            paymentStatus: bookings.paymentStatus,
+            totalAmount: bookings.totalAmount,
+            platformFee: bookings.platformFee,
+            vendorPayout: bookings.vendorPayout,
+            createdAt: bookings.createdAt,
+            updatedAt: bookings.updatedAt,
+
+            // booking-specific fields
+            eventId: bookings.eventId,
+            eventLocation: bookings.eventLocation,
+            guestCount: bookings.guestCount,
+            specialRequests: bookings.specialRequests,
+
+            // ✅ real calendar source
+            eventDate: drizzleSql<string>`coalesce(${bookings.eventDate}, ${events.date})`.as("eventDate"),
+            eventStartTime: drizzleSql<string>`coalesce(${bookings.eventStartTime}, ${events.startTime})`.as("eventStartTime"),
+          })
+          .from(bookings)
+          .leftJoin(events, eq(events.id, bookings.eventId))
+          .where(eq(bookings.vendorAccountId, account.id))
+          .orderBy(desc(bookings.createdAt));
+
+        res.json(rows);
     } catch (error: any) {
       res.status(500).json({ error: error.message });
     }
@@ -1537,6 +1645,42 @@ app.post(
       res.status(500).json({ error: error.message });
     }
   });
+
+  app.get("/api/vendor/notifications", ...requireVendorAuth0, async (req, res) => {
+    try {
+      const vendorAuth = (req as any).vendorAuth;
+      const account = await storage.getVendorAccount(vendorAuth.id);
+
+      if (!account?.id) {
+        return res.json([]);
+      }
+
+      const notifications = await storage.getNotificationsByRecipient(
+        account.id,
+        "vendor"
+      );
+
+      res.json(notifications);
+    } catch (error: any) {
+      res.status(500).json({ error: error.message });
+    }
+  });
+
+  app.patch(
+    "/api/vendor/notifications/:id/read",
+    ...requireVendorAuth0,
+    async (req, res) => {
+      try {
+        const { id } = req.params;
+
+        await storage.markNotificationAsRead(id);
+
+        res.json({ success: true });
+      } catch (error: any) {
+        res.status(500).json({ error: error.message });
+      }
+    }
+  );
 
   app.get("/api/vendor/reviews", ...requireVendorAuth0, async (req, res) => {
     try {
@@ -1706,7 +1850,11 @@ app.post(
         return res.status(404).json({ error: "Payment schedule not found" });
       }
 
-      const vendorAccount = await storage.getVendorAccountByVendorId(booking.vendorId);
+      if (!booking.vendorAccountId) {
+        return res.status(400).json({ message: "Booking is missing vendorAccountId" });
+      }
+
+      const vendorAccount = await storage.getVendorAccountById(booking.vendorAccountId);
       if (!vendorAccount || !vendorAccount.stripeConnectId || !vendorAccount.stripeOnboardingComplete) {
         return res.status(400).json({ error: "Vendor payment processing not set up" });
       }
@@ -1728,7 +1876,7 @@ app.post(
         bookingId: booking.id,
         scheduleId: schedule.id,
         customerId: booking.customerId,
-        vendorId: booking.vendorId,
+        vendorAccountId: booking.vendorAccountId,
         stripePaymentIntentId: paymentIntent.id,
         amount: schedule.amount,
         platformFee,

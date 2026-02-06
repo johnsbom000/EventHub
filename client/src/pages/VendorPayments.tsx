@@ -1,22 +1,35 @@
 import { useQuery } from "@tanstack/react-query";
+import { useAuth0 } from "@auth0/auth0-react";
+
 import { SidebarProvider, SidebarTrigger } from "@/components/ui/sidebar";
 import { VendorSidebar } from "@/components/vendor-sidebar";
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card";
 import { Button } from "@/components/ui/button";
 import { DollarSign, Download, ExternalLink } from "lucide-react";
 
+type VendorPayment = {
+  id: string;
+  amount?: number | null;
+  status?: string | null;
+  createdAt?: string | null;
+  // minimal shape for typing only
+};
+
 export default function VendorPayments() {
-  const { data: payments = [] } = useQuery({
+  const { isAuthenticated } = useAuth0();
+
+  const { data: payments = [] } = useQuery<VendorPayment[]>({
     queryKey: ["/api/vendor/payments"],
+    enabled: isAuthenticated,
   });
 
   const sidebarStyle = {
     "--sidebar-width": "16rem",
     "--sidebar-width-icon": "3rem",
-  };
+  } as React.CSSProperties;
 
   return (
-    <SidebarProvider style={sidebarStyle as React.CSSProperties}>
+    <SidebarProvider style={sidebarStyle}>
       <div className="flex h-screen w-full">
         <VendorSidebar />
         <div className="flex flex-col flex-1">
@@ -33,15 +46,14 @@ export default function VendorPayments() {
               </Button>
             </div>
           </header>
+
           <main className="flex-1 overflow-auto p-6">
             <div className="max-w-7xl mx-auto space-y-6">
               <div>
                 <h1 className="text-3xl font-bold mb-2" data-testid="text-page-title">
                   Payments
                 </h1>
-                <p className="text-muted-foreground">
-                  Track your earnings and payment history
-                </p>
+                <p className="text-muted-foreground">Track your earnings and payment history</p>
               </div>
 
               <div className="grid grid-cols-1 md:grid-cols-3 gap-6">
@@ -88,9 +100,7 @@ export default function VendorPayments() {
               <Card>
                 <CardHeader>
                   <CardTitle>Payment History</CardTitle>
-                  <CardDescription>
-                    Detailed list of all payments and transactions
-                  </CardDescription>
+                  <CardDescription>Detailed list of all payments and transactions</CardDescription>
                 </CardHeader>
                 <CardContent>
                   {payments.length === 0 ? (
@@ -102,9 +112,7 @@ export default function VendorPayments() {
                       </p>
                     </div>
                   ) : (
-                    <div>
-                      {/* Payment table will be rendered here */}
-                    </div>
+                    <div>{/* Payment table will be rendered here later */}</div>
                   )}
                 </CardContent>
               </Card>

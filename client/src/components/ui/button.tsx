@@ -18,6 +18,7 @@ const buttonVariants = cva(
           " border [border-color:var(--button-outline)]  shadow-xs active:shadow-none ",
         secondary: "border bg-secondary text-secondary-foreground border border-secondary-border ",
         ghost: "border border-transparent",
+        link: "underline-offset-4 hover:underline",
       },
       size: {
         default: "min-h-9 px-4 py-2",

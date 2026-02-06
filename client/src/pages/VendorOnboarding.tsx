@@ -1,4 +1,5 @@
-import { apiRequest } from "@/lib/queryClient";
+// client/src/pages/VendorOnboarding.tsx
+
 import { useEffect, useState } from "react";
 import { useLocation } from "wouter";
 import { Check } from "lucide-react";
@@ -8,8 +9,7 @@ import { useToast } from "@/hooks/use-toast";
 import Navigation from "@/components/Navigation";
 import { useAuth0 } from "@auth0/auth0-react";
 
-
-// Step components
+// Step components (Prop/Decor-only flow)
 import Step2_BusinessDetails from "@/features/vendor/onboarding/Step2_BusinessDetails";
 import Step3_Market from "@/features/vendor/onboarding/Step3_Market";
 import Step4_Confirm from "@/features/vendor/onboarding/Step4_Confirm";
@@ -29,7 +29,7 @@ export interface VendorOnboardingData {
   // Step 1 (hidden in single-vendor mode)
   vendorType: string;
 
-  // Business Details
+  // Business Details (current flow)
   businessName: string;
   streetAddress: string;
   city: string;
@@ -43,9 +43,34 @@ export interface VendorOnboardingData {
     lng: number;
   };
 
-  // Market
+  // Market (current flow)
   serviceRadiusMiles: number; // 0, 15, 30, ...
   chargesTravelFee: boolean;
+
+  /* -------------------------------------------------
+     Legacy fields still referenced by older onboarding steps
+     (kept so repo typecheck passes even if those steps
+     are not used in the current SINGLE_VENDOR_MODE flow)
+  -------------------------------------------------- */
+
+  // Step2_AboutYou.tsx
+  contactName?: string;
+  bio?: string;
+  introVideoUrl?: string;
+  website?: string;
+  instagram?: string;
+  tiktok?: string;
+
+  // Step3_Location.tsx (legacy name)
+  serviceRadius?: string;
+
+  // Step4_Portfolio.tsx
+  portfolioImages?: string[];
+  coverImageIndex?: number;
+
+  // Step5_ServiceDescription.tsx
+  serviceHeadline?: string;
+  serviceDescription?: string;
 }
 
 /* -----------------------------
@@ -69,6 +94,8 @@ const STORAGE_KEY = "vendorOnboarding:v1";
 
 const DEFAULT_ONBOARDING_DATA: VendorOnboardingData = {
   vendorType: SINGLE_VENDOR_MODE ? SINGLE_VENDOR_TYPE : "",
+
+  // current flow
   businessName: "",
   streetAddress: "",
   city: "",
@@ -77,6 +104,21 @@ const DEFAULT_ONBOARDING_DATA: VendorOnboardingData = {
   businessPhone: "",
   serviceRadiusMiles: 0,
   chargesTravelFee: false,
+
+  // legacy fields (safe defaults)
+  contactName: "",
+  bio: "",
+  introVideoUrl: "",
+  website: "",
+  instagram: "",
+  tiktok: "",
+  serviceRadius: "",
+
+  portfolioImages: [],
+  coverImageIndex: 0,
+
+  serviceHeadline: "",
+  serviceDescription: "",
 };
 
 export default function VendorOnboarding() {
@@ -156,32 +198,29 @@ export default function VendorOnboarding() {
   ------------------------------ */
 
   const completeOnboardingMutation = useMutation({
-  mutationFn: async (data: VendorOnboardingData) => {
-    const token = await getAccessTokenSilently();
-    
-    const res = await fetch("/api/vendor/onboarding/complete", {
-      method: "POST",
-      headers: {
-        "Content-Type": "application/json",
-        Authorization: `Bearer ${token}`,
-      },
-      body: JSON.stringify(data),
-    });
+    mutationFn: async (data: VendorOnboardingData) => {
+      const token = await getAccessTokenSilently();
 
-    if (!res.ok) {
-      const err = await res.json().catch(() => ({} as any));
-      throw new Error(err?.error || err?.message || "Failed to complete onboarding");
-    }
+      const res = await fetch("/api/vendor/onboarding/complete", {
+        method: "POST",
+        headers: {
+          "Content-Type": "application/json",
+          Authorization: `Bearer ${token}`,
+        },
+        body: JSON.stringify(data),
+      });
 
-    return res.json();
-  },
+      if (!res.ok) {
+        const err = await res.json().catch(() => ({} as any));
+        throw new Error(err?.error || err?.message || "Failed to complete onboarding");
+      }
 
+      return res.json();
+    },
 
-
-
-    onSuccess: (data) => {
-      if (data.vendorAccountId) localStorage.setItem("vendorAccountId", data.vendorAccountId);
-      if (data.profileId) localStorage.setItem("vendorProfileId", data.profileId);
+    onSuccess: (data: any) => {
+      if (data?.vendorAccountId) localStorage.setItem("vendorAccountId", data.vendorAccountId);
+      if (data?.profileId) localStorage.setItem("vendorProfileId", data.profileId);
 
       queryClient.invalidateQueries({ queryKey: ["/api/vendor/me"] });
       queryClient.invalidateQueries({ queryKey: ["/api/customer/me"] });
@@ -204,7 +243,6 @@ export default function VendorOnboarding() {
     }
   };
 
-
   /* -----------------------------
      Render step
   ------------------------------ */
@@ -213,9 +251,9 @@ export default function VendorOnboarding() {
     // In single-vendor mode:
     // 1 = Business Details, 2 = Market, 3 = Confirm
     if (SINGLE_VENDOR_MODE) {
-    switch (currentStep) {
-      case 1:
-        return (
+      switch (currentStep) {
+        case 1:
+          return (
             <Step2_BusinessDetails
               formData={formData}
               updateFormData={updateFormData}
@@ -228,7 +266,7 @@ export default function VendorOnboarding() {
             <Step3_Market
               formData={formData}
               updateFormData={updateFormData}
-            onNext={handleNext}
+              onNext={handleNext}
               onBack={handleBack}
             />
           );
@@ -238,8 +276,8 @@ export default function VendorOnboarding() {
               formData={formData}
               onBack={handleBack}
               onComplete={handleComplete}
-          />
-        );
+            />
+          );
         default:
           return null;
       }
@@ -289,7 +327,7 @@ export default function VendorOnboarding() {
   return (
     <div className="min-h-screen bg-white flex flex-col">
       <Navigation />
-      
+
       <div className="flex flex-1">
         {/* Sidebar */}
         <div className="w-64 border-r p-6">

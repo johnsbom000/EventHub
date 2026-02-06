@@ -421,5 +421,44 @@ export const insertWebTrafficSchema = createInsertSchema(webTraffic).omit({
   timestamp: true,
 });
 
+// Listing-level traffic (replaces listing_views)
+export const listingTraffic = pgTable("listing_traffic", {
+  id: varchar("id").primaryKey().default(sql`gen_random_uuid()`),
+  listingId: varchar("listing_id")
+    .notNull()
+    .references(() => vendorListings.id, { onDelete: "cascade" }),
+
+  eventType: text("event_type").notNull(),
+  sessionId: text("session_id"),
+  userId: varchar("user_id").references(() => users.id, { onDelete: "set null" }),
+
+  referrer: text("referrer"),
+  utmSource: text("utm_source"),
+  utmMedium: text("utm_medium"),
+  utmCampaign: text("utm_campaign"),
+
+  occurredAt: timestamp("occurred_at").defaultNow().notNull(),
+  meta: jsonb("meta").default({}).notNull(),
+});
+
+export const insertListingTrafficSchema = createInsertSchema(listingTraffic).omit({
+  id: true,
+  occurredAt: true,
+});
+
 export type InsertWebTraffic = z.infer<typeof insertWebTrafficSchema>;
 export type WebTraffic = typeof webTraffic.$inferSelect;
+export type InsertListingTraffic = z.infer<typeof insertListingTrafficSchema>;
+export type ListingTraffic = typeof listingTraffic.$inferSelect;
+
+export type RentalType = typeof rentalTypes.$inferSelect;
+
+// Rental Types (DB-backed canonical prop/rental types)
+export const rentalTypes = pgTable("rental_types", {
+  id: varchar("id").primaryKey().default(sql`gen_random_uuid()`),
+  slug: text("slug").notNull().unique(),
+  label: text("label").notNull(),
+  isActive: boolean("is_active").default(true).notNull(),
+  sortOrder: integer("sort_order").default(0).notNull(),
+  createdAt: timestamp("created_at").defaultNow().notNull(),
+});

@@ -1,7 +1,7 @@
-import { 
-  type User, 
-  type InsertUser, 
-  type Event, 
+import {
+  type User,
+  type InsertUser,
+  type Event,
   type InsertEvent,
   type VendorAccount,
   type InsertVendorAccount,
@@ -20,122 +20,240 @@ import {
   type Notification,
   type InsertNotification,
   type ReviewReply,
-  type InsertReviewReply
+  type InsertReviewReply,
 } from "@shared/schema";
 import { randomUUID } from "crypto";
+import { db } from "./db";
+import { notifications } from "@shared/schema";
+import { and, desc, eq } from "drizzle-orm";
 
 export interface IStorage {
-  // Customer users
   getUser(id: string): Promise<User | undefined>;
   getUserByUsername(username: string): Promise<User | undefined>;
   createUser(user: InsertUser): Promise<User>;
-  
-  // Vendor accounts (separate authentication)
+
   getVendorAccount(id: string): Promise<VendorAccount | undefined>;
+  getVendorAccountById(id: string): Promise<VendorAccount | undefined>;
   getVendorAccountByEmail(email: string): Promise<VendorAccount | undefined>;
-  getVendorAccountByVendorId(vendorId: string): Promise<VendorAccount | undefined>;
   createVendorAccount(account: InsertVendorAccount): Promise<VendorAccount>;
-  updateVendorAccount(id: string, updates: Partial<VendorAccount>): Promise<VendorAccount | undefined>;
-  
-  // Vendor profiles (1:1 with vendor accounts)
+  updateVendorAccount(
+    id: string,
+    updates: Partial<VendorAccount>
+  ): Promise<VendorAccount | undefined>;
+
   createVendorProfile(profile: InsertVendorProfile): Promise<VendorProfile>;
   getVendorProfile(id: string): Promise<VendorProfile | undefined>;
   getVendorProfileByAccountId(accountId: string): Promise<VendorProfile | undefined>;
-  updateVendorProfile(id: string, updates: Partial<VendorProfile>): Promise<VendorProfile | undefined>;
-  
-  // Vendor listings (1:n with vendor profiles)
+  updateVendorProfile(
+    id: string,
+    updates: Partial<VendorProfile>
+  ): Promise<VendorProfile | undefined>;
+
   createVendorListing(listing: InsertVendorListing): Promise<VendorListing>;
   getVendorListing(id: string): Promise<VendorListing | undefined>;
   getVendorListingsByProfile(profileId: string): Promise<VendorListing[]>;
   getVendorListingsByAccount(accountId: string): Promise<VendorListing[]>;
-  updateVendorListing(id: string, updates: Partial<VendorListing>): Promise<VendorListing | undefined>;
-  
-  // Events
+  updateVendorListing(
+    id: string,
+    updates: Partial<VendorListing>
+  ): Promise<VendorListing | undefined>;
+
   createEvent(event: InsertEvent): Promise<Event>;
   getEvent(id: string): Promise<Event | undefined>;
   getAllEvents(): Promise<Event[]>;
-  
-  // Bookings
+
   createBooking(booking: InsertBooking): Promise<Booking>;
   getBooking(id: string): Promise<Booking | undefined>;
   getBookingsByVendor(vendorId: string): Promise<Booking[]>;
   getBookingsByCustomer(customerId: string): Promise<Booking[]>;
-  updateBooking(id: string, updates: Partial<Booking>): Promise<Booking | undefined>;
-  
-  // Messages
+  updateBooking(
+    id: string,
+    updates: Partial<Booking>
+  ): Promise<Booking | undefined>;
+
   createMessage(message: InsertMessage): Promise<Message>;
   getMessagesByBooking(bookingId: string): Promise<Message[]>;
   markMessageAsRead(id: string): Promise<void>;
-  
-  // Payment Schedules
+
   createPaymentSchedule(schedule: InsertPaymentSchedule): Promise<PaymentSchedule>;
   getPaymentSchedulesByBooking(bookingId: string): Promise<PaymentSchedule[]>;
-  updatePaymentSchedule(id: string, updates: Partial<PaymentSchedule>): Promise<PaymentSchedule | undefined>;
-  
-  // Payments
+  updatePaymentSchedule(
+    id: string,
+    updates: Partial<PaymentSchedule>
+  ): Promise<PaymentSchedule | undefined>;
+
   createPayment(payment: InsertPayment): Promise<Payment>;
   getPayment(id: string): Promise<Payment | undefined>;
   getPaymentsByBooking(bookingId: string): Promise<Payment[]>;
   getPaymentsByVendor(vendorId: string): Promise<Payment[]>;
-  updatePayment(id: string, updates: Partial<Payment>): Promise<Payment | undefined>;
-  
-  // Notifications
+  updatePayment(
+    id: string,
+    updates: Partial<Payment>
+  ): Promise<Payment | undefined>;
+
   createNotification(notification: InsertNotification): Promise<Notification>;
   getNotificationsByRecipient(recipientId: string, recipientType: string): Promise<Notification[]>;
   markNotificationAsRead(id: string): Promise<void>;
-  
-  // Review Replies
-  createReviewReply(reply: InsertReviewReply): Promise<ReviewReply>;
-  getReviewRepliesByVendor(vendorId: string): Promise<ReviewReply[]>;
+
 }
 
 export class MemStorage implements IStorage {
-  private users: Map<string, User>;
-  private events: Map<string, Event>;
-  private vendorAccounts: Map<string, VendorAccount>;
-  private vendorProfiles: Map<string, VendorProfile>;
-  private vendorListings: Map<string, VendorListing>;
-  private bookings: Map<string, Booking>;
-  private messages: Map<string, Message>;
-  private payments: Map<string, Payment>;
-  private paymentSchedules: Map<string, PaymentSchedule>;
-  private notifications: Map<string, Notification>;
-  private reviewReplies: Map<string, ReviewReply>;
+  private users = new Map<string, User>();
+  private events = new Map<string, Event>();
+  private vendorAccounts = new Map<string, VendorAccount>();
+  private vendorProfiles = new Map<string, VendorProfile>();
+  private vendorListings = new Map<string, VendorListing>();
+  private bookings = new Map<string, Booking>();
+  private messages = new Map<string, Message>();
+  private payments = new Map<string, Payment>();
+  private paymentSchedules = new Map<string, PaymentSchedule>();
+  private notifications = new Map<string, Notification>();
+  private reviewReplies = new Map<string, ReviewReply>();
 
-  constructor() {
-    this.users = new Map();
-    this.events = new Map();
-    this.vendorAccounts = new Map();
-    this.vendorProfiles = new Map();
-    this.vendorListings = new Map();
-    this.bookings = new Map();
-    this.messages = new Map();
-    this.payments = new Map();
-    this.paymentSchedules = new Map();
-    this.notifications = new Map();
-    this.reviewReplies = new Map();
-  }
+  /* ---------------- Users ---------------- */
 
-  async getUser(id: string): Promise<User | undefined> {
+  async getUser(id: string) {
     return this.users.get(id);
   }
 
-  async getUserByUsername(username: string): Promise<User | undefined> {
+  async getUserByUsername(username: string) {
     return Array.from(this.users.values()).find(
-      (user) => user.username === username,
+      (u) => u.email === username
     );
   }
 
   async createUser(insertUser: InsertUser): Promise<User> {
     const id = randomUUID();
-    const user: User = { ...insertUser, id };
+    const now = new Date();
+
+    const user: User = {
+      id,
+      name: insertUser.name,
+      email: insertUser.email,
+      password: insertUser.password,
+
+      role: "customer",
+      displayName: null,
+      lastLoginAt: null,
+      defaultLocation: null,
+
+      createdAt: now,
+      updatedAt: now,
+    };
+
     this.users.set(id, user);
     return user;
   }
 
+  /* ---------------- Vendor Accounts ---------------- */
+
+  async getVendorAccount(id: string) {
+    return this.vendorAccounts.get(id);
+  }
+
+  async getVendorAccountByEmail(email: string) {
+    return Array.from(this.vendorAccounts.values()).find(
+      (a) => a.email === email
+    );
+  }
+
+  async getVendorAccountById(id: string): Promise<VendorAccount | undefined> {
+    return this.vendorAccounts.get(id);
+  }
+
+  async createVendorAccount(insert: InsertVendorAccount): Promise<VendorAccount> {
+    const id = randomUUID();
+    const now = new Date();
+
+    const account: VendorAccount = {
+      id,
+      email: insert.email,
+      password: insert.password,
+      businessName: insert.businessName,
+
+      userId: insert.userId ?? null,
+      auth0Sub: insert.auth0Sub ?? null,
+
+      stripeConnectId: insert.stripeConnectId ?? null,
+      stripeAccountType: insert.stripeAccountType ?? null,
+      stripeOnboardingComplete: insert.stripeOnboardingComplete ?? null,
+      profileComplete: insert.profileComplete ?? null,
+      active: insert.active ?? null,
+
+      createdAt: now,
+    };
+
+    this.vendorAccounts.set(id, account);
+    return account;
+  }
+
+  async updateVendorAccount(
+    id: string,
+    updates: Partial<VendorAccount>
+  ): Promise<VendorAccount | undefined> {
+    const existing = this.vendorAccounts.get(id);
+    if (!existing) return undefined;
+
+    const updated: VendorAccount = {
+      ...existing,
+      ...updates,
+    };
+
+    this.vendorAccounts.set(id, updated);
+    return updated;
+  }
+
+  /* ---------------- Vendor Profiles ---------------- */
+
+  async createVendorProfile(insert: InsertVendorProfile): Promise<VendorProfile> {
+    const id = randomUUID();
+    const now = new Date();
+
+    const profile: VendorProfile = {
+      id,
+      photos: [],
+      qualifications: [],
+      ...insert,
+      onlineProfiles: insert.onlineProfiles ?? null,
+      serviceRadius: insert.serviceRadius ?? null,
+      serviceAddress: insert.serviceAddress ?? null,
+      createdAt: now,
+      updatedAt: now,
+    };
+
+    this.vendorProfiles.set(id, profile);
+    return profile;
+  }
+
+  async getVendorProfile(id: string) {
+    return this.vendorProfiles.get(id);
+  }
+
+  async getVendorProfileByAccountId(accountId: string) {
+    return Array.from(this.vendorProfiles.values()).find(
+      (p) => p.accountId === accountId
+    );
+  }
+
+  async updateVendorProfile(
+    id: string,
+    updates: Partial<VendorProfile>
+  ): Promise<VendorProfile | undefined> {
+    const profile = this.vendorProfiles.get(id);
+    if (!profile) return undefined;
+
+    const updated = { ...profile, ...updates };
+    this.vendorProfiles.set(id, updated);
+    return updated;
+  }
+
+  /* ---------------- Events ---------------- */
   async createEvent(insertEvent: InsertEvent): Promise<Event> {
     const id = randomUUID();
-    const event: Event = { 
+    const now = new Date();
+
+    const event: Event = {
+      id,
       ...insertEvent,
       photographerDetails: insertEvent.photographerDetails ?? null,
       videographerDetails: insertEvent.videographerDetails ?? null,
@@ -143,9 +261,9 @@ export class MemStorage implements IStorage {
       cateringDetails: insertEvent.cateringDetails ?? null,
       djDetails: insertEvent.djDetails ?? null,
       propDecorDetails: insertEvent.propDecorDetails ?? null,
-      id,
-      createdAt: new Date(),
+      createdAt: now,
     };
+
     this.events.set(id, event);
     return event;
   }
@@ -158,133 +276,81 @@ export class MemStorage implements IStorage {
     return Array.from(this.events.values());
   }
 
-  // Vendor Account Methods
-  async getVendorAccount(id: string): Promise<VendorAccount | undefined> {
-    return this.vendorAccounts.get(id);
-  }
+  /* ---------------- Vendor Listings ---------------- */
 
-  async getVendorAccountByEmail(email: string): Promise<VendorAccount | undefined> {
-    return Array.from(this.vendorAccounts.values()).find(
-      (account) => account.email === email
-    );
-  }
-
-  async getVendorAccountByVendorId(vendorId: string): Promise<VendorAccount | undefined> {
-    return Array.from(this.vendorAccounts.values()).find(
-      (account) => account.vendorId === vendorId
-    );
-  }
-
-  async createVendorAccount(insertAccount: InsertVendorAccount): Promise<VendorAccount> {
+  async createVendorListing(insert: InsertVendorListing): Promise<VendorListing> {
     const id = randomUUID();
-    const account: VendorAccount = {
-      ...insertAccount,
-      vendorId: insertAccount.vendorId ?? null,
-      stripeConnectId: insertAccount.stripeConnectId ?? null,
-      stripeAccountType: insertAccount.stripeAccountType ?? null,
-      stripeOnboardingComplete: insertAccount.stripeOnboardingComplete ?? false,
-      active: insertAccount.active ?? true,
-      id,
-      createdAt: new Date(),
-    };
-    this.vendorAccounts.set(id, account);
-    return account;
-  }
+    const now = new Date();
 
-  // Vendor Profile Methods
-  async createVendorProfile(insertProfile: InsertVendorProfile): Promise<VendorProfile> {
-    const id = randomUUID();
-    const profile: VendorProfile = {
-      ...insertProfile,
-      photos: insertProfile.photos ?? [],
-      qualifications: insertProfile.qualifications ?? [],
-      willTravel: insertProfile.willTravel ?? null,
-      travelDistance: insertProfile.travelDistance ?? null,
-      id,
-      createdAt: new Date(),
-      updatedAt: new Date(),
-    };
-    this.vendorProfiles.set(id, profile);
-    return profile;
-  }
-
-  async getVendorProfile(id: string): Promise<VendorProfile | undefined> {
-    return this.vendorProfiles.get(id);
-  }
-
-  async getVendorProfileByAccountId(accountId: string): Promise<VendorProfile | undefined> {
-    return Array.from(this.vendorProfiles.values()).find(
-      (profile) => profile.accountId === accountId
-    );
-  }
-
-  async updateVendorProfile(id: string, updates: Partial<VendorProfile>): Promise<VendorProfile | undefined> {
-    const profile = this.vendorProfiles.get(id);
-    if (!profile) return undefined;
-    
-    const updated = { ...profile, ...updates, updatedAt: new Date() };
-    this.vendorProfiles.set(id, updated);
-    return updated;
-  }
-
-  // Vendor Listing Methods
-  async createVendorListing(insertListing: InsertVendorListing): Promise<VendorListing> {
-    const id = randomUUID();
     const listing: VendorListing = {
-      ...insertListing,
-      packages: insertListing.packages ?? [],
-      addOns: insertListing.addOns ?? [],
-      discounts: insertListing.discounts ?? [],
-      availableDays: insertListing.availableDays ?? [],
-      unavailableDates: insertListing.unavailableDates ?? [],
-      minNotice: insertListing.minNotice ?? null,
-      maxAdvanceBooking: insertListing.maxAdvanceBooking ?? null,
-      active: insertListing.active ?? true,
       id,
-      createdAt: new Date(),
-      updatedAt: new Date(),
+      status: insert.status ?? "draft",
+      createdAt: now,
+      updatedAt: now,
+
+      accountId: insert.accountId,
+      profileId: insert.profileId ?? null,
+      title: insert.title ?? null,
+
+      // required; must not be undefined
+      listingData: insert.listingData ?? {},
     };
+
     this.vendorListings.set(id, listing);
     return listing;
   }
 
-  async getVendorListing(id: string): Promise<VendorListing | undefined> {
+  async getVendorListing(id: string) {
     return this.vendorListings.get(id);
   }
 
-  async getVendorListingsByProfile(profileId: string): Promise<VendorListing[]> {
+  async getVendorListingsByProfile(profileId: string) {
     return Array.from(this.vendorListings.values()).filter(
-      (listing) => listing.profileId === profileId
+      (l) => l.profileId === profileId
     );
   }
 
-  async getVendorListingsByAccount(accountId: string): Promise<VendorListing[]> {
+  async getVendorListingsByAccount(accountId: string) {
     const profile = await this.getVendorProfileByAccountId(accountId);
     if (!profile) return [];
     return this.getVendorListingsByProfile(profile.id);
   }
 
-  async updateVendorListing(id: string, updates: Partial<VendorListing>): Promise<VendorListing | undefined> {
+  async updateVendorListing(
+    id: string,
+    updates: Partial<VendorListing>
+  ): Promise<VendorListing | undefined> {
     const listing = this.vendorListings.get(id);
     if (!listing) return undefined;
-    
-    const updated = { ...listing, ...updates, updatedAt: new Date() };
+
+    const updated = { ...listing, ...updates };
     this.vendorListings.set(id, updated);
     return updated;
   }
 
-  // Booking Methods
+  /* ---------------- Bookings ---------------- */
+
   async createBooking(insertBooking: InsertBooking): Promise<Booking> {
     const id = randomUUID();
+    const now = new Date();
+
     const booking: Booking = {
-      ...insertBooking,
+      id,
+
       customerId: insertBooking.customerId ?? null,
+      vendorAccountId: insertBooking.vendorAccountId ?? null,
       eventId: insertBooking.eventId ?? null,
       packageId: insertBooking.packageId ?? null,
+      addOnIds: insertBooking.addOnIds ?? [],
+      eventDate: insertBooking.eventDate,
       eventStartTime: insertBooking.eventStartTime ?? null,
       eventLocation: insertBooking.eventLocation ?? null,
       guestCount: insertBooking.guestCount ?? null,
       specialRequests: insertBooking.specialRequests ?? null,
+      totalAmount: insertBooking.totalAmount,
+      platformFee: insertBooking.platformFee,
+      vendorPayout: insertBooking.vendorPayout,
+      depositAmount: insertBooking.depositAmount,
       depositPaidAt: insertBooking.depositPaidAt ?? null,
       finalPaymentStrategy: insertBooking.finalPaymentStrategy ?? null,
       status: insertBooking.status ?? "pending",
@@ -293,10 +359,10 @@ export class MemStorage implements IStorage {
       cancelledAt: insertBooking.cancelledAt ?? null,
       confirmedAt: insertBooking.confirmedAt ?? null,
       completedAt: insertBooking.completedAt ?? null,
-      id,
-      createdAt: new Date(),
-      updatedAt: new Date(),
+      createdAt: now,
+      updatedAt: now,
     };
+
     this.bookings.set(id, booking);
     return booking;
   }
@@ -305,163 +371,233 @@ export class MemStorage implements IStorage {
     return this.bookings.get(id);
   }
 
-  async getBookingsByVendor(vendorId: string): Promise<Booking[]> {
-    return Array.from(this.bookings.values()).filter(b => b.vendorId === vendorId);
-  }
+  async updateBooking(
+    id: string,
+    updates: Partial<Booking>
+  ): Promise<Booking | undefined> {
+    const existing = this.bookings.get(id);
+    if (!existing) return undefined;
 
-  async getBookingsByCustomer(customerId: string): Promise<Booking[]> {
-    return Array.from(this.bookings.values()).filter(b => b.customerId === customerId);
-  }
+    const updated: Booking = {
+      ...existing,
+      ...updates,
+    };
 
-  async updateBooking(id: string, updates: Partial<Booking>): Promise<Booking | undefined> {
-    const booking = this.bookings.get(id);
-    if (!booking) return undefined;
-    
-    const updated = { ...booking, ...updates, updatedAt: new Date() };
     this.bookings.set(id, updated);
     return updated;
   }
 
-  // Message Methods
+  async getBookingsByVendor(vendorAccountId: string): Promise<Booking[]> {
+    return Array.from(this.bookings.values()).filter(
+      (b) => b.vendorAccountId === vendorAccountId
+    );
+  }
+
+  async getBookingsByCustomer(customerId: string): Promise<Booking[]> {
+    return Array.from(this.bookings.values()).filter(
+      (b) => b.customerId === customerId
+    );
+  }
+
+  /* ---------------- Messages (implemented, can remain unused) ---------------- */
+
   async createMessage(insertMessage: InsertMessage): Promise<Message> {
     const id = randomUUID();
+    const now = new Date();
+
     const message: Message = {
-      ...insertMessage,
-      attachments: insertMessage.attachments ?? null,
-      read: insertMessage.read ?? false,
       id,
-      createdAt: new Date(),
+      ...insertMessage,
+      attachments: insertMessage.attachments ?? [],
+      read: insertMessage.read ?? false,
+      createdAt: now,
     };
+
     this.messages.set(id, message);
     return message;
   }
 
   async getMessagesByBooking(bookingId: string): Promise<Message[]> {
-    return Array.from(this.messages.values())
-      .filter(m => m.bookingId === bookingId)
-      .sort((a, b) => a.createdAt!.getTime() - b.createdAt!.getTime());
+    return Array.from(this.messages.values()).filter(
+      (m) => m.bookingId === bookingId
+    );
   }
 
   async markMessageAsRead(id: string): Promise<void> {
-    const message = this.messages.get(id);
-    if (message) {
-      this.messages.set(id, { ...message, read: true });
-    }
+    const existing = this.messages.get(id);
+    if (!existing) return;
+
+    this.messages.set(id, { ...existing, read: true });
   }
 
-  // Payment Schedule Methods
+  /* ---------------- Payment Schedules ---------------- */
+
   async createPaymentSchedule(insertSchedule: InsertPaymentSchedule): Promise<PaymentSchedule> {
     const id = randomUUID();
+    const now = new Date();
+
     const schedule: PaymentSchedule = {
+      id,
       ...insertSchedule,
       status: insertSchedule.status ?? "pending",
       stripePaymentIntentId: insertSchedule.stripePaymentIntentId ?? null,
       paidAt: insertSchedule.paidAt ?? null,
-      id,
-      createdAt: new Date(),
+      createdAt: now,
     };
+
     this.paymentSchedules.set(id, schedule);
     return schedule;
   }
 
-  async getPaymentSchedulesByBooking(bookingId: string): Promise<PaymentSchedule[]> {
-    return Array.from(this.paymentSchedules.values())
-      .filter(s => s.bookingId === bookingId)
-      .sort((a, b) => a.installmentNumber - b.installmentNumber);
-  }
+  async updatePaymentSchedule(
+    id: string,
+    updates: Partial<PaymentSchedule>
+  ): Promise<PaymentSchedule | undefined> {
+    const existing = this.paymentSchedules.get(id);
+    if (!existing) return undefined;
 
-  async updatePaymentSchedule(id: string, updates: Partial<PaymentSchedule>): Promise<PaymentSchedule | undefined> {
-    const schedule = this.paymentSchedules.get(id);
-    if (!schedule) return undefined;
-    
-    const updated = { ...schedule, ...updates };
+    const updated: PaymentSchedule = {
+      ...existing,
+      ...updates,
+    };
+
     this.paymentSchedules.set(id, updated);
     return updated;
   }
 
-  // Payment Methods
+  async getPaymentSchedulesByBooking(bookingId: string): Promise<PaymentSchedule[]> {
+    return Array.from(this.paymentSchedules.values()).filter(
+      (s) => s.bookingId === bookingId
+    );
+  }
+
+  /* ---------------- Payments ---------------- */
+
   async createPayment(insertPayment: InsertPayment): Promise<Payment> {
     const id = randomUUID();
+    const now = new Date();
+
     const payment: Payment = {
+      id,
       ...insertPayment,
-      scheduleId: insertPayment.scheduleId ?? null,
-      customerId: insertPayment.customerId ?? null,
       status: insertPayment.status ?? "pending",
+      customerId: insertPayment.customerId ?? null,
+      vendorAccountId: insertPayment.vendorAccountId ?? null,
+      scheduleId: insertPayment.scheduleId ?? null,
       stripeTransferId: insertPayment.stripeTransferId ?? null,
+      stripePaymentIntentId: insertPayment.stripePaymentIntentId ?? null,
       refundAmount: insertPayment.refundAmount ?? null,
       refundReason: insertPayment.refundReason ?? null,
-      refundedAt: insertPayment.refundedAt ?? null,
       paidAt: insertPayment.paidAt ?? null,
-      id,
-      createdAt: new Date(),
+      refundedAt: insertPayment.refundedAt ?? null,
+      createdAt: now,
     };
+
     this.payments.set(id, payment);
     return payment;
+  }
+
+  async getPaymentsByBooking(bookingId: string): Promise<Payment[]> {
+    return Array.from(this.payments.values()).filter(
+      (p) => p.bookingId === bookingId
+    );
+  }
+
+  async updatePayment(
+    id: string,
+    updates: Partial<Payment>
+  ): Promise<Payment | undefined> {
+    const existing = this.payments.get(id);
+    if (!existing) return undefined;
+
+    const updated: Payment = {
+      ...existing,
+      ...updates,
+    };
+
+    this.payments.set(id, updated);
+    return updated;
   }
 
   async getPayment(id: string): Promise<Payment | undefined> {
     return this.payments.get(id);
   }
 
-  async getPaymentsByBooking(bookingId: string): Promise<Payment[]> {
-    return Array.from(this.payments.values()).filter(p => p.bookingId === bookingId);
+  async getPaymentsByVendor(vendorAccountId: string): Promise<Payment[]> {
+    return Array.from(this.payments.values()).filter(
+      (p) => p.vendorAccountId === vendorAccountId
+    );
   }
 
-  async getPaymentsByVendor(vendorId: string): Promise<Payment[]> {
-    return Array.from(this.payments.values()).filter(p => p.vendorId === vendorId);
-  }
+  /* ---------------- Notifications ---------------- */
 
-  async updatePayment(id: string, updates: Partial<Payment>): Promise<Payment | undefined> {
-    const payment = this.payments.get(id);
-    if (!payment) return undefined;
-    
-    const updated = { ...payment, ...updates };
-    this.payments.set(id, updated);
-    return updated;
-  }
-
-  // Notification Methods
   async createNotification(insertNotification: InsertNotification): Promise<Notification> {
     const id = randomUUID();
-    const notification: Notification = {
-      ...insertNotification,
-      link: insertNotification.link ?? null,
-      read: insertNotification.read ?? false,
-      id,
-      createdAt: new Date(),
-    };
-    this.notifications.set(id, notification);
-    return notification;
+
+    const [row] = await db
+      .insert(notifications)
+      .values({
+        id,
+        recipientId: insertNotification.recipientId,
+        recipientType: insertNotification.recipientType,
+        type: insertNotification.type,
+        title: insertNotification.title,
+        message: insertNotification.message,
+        link: insertNotification.link ?? null,
+        read: insertNotification.read ?? false,
+        createdAt: new Date(),
+      })
+      .returning();
+
+    return row as Notification;
   }
 
-  async getNotificationsByRecipient(recipientId: string, recipientType: string): Promise<Notification[]> {
-    return Array.from(this.notifications.values())
-      .filter(n => n.recipientId === recipientId && n.recipientType === recipientType)
-      .sort((a, b) => b.createdAt!.getTime() - a.createdAt!.getTime());
+  async getNotificationsByRecipient(
+    recipientId: string,
+    recipientType: string
+  ): Promise<Notification[]> {
+    const rows = await db
+      .select()
+      .from(notifications)
+      .where(
+        and(
+          eq(notifications.recipientId, recipientId),
+          eq(notifications.recipientType, recipientType)
+        )
+      )
+      .orderBy(desc(notifications.createdAt));
+
+    return rows as Notification[];
   }
 
   async markNotificationAsRead(id: string): Promise<void> {
-    const notification = this.notifications.get(id);
-    if (notification) {
-      this.notifications.set(id, { ...notification, read: true });
-    }
+    await db.update(notifications).set({ read: true }).where(eq(notifications.id, id));
   }
 
-  // Review Reply Methods
+  /* ---------------- Review Replies ---------------- */
+
   async createReviewReply(insertReply: InsertReviewReply): Promise<ReviewReply> {
     const id = randomUUID();
+    const now = new Date();
+
     const reply: ReviewReply = {
-      ...insertReply,
       id,
-      createdAt: new Date(),
+      ...insertReply,
+      vendorAccountId: insertReply.vendorAccountId ?? null,
+      createdAt: now,
     };
+
     this.reviewReplies.set(id, reply);
     return reply;
   }
 
-  async getReviewRepliesByVendor(vendorId: string): Promise<ReviewReply[]> {
-    return Array.from(this.reviewReplies.values()).filter(r => r.vendorId === vendorId);
+  async getReviewRepliesByVendor(vendorAccountId: string): Promise<ReviewReply[]> {
+    return Array.from(this.reviewReplies.values()).filter(
+      (r) => r.vendorAccountId === vendorAccountId
+    );
   }
+
+  /* ---------------- Remaining sections unchanged ---------------- */
 }
 
 export const storage = new MemStorage();

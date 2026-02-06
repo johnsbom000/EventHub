@@ -4,11 +4,33 @@ import { Card, CardContent } from "@/components/ui/card";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import { Skeleton } from "@/components/ui/skeleton";
-import { ScrollArea, ScrollBar } from "@/components/ui/scroll-area";
+import { ScrollArea } from "@/components/ui/scroll-area";
 import Navigation from "@/components/Navigation";
 import Footer from "@/components/Footer";
 import { Star, MapPin, CheckCircle2, Calendar } from "lucide-react";
-import type { Event, Vendor } from "@shared/schema";
+import type { Event } from "@shared/schema";
+
+// Local type (because @shared/schema no longer exports Vendor)
+type Vendor = {
+  id: string;
+  name: string;
+  description?: string | null;
+
+  imageUrl?: string | null;
+  verified?: boolean | null;
+
+  city?: string | null;
+  state?: string | null;
+
+  rating?: number | null;
+  reviewCount?: number | null;
+
+  travelFeeRequired?: boolean | null;
+  blockedDates?: string[] | null;
+
+  // optional: if your scoring uses price/budget, keep it here
+  startingPrice?: number | null;
+};
 
 interface ScoredVendor {
   vendor: Vendor;
@@ -22,14 +44,7 @@ interface ScoredVendor {
   labels: string[];
 }
 
-interface VendorRecommendations {
-  [category: string]: ScoredVendor[];
-}
-
-interface RecommendationsResponse {
-  event: Event;
-  recommendations: VendorRecommendations;
-}
+type VendorRecommendations = Record<string, ScoredVendor[]>;
 
 export default function CuratedRecommendations() {
   const params = useParams();
@@ -56,17 +71,9 @@ export default function CuratedRecommendations() {
     "prop-decor": "Props & Décor Rentals",
   };
 
-  const formatPrice = (price: number) => {
-    return new Intl.NumberFormat('en-US', {
-      style: 'currency',
-      currency: 'USD',
-      minimumFractionDigits: 0,
-      maximumFractionDigits: 0,
-    }).format(price);
-  };
-
   const getAvailabilityStatus = (vendor: Vendor, eventDate: string) => {
-    if (vendor.blockedDates?.includes(eventDate)) {
+    const blocked = vendor.blockedDates ?? [];
+    if (blocked.includes(eventDate)) {
       return { text: "Not available", color: "destructive" as const };
     }
     return { text: "Available", color: "default" as const };
@@ -75,7 +82,7 @@ export default function CuratedRecommendations() {
   return (
     <div className="min-h-screen flex flex-col">
       <Navigation />
-      
+
       <main className="flex-1 bg-background">
         {isLoading ? (
           <div className="container mx-auto px-4 py-12 space-y-12">
@@ -101,12 +108,14 @@ export default function CuratedRecommendations() {
                 Your Curated Vendor Recommendations
               </h1>
               <p className="text-lg text-muted-foreground" data-testid="text-event-details">
-                For your {event.eventType} on {new Date(event.date).toLocaleDateString('en-US', { 
-                  weekday: 'long',
-                  year: 'numeric',
-                  month: 'long',
-                  day: 'numeric' 
-                })} in {event.location}
+                For your {event.eventType} on{" "}
+                {new Date(event.date).toLocaleDateString("en-US", {
+                  weekday: "long",
+                  year: "numeric",
+                  month: "long",
+                  day: "numeric",
+                })}{" "}
+                in {event.location}
               </p>
             </div>
 
@@ -117,9 +126,7 @@ export default function CuratedRecommendations() {
                     {categoryDisplayNames[category] || category}
                   </h2>
                   <Button variant="outline" asChild data-testid={`button-view-all-${category}`}>
-                    <Link href={`/browse?category=${category}`}>
-                      View all
-                    </Link>
+                    <Link href={`/browse?category=${category}`}>View all</Link>
                   </Button>
                 </div>
 
@@ -134,21 +141,25 @@ export default function CuratedRecommendations() {
                 ) : (
                   <ScrollArea className="w-full whitespace-nowrap">
                     <div className="flex gap-6 pb-4">
-                      {scoredVendors.map((scoredVendor, index) => {
+                      {scoredVendors.map((scoredVendor) => {
                         const { vendor, labels } = scoredVendor;
                         const availability = getAvailabilityStatus(vendor, event.date);
-                        
+
+                        const vendorName = vendor.name ?? "Vendor";
+                        const vendorRating = vendor.rating ?? 0;
+                        const vendorReviews = vendor.reviewCount ?? 0;
+
                         return (
-                          <Card 
-                            key={vendor.id} 
+                          <Card
+                            key={vendor.id}
                             className="w-[320px] flex-shrink-0 hover-elevate overflow-hidden"
                             data-testid={`card-vendor-${vendor.id}`}
                           >
                             <div className="relative h-[200px] bg-muted">
                               {vendor.imageUrl ? (
-                                <img 
-                                  src={vendor.imageUrl} 
-                                  alt={vendor.name}
+                                <img
+                                  src={vendor.imageUrl}
+                                  alt={vendorName}
                                   className="w-full h-full object-cover"
                                 />
                               ) : (
@@ -156,15 +167,15 @@ export default function CuratedRecommendations() {
                                   No image
                                 </div>
                               )}
-                              
+
                               {labels.length > 0 && (
                                 <div className="absolute top-3 left-3 flex flex-wrap gap-2">
                                   {labels.map((label, idx) => (
-                                    <Badge 
-                                      key={idx} 
+                                    <Badge
+                                      key={idx}
                                       variant="default"
                                       className="bg-primary text-primary-foreground"
-                                      data-testid={`badge-${label.toLowerCase().replace(' ', '-')}-${vendor.id}`}
+                                      data-testid={`badge-${label.toLowerCase().replace(" ", "-")}-${vendor.id}`}
                                     >
                                       {label}
                                     </Badge>
@@ -185,12 +196,15 @@ export default function CuratedRecommendations() {
                             <CardContent className="p-6 space-y-4">
                               <div className="space-y-2">
                                 <h3 className="text-xl font-semibold text-foreground" data-testid={`text-vendor-name-${vendor.id}`}>
-                                  {vendor.name}
+                                  {vendorName}
                                 </h3>
-                                
+
                                 <div className="flex items-center gap-2 text-sm text-muted-foreground">
                                   <MapPin className="w-4 h-4" />
-                                  <span>{vendor.city}, {vendor.state}</span>
+                                  <span>
+                                    {vendor.city ?? "—"}
+                                    {vendor.state ? `, ${vendor.state}` : ""}
+                                  </span>
                                   {vendor.travelFeeRequired && (
                                     <Badge variant="outline" className="text-xs">
                                       Travel fee
@@ -201,11 +215,9 @@ export default function CuratedRecommendations() {
                                 <div className="flex items-center gap-3">
                                   <div className="flex items-center gap-1">
                                     <Star className="w-4 h-4 fill-yellow-400 text-yellow-400" />
-                                    <span className="font-medium text-foreground">{vendor.rating}</span>
+                                    <span className="font-medium text-foreground">{vendorRating}</span>
                                   </div>
-                                  <span className="text-sm text-muted-foreground">
-                                    ({vendor.reviewCount} reviews)
-                                  </span>
+                                  <span className="text-sm text-muted-foreground">({vendorReviews} reviews)</span>
                                 </div>
 
                                 <div className="flex items-center gap-2">
@@ -217,72 +229,27 @@ export default function CuratedRecommendations() {
                               </div>
 
                               <p className="text-sm text-muted-foreground line-clamp-2">
-                                {vendor.description}
+                                {vendor.description ?? ""}
                               </p>
 
-                              <div className="pt-2 border-t">
-                                <div className="flex items-baseline justify-between mb-3">
-                                  <span className="text-sm text-muted-foreground">Starting at</span>
-                                  <span className="text-2xl font-bold text-foreground" data-testid={`text-price-${vendor.id}`}>
-                                    {formatPrice(vendor.basePrice)}
-                                  </span>
-                                </div>
-
-                                <Button asChild className="w-full" data-testid={`button-view-profile-${vendor.id}`}>
-                                  <Link href={`/vendor/${vendor.id}`}>
-                                    View Profile
-                                  </Link>
-                                </Button>
-                              </div>
+                              <Button asChild className="w-full" data-testid={`button-view-vendor-${vendor.id}`}>
+                                <Link href={`/vendor/${vendor.id}`}>View profile</Link>
+                              </Button>
                             </CardContent>
                           </Card>
                         );
                       })}
                     </div>
-                    <ScrollBar orientation="horizontal" />
                   </ScrollArea>
                 )}
               </div>
             ))}
-
-            <div className="pt-8 border-t">
-              <Card>
-                <CardContent className="p-8 text-center space-y-4">
-                  <h3 className="text-2xl font-semibold text-foreground">
-                    Not finding what you're looking for?
-                  </h3>
-                  <p className="text-muted-foreground">
-                    Browse all vendors in our marketplace or refine your event details
-                  </p>
-                  <div className="flex gap-4 justify-center">
-                    <Button variant="outline" asChild data-testid="button-browse-all">
-                      <Link href="/browse">
-                        Browse All Vendors
-                      </Link>
-                    </Button>
-                    <Button asChild data-testid="button-update-event">
-                      <Link href="/planner">
-                        Update Event Details
-                      </Link>
-                    </Button>
-                  </div>
-                </CardContent>
-              </Card>
-            </div>
           </div>
         ) : (
           <div className="container mx-auto px-4 py-12">
             <Card>
-              <CardContent className="py-16 text-center">
-                <h2 className="text-2xl font-semibold text-foreground mb-4">Event not found</h2>
-                <p className="text-muted-foreground mb-6">
-                  We couldn't find the event you're looking for.
-                </p>
-                <Button asChild>
-                  <Link href="/planner">
-                    Start Planning Your Event
-                  </Link>
-                </Button>
+              <CardContent className="py-12 text-center">
+                <p className="text-muted-foreground">We couldn’t load recommendations for this event.</p>
               </CardContent>
             </Card>
           </div>

@@ -190,11 +190,34 @@ export default function VendorListings() {
 
     const category = listing?.category || listing?.listingData?.serviceType || "";
 
-    const location =
-      listing?.city ??
-      listing?.location?.city ??
-      listing?.listingData?.location?.city ??
-      "Location not set";
+    const sl =
+      listing?.listingData?.serviceLocation ??
+      listing?.listingData?.location ??
+      listing?.serviceLocation ??
+      listing?.location ??
+      null;
+
+    const location = (() => {
+      const city = sl?.city;
+      const region = sl?.region || sl?.state;
+
+      // Best case: structured city/region exists
+      if (typeof city === "string" && city.trim()) {
+        const c = city.trim();
+        const r = typeof region === "string" && region.trim() ? region.trim() : "";
+        return r ? `${c}, ${r}` : c;
+      }
+
+      // Fallback: derive from label like "Provo, UT, United States"
+      const label = typeof sl?.label === "string" ? sl.label.trim() : "";
+      if (label) {
+        const parts = label.split(",").map((p: string) => p.trim()).filter(Boolean);
+        if (parts.length >= 2) return `${parts[0]}, ${parts[1]}`;
+        return parts[0] || "Location not set";
+      }
+
+      return "Location not set";
+    })();
 
     const price =
       listing?.price ||

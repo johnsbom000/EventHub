@@ -39,16 +39,6 @@ const menuItems = [
     icon: LayoutGrid,
   },
   {
-    title: "Messages",
-    url: "/vendor/messages",
-    icon: MessageSquare,
-  },
-  {
-    title: "Calendar",
-    url: "/vendor/calendar",
-    icon: Calendar,
-  },
-  {
     title: "Payments",
     url: "/vendor/payments",
     icon: DollarSign,

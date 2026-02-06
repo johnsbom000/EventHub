@@ -42,25 +42,6 @@ type AnyListing = {
   listingData?: any;
 };
 
-// ---- Constants (copied from CreateListingWizard) ----
-const PROP_TYPES = [
-  "Arches",
-  "Backdrops",
-  "Signage",
-  "Tabletop Decor",
-  "Linens",
-  "Lighting",
-  "Photo Booths",
-  "Furniture & Lounges",
-  "Floral & Greenery",
-  "Food Displays",
-  "Carts & Stations",
-  "Games & Activities",
-  "Staging & Structures",
-  "Apparel & Accessories",
-  "Other",
-] as const;
-
 const POPULAR_FOR_OPTIONS = [
   "Weddings",
   "Corporate",
@@ -217,6 +198,12 @@ export default function VendorListingEdit() {
     queryKey: ["/api/vendor/profile"],
   });
 
+  const { data: rentalTypes = [] } = useQuery<{ slug: string; label: string }[]>({
+    queryKey: ["/api/rental-types"],
+  });
+
+  // Rental types (for prop type selection UI)
+
   const listing = (data as AnyListing | undefined) ?? undefined;
 
   // ---- Draft state (this is what we edit inline) ----
@@ -335,40 +322,40 @@ export default function VendorListingEdit() {
     });
   };
 
-  const setPropQuantity = (pt: string, raw: string) => {
+  const setPropQuantity = (slug: string, raw: string) => {
     const cleaned = raw.replace(/[^\d]/g, "");
     setDraft((d: any) => ({
       ...d,
       quantitiesByPropType: {
         ...(d.quantitiesByPropType || {}),
-        [pt]: cleaned,
+        [slug]: cleaned,
       },
     }));
   };
 
-  const togglePropType = (pt: string) => {
+  const togglePropType = (slug: string) => {
     setDraft((d: any) => {
       if (!d) return d;
       const mode: PricingMode = d.pricingMode;
 
       if (mode === "single_service") {
-        const isSelected = d.propTypes?.[0] === pt;
+        const isSelected = d.propTypes?.[0] === slug;
         return {
           ...d,
-          propTypes: isSelected ? [] : [pt],
-          quantitiesByPropType: isSelected ? {} : { [pt]: "1" },
+          propTypes: isSelected ? [] : [slug],
+          quantitiesByPropType: isSelected ? {} : { [slug]: "1" },
         };
       }
 
-      const has = (d.propTypes || []).includes(pt);
-      const nextPropTypes = has ? d.propTypes.filter((x: string) => x !== pt) : [...d.propTypes, pt];
+      const has = (d.propTypes || []).includes(slug);
+      const nextPropTypes = has ? d.propTypes.filter((x: string) => x !== slug) : [...d.propTypes, slug];
 
       let nextQty = d.quantitiesByPropType || {};
       if (has) {
-        const { [pt]: _removed, ...rest } = nextQty;
+        const { [slug]: _removed, ...rest } = nextQty;
         nextQty = rest;
       } else {
-        nextQty = { ...nextQty, [pt]: nextQty[pt] ?? "1" };
+        nextQty = { ...nextQty, [slug]: nextQty[slug] ?? "1" };
       }
 
       return { ...d, propTypes: nextPropTypes, quantitiesByPropType: nextQty };
@@ -382,8 +369,6 @@ export default function VendorListingEdit() {
 
   const mapContainerRef = useRef<HTMLDivElement | null>(null);
   const mapRef = useRef<mapboxgl.Map | null>(null);
-
-  type UploadedListingPhoto = { filename: string; url: string };
 
   async function uploadListingPhoto(file: File): Promise<{ url: string; filename: string }> {
     // IMPORTANT: For FormData uploads, do NOT use apiRequest() (it sets JSON headers)
@@ -979,22 +964,29 @@ export default function VendorListingEdit() {
                       </div>
 
                       <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
-                        {PROP_TYPES.map((pt) => {
-                          const checked = draft.propTypes.includes(pt);
+                        {(rentalTypes.length > 0 ? rentalTypes : []).map((r: { slug: string; label: string }) => {
+                          const slug = r.slug as string;
+                          const label = r.label as string;
+
+                          const checked = draft.propTypes.includes(slug);
                           const showQty = checked && draft.pricingMode === "a_la_carte";
-                          const qtyVal = draft.quantitiesByPropType?.[pt] ?? "1";
+                          const qtyVal = draft.quantitiesByPropType?.[slug] ?? "1";
 
                           return (
                             <label
-                              key={pt}
+                              key={slug}
                               className={[
                                 "flex items-center justify-between gap-3 rounded-lg border px-4 py-3 cursor-pointer",
                                 checked ? "border-primary bg-primary/5" : "border-border hover:bg-muted",
                               ].join(" ")}
                             >
                               <div className="flex items-center gap-3">
-                                <input type="checkbox" checked={checked} onChange={() => togglePropType(pt)} />
-                                <span className="font-medium">{pt}</span>
+                                <input
+                                  type="checkbox"
+                                  checked={checked}
+                                  onChange={() => togglePropType(slug)}
+                                />
+                                <span className="font-medium">{label}</span>
                               </div>
 
                               {showQty && (
@@ -1005,7 +997,7 @@ export default function VendorListingEdit() {
                                     value={qtyVal}
                                     inputMode="numeric"
                                     onClick={(e) => e.preventDefault()}
-                                    onChange={(e) => setPropQuantity(pt, e.target.value)}
+                                    onChange={(e) => setPropQuantity(slug, e.target.value)}
                                     placeholder="1"
                                   />
                                 </div>
@@ -1025,9 +1017,9 @@ export default function VendorListingEdit() {
                       )}
                       {draft.pricingMode === "a_la_carte" &&
                         draft.propTypes.length > 0 &&
-                        draft.propTypes.some((pt: string) => {
-                          const q = Number(draft.quantitiesByPropType?.[pt]);
-                          return !Number.isFinite(q) || q < 1;
+                        draft.propTypes.some((slug: string) => {
+                          const q = Number(draft.quantitiesByPropType?.[slug]);
+                          return !q || q < 1;
                         }) && (
                           <div className="text-sm text-destructive">
                             Each selected prop must have a quantity of at least 1.

@@ -39,17 +39,17 @@ export function toast({ title, description, variant = 'default', duration }: Enh
   const shadcnVariant = variant === 'error' ? 'destructive' : (variant === 'success' || variant === 'warning' || variant === 'info' ? 'default' : variant)
 
   return baseToast({
-    title: Icon ? (
+    title: !Icon ? title : undefined,
+    description: Icon ? (
       <div className="flex items-center gap-2">
         <Icon className="h-5 w-5" />
         <span>{title}</span>
       </div>
-    ) : title,
-    description,
-    variant: shadcnVariant as 'default' | 'destructive',
+    ) : description,
+    variant: shadcnVariant as "default" | "destructive",
     className: cn(config.className),
     duration: duration !== undefined ? duration : 5000,
-  })
+  });
 }
 
 // Re-export the useToast hook from shadcn

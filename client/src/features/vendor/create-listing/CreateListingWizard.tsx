@@ -7,6 +7,7 @@ import mapboxgl from "mapbox-gl";
 import "mapbox-gl/dist/mapbox-gl.css";
 import { Slider } from "@/components/ui/slider";
 import { LocationPicker } from "@/components/LocationPicker";
+import type { LocationResult } from "@/types/location";
 
 import { Button } from "@/components/ui/button";
 import { Card } from "@/components/ui/card";
@@ -144,7 +145,7 @@ type StepId =
 
 const STEPS: { id: StepId; title: string }[] = [
   { id: "listingType", title: "Listing Type" },
-  { id: "propTypes", title: "Prop Types" },
+  { id: "propTypes", title: "Rental Types" },
   { id: "tags", title: "Title & Description" },
   { id: "popularFor", title: "Popular For" },
   { id: "pricing", title: "Pricing" },
@@ -250,7 +251,8 @@ const DEFAULT_DRAFT: ListingDraft = {
   photosByPropType: {},
 };
 
-const PROP_TYPES = [
+// come back here
+const RENTAL_TYPES_FALLBACK = [
   "Arches",
   "Backdrops",
   "Signage",
@@ -358,6 +360,32 @@ export type CreateListingWizardProps = {
 export function CreateListingWizard({ onClose, editMode, initialData }: CreateListingWizardProps) {
   const { toast } = useToast();
 
+  const { data: rentalTypes = [] } = useQuery<{ slug: string; label: string }[]>({
+    queryKey: ["rental-types"],
+    queryFn: async () => {
+      const res = await fetch("/api/rental-types");
+      if (!res.ok) throw new Error("Failed to load rental types");
+      return res.json();
+    },
+  });
+
+  const rentalSlugToLabel = useMemo(() => {
+    const m = new Map<string, string>();
+    for (const r of rentalTypes) m.set(r.slug, r.label);
+    return m;
+  }, [rentalTypes]);
+
+  const rentalLabelToSlug = useMemo(() => {
+    const m = new Map<string, string>();
+    for (const r of rentalTypes) m.set(r.label, r.slug);
+    return m;
+  }, [rentalTypes]);
+
+    const rentalTypeLabels: string[] =
+    rentalTypes.length > 0
+      ? rentalTypes.map((r: { slug: string; label: string }) => r.label)
+      : [...RENTAL_TYPES_FALLBACK];
+
 // Vendor profile (Auth0 Bearer automatically attached by queryClient default queryFn)
 const { data: me } = useQuery({
   queryKey: ["/api/vendor/me"],
@@ -368,7 +396,7 @@ const { data: vendorProfile } = useQuery({
 });
 
 // Wizard state
-const vendorType = (me?.vendorType || "unspecified") as string;
+const vendorType = ((me as any)?.vendorType || "unspecified") as string;
 const [currentStep, setCurrentStep] = useState<StepId>("listingType");
 const [draft, setDraft] = useState<ListingDraft>(DEFAULT_DRAFT);
 
@@ -395,6 +423,23 @@ const [draft, setDraft] = useState<ListingDraft>(DEFAULT_DRAFT);
 
         const results: LocationResult[] = await res.json();
         const top = results?.[0];
+        if (!top) return;
+
+        // Ensure required fields exist for the shared LocationResult type
+        const normalizedTop: LocationResult = {
+          ...top,
+          id: (top as any).id ?? `loc_${top.lat}_${top.lng}`,
+          label: (top as any).label ?? [addr, city, state, zip].filter(Boolean).join(", "),
+        };
+
+        setDraft((d) => {
+          if (d.serviceCenter || d.serviceLocation) return d;
+          return {
+            ...d,
+            serviceLocation: normalizedTop,
+            serviceCenter: { lat: normalizedTop.lat, lng: normalizedTop.lng },
+          };
+        });
         if (!top) return;
 
         setDraft((d) => {
@@ -775,8 +820,8 @@ const [draft, setDraft] = useState<ListingDraft>(DEFAULT_DRAFT);
       if (draft.pricingMode === "single_service") return draft.propTypes.length === 1;
 
       if (draft.pricingMode === "a_la_carte") {
-        return draft.propTypes.every((pt) => {
-          const q = draft.quantitiesByPropType[pt];
+        return draft.propTypes.every((slug) => {
+          const q = draft.quantitiesByPropType[slug];
           const n = Number(q);
           return Number.isFinite(n) && n >= 1;
         });
@@ -790,8 +835,8 @@ const [draft, setDraft] = useState<ListingDraft>(DEFAULT_DRAFT);
       if (draft.propTypes.length === 0) return false;
 
       if (draft.pricingMode === "a_la_carte") {
-        return draft.propTypes.every((pt) => {
-          const d = draft.perPropDetails[pt];
+        return draft.propTypes.every((slug) => {
+          const d = draft.perPropDetails[slug];
           return !!d?.title?.trim() && !!d?.description?.trim();
         });
       }
@@ -802,8 +847,8 @@ const [draft, setDraft] = useState<ListingDraft>(DEFAULT_DRAFT);
     if (currentStep === "pricing") {
       if (draft.pricingMode === "a_la_carte") {
         if (draft.propTypes.length === 0) return false;
-        return draft.propTypes.every((pt) => {
-          const p = draft.pricingByPropType[pt];
+        return draft.propTypes.every((slug) => {
+          const p = draft.pricingByPropType[slug];
           if (!p?.rate?.trim()) return false;
           if (draft.pricingUnit === "per_hour" && !p?.minimumHours?.trim()) return false;
           return true;
@@ -876,13 +921,13 @@ const [draft, setDraft] = useState<ListingDraft>(DEFAULT_DRAFT);
     setDraft((d) => ({ ...d, listingTitle: val }));
   };
 
-  const updatePerPropTitle = (pt: string, raw: string) => {
+  const updatePerPropTitle = (slug: string, raw: string) => {
     const val = titleCaseNoSymbols(raw, 60);
     setDraft((d) => ({
       ...d,
       perPropDetails: {
         ...d.perPropDetails,
-        [pt]: { title: val, description: d.perPropDetails[pt]?.description ?? "" },
+        [slug]: { title: val, description: d.perPropDetails[slug]?.description ?? "" },
       },
     }));
   };
@@ -926,28 +971,28 @@ const [draft, setDraft] = useState<ListingDraft>(DEFAULT_DRAFT);
   };
 
   // Quantity helpers (a_la_carte)
-  const setPropQuantity = (pt: string, raw: string) => {
+  const setPropQuantity = (slug: string, raw: string) => {
     const cleaned = raw.replace(/[^\d]/g, "");
     setDraft((d) => ({
       ...d,
       quantitiesByPropType: {
         ...d.quantitiesByPropType,
-        [pt]: cleaned,
+        [slug]: cleaned,
       },
     }));
   };
 
-  const togglePropType = (pt: string) => {
+  const togglePropType = (slug: string) => {
     setDraft((d) => {
       const mode = d.pricingMode;
 
       if (mode === "single_service") {
-        const isSelected = d.propTypes[0] === pt;
-        const nextPropTypes = isSelected ? [] : [pt];
+        const isSelected = d.propTypes[0] === slug;
+        const nextPropTypes = isSelected ? [] : [slug];
 
         if (isSelected) {
           setTagInputByProp((m) => {
-            const { [pt]: _i, ...rest } = m;
+            const { [slug]: _i, ...rest } = m;
             return rest;
           });
         }
@@ -955,15 +1000,15 @@ const [draft, setDraft] = useState<ListingDraft>(DEFAULT_DRAFT);
         return {
           ...d,
           propTypes: nextPropTypes,
-          quantitiesByPropType: isSelected ? {} : { [pt]: "1" },
-          perPropDetails: isSelected ? {} : { [pt]: d.perPropDetails[pt] ?? { title: "", description: "" } },
-          pricingByPropType: isSelected ? {} : { [pt]: d.pricingByPropType[pt] ?? { rate: "", minimumHours: "" } },
+          quantitiesByPropType: isSelected ? {} : { [slug]: "1" },
+          perPropDetails: isSelected ? {} : { [slug]: d.perPropDetails[slug] ?? { title: "", description: "" } },
+          pricingByPropType: isSelected ? {} : { [slug]: d.pricingByPropType[slug] ?? { rate: "", minimumHours: "" } },
         };
       }
 
       // package / a_la_carte: multi-select
-      const has = d.propTypes.includes(pt);
-      const nextPropTypes = has ? d.propTypes.filter((x) => x !== pt) : [...d.propTypes, pt];
+      const has = d.propTypes.includes(slug);
+      const nextPropTypes = has ? d.propTypes.filter((x) => x !== slug) : [...d.propTypes, slug];
 
       let nextPerPropDetails = d.perPropDetails;
       let nextPricingByPropType = d.pricingByPropType;
@@ -972,45 +1017,45 @@ const [draft, setDraft] = useState<ListingDraft>(DEFAULT_DRAFT);
 
       if (has) {
         setTagInputByProp((m) => {
-          const { [pt]: _i, ...restInputs } = m;
+          const { [slug]: _i, ...restInputs } = m;
           return restInputs;
         });
 
         // remove quantity
-        const { [pt]: _removedQty, ...restQty } = d.quantitiesByPropType;
+        const { [slug]: _removedQty, ...restQty } = d.quantitiesByPropType;
         nextQty = restQty;
 
         if (d.pricingMode === "a_la_carte") {
-          const { [pt]: _removedDetails, ...restDetails } = d.perPropDetails;
+          const { [slug]: _removedDetails, ...restDetails } = d.perPropDetails;
           nextPerPropDetails = restDetails;
 
-          const { [pt]: _removedPricing, ...restPricing } = d.pricingByPropType;
+          const { [slug]: _removedPricing, ...restPricing } = d.pricingByPropType;
           nextPricingByPropType = restPricing;
 
           // remove per-prop photos + revoke previews
-          const existingPhotos = d.photosByPropType[pt];
+          const existingPhotos = d.photosByPropType[slug];
           if (existingPhotos) {
             existingPhotos.previews.forEach((u) => URL.revokeObjectURL(u));
           }
-          const { [pt]: _removedPhotos, ...restPhotos } = d.photosByPropType;
+          const { [slug]: _removedPhotos, ...restPhotos } = d.photosByPropType;
           nextPhotosByProp = restPhotos;
         }
       } else if (!has && d.pricingMode === "a_la_carte") {
         nextPerPropDetails = {
           ...d.perPropDetails,
-          [pt]: d.perPropDetails[pt] ?? { title: "", description: "" },
+          [slug]: d.perPropDetails[slug] ?? { title: "", description: "" },
         };
         nextPricingByPropType = {
           ...d.pricingByPropType,
-          [pt]: d.pricingByPropType[pt] ?? { rate: "", minimumHours: "" },
+          [slug]: d.pricingByPropType[slug] ?? { rate: "", minimumHours: "" },
         };
         nextPhotosByProp = {
           ...d.photosByPropType,
-          [pt]: d.photosByPropType[pt] ?? { previews: [], names: [] },
+          [slug]: d.photosByPropType[slug] ?? { previews: [], names: [] },
         };
         nextQty = {
           ...d.quantitiesByPropType,
-          [pt]: d.quantitiesByPropType[pt] ?? "1",
+          [slug]: d.quantitiesByPropType[slug] ?? "1",
         };
       } else if (!has && d.pricingMode !== "a_la_carte") {
         // package: we still allow selecting propTypes, but quantity is irrelevant.
@@ -1291,28 +1336,28 @@ const [draft, setDraft] = useState<ListingDraft>(DEFAULT_DRAFT);
     setDraft((d) => ({ ...d, minimumHours: cleaned }));
   };
 
-  const setPropRate = (pt: string, raw: string) => {
+  const setPropRate = (slug: string, raw: string) => {
     const cleaned = raw.replace(/[^\d.]/g, "");
     setDraft((d) => ({
       ...d,
       pricingByPropType: {
         ...d.pricingByPropType,
-        [pt]: {
+        [slug]: {
           rate: cleaned,
-          minimumHours: d.pricingByPropType[pt]?.minimumHours ?? "",
+          minimumHours: d.pricingByPropType[slug]?.minimumHours ?? "",
         },
       },
     }));
   };
 
-  const setPropMinHours = (pt: string, raw: string) => {
+  const setPropMinHours = (slug: string, raw: string) => {
     const cleaned = raw.replace(/[^\d]/g, "");
     setDraft((d) => ({
       ...d,
       pricingByPropType: {
         ...d.pricingByPropType,
-        [pt]: {
-          rate: d.pricingByPropType[pt]?.rate ?? "",
+        [slug]: {
+          rate: d.pricingByPropType[slug]?.rate ?? "",
           minimumHours: cleaned,
         },
       },
@@ -1410,30 +1455,37 @@ const [draft, setDraft] = useState<ListingDraft>(DEFAULT_DRAFT);
           {/* Step 2: Prop Types */}
           {currentStep === "propTypes" && (
             <div className="max-w-3xl space-y-6">
-              <h1 className="text-4xl font-bold">Prop Types</h1>
+              <h1 className="text-4xl font-bold">Rental Types</h1>
               <p className="text-muted-foreground">
                 {draft.pricingMode === "single_service"
-                  ? "Select exactly 1 prop type for this Single Item listing. (Required)"
-                  : "Select all prop types included in this listing. (Required)"}
+                  ? "Select exactly 1 rental type for this Single Item listing. (Required)"
+                  : "Select all rental types included in this listing. (Required)"}
               </p>
 
               <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
-                {PROP_TYPES.map((pt) => {
-                  const checked = draft.propTypes.includes(pt);
+                {rentalTypes.map((rt: { slug: string; label: string }) => {
+                  const slug = rt.slug;
+                  const label = rt.label;
+
+                  const checked = draft.propTypes.includes(slug);
                   const showQty = checked && draft.pricingMode === "a_la_carte";
-                  const qtyVal = draft.quantitiesByPropType[pt] ?? "1";
+                  const qtyVal = draft.quantitiesByPropType[slug] ?? "1";
 
                   return (
                     <label
-                      key={pt}
+                      key={slug}
                       className={[
                         "flex items-center justify-between gap-3 rounded-lg border px-4 py-3 cursor-pointer",
                         checked ? "border-primary bg-primary/5" : "border-border hover:bg-muted",
                       ].join(" ")}
                     >
                       <div className="flex items-center gap-3">
-                        <input type="checkbox" checked={checked} onChange={() => togglePropType(pt)} />
-                        <span className="font-medium">{pt}</span>
+                        <input
+                          type="checkbox"
+                          checked={checked}
+                          onChange={() => togglePropType(slug)}
+                        />
+                        <span className="font-medium">{label}</span>
                       </div>
 
                       {showQty && (
@@ -1443,8 +1495,7 @@ const [draft, setDraft] = useState<ListingDraft>(DEFAULT_DRAFT);
                             className="w-20 h-9"
                             value={qtyVal}
                             inputMode="numeric"
-                            onClick={(e) => e.preventDefault()}
-                            onChange={(e) => setPropQuantity(pt, e.target.value)}
+                            onChange={(e) => setPropQuantity(slug, e.target.value)}
                             placeholder="1"
                           />
                         </div>
@@ -1462,8 +1513,8 @@ const [draft, setDraft] = useState<ListingDraft>(DEFAULT_DRAFT);
               )}
               {draft.pricingMode === "a_la_carte" &&
                 draft.propTypes.length > 0 &&
-                draft.propTypes.some((pt) => {
-                  const q = Number(draft.quantitiesByPropType[pt]);
+                draft.propTypes.some((slug) => {
+                  const q = Number(draft.quantitiesByPropType[slug]);
                   return !Number.isFinite(q) || q < 1;
                 }) && <div className="text-sm text-destructive">Each selected prop must have a quantity of at least 1.</div>}
             </div>
@@ -1485,20 +1536,22 @@ const [draft, setDraft] = useState<ListingDraft>(DEFAULT_DRAFT);
                 <div className="text-sm text-muted-foreground">No prop types selected yet. Go back and pick at least 1.</div>
               ) : draft.pricingMode === "a_la_carte" ? (
                 <div className="space-y-6">
-                  {draft.propTypes.map((pt) => {
-                    const tags = draft.tagsByPropType[pt] ?? [];
-                    const inputVal = tagInputByProp[pt] ?? "";
-                    const suggestions = TAG_SUGGESTIONS[pt] ?? TAG_SUGGESTIONS.Other ?? [];
+                  {draft.propTypes.map((slug) => {
+                    const tags = draft.tagsByPropType[slug] ?? [];
+                    const inputVal = tagInputByProp[slug] ?? "";
+                    const suggestions = TAG_SUGGESTIONS[slug] ?? TAG_SUGGESTIONS.Other ?? [];
 
-                    const titleValue = draft.perPropDetails[pt]?.title ?? "";
-                    const descValue = draft.perPropDetails[pt]?.description ?? "";
+                    const titleValue = draft.perPropDetails[slug]?.title ?? "";
+                    const descValue = draft.perPropDetails[slug]?.description ?? "";
 
                     return (
-                      <Card key={pt} className="p-6 space-y-4">
+                      <Card key={slug} className="p-6 space-y-4">
                         <div className="flex items-center justify-between gap-4">
-                          <div className="text-xl font-semibold">Item: {pt}</div>
+                          <div className="text-xl font-semibold">
+                            Item: {rentalSlugToLabel.get(slug) ?? slug}
+                          </div>
                           <div className="text-sm text-muted-foreground">
-                            Qty available: <span className="font-medium">{draft.quantitiesByPropType[pt] ?? "1"}</span>
+                            Qty available: <span className="font-medium">{draft.quantitiesByPropType[slug] ?? "1"}</span>
                           </div>
                         </div>
 
@@ -1506,21 +1559,21 @@ const [draft, setDraft] = useState<ListingDraft>(DEFAULT_DRAFT);
                           <div className="font-medium">Title</div>
                           <Input
                             value={titleValue}
-                            placeholder={`e.g. ${pt} Rental`}
+                            placeholder={`e.g. ${slug} Rental`}
                             onChange={(e) => {
                               const raw = e.target.value;
                               setDraft((d) => ({
                                 ...d,
                                 perPropDetails: {
                                   ...d.perPropDetails,
-                                  [pt]: {
+                                  [slug]: {
                                     title: raw,
-                                    description: d.perPropDetails[pt]?.description ?? "",
+                                    description: d.perPropDetails[slug]?.description ?? "",
                                   },
                                 },
                               }));
                             }}
-                            onBlur={() => updatePerPropTitle(pt, titleValue)}
+                            onBlur={() => updatePerPropTitle(slug, titleValue)}
                           />
                         </div>
 
@@ -1534,8 +1587,8 @@ const [draft, setDraft] = useState<ListingDraft>(DEFAULT_DRAFT);
                                 ...d,
                                 perPropDetails: {
                                   ...d.perPropDetails,
-                                  [pt]: {
-                                    title: d.perPropDetails[pt]?.title ?? "",
+                                  [slug]: {
+                                    title: d.perPropDetails[slug]?.title ?? "",
                                     description: cleaned.slice(0, 300),
                                   },
                                 },
@@ -1558,7 +1611,7 @@ const [draft, setDraft] = useState<ListingDraft>(DEFAULT_DRAFT);
                                   <button
                                     type="button"
                                     className="text-muted-foreground hover:text-foreground"
-                                    onClick={() => removeTag(pt, t.slug)}
+                                    onClick={() => removeTag(slug, t.slug)}
                                     aria-label={`Remove ${t.label}`}
                                   >
                                     ×
@@ -1574,18 +1627,18 @@ const [draft, setDraft] = useState<ListingDraft>(DEFAULT_DRAFT);
                               onChange={(e) =>
                                 setTagInputByProp((m) => ({
                                   ...m,
-                                  [pt]: e.target.value.replace(/[^a-zA-Z0-9\s-]/g, ""),
+                                  [slug]: e.target.value.replace(/[^a-zA-Z0-9\s-]/g, ""),
                                 }))
                               }
                               placeholder="Type a tag…"
                               onKeyDown={(e) => {
                                 if (e.key === "Enter") {
                                   e.preventDefault();
-                                  addTag(pt, inputVal);
+                                  addTag(slug, inputVal);
                                 }
                               }}
                             />
-                            <Button type="button" variant="outline" onClick={() => addTag(pt, inputVal)}>
+                            <Button type="button" variant="outline" onClick={() => addTag(slug, inputVal)}>
                               Add
                             </Button>
                           </div>
@@ -1598,7 +1651,7 @@ const [draft, setDraft] = useState<ListingDraft>(DEFAULT_DRAFT);
                                   key={s}
                                   type="button"
                                   className="rounded-full border px-3 py-1 text-sm hover:bg-muted"
-                                  onClick={() => addTag(pt, s)}
+                                  onClick={() => addTag(slug, s)}
                                 >
                                   {s}
                                 </button>
@@ -1626,9 +1679,9 @@ const [draft, setDraft] = useState<ListingDraft>(DEFAULT_DRAFT);
                     <div className="space-y-2">
                       <div className="text-sm text-muted-foreground">Included prop types</div>
                       <div className="flex flex-wrap gap-2">
-                        {draft.propTypes.map((pt) => (
-                          <span key={pt} className="rounded-full border px-3 py-1 text-sm">
-                            {pt}
+                        {draft.propTypes.map((slug) => (
+                          <span key={slug} className="rounded-full border px-3 py-1 text-sm">
+                            {rentalSlugToLabel.get(slug) ?? slug}
                           </span>
                         ))}
                       </div>
@@ -1789,14 +1842,14 @@ const [draft, setDraft] = useState<ListingDraft>(DEFAULT_DRAFT);
                   <div className="text-sm text-muted-foreground">No prop types selected yet. Go back and pick at least 1.</div>
                 ) : (
                   <div className="space-y-6">
-                    {draft.propTypes.map((pt) => {
-                      const p = draft.pricingByPropType[pt] ?? { rate: "", minimumHours: "" };
+                    {draft.propTypes.map((slug) => {
+                      const p = draft.pricingByPropType[slug] ?? { rate: "", minimumHours: "" };
                       return (
-                        <Card key={pt} className="p-6 space-y-4">
+                        <Card key={slug} className="p-6 space-y-4">
                           <div className="flex items-center justify-between gap-4">
-                            <div className="text-xl font-semibold">Pricing for {pt}</div>
+                            <div className="text-xl font-semibold">Pricing for {slug}</div>
                             <div className="text-sm text-muted-foreground">
-                              Qty available: <span className="font-medium">{draft.quantitiesByPropType[pt] ?? "1"}</span>
+                              Qty available: <span className="font-medium">{draft.quantitiesByPropType[slug] ?? "1"}</span>
                             </div>
                           </div>
 
@@ -1809,7 +1862,7 @@ const [draft, setDraft] = useState<ListingDraft>(DEFAULT_DRAFT);
                               <Input
                                 className="pl-7"
                                 value={p.rate}
-                                onChange={(e) => setPropRate(pt, e.target.value)}
+                                onChange={(e) => setPropRate(slug, e.target.value)}
                                 placeholder={draft.pricingUnit === "per_day" ? "e.g. 300" : "e.g. 75"}
                                 inputMode="decimal"
                               />
@@ -1821,16 +1874,16 @@ const [draft, setDraft] = useState<ListingDraft>(DEFAULT_DRAFT);
                               <div className="font-medium">Minimum hours</div>
                               <Input
                                 value={p.minimumHours}
-                                onChange={(e) => setPropMinHours(pt, e.target.value)}
+                                onChange={(e) => setPropMinHours(slug, e.target.value)}
                                 placeholder="e.g. 2"
                                 inputMode="numeric"
                               />
                             </div>
                           )}
 
-                          {!p.rate.trim() && <div className="text-sm text-destructive">Enter a rate for {pt} to continue.</div>}
+                          {!p.rate.trim() && <div className="text-sm text-destructive">Enter a rate for {slug} to continue.</div>}
                           {draft.pricingUnit === "per_hour" && !p.minimumHours.trim() && (
-                            <div className="text-sm text-destructive">Enter minimum hours for {pt} to continue.</div>
+                            <div className="text-sm text-destructive">Enter minimum hours for {slug} to continue.</div>
                           )}
                         </Card>
                       );
