@@ -1,5 +1,6 @@
 import { Calendar, Home, LayoutGrid, MessageSquare, DollarSign, Star, Bell, Settings, Menu } from "lucide-react";
 import { Link, useLocation } from "wouter";
+import { useQuery } from "@tanstack/react-query";
 import {
   Sidebar,
   SidebarContent,
@@ -14,7 +15,7 @@ import {
 } from "@/components/ui/sidebar";
 import { Button } from "@/components/ui/button";
 import { Avatar, AvatarFallback } from "@/components/ui/avatar";
-import { useQuery } from "@tanstack/react-query";
+import { useAuth0 } from "@auth0/auth0-react";
 
 interface VendorAccount {
   businessName: string;
@@ -58,10 +59,25 @@ const menuItems = [
 export function VendorSidebar() {
   const [location] = useLocation();
   
-  const { data: vendorAccount } = useQuery<VendorAccount>({
-    queryKey: ["/api/vendor/me"],
-    retry: false,
-  });
+    const { isAuthenticated, getAccessTokenSilently } = useAuth0();
+
+    const { data: vendorAccount } = useQuery<VendorAccount>({
+      queryKey: ["/api/vendor/me", isAuthenticated ? "auth" : "anon"],
+      enabled: isAuthenticated,
+      retry: false,
+      queryFn: async () => {
+        const token = await getAccessTokenSilently({
+          authorizationParams: { audience: "https://eventhub-api" },
+        });
+
+        const res = await fetch("/api/vendor/me", {
+          headers: { Authorization: `Bearer ${token}` },
+        });
+
+        if (!res.ok) throw new Error(`vendor /me failed: ${res.status}`);
+        return res.json();
+      },
+    });
 
   return (
     <Sidebar>

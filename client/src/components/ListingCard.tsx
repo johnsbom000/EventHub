@@ -74,7 +74,7 @@ export default function ListingCard({ listing }: ListingCardProps) {
 
   return (
     <Card
-      className="overflow-hidden hover-elevate group cursor-pointer"
+      className="overflow-hidden group cursor-pointer transition-shadow hover:shadow-lg"
       data-testid={`card-listing-${listingAny.id ?? listingAny.listingId ?? listingAny.listing?.id ?? listingAny.vendorListingId ?? "unknown"}`}
       role="link"
       tabIndex={0}
@@ -92,7 +92,7 @@ export default function ListingCard({ listing }: ListingCardProps) {
           <img
             src={cover}
             alt={title}
-            className="w-full h-full object-cover transition-transform duration-300 group-hover:scale-105"
+            className="w-full h-full object-cover"
           />
         ) : (
           <div className="w-full h-full flex items-center justify-center text-muted-foreground text-sm">

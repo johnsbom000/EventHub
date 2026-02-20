@@ -307,19 +307,9 @@ export default function VendorListingEdit() {
   }, [vendorProfile, draft?.serviceCenter, draft?.serviceLocation, draft]);
 
   // ---- Prop type logic (copied behavior from wizard, simplified) ----
-  const setPricingMode = (mode: PricingMode) => {
-    setDraft((d: any) => {
-      if (!d) return d;
-      if (d.pricingMode === mode) return d;
-
-      // Reset fields that should not “leak” between modes (same intent as wizard)
-      return {
-        ...d,
-        pricingMode: mode,
-        propTypes: [],
-        quantitiesByPropType: {},
-      };
-    });
+  const setPricingMode = (_mode: PricingMode) => {
+    // MVP: listing types are locked to single_service
+    return;
   };
 
   const setPropQuantity = (slug: string, raw: string) => {

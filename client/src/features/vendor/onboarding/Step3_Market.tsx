@@ -4,7 +4,6 @@ import "mapbox-gl/dist/mapbox-gl.css";
 
 import { Button } from "@/components/ui/button";
 import { Slider } from "@/components/ui/slider";
-import { Switch } from "@/components/ui/switch";
 import { Label } from "@/components/ui/label";
 import { LocationPicker } from "@/components/LocationPicker";
 import type { LocationResult } from "@/types/location";
@@ -76,7 +75,6 @@ interface Step3MarketProps {
 
     homeBaseLocation?: { lat: number; lng: number };
     serviceRadiusMiles: number;
-    chargesTravelFee: boolean;
 
     // new: service area mode
     serviceAreaMode?: ServiceAreaMode;
@@ -539,12 +537,6 @@ export default function Step3_Market({
             If yes, customers will be notified.
           </p>
         </div>
-        <Switch
-          checked={formData.chargesTravelFee}
-          onCheckedChange={(checked) =>
-            updateFormData({ chargesTravelFee: checked })
-          }
-        />
       </div>
 
       {/* Actions */}

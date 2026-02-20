@@ -1,6 +1,7 @@
 import { useMemo } from "react";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
+import { Textarea } from "@/components/ui/textarea";
 import { LocationPicker } from "@/components/LocationPicker";
 import type { LocationResult } from "@/types/location";
 
@@ -14,6 +15,8 @@ interface Step2BusinessDetailsProps {
     zipCode: string;
 
     businessPhone: string;
+    businessEmail: string;
+    aboutBusiness: string;
 
     // proof the address came from dropdown
     homeBaseLocation?: { lat: number; lng: number };
@@ -241,12 +244,34 @@ export default function Step2_BusinessDetails({
               }
               required
             />
+
             <Input
               name="businessPhone"
               placeholder="Business phone"
               value={formData.businessPhone}
               onChange={(e) => updateFormData({ businessPhone: e.target.value })}
               required
+            />
+          </div>
+
+          <div className="space-y-2">
+            <Input
+              name="businessEmail"
+              placeholder="Business email"
+              value={formData.businessEmail}
+              onChange={(e) => updateFormData({ businessEmail: e.target.value })}
+              type="email"
+              required
+            />
+          </div>
+
+          <div className="space-y-2">
+            <Textarea
+              name="aboutBusiness"
+              placeholder="About the business (optional)"
+              value={formData.aboutBusiness}
+              onChange={(e) => updateFormData({ aboutBusiness: e.target.value })}
+              rows={4}
             />
           </div>
         </div>

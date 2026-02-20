@@ -36,6 +36,9 @@ export interface VendorOnboardingData {
   state: string;
   zipCode: string;
   businessPhone: string;
+  businessEmail: string;
+  aboutBusiness: string;
+
 
   // Derived
   homeBaseLocation?: {
@@ -46,36 +49,7 @@ export interface VendorOnboardingData {
   // Market (current flow)
   serviceRadiusMiles: number; // 0, 15, 30, ...
   chargesTravelFee: boolean;
-
-  /* -------------------------------------------------
-     Legacy fields still referenced by older onboarding steps
-     (kept so repo typecheck passes even if those steps
-     are not used in the current SINGLE_VENDOR_MODE flow)
-  -------------------------------------------------- */
-
-  // Step2_AboutYou.tsx
-  contactName?: string;
-  bio?: string;
-  introVideoUrl?: string;
-  website?: string;
-  instagram?: string;
-  tiktok?: string;
-
-  // Step3_Location.tsx (legacy name)
-  serviceRadius?: string;
-
-  // Step4_Portfolio.tsx
-  portfolioImages?: string[];
-  coverImageIndex?: number;
-
-  // Step5_ServiceDescription.tsx
-  serviceHeadline?: string;
-  serviceDescription?: string;
 }
-
-/* -----------------------------
-   Steps
------------------------------- */
 
 const STEPS = SINGLE_VENDOR_MODE
   ? [
@@ -102,26 +76,14 @@ const DEFAULT_ONBOARDING_DATA: VendorOnboardingData = {
   state: "",
   zipCode: "",
   businessPhone: "",
+  businessEmail: "",
+  aboutBusiness: "",
   serviceRadiusMiles: 0,
   chargesTravelFee: false,
-
-  // legacy fields (safe defaults)
-  contactName: "",
-  bio: "",
-  introVideoUrl: "",
-  website: "",
-  instagram: "",
-  tiktok: "",
-  serviceRadius: "",
-
-  portfolioImages: [],
-  coverImageIndex: 0,
-
-  serviceHeadline: "",
-  serviceDescription: "",
 };
 
 export default function VendorOnboarding() {
+
   const [, setLocation] = useLocation();
   const { toast } = useToast();
   const { getAccessTokenSilently } = useAuth0();

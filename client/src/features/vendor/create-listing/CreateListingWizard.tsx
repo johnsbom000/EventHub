@@ -135,7 +135,6 @@ function YesNoButtons({
 type PricingMode = "single_service" | "package" | "a_la_carte";
 
 type StepId =
-  | "listingType"
   | "propTypes"
   | "tags" // Title & Description
   | "popularFor"
@@ -144,7 +143,6 @@ type StepId =
   | "deliverySetup";
 
 const STEPS: { id: StepId; title: string }[] = [
-  { id: "listingType", title: "Listing Type" },
   { id: "propTypes", title: "Rental Types" },
   { id: "tags", title: "Title & Description" },
   { id: "popularFor", title: "Popular For" },
@@ -217,7 +215,7 @@ type ListingDraft = {
 };
 
 const DEFAULT_DRAFT: ListingDraft = {
-  pricingMode: null,
+  pricingMode: "single_service",
 
   propTypes: [],
   quantitiesByPropType: {},
@@ -397,7 +395,7 @@ const { data: vendorProfile } = useQuery({
 
 // Wizard state
 const vendorType = ((me as any)?.vendorType || "unspecified") as string;
-const [currentStep, setCurrentStep] = useState<StepId>("listingType");
+const [currentStep, setCurrentStep] = useState<StepId>("propTypes");
 const [draft, setDraft] = useState<ListingDraft>(DEFAULT_DRAFT);
 
   // Default listing service center from vendor onboarding address (one-time per listing)
@@ -812,7 +810,6 @@ const [draft, setDraft] = useState<ListingDraft>(DEFAULT_DRAFT);
   };
 
   const canContinue = useMemo(() => {
-    if (currentStep === "listingType") return !!draft.pricingMode;
 
     if (currentStep === "propTypes") {
       if (draft.propTypes.length === 0) return false;
@@ -911,7 +908,7 @@ const [draft, setDraft] = useState<ListingDraft>(DEFAULT_DRAFT);
     });
 
     // Reset navigation progress when listing type changes
-    setCurrentStep("listingType");
+    setCurrentStep("propTypes");
     setMaxStepReached(0);
   };
 
@@ -1415,42 +1412,6 @@ const [draft, setDraft] = useState<ListingDraft>(DEFAULT_DRAFT);
 
         {/* Main panel */}
         <div className="flex-1 bg-background p-10 overflow-y-auto">
-          {/* Step 1: Listing Type */}
-          {currentStep === "listingType" && (
-            <div className="max-w-3xl space-y-6">
-              <h1 className="text-4xl font-bold">{pricingModeConfig.headline}</h1>
-              <p className="text-muted-foreground">{pricingModeConfig.subhead}</p>
-
-              <div className="grid grid-cols-1 md:grid-cols-3 gap-4">
-                {pricingModeConfig.cards.map((c) => (
-                  <Card
-                    key={c.mode}
-                    className={`p-5 cursor-pointer hover:border-primary ${draft.pricingMode === c.mode ? "border-primary" : ""}`}
-                    onClick={() => setPricingMode(c.mode)}
-                  >
-                    <div className="font-semibold mb-1">{c.title}</div>
-                    <div className="text-sm text-muted-foreground">{c.desc}</div>
-                  </Card>
-                ))}
-              </div>
-
-              {draft.pricingMode === "single_service" && (
-                <div className="text-sm text-muted-foreground">
-                  Single Item = select exactly <strong>1</strong> prop type next.
-                </div>
-              )}
-              {draft.pricingMode === "package" && (
-                <div className="text-sm text-muted-foreground">
-                  Package = select <strong>1+</strong> prop types, then set one bundle price.
-                </div>
-              )}
-              {draft.pricingMode === "a_la_carte" && (
-                <div className="text-sm text-muted-foreground">
-                  A La Carte = select <strong>1+</strong> prop types, set quantities, then set pricing per prop.
-                </div>
-              )}
-            </div>
-          )}
 
           {/* Step 2: Prop Types */}
           {currentStep === "propTypes" && (

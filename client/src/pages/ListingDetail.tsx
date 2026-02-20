@@ -1,459 +1,52 @@
-import React, { useState } from 'react';
+import React, { useState } from "react";
 import { useLocation, useRoute } from "wouter";
 import { useQuery } from "@tanstack/react-query";
-import { Star, MapPin, Calendar, Clock, Users, CheckCircle, XCircle, ChevronLeft } from 'lucide-react';
-
-type Package = {
-  id: string;
-  name: string;
-  description: string;
-  price: number;
-  pricePer?: string;
-  features: string[];
-};
-
-type Addon = {
-  id: string;
-  name: string;
-  price: number;
-};
-
-type ListingDetailProps = {
-  listing: {
-    id: string;
-    title: string;
-    category: string;
-    description: string;
-    featuredImage: string;
-    gallery: string[];
-    packages: Package[];
-    addons?: Addon[];
-    vendor: {
-      id: string;
-      businessName: string;
-      rating: number;
-      reviewCount: number;
-    };
-    location: string;
-    rating: number;
-    reviewCount: number;
-  };
-};
-
-const ListingDetailView: React.FC<ListingDetailProps> = ({ listing }) => {
-  const [, setLocation] = useLocation();
-  const [selectedImage, setSelectedImage] = useState(listing.featuredImage);
-  const [selectedPackage, setSelectedPackage] = useState<Package | null>(null);
-  const [selectedAddons, setSelectedAddons] = useState<Set<string>>(new Set());
-  const [activeTab, setActiveTab] = useState('overview');
-  const [bookingDate, setBookingDate] = useState('');
-  const [guestCount, setGuestCount] = useState(1);
-
-  const toggleAddon = (addonId: string) => {
-    const newAddons = new Set(selectedAddons);
-    if (newAddons.has(addonId)) {
-      newAddons.delete(addonId);
-    } else {
-      newAddons.add(addonId);
-    }
-    setSelectedAddons(newAddons);
-  };
-
-  const calculateTotal = () => {
-    let total = selectedPackage?.price || 0;
-    if (selectedPackage?.pricePer === 'guest') {
-      total *= guestCount;
-    }
-    
-    listing.addons?.forEach(addon => {
-      if (selectedAddons.has(addon.id)) {
-        total += addon.price;
-      }
-    });
-    
-    return total.toFixed(2);
-  };
-  const handleBookNow = () => {
-    // In a real app, this would redirect to a booking confirmation page
-    // or open a booking modal with the selected options
-    console.log('Booking with:', {
-      package: selectedPackage,
-      addons: Array.from(selectedAddons),
-      date: bookingDate,
-      guestCount,
-      total: calculateTotal()
-    });
-  };
-
-  return (
-    <div className="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8 py-8">
-      <button 
-        onClick={() => setLocation("/browse")}
-        className="flex items-center text-gray-600 hover:text-gray-900 mb-6"
-      >
-        <ChevronLeft className="w-5 h-5 mr-1" />
-        Back to results
-      </button>
-      
-      <div className="bg-white rounded-lg shadow-lg overflow-hidden">
-        {/* Image Gallery */}
-        <div className="relative h-96 bg-gray-100">
-          <img
-            src={selectedImage}
-            alt={listing.title}
-            className="absolute inset-0 w-full h-full object-cover transition-opacity duration-300"
-          />
-
-          <div className="absolute bottom-4 left-4 right-4 flex space-x-2 overflow-x-auto">
-            {[listing.featuredImage, ...(listing.gallery || [])].map((img, idx) => (
-              <button
-                key={idx}
-                onClick={() => setSelectedImage(img)}
-                className={`w-16 h-16 rounded-md overflow-hidden border-2 ${
-                  selectedImage === img ? "border-blue-500" : "border-transparent"
-                }`}
-              >
-                <img
-                  src={img}
-                  alt={`${listing.title} - ${idx + 1}`}
-                  className="w-full h-full object-cover"
-                />
-              </button>
-            ))}
-          </div>
-        </div>
-
-        <div className="p-6 md:p-8">
-          <div className="flex flex-col md:flex-row md:items-start justify-between gap-8">
-            {/* Main Content */}
-            <div className="flex-1">
-              <div className="flex items-center mb-2">
-                <h1 className="text-3xl font-bold text-gray-900">{listing.title}</h1>
-                <span className="ml-4 px-3 py-1 bg-blue-100 text-blue-800 text-sm font-medium rounded-full">
-                  {listing.category}
-                </span>
-              </div>
-              
-              <div className="flex items-center text-gray-600 mb-4">
-                <div className="flex items-center mr-4">
-                  <MapPin className="w-4 h-4 mr-1" />
-                  <span>{listing.location}</span>
-                </div>
-                <div className="flex items-center">
-                  <Star className="w-4 h-4 text-yellow-400 fill-current mr-1" />
-                  <span>{listing.rating.toFixed(1)}</span>
-                  <span className="text-gray-400 ml-1">({listing.reviewCount} reviews)</span>
-                </div>
-              </div>
-
-              {/* Tabs */}
-              <div className="border-b border-gray-200 mb-6">
-                <nav className="-mb-px flex space-x-8">
-                  <button
-                    onClick={() => setActiveTab('overview')}
-                    className={`py-4 px-1 border-b-2 font-medium text-sm ${activeTab === 'overview' ? 'border-blue-500 text-blue-600' : 'border-transparent text-gray-500 hover:text-gray-700 hover:border-gray-300'}`}
-                  >
-                    Overview
-                  </button>
-                  <button
-                    onClick={() => setActiveTab('packages')}
-                    className={`py-4 px-1 border-b-2 font-medium text-sm ${activeTab === 'packages' ? 'border-blue-500 text-blue-600' : 'border-transparent text-gray-500 hover:text-gray-700 hover:border-gray-300'}`}
-                  >
-                    Packages & Pricing
-                  </button>
-                  <button
-                    onClick={() => setActiveTab('reviews')}
-                    className={`py-4 px-1 border-b-2 font-medium text-sm ${activeTab === 'reviews' ? 'border-blue-500 text-blue-600' : 'border-transparent text-gray-500 hover:text-gray-700 hover:border-gray-300'}`}
-                  >
-                    Reviews
-                  </button>
-                </nav>
-              </div>
-
-              {/* Tab Content */}
-              <div className="prose max-w-none">
-                {activeTab === 'overview' && (
-                  <div>
-                    <h2 className="text-xl font-semibold mb-4">About This {listing.category} Service</h2>
-                    <p className="text-gray-700 mb-6">{listing.description}</p>
-                    
-                    <h3 className="text-lg font-medium mb-3">What's Included</h3>
-                    <ul className="space-y-2 mb-6">
-                      {listing.packages[0]?.features?.slice(0, 5).map((feature, i) => (
-                        <li key={i} className="flex items-start">
-                          <CheckCircle className="w-5 h-5 text-green-500 mr-2 mt-0.5 flex-shrink-0" />
-                          <span>{feature}</span>
-                        </li>
-                      ))}
-                    </ul>
-
-                    <h3 className="text-lg font-medium mb-3">About {listing.vendor.businessName}</h3>
-                    <div className="flex items-center mb-4">
-                      <div className="w-12 h-12 rounded-full bg-gray-200 flex items-center justify-center text-gray-500 font-bold text-xl">
-                        {listing.vendor.businessName.charAt(0)}
-                      </div>
-                      <div className="ml-3">
-                        <div className="font-medium">{listing.vendor.businessName}</div>
-                        <div className="flex items-center text-sm text-gray-500">
-                          <Star className="w-4 h-4 text-yellow-400 fill-current mr-1" />
-                          {listing.vendor.rating.toFixed(1)} ({listing.vendor.reviewCount} reviews)
-                        </div>
-                      </div>
-                    </div>
-                  </div>
-                )}
-
-                {activeTab === 'packages' && (
-                  <div>
-                    <h2 className="text-xl font-semibold mb-6">Packages & Pricing</h2>
-                    <div className="space-y-6">
-                      {listing.packages.map((pkg) => (
-                        <div 
-                          key={pkg.id}
-                          onClick={() => setSelectedPackage(pkg)}
-                          className={`border rounded-lg p-6 cursor-pointer transition-all ${selectedPackage?.id === pkg.id ? 'border-blue-500 ring-2 ring-blue-200' : 'border-gray-200 hover:border-blue-300'}`}
-                        >
-                          <div className="flex justify-between items-start">
-                            <div>
-                              <h3 className="text-lg font-medium">{pkg.name}</h3>
-                              <p className="text-gray-600 mt-1">{pkg.description}</p>
-                              <div className="mt-3">
-                                <span className="text-2xl font-bold">
-                                  ${pkg.price.toFixed(2)}
-                                  {pkg.pricePer && <span className="text-sm font-normal text-gray-500"> / {pkg.pricePer}</span>}
-                                </span>
-                              </div>
-                            </div>
-                            <div className="bg-blue-100 text-blue-800 text-xs font-medium px-2.5 py-0.5 rounded-full">
-                              {selectedPackage?.id === pkg.id ? 'Selected' : 'Select'}
-                            </div>
-                          </div>
-                          
-                          {pkg.features && pkg.features.length > 0 && (
-                            <ul className="mt-4 space-y-2">
-                              {pkg.features.map((feature, i) => (
-                                <li key={i} className="flex items-start">
-                                  <CheckCircle className="w-4 h-4 text-green-500 mr-2 mt-0.5 flex-shrink-0" />
-                                  <span className="text-sm">{feature}</span>
-                                </li>
-                              ))}
-                            </ul>
-                          )}
-                        </div>
-                      ))}
-                    </div>
-
-                    {listing.addons && listing.addons.length > 0 && (
-                      <div className="mt-8">
-                        <h3 className="text-lg font-medium mb-4">Available Add-ons</h3>
-                        <div className="space-y-3">
-                          {listing.addons.map((addon) => (
-                            <div 
-                              key={addon.id}
-                              onClick={() => toggleAddon(addon.id)}
-                              className={`flex items-center justify-between p-4 border rounded-lg cursor-pointer ${selectedAddons.has(addon.id) ? 'border-blue-500 bg-blue-50' : 'border-gray-200 hover:bg-gray-50'}`}
-                            >
-                              <div className="flex items-center">
-                                <div className={`w-5 h-5 rounded border mr-3 flex items-center justify-center ${selectedAddons.has(addon.id) ? 'bg-blue-500 border-blue-500' : 'border-gray-300'}`}>
-                                  {selectedAddons.has(addon.id) && (
-                                    <svg className="w-3 h-3 text-white" fill="none" viewBox="0 0 24 24" stroke="currentColor">
-                                      <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M5 13l4 4L19 7" />
-                                    </svg>
-                                  )}
-                                </div>
-                                <span className="font-medium">{addon.name}</span>
-                              </div>
-                              <span className="font-medium">+${addon.price.toFixed(2)}</span>
-                            </div>
-                          ))}
-                        </div>
-                      </div>
-                    )}
-                  </div>
-                )}
-
-                {activeTab === 'reviews' && (
-                  <div>
-                    <h2 className="text-xl font-semibold mb-6">Customer Reviews</h2>
-                    <div className="flex items-center mb-6">
-                      <div className="text-4xl font-bold mr-4">{listing.rating.toFixed(1)}</div>
-                      <div>
-                        <div className="flex items-center">
-                          {[1, 2, 3, 4, 5].map((star) => (
-                            <Star 
-                              key={star} 
-                              className={`w-5 h-5 ${star <= Math.round(listing.rating) ? 'text-yellow-400 fill-current' : 'text-gray-300'}`} 
-                            />
-                          ))}
-                        </div>
-                        <div className="text-sm text-gray-500 mt-1">
-                          Based on {listing.reviewCount} reviews
-                        </div>
-                      </div>
-                    </div>
-                    
-                    {/* Sample reviews */}
-                    <div className="space-y-6">
-                      {[1, 2, 3].map((i) => (
-                        <div key={i} className="border-b border-gray-100 pb-6 last:border-0 last:pb-0">
-                          <div className="flex items-center mb-2">
-                            <div className="w-10 h-10 rounded-full bg-gray-200 flex items-center justify-center text-gray-500 font-bold">
-                              {['A', 'B', 'C'][i - 1]}
-                            </div>
-                            <div className="ml-3">
-                              <div className="font-medium">
-                                {['Alex Johnson', 'Taylor Smith', 'Jordan Lee'][i - 1]}
-                              </div>
-                              <div className="flex items-center text-sm text-gray-500">
-                                <Star className="w-4 h-4 text-yellow-400 fill-current mr-1" />
-                                {5 - i}.0
-                                <span className="mx-1">•</span>
-                                {i} month{i !== 1 ? 's' : ''} ago
-                              </div>
-                            </div>
-                          </div>
-                          <p className="mt-2 text-gray-700">
-                            {[
-                              'Absolutely amazing service! The team went above and beyond to make our day special.',
-                              'Great experience overall. Professional and easy to work with.',
-                              'Good service, but had a small issue with timing. They resolved it professionally.'
-                            ][i - 1]}
-                          </p>
-                        </div>
-                      ))}
-                    </div>
-                  </div>
-                )}
-              </div>
-            </div>
-
-            {/* Booking Sidebar */}
-            <div className="w-full md:w-96">
-              <div className="bg-gray-50 rounded-lg border border-gray-200 p-6 sticky top-6">
-                <h3 className="text-lg font-semibold mb-4">Book This Service</h3>
-                
-                {selectedPackage ? (
-                  <div className="mb-6">
-                    <div className="flex justify-between items-center mb-2">
-                      <span className="font-medium">{selectedPackage.name}</span>
-                      <span className="font-medium">
-                        ${selectedPackage.price.toFixed(2)}
-                        {selectedPackage.pricePer && ` per ${selectedPackage.pricePer}`}
-                      </span>
-                    </div>
-                    
-                    {selectedPackage.pricePer === 'guest' && (
-                      <div className="mt-4">
-                        <label className="block text-sm font-medium text-gray-700 mb-1">Number of Guests</label>
-                        <select
-                          value={guestCount}
-                          onChange={(e) => setGuestCount(parseInt(e.target.value))}
-                          className="w-full rounded-md border-gray-300 shadow-sm focus:border-blue-500 focus:ring-blue-500"
-                        >
-                          {[1, 2, 3, 4, 5, 6, 7, 8, 9, 10].map((num) => (
-                            <option key={num} value={num}>
-                              {num} {num === 1 ? 'guest' : 'guests'}
-                            </option>
-                          ))}
-                        </select>
-                      </div>
-                    )}
-                    
-                    <div className="mt-4">
-                      <label className="block text-sm font-medium text-gray-700 mb-1">Event Date</label>
-                      <input
-                        type="date"
-                        value={bookingDate}
-                        onChange={(e) => setBookingDate(e.target.value)}
-                        min={new Date().toISOString().split('T')[0]}
-                        className="w-full rounded-md border-gray-300 shadow-sm focus:border-blue-500 focus:ring-blue-500"
-                      />
-                    </div>
-                    
-                    {listing.addons && listing.addons.length > 0 && selectedAddons.size > 0 && (
-                      <div className="mt-4 pt-4 border-t border-gray-200">
-                        <h4 className="text-sm font-medium text-gray-700 mb-2">Selected Add-ons</h4>
-                        <div className="space-y-2">
-                          {listing.addons
-                            .filter(addon => selectedAddons.has(addon.id))
-                            .map(addon => (
-                              <div key={addon.id} className="flex justify-between text-sm">
-                                <span className="text-gray-600">{addon.name}</span>
-                                <span className="font-medium">+${addon.price.toFixed(2)}</span>
-                              </div>
-                            ))}
-                        </div>
-                      </div>
-                    )}
-                    
-                    <div className="mt-6 pt-4 border-t border-gray-200">
-                      <div className="flex justify-between font-medium text-lg">
-                        <span>Total</span>
-                        <span>${calculateTotal()}</span>
-                      </div>
-                      <p className="text-xs text-gray-500 mt-1">Taxes and fees may apply</p>
-                    </div>
-                    
-                    <button
-                      onClick={handleBookNow}
-                      disabled={!bookingDate}
-                      className={`mt-4 w-full bg-blue-600 hover:bg-blue-700 text-white font-medium py-3 px-4 rounded-md transition-colors ${!bookingDate ? 'opacity-50 cursor-not-allowed' : ''}`}
-                    >
-                      Book Now
-                    </button>
-                    
-                    <p className="mt-3 text-xs text-center text-gray-500">
-                      You won't be charged yet
-                    </p>
-                  </div>
-                ) : (
-                  <div className="text-center py-8">
-                    <div className="text-gray-400 mb-2">
-                      <svg className="mx-auto h-12 w-12" fill="none" viewBox="0 0 24 24" stroke="currentColor">
-                        <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={1.5} d="M16 11V7a4 4 0 00-8 0v4M5 9h14l1 12H4L5 9z" />
-                      </svg>
-                    </div>
-                    <p className="text-gray-600">Select a package to continue</p>
-                  </div>
-                )}
-                
-                <div className="mt-6 pt-6 border-t border-gray-200">
-                  <h4 className="text-sm font-medium text-gray-700 mb-3">What's included</h4>
-                  <ul className="space-y-2">
-                    {selectedPackage?.features.slice(0, 3).map((feature, i) => (
-                      <li key={i} className="flex items-start">
-                        <CheckCircle className="w-4 h-4 text-green-500 mr-2 mt-0.5 flex-shrink-0" />
-                        <span className="text-sm">{feature}</span>
-                      </li>
-                    ))}
-                    {selectedPackage?.features?.length && selectedPackage.features.length > 3 && (
-                      <li className="text-sm text-blue-600">+ {selectedPackage.features.length - 3} more</li>
-                    )}
-                  </ul>
-                </div>
-                
-                <div className="mt-6 pt-6 border-t border-gray-200">
-                  <h4 className="text-sm font-medium text-gray-700 mb-3">Cancellation Policy</h4>
-                  <p className="text-sm text-gray-600">
-                    Full refund available if cancelled at least 7 days before the event. 50% refund if cancelled within 7 days.
-                  </p>
-                </div>
-              </div>
-            </div>
-          </div>
-        </div>
-      </div>
-    </div>
-  );
-};
+import { ChevronLeft, MapPin, Star, CheckCircle, Truck, Wrench, X } from "lucide-react";
+import { useAuth0 } from "@auth0/auth0-react";
 
 type RouteParams = { id: string };
 
-const ListingDetailPage: React.FC = () => {
+// --- Small helpers ---
+function isNonEmptyString(v: unknown): v is string {
+  return typeof v === "string" && v.trim().length > 0;
+}
+
+function normalizePhotoToUrl(photo: any): string | undefined {
+  if (typeof photo === "string") {
+    // allow absolute, relative, uploads path
+    if (photo.startsWith("http://") || photo.startsWith("https://") || photo.startsWith("/")) return photo;
+    return undefined;
+  }
+  if (photo && typeof photo === "object") {
+    const url = photo.url;
+    if (isNonEmptyString(url) && (url.startsWith("http") || url.startsWith("/"))) return url;
+
+    const name = photo.name || photo.filename;
+    if (isNonEmptyString(name)) return `/uploads/listings/${name}`;
+  }
+  return undefined;
+}
+
+function formatPricingUnit(unit: string | undefined) {
+  if (!unit) return "";
+  if (unit === "per_day") return "/ per day";
+  if (unit === "per_hour") return "/ per hour";
+  return `/${unit}`;
+}
+
+function money(n: number | null | undefined) {
+  if (typeof n !== "number" || !Number.isFinite(n)) return null;
+  return `$${Math.round(n).toLocaleString()}`;
+}
+
+export default function ListingDetailPage() {
+  const [, setLocation] = useLocation();
   const [, params] = useRoute<RouteParams>("/listing/:id");
   const listingId = params?.id;
 
-  const { data: listing, isLoading, error } = useQuery<any>({
+  const [galleryOpen, setGalleryOpen] = useState(false);
+
+  const { data, isLoading, error } = useQuery<any>({
     queryKey: ["/api/listings/public", listingId],
     enabled: !!listingId,
     queryFn: async () => {
@@ -461,59 +54,98 @@ const ListingDetailPage: React.FC = () => {
         headers: { Accept: "application/json" },
       });
 
-      if (!res.ok) {
-        throw new Error(`Failed to load listing ${listingId}`);
-      }
+      if (!res.ok) throw new Error(`Failed to load listing ${listingId}`);
 
       const contentType = res.headers.get("content-type") || "";
       if (!contentType.includes("application/json")) {
         const text = await res.text();
-        throw new Error(
-          `Expected JSON but got ${contentType}. First 120 chars: ${text.slice(0, 120)}`
-        );
+        throw new Error(`Expected JSON but got ${contentType}. First 120 chars: ${text.slice(0, 120)}`);
       }
 
       const raw = await res.json();
       const ld = (raw?.listingData ?? {}) as any;
 
-      // photos
-      const photosFromObjects =
-        Array.isArray(raw?.photos)
-          ? raw.photos.map((p: any) => p?.url).filter(Boolean)
-          : [];
+      // Photos: support raw.photos objects and listingData photos names/urls
+      const photosFromObjects: string[] = Array.isArray(raw?.photos)
+        ? raw.photos.map((p: any) => normalizePhotoToUrl(p)).filter((u: any) => typeof u === "string")
+        : [];
 
-      const photosFromListingData =
-        Array.isArray(ld?.photos?.urls)
-          ? ld.photos.urls
+      const photosFromListingData: string[] = Array.isArray(ld?.photos?.urls)
+        ? ld.photos.urls.filter((u: any) => typeof u === "string")
+        : Array.isArray(ld?.photos?.names)
+          ? ld.photos.names
+              .map((n: any) => (typeof n === "string" ? `/uploads/listings/${n}` : null))
+              .filter(Boolean)
           : Array.isArray(ld?.photos)
-          ? ld.photos
+            ? ld.photos.filter((u: any) => typeof u === "string")
+            : [];
+
+      const allPhotos = [...photosFromObjects, ...photosFromListingData].filter(Boolean);
+
+      // Pricing: single-item rental only (listing-level)
+      const pricingRateRaw =
+        ld?.pricing?.rate ?? ld?.pricing?.pricingByPropType?.[ld?.propTypes?.[0]]?.rate ?? null;
+
+      const pricingRate =
+        typeof pricingRateRaw === "number"
+          ? pricingRateRaw
+          : typeof pricingRateRaw === "string"
+            ? Number(pricingRateRaw)
+            : null;
+
+      const pricingUnit = ld?.pricing?.unit ?? ld?.pricingUnit ?? ld?.pricing?.pricingUnit ?? "per_day";
+
+      // Title/category/location: prefer listingData fields first
+      const title = ld?.listingTitle ?? raw?.title ?? "Listing";
+      const description = ld?.listingDescription ?? "";
+      const vendorName = raw?.vendorName ?? raw?.vendor?.businessName ?? "Vendor";
+
+      const city =
+        raw?.city ??
+        ld?.serviceLocation?.city ??
+        (typeof ld?.serviceLocation?.label === "string" ? ld.serviceLocation.label : "") ??
+        "";
+
+      const rating = Number(raw?.rating ?? 0);
+      const reviewCount = Number(raw?.reviewCount ?? 0);
+
+      // “What’s included” (best-effort from tags + propTypes)
+      const tags: string[] = Array.isArray(ld?.tagsByPropType?.__listing__)
+        ? ld.tagsByPropType.__listing__.map((t: any) => t?.label).filter(Boolean)
+        : [];
+
+      const propTypes: string[] = Array.isArray(ld?.propTypes)
+        ? ld.propTypes
+        : Array.isArray(ld?.propTypes?.selected)
+          ? ld.propTypes.selected
           : [];
 
-      const allPhotos = [...photosFromObjects, ...photosFromListingData].filter(
-        (p) => typeof p === "string"
-      );
+      const included = [...tags, ...propTypes].filter((x) => typeof x === "string");
 
-      const featuredImage =
-        photosFromObjects[0] || photosFromListingData[0] || "";
+      // Logistics (best-effort)
+      const delivery = ld?.deliverySetup ?? {};
+      const deliveryIncluded = Boolean(delivery?.deliveryIncluded ?? ld?.deliveryIncluded);
+      const setupIncluded = Boolean(delivery?.setupIncluded ?? ld?.setupIncluded);
+      const radiusMiles = Number(ld?.serviceRadiusMiles ?? ld?.deliverySetup?.serviceRadiusMiles ?? 0) || null;
 
       return {
-        id: raw?.id,
-        title: raw?.title ?? ld?.listingTitle ?? "Listing",
-        category: raw?.serviceType ?? ld?.category ?? "Service",
-        description: ld?.listingDescription ?? "",
-        featuredImage,
-        gallery: allPhotos.slice(1),
-        packages: Array.isArray(ld?.packages) ? ld.packages : [],
-        addons: Array.isArray(ld?.addons) ? ld.addons : [],
-        vendor: {
-          id: raw?.vendorId ?? "",
-          businessName: raw?.vendorName ?? "Vendor",
-          rating: Number(raw?.vendor?.rating ?? 0),
-          reviewCount: Number(raw?.vendor?.reviewCount ?? 0),
+        id: raw?.id ?? listingId,
+        vendorId: raw?.vendorId ?? null,
+        title,
+        description,
+        vendorName,
+        city,
+        rating,
+        reviewCount,
+        photos: allPhotos,
+        price: pricingRate,
+        pricingUnit,
+        included,
+        logistics: {
+          deliveryIncluded,
+          setupIncluded,
+          radiusMiles,
         },
-        location: raw?.city ?? ld?.location ?? "",
-        rating: Number(raw?.rating ?? 0),
-        reviewCount: Number(raw?.reviewCount ?? 0),
       };
     },
   });
@@ -521,10 +153,419 @@ const ListingDetailPage: React.FC = () => {
   if (!listingId) return <div className="p-6">Missing listing id</div>;
   if (isLoading) return <div className="p-6">Loading…</div>;
   if (error) return <div className="p-6">Error loading listing</div>;
-  if (!listing) return <div className="p-6">Listing not found</div>;
+  if (!data) return <div className="p-6">Listing not found</div>;
 
-  return <ListingDetailView listing={listing} />;
-};
+  const photos = Array.isArray(data.photos) ? data.photos : [];
+  const hasPhotos = photos.length > 0;
+  const topPhotos = photos.slice(0, 5);
 
-export default ListingDetailPage;
+  return (
+    <div className="max-w-6xl mx-auto px-4 sm:px-6 lg:px-8 py-8">
+      {/* Back */}
+      <button
+        onClick={() => setLocation("/browse")}
+        className="flex items-center text-muted-foreground hover:text-foreground mb-6"
+      >
+        <ChevronLeft className="w-5 h-5 mr-1" />
+        Back to results
+      </button>
 
+      {/* Photo grid (Airbnb-ish) */}
+      <div className="relative">
+        {hasPhotos ? (
+          <div className="relative rounded-2xl overflow-hidden bg-muted">
+            {/* 1 photo: full-width hero */}
+            {photos.length === 1 && (
+              <button
+                className="relative h-[320px] md:h-[520px] w-full overflow-hidden"
+                onClick={() => setGalleryOpen(true)}
+                title="Show all photos"
+              >
+                <img src={photos[0]} alt={data.title} className="absolute inset-0 w-full h-full object-cover" />
+              </button>
+            )}
+
+            {/* 2–4 photos: simple filled grid */}
+            {photos.length > 1 && photos.length < 5 && (
+              <div className="grid grid-cols-1 md:grid-cols-2 gap-2">
+                <button
+                  className="relative h-[320px] md:h-[420px] w-full overflow-hidden"
+                  onClick={() => setGalleryOpen(true)}
+                  title="Show all photos"
+                >
+                  <img src={photos[0]} alt={data.title} className="absolute inset-0 w-full h-full object-cover" />
+                </button>
+
+                <div className="grid grid-rows-2 gap-2">
+                  {photos.slice(1, 3).map((src: string, i: number) => (
+                    <button
+                      key={i}
+                      className="relative h-[156px] md:h-[206px] overflow-hidden"
+                      onClick={() => setGalleryOpen(true)}
+                      title="Show all photos"
+                    >
+                      <img
+                        src={src}
+                        alt={`${data.title} photo ${i + 2}`}
+                        className="absolute inset-0 w-full h-full object-cover"
+                      />
+                    </button>
+                  ))}
+
+                  {/* If only 2 photos total, fill the last slot with a blurred version */}
+                  {photos.length === 2 && (
+                    <div className="relative h-[156px] md:h-[206px] overflow-hidden">
+                      <img
+                        src={photos[0]}
+                        alt=""
+                        className="absolute inset-0 w-full h-full object-cover blur-lg scale-110 opacity-60"
+                      />
+                    </div>
+                  )}
+                </div>
+              </div>
+            )}
+
+            {/* 5+ photos: Airbnb-like 1 big + 4 small */}
+            {photos.length >= 5 && (
+              <div className="grid grid-cols-1 md:grid-cols-2 gap-2">
+                <button
+                  className="relative h-[320px] md:h-[420px] w-full overflow-hidden"
+                  onClick={() => setGalleryOpen(true)}
+                  title="Show all photos"
+                >
+                  <img src={topPhotos[0]} alt={data.title} className="absolute inset-0 w-full h-full object-cover" />
+                </button>
+
+                <div className="hidden md:grid grid-cols-2 grid-rows-2 gap-2">
+                  {topPhotos.slice(1, 5).map((src: string, i: number) => (
+                    <button
+                      key={i}
+                      className="relative h-[206px] overflow-hidden"
+                      onClick={() => setGalleryOpen(true)}
+                      title="Show all photos"
+                    >
+                      <img
+                        src={src}
+                        alt={`${data.title} photo ${i + 2}`}
+                        className="absolute inset-0 w-full h-full object-cover"
+                      />
+                    </button>
+                  ))}
+                </div>
+              </div>
+            )}
+
+            {/* Show all photos button */}
+            <div className="absolute bottom-4 right-4">
+              <button
+                onClick={() => setGalleryOpen(true)}
+                className="bg-white/95 hover:bg-white text-foreground border border-border rounded-lg px-3 py-2 text-sm font-medium shadow-sm"
+              >
+                Show all photos
+              </button>
+            </div>
+          </div>
+        ) : (
+          <div className="rounded-2xl bg-muted h-[320px] md:h-[420px] flex items-center justify-center text-muted-foreground">
+            No photos yet
+          </div>
+        )}
+      </div>
+
+      {/* Main layout: content + sticky reservation */}
+      <div className="mt-8 grid grid-cols-1 lg:grid-cols-[1fr_360px] gap-10 items-start">
+        {/* Left content */}
+        <div className="space-y-10">
+          {/* Title block */}
+          <div className="space-y-3">
+            <h1 className="text-3xl sm:text-4xl font-bold tracking-tight">{data.title}</h1>
+
+            <div className="flex flex-wrap items-center gap-x-4 gap-y-2 text-sm text-muted-foreground">
+              {isNonEmptyString(data.city) && (
+                <div className="flex items-center gap-1">
+                  <MapPin className="w-4 h-4" />
+                  <span>{data.city}</span>
+                </div>
+              )}
+
+              <div className="flex items-center gap-1">
+                <Star className="w-4 h-4 fill-current" />
+                <span className="text-foreground font-medium">
+                  {Number.isFinite(data.rating) && data.rating > 0 ? data.rating.toFixed(2) : "New"}
+                </span>
+                <span className="text-muted-foreground">
+                  {data.reviewCount > 0 ? `(${data.reviewCount} reviews)` : "(No reviews yet)"}
+                </span>
+              </div>
+            </div>
+          </div>
+
+          <div className="border-t border-border" />
+
+          {/* Description */}
+          <section className="space-y-3">
+            <h2 className="text-xl font-semibold">Description</h2>
+            {isNonEmptyString(data.description) ? (
+              <p className="text-muted-foreground leading-relaxed">{data.description}</p>
+            ) : (
+              <p className="text-muted-foreground">Not configured yet</p>
+            )}
+          </section>
+
+          <div className="border-t border-border" />
+
+          {/* What's Included */}
+          <section className="space-y-3">
+            <h2 className="text-xl font-semibold">What’s Included</h2>
+            {Array.isArray(data.included) && data.included.length > 0 ? (
+              <ul className="grid grid-cols-1 sm:grid-cols-2 gap-2">
+                {data.included.slice(0, 10).map((item: string, i: number) => (
+                  <li key={i} className="flex items-start gap-2 text-sm text-muted-foreground">
+                    <CheckCircle className="w-4 h-4 mt-0.5" />
+                    <span>{item}</span>
+                  </li>
+                ))}
+              </ul>
+            ) : (
+              <p className="text-muted-foreground">Not configured yet</p>
+            )}
+          </section>
+
+          <div className="border-t border-border" />
+
+          {/* Logistics */}
+          <section className="space-y-3">
+            <h2 className="text-xl font-semibold">Logistics</h2>
+
+            <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
+              <div className="rounded-xl border border-border p-4">
+                <div className="flex items-center gap-2 font-medium">
+                  <Truck className="w-4 h-4" />
+                  Delivery
+                </div>
+                <p className="mt-2 text-sm text-muted-foreground">
+                  {data.logistics?.deliveryIncluded ? "Delivery included" : "Not configured yet"}
+                </p>
+              </div>
+
+              <div className="rounded-xl border border-border p-4">
+                <div className="flex items-center gap-2 font-medium">
+                  <Wrench className="w-4 h-4" />
+                  Setup
+                </div>
+                <p className="mt-2 text-sm text-muted-foreground">
+                  {data.logistics?.setupIncluded ? "Setup included" : "Not configured yet"}
+                </p>
+              </div>
+            </div>
+
+            {data.logistics?.radiusMiles ? (
+              <p className="text-sm text-muted-foreground">Service area: within {data.logistics.radiusMiles} miles</p>
+            ) : null}
+          </section>
+
+          <div className="border-t border-border" />
+
+          {/* Reviews */}
+          <section className="space-y-3">
+            <h2 className="text-xl font-semibold">Reviews</h2>
+            <p className="text-muted-foreground">No reviews yet</p>
+          </section>
+
+          <div className="border-t border-border" />
+
+          {/* Vendor */}
+          <section className="space-y-3">
+            <h2 className="text-xl font-semibold">Vendor</h2>
+            <p className="text-muted-foreground">Hosted by {data.vendorName}</p>
+          </section>
+        </div>
+
+        {/* Right sticky reservation card */}
+        <aside className="lg:sticky lg:top-8">
+          <ReservationCard
+            listingId={data.id}
+            vendorId={data.vendorId}
+            price={data.price}
+            pricingUnit={data.pricingUnit}
+            onBooked={() => {}}
+          />
+        </aside>
+      </div>
+
+      {/* Gallery modal */}
+      {galleryOpen && (
+        <div className="fixed inset-0 z-50 bg-black/70">
+          <div className="absolute inset-0 overflow-y-auto">
+            <div className="min-h-full flex items-start justify-center px-4 py-10">
+              <div className="w-full max-w-5xl bg-background rounded-2xl shadow-xl overflow-hidden">
+                <div className="flex items-center justify-between px-5 py-4 border-b border-border">
+                  <div className="font-semibold">Photos</div>
+                  <button
+                    onClick={() => setGalleryOpen(false)}
+                    className="rounded-md p-2 hover:bg-muted"
+                    aria-label="Close"
+                  >
+                    <X className="w-5 h-5" />
+                  </button>
+                </div>
+
+                <div className="p-5">
+                  {hasPhotos ? (
+                    <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-3">
+                      {photos.map((src: string, i: number) => (
+                        <div key={i} className="rounded-xl overflow-hidden bg-muted">
+                          <img
+                            src={src}
+                            alt={`${data.title} photo ${i + 1}`}
+                            className="w-full h-64 object-cover"
+                            loading="lazy"
+                          />
+                        </div>
+                      ))}
+                    </div>
+                  ) : (
+                    <div className="text-muted-foreground">No photos yet</div>
+                  )}
+                </div>
+              </div>
+            </div>
+          </div>
+
+          {/* Click outside to close */}
+          <button
+            className="absolute inset-0 w-full h-full cursor-default"
+            onClick={() => setGalleryOpen(false)}
+            aria-label="Close gallery overlay"
+            style={{ background: "transparent" }}
+          />
+        </div>
+      )}
+    </div>
+  );
+}
+
+function ReservationCard({
+  listingId, // kept for future (not sent to backend yet)
+  vendorId,
+  price,
+  pricingUnit,
+  onBooked,
+}: {
+  listingId: string;
+  vendorId: string | null;
+  price: number | null;
+  pricingUnit: string;
+  onBooked: (booking: any) => void;
+}) {
+  const [date, setDate] = useState("");
+  const [isBooking, setIsBooking] = useState(false);
+
+  const { isAuthenticated, loginWithRedirect, getAccessTokenSilently } = useAuth0();
+
+  const priceText = money(price);
+  const unitText = formatPricingUnit(pricingUnit);
+
+  const canBook = Boolean(date) && Boolean(priceText) && Boolean(vendorId) && !isBooking;
+
+  async function handleBookNow() {
+    if (!vendorId) {
+      alert("This listing is missing a vendor id (can’t book yet).");
+      return;
+    }
+    if (!date) {
+      alert("Pick an event date first.");
+      return;
+    }
+    if (!priceText || typeof price !== "number") {
+      alert("This listing is missing a price (can’t book yet).");
+      return;
+    }
+
+    // MVP assumptions:
+    // - totalAmount is the listing price
+    // - deposit is 25% (required by backend schema: must be positive int)
+    // - final payment strategy: immediately
+    const totalAmount = Math.round(price);
+    const depositAmount = Math.max(1, Math.round(totalAmount * 0.25));
+
+    setIsBooking(true);
+    try {
+      const res = await fetch("/api/bookings", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          vendorId,
+          eventDate: date,
+          totalAmount,
+          depositAmount,
+          finalPaymentStrategy: "immediately",
+          // listingId not in schema yet, so we do NOT send it
+        }),
+      });
+
+      const json = await res.json().catch(() => ({}));
+
+      if (!res.ok) {
+        throw new Error(json?.error || "Failed to create booking");
+      }
+
+      onBooked(json);
+    } catch (e: any) {
+      alert(e?.message || "Failed to create booking");
+    } finally {
+      setIsBooking(false);
+    }
+  }
+
+  return (
+    <div className="rounded-2xl border border-border bg-background shadow-sm p-5">
+      <div className="flex items-end justify-between">
+        <div className="text-2xl font-semibold">
+          {priceText ?? "Not configured"}
+          {priceText ? <span className="text-sm font-normal text-muted-foreground"> {unitText}</span> : null}
+        </div>
+      </div>
+
+      <div className="mt-4 space-y-3">
+        <div className="space-y-1">
+          <div className="text-sm font-medium">Event Date</div>
+          <input
+            type="date"
+            value={date}
+            onChange={(e) => setDate(e.target.value)}
+            min={new Date().toISOString().split("T")[0]}
+            className="w-full rounded-md border border-border bg-background px-3 py-2 text-sm"
+          />
+        </div>
+
+        <div className="border-t border-border pt-3">
+          <div className="flex items-center justify-between text-sm">
+            <span className="text-muted-foreground">Total</span>
+            <span className="font-medium">{priceText ?? "Not configured yet"}</span>
+          </div>
+          <div className="text-xs text-muted-foreground mt-1">Taxes/fees/deposit: Not configured yet</div>
+        </div>
+
+        <button
+          onClick={handleBookNow}
+          disabled={!canBook}
+          className={[
+            "w-full rounded-md py-3 text-sm font-medium transition",
+            !canBook ? "bg-muted text-muted-foreground cursor-not-allowed" : "bg-rose-600 hover:bg-rose-700 text-white",
+          ].join(" ")}
+        >
+          {isBooking ? "Booking..." : "Book Now"}
+        </button>
+
+        <p className="text-xs text-center text-muted-foreground">You won’t be charged yet (payments not wired here)</p>
+
+        <div className="border-t border-border pt-3">
+          <div className="text-sm font-medium">Cancellation Policy</div>
+          <div className="text-sm text-muted-foreground">Not configured yet</div>
+        </div>
+      </div>
+    </div>
+  );
+}

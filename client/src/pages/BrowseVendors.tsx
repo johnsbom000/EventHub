@@ -15,10 +15,9 @@ import { Search, SlidersHorizontal } from "lucide-react";
 const ENABLED_VENDOR_CATEGORIES = ["prop-rentals"] as const;
 type VendorCategory = (typeof ENABLED_VENDOR_CATEGORIES)[number];
 
-const listingMatchesCategory = (listing: ListingPublic, category: VendorCategory) => {
-  if (category !== "prop-rentals") return false;
-  const haystack = `${listing.serviceType} ${listing.vendorName}`.toLowerCase();
-  return haystack.includes("prop") || haystack.includes("decor") || haystack.includes("rental");
+const listingMatchesCategory = (_listing: ListingPublic, category: VendorCategory) => {
+  // Browse is locked to prop rentals; treat all public listings as eligible for now.
+  return category === "prop-rentals";
 };
 
 const getMinOfferingPrice = (listing: ListingPublic) => {
@@ -336,7 +335,7 @@ const filteredListings = useMemo(() => {
                   {filteredListings.map((listing) => (
                     <div
                       key={listing.id}
-                      className="mb-4 break-inside-avoid inline-block w-full relative hover:z-10"
+                      className="mb-4 break-inside-avoid inline-block w-full"
                     >
                       <ListingCard listing={listing} />
                     </div>

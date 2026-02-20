@@ -737,20 +737,26 @@ app.post(
 
   // Complete vendor onboarding (already Auth0)
   const completeOnboardingSchema = z.object({
-    businessName: z.string().min(2),
     vendorType: z.enum(ENABLED_VENDOR_TYPES),
-    contactName: z.string().optional(),
-    bio: z.string().optional(),
-    website: z.string().optional(),
-    instagram: z.string().optional(),
-    tiktok: z.string().optional(),
-    introVideoUrl: z.string().optional(),
-    city: z.string(),
-    state: z.string().optional(),
-    serviceRadius: z.coerce.number().optional(),
+    businessName: z.string().min(2),
+
+    streetAddress: z.string().min(1),
+    city: z.string().min(1),
+    state: z.string().min(1),
+    zipCode: z.string().min(1),
+
+    businessPhone: z.string().min(1),
+    businessEmail: z.string().email(),
+    aboutBusiness: z.string().optional(),
+
+    homeBaseLocation: z
+      .object({
+        lat: z.number(),
+        lng: z.number(),
+      })
+      .optional(),
+
     serviceRadiusMiles: z.coerce.number().optional(),
-    portfolioImages: z.array(z.string()).optional(),
-    serviceHeadline: z.string().optional(),
   });
 
   app.post("/api/vendor/onboarding/complete", requireAuth0, async (req, res) => {
@@ -803,10 +809,16 @@ app.post(
 
       const existingProfiles = await db.select().from(vendorProfiles).where(eq(vendorProfiles.accountId, account.id));
 
-      const addressParts = [onboardingData.city, onboardingData.state].filter(Boolean);
-      const address = addressParts.join(", ");
+      const address = [
+        onboardingData.streetAddress,
+        onboardingData.city,
+        onboardingData.state,
+        onboardingData.zipCode,
+      ]
+        .filter(Boolean)
+        .join(", ");
 
-      const radius = onboardingData.serviceRadius ?? onboardingData.serviceRadiusMiles ?? 25;
+      const radius = onboardingData.serviceRadiusMiles ?? 25;
 
       const profilePayload = {
         accountId: account.id,
@@ -814,20 +826,30 @@ app.post(
         experience: 0,
         qualifications: [] as string[],
         onlineProfiles: {
-          website: onboardingData.website || null,
-          instagram: onboardingData.instagram || null,
-          tiktok: onboardingData.tiktok || null,
-          introVideoUrl: onboardingData.introVideoUrl || null,
-          bio: onboardingData.bio || null,
-          headline: onboardingData.serviceHeadline || null,
+          businessPhone: onboardingData.businessPhone,
+          businessEmail: onboardingData.businessEmail,
+          state: onboardingData.state,
+          zipCode: onboardingData.zipCode,
+
+          // for LocationPicker autofill later
+          homeBaseLocation: onboardingData.homeBaseLocation ?? null,
+
+          // optional: store a “marketLocation” label so LocationPicker can show something even if we only have text
+          marketLocation: {
+            id: "onboarding-address",
+            label: address,
+            lat: onboardingData.homeBaseLocation?.lat ?? null,
+            lng: onboardingData.homeBaseLocation?.lng ?? null,
+          },
         },
+
         address,
         city: onboardingData.city,
-        travelMode: "travel-to-guests" as const,
+        travelMode: "included",
         serviceRadius: radius,
-        serviceAddress: null as string | null,
-        photos: onboardingData.portfolioImages ?? [],
-        serviceDescription: onboardingData.serviceHeadline || `Services by ${onboardingData.businessName}`,
+        serviceAddress: address,
+        photos: [],
+        serviceDescription: onboardingData.aboutBusiness?.trim() || "",
       };
 
       let profile;
@@ -874,6 +896,7 @@ app.post(
       }),
       serviceRadius: z.number().optional(),
       serviceAddress: z.string().optional(),
+      onlineProfiles: z.any().optional(),
     })
     .refine(
       (data) => {
