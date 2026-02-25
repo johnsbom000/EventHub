@@ -6,8 +6,9 @@ import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
 import { useToast } from "@/hooks/use-toast";
-import { Calendar } from "lucide-react";
 import { Alert, AlertDescription } from "@/components/ui/alert";
+import { loginWithPopupFirst } from "@/lib/auth0Login";
+import BrandWordmark from "@/components/BrandWordmark";
 
 interface AuthModalProps {
   open: boolean;
@@ -16,7 +17,7 @@ interface AuthModalProps {
 
 export default function AuthModal({ open, onOpenChange }: AuthModalProps) {
   const { toast } = useToast();
-  const { loginWithRedirect } = useAuth0();
+  const { loginWithPopup, loginWithRedirect } = useAuth0();
 
   const [activeTab, setActiveTab] = useState<"login" | "signup">("login");
 
@@ -38,11 +39,31 @@ export default function AuthModal({ open, onOpenChange }: AuthModalProps) {
 
   const safeLoginHint = email?.trim() ? email.trim() : undefined;
 
-  const startRedirect = async (opts: Parameters<typeof loginWithRedirect>[0]) => {
+  const startLogin = async (opts: Parameters<typeof loginWithRedirect>[0]) => {
+    const returnTo = `${window.location.pathname}${window.location.search}${window.location.hash}`;
+    const redirectOptions = {
+      ...opts,
+      appState: {
+        ...(opts?.appState || {}),
+        returnTo,
+      },
+    };
+
     try {
       // Close the modal immediately so the UI feels responsive.
       onOpenChange(false);
-      await loginWithRedirect(opts);
+      const result = await loginWithPopupFirst({
+        loginWithPopup,
+        loginWithRedirect,
+        popupOptions: {
+          authorizationParams: opts?.authorizationParams,
+        },
+        redirectOptions,
+      });
+
+      if (result === "cancelled") {
+        onOpenChange(true);
+      }
     } catch (err: any) {
       // Re-open modal so user can try again
       onOpenChange(true);
@@ -55,7 +76,7 @@ export default function AuthModal({ open, onOpenChange }: AuthModalProps) {
   };
 
   const continueWithGoogle = async () => {
-    await startRedirect({
+    await startLogin({
       authorizationParams: {
         connection: "google-oauth2",
         login_hint: safeLoginHint,
@@ -64,7 +85,7 @@ export default function AuthModal({ open, onOpenChange }: AuthModalProps) {
   };
 
   const continueWithFacebook = async () => {
-    await startRedirect({
+    await startLogin({
       authorizationParams: {
         connection: "facebook",
         login_hint: safeLoginHint,
@@ -73,7 +94,7 @@ export default function AuthModal({ open, onOpenChange }: AuthModalProps) {
   };
 
   const continueWithEmail = async () => {
-    await startRedirect({
+    await startLogin({
       authorizationParams: {
         // Auth0 will show the email/password login page.
         // For signup tab, we hint Auth0 to show signup first.
@@ -88,10 +109,7 @@ export default function AuthModal({ open, onOpenChange }: AuthModalProps) {
       <DialogContent className="sm:max-w-[520px]">
         <DialogHeader>
           <DialogTitle className="flex items-center gap-2">
-            <span className="inline-flex h-8 w-8 items-center justify-center rounded-lg bg-primary/10">
-              <Calendar className="h-4 w-4 text-primary" />
-            </span>
-            <span>Event Hub</span>
+            <BrandWordmark className="text-[1.85rem]" />
           </DialogTitle>
           <DialogDescription>{description}</DialogDescription>
         </DialogHeader>
@@ -131,7 +149,7 @@ export default function AuthModal({ open, onOpenChange }: AuthModalProps) {
 
             <Alert>
               <AlertDescription>
-                You’ll be redirected to our secure authentication provider (Auth0) to finish signing in.
+                We’ll open secure Auth0 sign-in in a popup. If popups are blocked, we’ll redirect you.
               </AlertDescription>
             </Alert>
           </TabsContent>
@@ -176,7 +194,7 @@ export default function AuthModal({ open, onOpenChange }: AuthModalProps) {
 
             <Alert>
               <AlertDescription>
-                You’ll be redirected to Auth0 to create your account. After that, you’ll return to Event Hub.
+                We’ll open Auth0 account creation in a popup. If blocked, we’ll redirect and return you to Event Hub.
               </AlertDescription>
             </Alert>
           </TabsContent>

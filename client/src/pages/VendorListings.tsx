@@ -10,6 +10,14 @@ import { queryClient } from "@/lib/queryClient";
 import { useToast } from "@/hooks/use-toast";
 import { useLocation } from "wouter";
 import VendorShell from "@/components/VendorShell";
+import { getListingRentalTypes } from "@/lib/rentalTypes";
+import {
+  coverRatioToAspectRatio,
+  getCoverPhotoIndex,
+  getCoverPhotoRatio,
+  getListingPhotoUrls,
+  moveCoverToFront,
+} from "@/lib/listingPhotos";
 
 type AnyListing = any;
 
@@ -24,7 +32,11 @@ export default function VendorListings() {
     queryKey: ["/api/vendor/listings", "draft"],
     queryFn: async () => {
       const res = await apiRequest("GET", "/api/vendor/listings?status=draft");
-      return res.json();
+      const json = await res.json();
+      if (!res.ok) {
+        throw new Error(json?.error || "Failed to load draft listings");
+      }
+      return json;
     },
   });
 
@@ -33,7 +45,11 @@ export default function VendorListings() {
     queryKey: ["/api/vendor/listings", "active"],
     queryFn: async () => {
       const res = await apiRequest("GET", "/api/vendor/listings?status=active");
-      return res.json();
+      const json = await res.json();
+      if (!res.ok) {
+        throw new Error(json?.error || "Failed to load active listings");
+      }
+      return json;
     },
   });
 
@@ -42,13 +58,21 @@ export default function VendorListings() {
     queryKey: ["/api/vendor/listings", "inactive"],
     queryFn: async () => {
       const res = await apiRequest("GET", "/api/vendor/listings?status=inactive");
-      return res.json();
+      const json = await res.json();
+      if (!res.ok) {
+        throw new Error(json?.error || "Failed to load inactive listings");
+      }
+      return json;
     },
   });
 
+  const draftListingRows: AnyListing[] = Array.isArray(draftListings) ? draftListings : [];
+  const activeListingRows: AnyListing[] = Array.isArray(activeListings) ? activeListings : [];
+  const inactiveListingRows: AnyListing[] = Array.isArray(inactiveListings) ? inactiveListings : [];
+
   // Hide empty shell drafts (default title + no meaningful data)
   const visibleDraftListings = useMemo(() => {
-    return (draftListings || []).filter((l: AnyListing) => {
+    return draftListingRows.filter((l: AnyListing) => {
       const title = String(l?.title || "").trim();
       const data = l?.listingData || {};
 
@@ -57,18 +81,19 @@ export default function VendorListings() {
         (Array.isArray(data?.photos?.names) ? data.photos.names.length : 0) ??
         (Array.isArray(data?.photos) ? data.photos.length : 0);
 
-      const propTypesCount = Array.isArray(data?.propTypes) ? data.propTypes.length : 0;
+      const rentalTypesCount = getListingRentalTypes(data).length;
 
       const rate = data?.pricing?.rate;
       const hasRate = rate !== null && rate !== undefined && `${rate}`.trim() !== "";
 
       const desc = String(data?.listingDescription || "").trim();
-      const hasAnyContent = photosCount > 0 || propTypesCount > 0 || hasRate || desc.length > 0;
+      const hasAnyContent = photosCount > 0 || rentalTypesCount > 0 || hasRate || desc.length > 0;
 
-      const isEmptyShell = title === "New prop-decor listing" && !hasAnyContent;
+      const isDefaultDraftTitle = /^new\s+.+\s+listing$/i.test(title);
+      const isEmptyShell = isDefaultDraftTitle && !hasAnyContent;
       return !isEmptyShell;
     });
-  }, [draftListings]);
+  }, [draftListingRows]);
 
   const handleEditListing = (listingId: string) => {
     setLocation(`/vendor/listings/${listingId}`);
@@ -218,33 +243,11 @@ export default function VendorListings() {
       (listing?.listingData?.pricing?.rate ? `$${listing.listingData.pricing.rate}` : null) ||
       (listing?.listingData?.offerings?.[0]?.price ? `$${listing.listingData.offerings[0].price}` : "Price not set");
 
-    const photosArr: any[] = Array.isArray(listing?.photos) ? listing.photos : [];
-
-    const coverCandidate =
-      photosArr.find((p) => p && typeof p === "object" && p.isCover === true) ??
-      photosArr[0] ??
-      listing?.image ??
-      (Array.isArray(listing?.listingData?.photos?.names)
-        ? { name: listing.listingData.photos.names[0] }
-        : undefined);
-
-    const rawImage =
-      typeof coverCandidate === "string"
-        ? coverCandidate
-        : coverCandidate && typeof coverCandidate === "object"
-        ? typeof coverCandidate.url === "string"
-          ? coverCandidate.url
-          : typeof coverCandidate.name === "string"
-          ? `/uploads/listings/${coverCandidate.name}`
-          : undefined
-        : undefined;
-
-    const image =
-      typeof rawImage === "string" &&
-      (rawImage.startsWith("http://") || rawImage.startsWith("https://") || rawImage.startsWith("/")) &&
-      !rawImage.toLowerCase().endsWith(".heic")
-        ? rawImage
-        : null;
+    const photoUrls = getListingPhotoUrls(listing);
+    const coverIndex = getCoverPhotoIndex(listing, photoUrls);
+    const orderedPhotos = moveCoverToFront(photoUrls, coverIndex);
+    const image = orderedPhotos[0] ?? null;
+    const coverAspectRatio = coverRatioToAspectRatio(getCoverPhotoRatio(listing));
 
 
     const statusLabel = isDraft ? "Draft" : isActive ? "Active" : "Inactive";
@@ -255,7 +258,7 @@ export default function VendorListings() {
         onClick={() => handleEditListing(listing.id)}
         data-testid={`card-listing-${listing.id}`}
       >
-        <div className="overflow-hidden relative">
+        <div className="relative overflow-hidden bg-muted" style={{ aspectRatio: coverAspectRatio }}>
           {image ? (
             <img
               src={image}
@@ -268,7 +271,7 @@ export default function VendorListings() {
             </div>
           )}
 
-          <div className="absolute top-3 left-3">
+          <div className="absolute top-3 left-3 z-10">
             {isDraft ? (
               <Badge style={{ backgroundColor: "#9EDBC0", color: "white", borderColor: "#8CCBB0" }}>
                 {statusLabel}
@@ -290,6 +293,19 @@ export default function VendorListings() {
               </h3>
               <p className="text-sm text-muted-foreground">{category}</p>
             </div>
+            <button
+              type="button"
+              className="ml-3 shrink-0 inline-flex items-center gap-1 rounded-full border border-border/70 bg-background/70 px-2.5 py-1 text-xs font-medium text-muted-foreground hover:text-foreground hover:border-border transition-colors"
+              onClick={(e) => {
+                e.stopPropagation();
+                handleEditListing(listing.id);
+              }}
+              data-testid={`button-edit-${listing.id}`}
+              aria-label={`Edit ${title}`}
+            >
+              <Edit className="w-3.5 h-3.5" />
+              Edit
+            </button>
           </div>
 
           <div className="flex items-center gap-2 text-sm text-muted-foreground mb-3">
@@ -318,22 +334,10 @@ export default function VendorListings() {
             )}
           </div>
 
-          <div className="flex gap-2 mt-4 pt-4 border-t">
-            <Button
-              variant="outline"
-              className="flex-1"
-              onClick={(e) => {
-                e.stopPropagation();
-                handleEditListing(listing.id);
-              }}
-              data-testid={`button-edit-${listing.id}`}
-            >
-              Edit
-            </Button>
-
+          <div className="grid grid-cols-2 gap-2 mt-4 pt-4 border-t">
             {(isDraft || isInactive) && (
               <Button
-                className="flex-1"
+                className="w-full min-w-0 px-2"
                 style={{ backgroundColor: "#9EDBC0", color: "white" }}
                 onClick={(e) => {
                   e.stopPropagation();
@@ -349,7 +353,7 @@ export default function VendorListings() {
             {isActive && (
               <Button
                 variant="outline"
-                className="flex-1"
+                className="w-full min-w-0 px-2"
                 onClick={(e) => {
                   e.stopPropagation();
                   handleUnpublishListing(listing.id);
@@ -361,10 +365,9 @@ export default function VendorListings() {
               </Button>
             )}
 
-
             <Button
               variant="destructive"
-              className="flex-1"
+              className="w-full min-w-0 px-2"
               onClick={(e) => {
                 e.stopPropagation();
                 handleDeleteListing(listing.id);
@@ -407,7 +410,7 @@ export default function VendorListings() {
         </Card>
       ) : listings.length > 0 ? (
         <div className="overflow-x-auto -mx-6 px-6">
-          <div className="flex gap-4 pb-4">
+          <div className="flex gap-4 pb-4 pr-4">
             {listings.map((listing: AnyListing) => (
               <ListingCardRow key={listing.id} listing={listing} status={status} />
             ))}
@@ -446,7 +449,7 @@ export default function VendorListings() {
 
           <ListingSection
             title="Active Listings"
-            listings={activeListings}
+            listings={activeListingRows}
             status="active"
             emptyMessage="No active listings. Publish a draft to make it active."
             isLoading={loadingActive}
@@ -454,7 +457,7 @@ export default function VendorListings() {
 
           <ListingSection
             title="Inactive Listings"
-            listings={inactiveListings}
+            listings={inactiveListingRows}
             status="inactive"
             emptyMessage="No inactive listings."
             isLoading={loadingInactive}

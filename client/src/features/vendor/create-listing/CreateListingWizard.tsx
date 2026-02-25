@@ -17,6 +17,7 @@ import { Label } from "@/components/ui/label";
 
 import { useToast } from "@/hooks/use-toast";
 import { apiRequest } from "@/lib/queryClient";
+import { POPULAR_FOR_OPTIONS } from "@/constants/eventTypes";
 
 import {
   Select,
@@ -27,6 +28,11 @@ import {
 } from "@/components/ui/select";
 
 import { getFreshAccessToken } from "@/lib/authToken";
+import {
+  DEFAULT_COVER_RATIO,
+  type CoverRatio,
+} from "@/lib/listingPhotos";
+import { InlinePhotoEditor, type ListingPhotoCrop } from "@/components/listings/InlinePhotoEditor";
 
 
 const MAPBOX_TOKEN = (import.meta.env.VITE_MAPBOX_TOKEN as string | undefined) ?? "";
@@ -135,7 +141,6 @@ function YesNoButtons({
 type PricingMode = "single_service" | "package" | "a_la_carte";
 
 type StepId =
-  | "propTypes"
   | "tags" // Title & Description
   | "popularFor"
   | "pricing"
@@ -143,7 +148,6 @@ type StepId =
   | "deliverySetup";
 
 const STEPS: { id: StepId; title: string }[] = [
-  { id: "propTypes", title: "Rental Types" },
   { id: "tags", title: "Title & Description" },
   { id: "popularFor", title: "Popular For" },
   { id: "pricing", title: "Pricing" },
@@ -161,29 +165,30 @@ type PerPropPricing = {
 type ListingDraft = {
   pricingMode: PricingMode | null;
 
-  // Prop/Decor-specific
-  propTypes: string[];
+  // Rental-specific
+  rentalTypes: string[];
 
   // Quantities (only meaningful for a_la_carte)
   quantitiesByPropType: Record<string, string>; // numeric string
 
   // Title/Description rules:
   // - single_service/package: one title+description (shared)
-  // - a_la_carte: title+description per prop type
+  // - a_la_carte: title+description per rental type
   listingTitle: string;
   listingDescription: string;
+  whatsIncluded: string[];
   perPropDetails: Record<string, { title: string; description: string }>;
 
   // Tags:
   // - single_service/package: stored under LISTING_TAG_KEY
-  // - a_la_carte: stored per prop type key
+  // - a_la_carte: stored per rental type key
   tagsByPropType: Record<string, { label: string; slug: string }[]>;
 
   popularFor: string[];
 
   // Pricing rules:
   // - single_service/package: one price (listing-level)
-  // - a_la_carte: price per prop type
+  // - a_la_carte: price per rental type
   pricingUnit: PricingUnit;
   rate: string; // listing-level
   minimumHours: string; // listing-level, only used for per_hour
@@ -209,19 +214,23 @@ type ListingDraft = {
   // Photos (listing-level)
   photoPreviews: string[];
   photoNames: string[];
+  coverPhotoIndex: number;
+  coverPhotoRatio: CoverRatio;
+  photoCropsByName: Record<string, ListingPhotoCrop>;
 
-  // Photos (a_la_carte per prop type)
+  // Photos (a_la_carte per rental type)
   photosByPropType: Record<string, { previews: string[]; names: string[] }>;
 };
 
 const DEFAULT_DRAFT: ListingDraft = {
   pricingMode: "single_service",
 
-  propTypes: [],
+  rentalTypes: [],
   quantitiesByPropType: {},
 
   listingTitle: "",
   listingDescription: "",
+  whatsIncluded: [],
   perPropDetails: {},
 
   tagsByPropType: {},
@@ -246,6 +255,9 @@ const DEFAULT_DRAFT: ListingDraft = {
 
   photoPreviews: [],
   photoNames: [],
+  coverPhotoIndex: 0,
+  coverPhotoRatio: DEFAULT_COVER_RATIO,
+  photoCropsByName: {},
   photosByPropType: {},
 };
 
@@ -254,7 +266,7 @@ const RENTAL_TYPES_FALLBACK = [
   "Arches",
   "Backdrops",
   "Signage",
-  "Tabletop Decor",
+  "Tabletop Rentals",
   "Linens",
   "Lighting",
   "Photo Booths",
@@ -270,35 +282,24 @@ const RENTAL_TYPES_FALLBACK = [
 
 const LISTING_TAG_KEY = "__listing__";
 
-// Popular tags suggestions per prop type
+// Popular tags suggestions per rental type
 const TAG_SUGGESTIONS: Record<string, string[]> = {
   Arches: ["Hex Arch", "Round Arch", "Boho", "Gold", "White", "Modern"],
   Backdrops: ["Draped", "Neutral", "Black", "White", "Vintage", "Modern"],
   Signage: ["Welcome", "Seating Chart", "Bar Menu", "Neon", "Acrylic", "Wood"],
-  "Tabletop Decor": ["Candles", "Neutral", "Modern", "Gold", "Silver", "Vintage"],
+  "Tabletop Rentals": ["Candles", "Neutral", "Modern", "Gold", "Silver", "Vintage"],
   Linens: ["Ivory", "White", "Black", "Sage", "Dusty Rose", "Velvet"],
   Lighting: ["Bistro Lights", "Uplighting", "Neon", "Warm", "Cool", "LED"],
-  "Photo Booths": ["Vintage Booth", "Backdrop", "Props", "Modern", "Neon", "Prints"],
+  "Photo Booths": ["Vintage Booth", "Backdrop", "Accessories", "Modern", "Neon", "Prints"],
   "Furniture & Lounges": ["Lounge", "Rattan", "Modern", "Vintage", "Neutral", "White"],
   "Floral & Greenery": ["Neutral", "Modern", "Boho", "Green", "White", "Garden"],
   "Food Displays": ["Donut Wall", "Champagne Wall", "Dessert", "Modern", "Rustic"],
   "Carts & Stations": ["Coffee Cart", "Bar Cart", "Modern", "Vintage", "White"],
   "Games & Activities": ["Lawn Games", "Cornhole", "Giant Jenga", "Kids", "Outdoor"],
   "Staging & Structures": ["Stage", "Platform", "Pipe & Drape", "Modern", "Black"],
-  "Apparel & Accessories": ["Hats", "Robes", "Props", "Modern", "Neutral"],
+  "Apparel & Accessories": ["Hats", "Robes", "Accessories", "Modern", "Neutral"],
   Other: ["Custom", "Handmade", "Modern", "Neutral"],
 };
-
-const POPULAR_FOR_OPTIONS = [
-  "Weddings",
-  "Corporate",
-  "Baby Showers",
-  "Photoshoots",
-  "Birthdays",
-  "Bridal Showers",
-  "Graduations",
-  "Holiday Parties",
-] as const;
 
 /** Normalize tags:
  * - strip special symbols
@@ -349,6 +350,19 @@ function titleCaseNoSymbols(raw: string, maxLen: number) {
     .join(" ");
 }
 
+function normalizeIncludedBullet(raw: string): string {
+  const cleaned = (raw ?? "")
+    .replace(/[^a-zA-Z0-9\s&/,'-]/g, "")
+    .replace(/\s+/g, " ")
+    .trim()
+    .replace(/[.]+$/g, "")
+    .trim()
+    .slice(0, 80);
+
+  if (!cleaned) return "";
+  return cleaned.charAt(0).toUpperCase() + cleaned.slice(1);
+}
+
 export type CreateListingWizardProps = {
   onClose: () => void;
   editMode?: boolean;
@@ -395,7 +409,7 @@ const { data: vendorProfile } = useQuery({
 
 // Wizard state
 const vendorType = ((me as any)?.vendorType || "unspecified") as string;
-const [currentStep, setCurrentStep] = useState<StepId>("propTypes");
+const [currentStep, setCurrentStep] = useState<StepId>("tags");
 const [draft, setDraft] = useState<ListingDraft>(DEFAULT_DRAFT);
 
   // Default listing service center from vendor onboarding address (one-time per listing)
@@ -462,7 +476,7 @@ const [draft, setDraft] = useState<ListingDraft>(DEFAULT_DRAFT);
 
 
   // Track the furthest step the user reached using Next (prevents “jumping forward” via sidebar)
-  // -------- Step 7: Service area map state (listing-specific) --------
+  // -------- Step 5: Service area map state (listing-specific) --------
   const mode = draft.serviceAreaMode ?? "radius";
   const radius = draft.serviceRadiusMiles ?? 0;
 
@@ -717,7 +731,8 @@ const [draft, setDraft] = useState<ListingDraft>(DEFAULT_DRAFT);
     const hasMeaningfulData =
       (draft.listingTitle || "").trim().length > 0 ||
       (draft.listingDescription || "").trim().length > 0 ||
-      (draft.propTypes?.length || 0) > 0 ||
+      (draft.whatsIncluded?.length || 0) > 0 ||
+      (draft.rentalTypes?.length || 0) > 0 ||
       (draft.photoPreviews?.length || 0) > 0 ||
       (draft.rate && String(draft.rate).trim().length > 0);
 
@@ -728,11 +743,13 @@ const [draft, setDraft] = useState<ListingDraft>(DEFAULT_DRAFT);
   vendorType,
   pricingMode: draft.pricingMode,
 
-  propTypes: draft.propTypes,
+  rentalTypes: draft.rentalTypes,
+  propTypes: draft.rentalTypes, // legacy compatibility for existing listing readers
   quantitiesByPropType: draft.quantitiesByPropType,
 
   listingTitle: draft.listingTitle,
   listingDescription: draft.listingDescription,
+  whatsIncluded: draft.whatsIncluded,
   perPropDetails: draft.perPropDetails,
 
   tagsByPropType: draft.tagsByPropType,
@@ -756,6 +773,10 @@ const [draft, setDraft] = useState<ListingDraft>(DEFAULT_DRAFT);
   photos: {
     count: draft.photoPreviews.length,
     names: draft.photoNames,
+    coverPhotoIndex: draft.photoNames.length > 0 ? 0 : 0,
+    coverPhotoRatio: draft.coverPhotoRatio,
+    coverPhotoName: draft.photoNames[0] ?? null,
+    cropsByName: draft.photoCropsByName,
     byPropType: Object.fromEntries(
       Object.entries(draft.photosByPropType).map(([k, v]) => [
         k,
@@ -810,29 +831,11 @@ const [draft, setDraft] = useState<ListingDraft>(DEFAULT_DRAFT);
   };
 
   const canContinue = useMemo(() => {
-
-    if (currentStep === "propTypes") {
-      if (draft.propTypes.length === 0) return false;
-
-      if (draft.pricingMode === "single_service") return draft.propTypes.length === 1;
-
-      if (draft.pricingMode === "a_la_carte") {
-        return draft.propTypes.every((slug) => {
-          const q = draft.quantitiesByPropType[slug];
-          const n = Number(q);
-          return Number.isFinite(n) && n >= 1;
-        });
-      }
-
-      return true;
-    }
-
     // Title & Description
     if (currentStep === "tags") {
-      if (draft.propTypes.length === 0) return false;
-
       if (draft.pricingMode === "a_la_carte") {
-        return draft.propTypes.every((slug) => {
+        if (draft.rentalTypes.length === 0) return false;
+        return draft.rentalTypes.every((slug) => {
           const d = draft.perPropDetails[slug];
           return !!d?.title?.trim() && !!d?.description?.trim();
         });
@@ -843,8 +846,8 @@ const [draft, setDraft] = useState<ListingDraft>(DEFAULT_DRAFT);
 
     if (currentStep === "pricing") {
       if (draft.pricingMode === "a_la_carte") {
-        if (draft.propTypes.length === 0) return false;
-        return draft.propTypes.every((slug) => {
+        if (draft.rentalTypes.length === 0) return false;
+        return draft.rentalTypes.every((slug) => {
           const p = draft.pricingByPropType[slug];
           if (!p?.rate?.trim()) return false;
           if (draft.pricingUnit === "per_hour" && !p?.minimumHours?.trim()) return false;
@@ -881,7 +884,7 @@ const [draft, setDraft] = useState<ListingDraft>(DEFAULT_DRAFT);
       cards: [
         { mode: "single_service" as PricingMode, title: "Single Item", desc: "Single service with simple pricing." },
         { mode: "package" as PricingMode, title: "Package", desc: "Bundled services into named packages." },
-        { mode: "a_la_carte" as PricingMode, title: "A La Carte", desc: "Customers choose individual props with individual pricing." },
+        { mode: "a_la_carte" as PricingMode, title: "A La Carte", desc: "Customers choose individual rentals with individual pricing." },
       ],
     };
   }, []);
@@ -908,7 +911,7 @@ const [draft, setDraft] = useState<ListingDraft>(DEFAULT_DRAFT);
     });
 
     // Reset navigation progress when listing type changes
-    setCurrentStep("propTypes");
+    setCurrentStep("tags");
     setMaxStepReached(0);
   };
 
@@ -931,6 +934,7 @@ const [draft, setDraft] = useState<ListingDraft>(DEFAULT_DRAFT);
 
   // Tags UI helpers
   const [tagInputByProp, setTagInputByProp] = useState<Record<string, string>>({});
+  const [includedInput, setIncludedInput] = useState("");
 
   const addTag = (key: string, raw: string) => {
     const norm = normalizeTag(raw);
@@ -967,6 +971,30 @@ const [draft, setDraft] = useState<ListingDraft>(DEFAULT_DRAFT);
     });
   };
 
+  const addIncludedItem = (raw: string) => {
+    const normalized = normalizeIncludedBullet(raw);
+    if (!normalized) return;
+
+    setDraft((d) => {
+      const existing = Array.isArray(d.whatsIncluded) ? d.whatsIncluded : [];
+      const hasDuplicate = existing.some((item) => item.toLowerCase() === normalized.toLowerCase());
+      if (hasDuplicate || existing.length >= 20) return d;
+
+      return {
+        ...d,
+        whatsIncluded: [...existing, normalized],
+      };
+    });
+    setIncludedInput("");
+  };
+
+  const removeIncludedItem = (itemToRemove: string) => {
+    setDraft((d) => ({
+      ...d,
+      whatsIncluded: (Array.isArray(d.whatsIncluded) ? d.whatsIncluded : []).filter((item) => item !== itemToRemove),
+    }));
+  };
+
   // Quantity helpers (a_la_carte)
   const setPropQuantity = (slug: string, raw: string) => {
     const cleaned = raw.replace(/[^\d]/g, "");
@@ -984,7 +1012,7 @@ const [draft, setDraft] = useState<ListingDraft>(DEFAULT_DRAFT);
       const mode = d.pricingMode;
 
       if (mode === "single_service") {
-        const isSelected = d.propTypes[0] === slug;
+        const isSelected = d.rentalTypes[0] === slug;
         const nextPropTypes = isSelected ? [] : [slug];
 
         if (isSelected) {
@@ -996,7 +1024,7 @@ const [draft, setDraft] = useState<ListingDraft>(DEFAULT_DRAFT);
 
         return {
           ...d,
-          propTypes: nextPropTypes,
+          rentalTypes: nextPropTypes,
           quantitiesByPropType: isSelected ? {} : { [slug]: "1" },
           perPropDetails: isSelected ? {} : { [slug]: d.perPropDetails[slug] ?? { title: "", description: "" } },
           pricingByPropType: isSelected ? {} : { [slug]: d.pricingByPropType[slug] ?? { rate: "", minimumHours: "" } },
@@ -1004,8 +1032,8 @@ const [draft, setDraft] = useState<ListingDraft>(DEFAULT_DRAFT);
       }
 
       // package / a_la_carte: multi-select
-      const has = d.propTypes.includes(slug);
-      const nextPropTypes = has ? d.propTypes.filter((x) => x !== slug) : [...d.propTypes, slug];
+      const has = d.rentalTypes.includes(slug);
+      const nextPropTypes = has ? d.rentalTypes.filter((x) => x !== slug) : [...d.rentalTypes, slug];
 
       let nextPerPropDetails = d.perPropDetails;
       let nextPricingByPropType = d.pricingByPropType;
@@ -1055,14 +1083,14 @@ const [draft, setDraft] = useState<ListingDraft>(DEFAULT_DRAFT);
           [slug]: d.quantitiesByPropType[slug] ?? "1",
         };
       } else if (!has && d.pricingMode !== "a_la_carte") {
-        // package: we still allow selecting propTypes, but quantity is irrelevant.
+        // package: we still allow selecting rentalTypes, but quantity is irrelevant.
         // Keep it empty to avoid confusion.
         nextQty = d.quantitiesByPropType;
       }
 
       return {
         ...d,
-        propTypes: nextPropTypes,
+        rentalTypes: nextPropTypes,
         quantitiesByPropType: nextQty,
         perPropDetails: nextPerPropDetails,
         pricingByPropType: nextPricingByPropType,
@@ -1072,7 +1100,6 @@ const [draft, setDraft] = useState<ListingDraft>(DEFAULT_DRAFT);
   };
 
   // Photos (listing-level)
-  const [photoFiles, setPhotoFiles] = useState<File[]>([]);
   const fileInputRef = useRef<HTMLInputElement | null>(null);
 
   type UploadedListingPhoto = { filename: string; url: string };
@@ -1097,7 +1124,7 @@ const [draft, setDraft] = useState<ListingDraft>(DEFAULT_DRAFT);
     return await res.json();
   }
 
-  // A La Carte photos (per prop)
+  // A La Carte photos (per rental)
   const [photoFilesByProp, setPhotoFilesByProp] = useState<Record<string, File[]>>({});
   const fileInputRefsByProp = useRef<Record<string, HTMLInputElement | null>>({});
 
@@ -1255,31 +1282,84 @@ const [draft, setDraft] = useState<ListingDraft>(DEFAULT_DRAFT);
       });
     }
 
-    const picked = all.filter((f) => allowed.has(f.type));
+    const picked = all.filter((f) => {
+      const lowerName = (f.name || "").toLowerCase();
+      const extOk =
+        lowerName.endsWith(".jpg") ||
+        lowerName.endsWith(".jpeg") ||
+        lowerName.endsWith(".png") ||
+        lowerName.endsWith(".webp");
+      return allowed.has(f.type) || extOk;
+    });
     if (picked.length === 0) return;
 
-    const previews = picked.map((f) => URL.createObjectURL(f));
-    setPhotoFiles((prev) => [...prev, ...picked]);
-    setDraft((d) => ({
-      ...d,
-      photoPreviews: [...d.photoPreviews, ...previews],
-    }));
+    const tempEntries = picked.map((f) => {
+      const ext = (f.name.split(".").pop() || "jpg").toLowerCase();
+      const tempName = `__uploading__-${Date.now()}-${Math.random().toString(16).slice(2)}.${ext}`;
+      const preview = URL.createObjectURL(f);
+      return { file: f, tempName, preview };
+    });
+
+    setDraft((d) => {
+      return {
+        ...d,
+        photoPreviews: [...d.photoPreviews, ...tempEntries.map((entry) => entry.preview)],
+        photoNames: [...d.photoNames, ...tempEntries.map((entry) => entry.tempName)],
+        coverPhotoIndex: 0,
+      };
+    });
 
     try {
-      const uploaded = await Promise.all(picked.map(uploadListingPhoto));
-      const uploadedNames = uploaded.map((u) => u.filename);
+      const uploaded = await Promise.all(tempEntries.map((entry) => uploadListingPhoto(entry.file)));
 
-      setDraft((d) => ({
-        ...d,
-        photoNames: [...d.photoNames, ...uploadedNames],
-      }));
+      setDraft((d) => {
+        let nextNames = d.photoNames.slice();
+        const nextCropsByName: Record<string, ListingPhotoCrop> = { ...(d.photoCropsByName || {}) };
+
+        uploaded.forEach((result, i) => {
+          const tempName = tempEntries[i].tempName;
+          nextNames = nextNames.map((name) => (name === tempName ? result.filename : name));
+
+          if (nextCropsByName[tempName]) {
+            nextCropsByName[result.filename] = nextCropsByName[tempName];
+            delete nextCropsByName[tempName];
+          }
+        });
+
+        return {
+          ...d,
+          photoNames: nextNames,
+          coverPhotoIndex: nextNames.length > 0 ? 0 : 0,
+          photoCropsByName: nextCropsByName,
+        };
+      });
     } catch (err: any) {
       // rollback previews we just created
-      previews.forEach((u) => URL.revokeObjectURL(u));
-      setDraft((d) => ({
-        ...d,
-        photoPreviews: d.photoPreviews.slice(0, d.photoPreviews.length - previews.length),
-      }));
+      tempEntries.forEach((entry) => URL.revokeObjectURL(entry.preview));
+      setDraft((d) => {
+        const toRemove = new Set(tempEntries.map((entry) => entry.tempName));
+        const keptNames: string[] = [];
+        const keptPreviews: string[] = [];
+        d.photoNames.forEach((name, idx) => {
+          if (!toRemove.has(name)) {
+            keptNames.push(name);
+            keptPreviews.push(d.photoPreviews[idx]);
+          }
+        });
+
+        const nextCropsByName: Record<string, ListingPhotoCrop> = { ...(d.photoCropsByName || {}) };
+        tempEntries.forEach((entry) => {
+          delete nextCropsByName[entry.tempName];
+        });
+
+        return {
+          ...d,
+          photoNames: keptNames,
+          photoPreviews: keptPreviews,
+          coverPhotoIndex: keptNames.length > 0 ? 0 : 0,
+          photoCropsByName: nextCropsByName,
+        };
+      });
 
       toast({
         title: "Photo upload failed",
@@ -1301,13 +1381,56 @@ const [draft, setDraft] = useState<ListingDraft>(DEFAULT_DRAFT);
       nextPreviews.splice(idx, 1);
       nextNames.splice(idx, 1);
 
-      return { ...d, photoPreviews: nextPreviews, photoNames: nextNames };
-    });
+      const nextCropsByName: Record<string, ListingPhotoCrop> = { ...(d.photoCropsByName || {}) };
+      if (typeof d.photoNames[idx] === "string") delete nextCropsByName[d.photoNames[idx]];
 
-    setPhotoFiles((prev) => {
-      const next = prev.slice();
-      next.splice(idx, 1);
-      return next;
+      return {
+        ...d,
+        photoPreviews: nextPreviews,
+        photoNames: nextNames,
+        coverPhotoIndex: nextNames.length > 0 ? 0 : 0,
+        photoCropsByName: nextCropsByName,
+      };
+    });
+  };
+
+  const removePhotoByName = (photoName: string) => {
+    const idx = draft.photoNames.findIndex((name) => name === photoName);
+    if (idx >= 0) removePhotoAt(idx);
+  };
+
+  const reorderListingPhotos = (orderedPhotoNames: string[]) => {
+    setDraft((d) => {
+      const previewByName = new Map<string, string>();
+      d.photoNames.forEach((name: string, idx: number) => {
+        previewByName.set(name, d.photoPreviews[idx]);
+      });
+
+      const nextNames = orderedPhotoNames.filter((name) => previewByName.has(name));
+      if (nextNames.length !== d.photoNames.length) return d;
+
+      const nextPreviews = nextNames.map((name) => previewByName.get(name) ?? "");
+      const nextCropsByName: Record<string, ListingPhotoCrop> = {};
+      nextNames.forEach((name) => {
+        if (d.photoCropsByName?.[name]) nextCropsByName[name] = d.photoCropsByName[name];
+      });
+
+      return {
+        ...d,
+        photoNames: nextNames,
+        photoPreviews: nextPreviews,
+        coverPhotoIndex: nextNames.length > 0 ? 0 : 0,
+        photoCropsByName: nextCropsByName,
+      };
+    });
+  };
+
+  const setPhotoCropByName = (photoName: string, crop: ListingPhotoCrop | null) => {
+    setDraft((d) => {
+      const nextCropsByName: Record<string, ListingPhotoCrop> = { ...(d.photoCropsByName || {}) };
+      if (crop) nextCropsByName[photoName] = crop;
+      else delete nextCropsByName[photoName];
+      return { ...d, photoCropsByName: nextCropsByName };
     });
   };
 
@@ -1359,6 +1482,29 @@ const [draft, setDraft] = useState<ListingDraft>(DEFAULT_DRAFT);
         },
       },
     }));
+  };
+
+  const selectedPopularFor = Array.isArray(draft.popularFor) ? draft.popularFor : [];
+  const allPopularForSelected = POPULAR_FOR_OPTIONS.every((option) => selectedPopularFor.includes(option));
+
+  const toggleSelectAllPopularFor = () => {
+    setDraft((d) => {
+      const current = Array.isArray(d.popularFor) ? d.popularFor : [];
+      const knownOptions = new Set<string>(POPULAR_FOR_OPTIONS);
+      const hasAllSelected = POPULAR_FOR_OPTIONS.every((option) => current.includes(option));
+
+      if (hasAllSelected) {
+        return {
+          ...d,
+          popularFor: current.filter((value) => !knownOptions.has(value)),
+        };
+      }
+
+      return {
+        ...d,
+        popularFor: Array.from(new Set([...current, ...POPULAR_FOR_OPTIONS])),
+      };
+    });
   };
 
   const isLastStep = stepIndex === STEPS.length - 1;
@@ -1413,91 +1559,23 @@ const [draft, setDraft] = useState<ListingDraft>(DEFAULT_DRAFT);
         {/* Main panel */}
         <div className="flex-1 bg-background p-10 overflow-y-auto">
 
-          {/* Step 2: Prop Types */}
-          {currentStep === "propTypes" && (
-            <div className="max-w-3xl space-y-6">
-              <h1 className="text-4xl font-bold">Rental Types</h1>
-              <p className="text-muted-foreground">
-                {draft.pricingMode === "single_service"
-                  ? "Select exactly 1 rental type for this Single Item listing. (Required)"
-                  : "Select all rental types included in this listing. (Required)"}
-              </p>
-
-              <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
-                {rentalTypes.map((rt: { slug: string; label: string }) => {
-                  const slug = rt.slug;
-                  const label = rt.label;
-
-                  const checked = draft.propTypes.includes(slug);
-                  const showQty = checked && draft.pricingMode === "a_la_carte";
-                  const qtyVal = draft.quantitiesByPropType[slug] ?? "1";
-
-                  return (
-                    <label
-                      key={slug}
-                      className={[
-                        "flex items-center justify-between gap-3 rounded-lg border px-4 py-3 cursor-pointer",
-                        checked ? "border-primary bg-primary/5" : "border-border hover:bg-muted",
-                      ].join(" ")}
-                    >
-                      <div className="flex items-center gap-3">
-                        <input
-                          type="checkbox"
-                          checked={checked}
-                          onChange={() => togglePropType(slug)}
-                        />
-                        <span className="font-medium">{label}</span>
-                      </div>
-
-                      {showQty && (
-                        <div className="flex items-center gap-2">
-                          <span className="text-xs text-muted-foreground">Qty</span>
-                          <Input
-                            className="w-20 h-9"
-                            value={qtyVal}
-                            inputMode="numeric"
-                            onChange={(e) => setPropQuantity(slug, e.target.value)}
-                            placeholder="1"
-                          />
-                        </div>
-                      )}
-                    </label>
-                  );
-                })}
-              </div>
-
-              {draft.propTypes.length === 0 && (
-                <div className="text-sm text-destructive">Select at least 1 prop type to continue.</div>
-              )}
-              {draft.pricingMode === "single_service" && draft.propTypes.length !== 1 && (
-                <div className="text-sm text-destructive">Single Item listings must have exactly 1 prop type selected.</div>
-              )}
-              {draft.pricingMode === "a_la_carte" &&
-                draft.propTypes.length > 0 &&
-                draft.propTypes.some((slug) => {
-                  const q = Number(draft.quantitiesByPropType[slug]);
-                  return !Number.isFinite(q) || q < 1;
-                }) && <div className="text-sm text-destructive">Each selected prop must have a quantity of at least 1.</div>}
-            </div>
-          )}
-
-          {/* Step 3: Title & Description */}
+          {/* Step 1: Title & Description */}
           {currentStep === "tags" && (
             <div className="max-w-3xl space-y-8">
               <div>
                 <h1 className="text-4xl font-bold">Title &amp; Description</h1>
                 <p className="text-muted-foreground">
                   {draft.pricingMode === "a_la_carte"
-                    ? "Add a title, short description, and tags for each prop."
+                    ? "Add a title, short description, and tags for each rental."
                     : "Add a title, short description, and tags for this listing."}
                 </p>
               </div>
 
-              {draft.propTypes.length === 0 ? (
-                <div className="text-sm text-muted-foreground">No prop types selected yet. Go back and pick at least 1.</div>
+              {draft.pricingMode === "a_la_carte" && draft.rentalTypes.length === 0 ? (
+                <div className="text-sm text-muted-foreground">No rental types selected yet. Add rental types while editing this listing.</div>
               ) : draft.pricingMode === "a_la_carte" ? (
                 <div className="space-y-6">
-                  {draft.propTypes.map((slug) => {
+                  {draft.rentalTypes.map((slug) => {
                     const tags = draft.tagsByPropType[slug] ?? [];
                     const inputVal = tagInputByProp[slug] ?? "";
                     const suggestions = TAG_SUGGESTIONS[slug] ?? TAG_SUGGESTIONS.Other ?? [];
@@ -1636,11 +1714,11 @@ const [draft, setDraft] = useState<ListingDraft>(DEFAULT_DRAFT);
                 <Card className="p-6 space-y-5">
                   <div className="text-xl font-semibold">Listing Details</div>
 
-                  {draft.propTypes.length > 1 && (
+                  {draft.rentalTypes.length > 1 && (
                     <div className="space-y-2">
-                      <div className="text-sm text-muted-foreground">Included prop types</div>
+                      <div className="text-sm text-muted-foreground">Included rental types</div>
                       <div className="flex flex-wrap gap-2">
-                        {draft.propTypes.map((slug) => (
+                        {draft.rentalTypes.map((slug) => (
                           <span key={slug} className="rounded-full border px-3 py-1 text-sm">
                             {rentalSlugToLabel.get(slug) ?? slug}
                           </span>
@@ -1674,6 +1752,63 @@ const [draft, setDraft] = useState<ListingDraft>(DEFAULT_DRAFT);
                       rows={4}
                     />
                     <div className="text-xs text-muted-foreground">Max 300 chars. Special symbols removed.</div>
+                  </div>
+
+                  <div className="space-y-3">
+                    <div className="font-medium">What’s Included</div>
+
+                    {(draft.whatsIncluded ?? []).length > 0 && (
+                      <ul className="space-y-1">
+                        {(draft.whatsIncluded ?? []).map((item) => (
+                          <li key={item} className="flex items-center justify-between rounded-md border px-3 py-2 text-sm">
+                            <span className="flex items-start gap-2">
+                              <span aria-hidden>•</span>
+                              <span>{item}</span>
+                            </span>
+                            <button
+                              type="button"
+                              className="text-muted-foreground hover:text-foreground"
+                              onClick={() => removeIncludedItem(item)}
+                              aria-label={`Remove ${item}`}
+                            >
+                              ×
+                            </button>
+                          </li>
+                        ))}
+                      </ul>
+                    )}
+
+                    <div className="flex gap-2">
+                      <Input
+                        value={includedInput}
+                        onChange={(e) => setIncludedInput(e.target.value)}
+                        placeholder="Type an included item…"
+                        spellCheck={true}
+                        autoCorrect="on"
+                        onKeyDown={(e) => {
+                          if (e.key === "Enter") {
+                            e.preventDefault();
+                            addIncludedItem(includedInput);
+                          }
+                        }}
+                      />
+                      <Button
+                        type="button"
+                        disabled={includedInput.trim().length === 0}
+                        onClick={() => addIncludedItem(includedInput)}
+                        className={
+                          includedInput.trim().length > 0
+                            ? "bg-primary text-primary-foreground hover:bg-primary/90"
+                            : "bg-muted text-muted-foreground"
+                        }
+                      >
+                        Add to listing
+                      </Button>
+                    </div>
+
+                    <div className="text-xs text-muted-foreground">
+                      Rules: Each bullet is capitalized, ends without a period, and typos are highlighted by spellcheck.
+                    </div>
                   </div>
 
                   <div className="space-y-3">
@@ -1736,15 +1871,20 @@ const [draft, setDraft] = useState<ListingDraft>(DEFAULT_DRAFT);
             </div>
           )}
 
-          {/* Step 4: Popular For */}
+          {/* Step 2: Popular For */}
           {currentStep === "popularFor" && (
             <div className="max-w-3xl space-y-6">
               <h1 className="text-4xl font-bold">Popular For</h1>
-              <p className="text-muted-foreground">Optional. Select all that apply.</p>
+              <div className="flex flex-wrap items-center justify-between gap-3">
+                <p className="text-muted-foreground">Optional. Select all that apply.</p>
+                <Button type="button" variant="outline" onClick={toggleSelectAllPopularFor}>
+                  {allPopularForSelected ? "Deselect all" : "Select all"}
+                </Button>
+              </div>
 
               <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
                 {POPULAR_FOR_OPTIONS.map((opt) => {
-                  const checked = draft.popularFor.includes(opt);
+                  const checked = selectedPopularFor.includes(opt);
                   return (
                     <label
                       key={opt}
@@ -1759,7 +1899,9 @@ const [draft, setDraft] = useState<ListingDraft>(DEFAULT_DRAFT);
                         onChange={() =>
                           setDraft((d) => ({
                             ...d,
-                            popularFor: checked ? d.popularFor.filter((x) => x !== opt) : [...d.popularFor, opt],
+                            popularFor: checked
+                              ? (Array.isArray(d.popularFor) ? d.popularFor.filter((x) => x !== opt) : [])
+                              : Array.from(new Set([...(Array.isArray(d.popularFor) ? d.popularFor : []), opt])),
                           }))
                         }
                       />
@@ -1771,14 +1913,14 @@ const [draft, setDraft] = useState<ListingDraft>(DEFAULT_DRAFT);
             </div>
           )}
 
-          {/* Step 5: Pricing */}
+          {/* Step 3: Pricing */}
           {currentStep === "pricing" && (
             <div className="max-w-3xl space-y-8">
               <div>
                 <h1 className="text-4xl font-bold">Pricing</h1>
                 <p className="text-muted-foreground">
                   {draft.pricingMode === "a_la_carte"
-                    ? "Set a price for each prop. Customers can choose what they want."
+                    ? "Set a price for each rental. Customers can choose what they want."
                     : "Set one price for this listing."}
                 </p>
               </div>
@@ -1799,11 +1941,11 @@ const [draft, setDraft] = useState<ListingDraft>(DEFAULT_DRAFT);
               </div>
 
               {draft.pricingMode === "a_la_carte" ? (
-                draft.propTypes.length === 0 ? (
-                  <div className="text-sm text-muted-foreground">No prop types selected yet. Go back and pick at least 1.</div>
+                draft.rentalTypes.length === 0 ? (
+                  <div className="text-sm text-muted-foreground">No rental types selected yet. Add rental types while editing this listing.</div>
                 ) : (
                   <div className="space-y-6">
-                    {draft.propTypes.map((slug) => {
+                    {draft.rentalTypes.map((slug) => {
                       const p = draft.pricingByPropType[slug] ?? { rate: "", minimumHours: "" };
                       return (
                         <Card key={slug} className="p-6 space-y-4">
@@ -1891,9 +2033,9 @@ const [draft, setDraft] = useState<ListingDraft>(DEFAULT_DRAFT);
                     )}
                   </Card>
 
-                  {draft.pricingMode === "package" && draft.propTypes.length > 1 && (
+                  {draft.pricingMode === "package" && draft.rentalTypes.length > 1 && (
                     <div className="text-sm text-muted-foreground">
-                      This is one package price for all selected props inside the package.
+                      This is one package price for all selected rentals inside the package.
                     </div>
                   )}
                 </div>
@@ -1901,7 +2043,7 @@ const [draft, setDraft] = useState<ListingDraft>(DEFAULT_DRAFT);
             </div>
           )}
 
-          {/* Step 6: Photos */}
+          {/* Step 4: Photos */}
           {currentStep === "photos" && (
             <div className="max-w-3xl space-y-6">
               <div>
@@ -1924,7 +2066,6 @@ const [draft, setDraft] = useState<ListingDraft>(DEFAULT_DRAFT);
                   <Upload className="h-4 w-4" />
                   Add photos
                 </Button>
-
                 <Button
                   variant="outline"
                   type="button"
@@ -1937,31 +2078,25 @@ const [draft, setDraft] = useState<ListingDraft>(DEFAULT_DRAFT);
                 </Button>
               </div>
 
-              {draft.photoPreviews.length === 0 ? (
-                <div className="text-sm text-muted-foreground">No photos added yet.</div>
-              ) : (
-                <div className="grid grid-cols-2 sm:grid-cols-3 gap-3">
-                  {draft.photoPreviews.map((src, idx) => (
-                    <div key={src} className="rounded-lg border overflow-hidden">
-                      <div className="aspect-square bg-muted">
-                        <img src={src} alt={`Photo ${idx + 1}`} className="w-full h-full object-cover" />
-                      </div>
-                      <div className="p-2 flex items-center justify-between gap-2">
-                        <div className="text-xs truncate text-muted-foreground">{draft.photoNames[idx] ?? `Photo ${idx + 1}`}</div>
-                        <Button variant="ghost" size="sm" onClick={() => removePhotoAt(idx)}>
-                          Remove
-                        </Button>
-                      </div>
-                    </div>
-                  ))}
-                </div>
-              )}
-
-              <div className="text-xs text-muted-foreground">Count: {draft.photoPreviews.length}</div>
+              <InlinePhotoEditor
+                photos={draft.photoNames.map((name, idx) => ({
+                  id: name,
+                  name,
+                  src: draft.photoPreviews[idx] || `/uploads/listings/${name}`,
+                }))}
+                coverRatio={draft.coverPhotoRatio}
+                cropsByPhotoId={draft.photoCropsByName}
+                onAddPhotos={() => fileInputRef.current?.click()}
+                onRemovePhoto={removePhotoByName}
+                onReorderPhotos={reorderListingPhotos}
+                onCoverRatioChange={(ratio) => setDraft((d) => ({ ...d, coverPhotoRatio: ratio, coverPhotoIndex: 0 }))}
+                onCropChange={setPhotoCropByName}
+              />
+              <div className="text-xs text-muted-foreground">Count: {draft.photoNames.length}</div>
             </div>
           )}
 
-          {/* Step 7: Delivery / Setup */}
+          {/* Step 5: Delivery / Setup */}
           {currentStep === "deliverySetup" && (
             <div className="max-w-3xl space-y-10">
               <div>

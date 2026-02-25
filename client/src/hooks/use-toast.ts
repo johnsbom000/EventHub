@@ -139,20 +139,105 @@ function dispatch(action: Action) {
 
 type Toast = Omit<ToasterToast, "id">
 
+function toFriendlyErrorText(text: string): string {
+  let cleaned = text.trim();
+  if (!cleaned) return "Something went wrong. Please try again.";
+
+  // Remove technical prefixes and status-code noise.
+  cleaned = cleaned.replace(/^\s*\d{3}\s*:\s*/g, "");
+  cleaned = cleaned.replace(/^(GET|POST|PUT|PATCH|DELETE)\s+\/\S+\s+failed:\s*/i, "");
+
+  // Keep only first line if backend returned stack/trace text.
+  const firstLine = cleaned.split("\n").map((line) => line.trim()).find(Boolean) ?? "";
+  cleaned = firstLine || cleaned;
+
+  // Unwrap common JSON error wrappers.
+  if ((cleaned.startsWith("{") && cleaned.endsWith("}")) || (cleaned.startsWith("[") && cleaned.endsWith("]"))) {
+    try {
+      const parsed = JSON.parse(cleaned);
+      const extracted =
+        (typeof parsed?.error === "string" && parsed.error) ||
+        (typeof parsed?.message === "string" && parsed.message) ||
+        "";
+      if (extracted) cleaned = extracted.trim();
+    } catch {
+      // ignore parse failure
+    }
+  }
+
+  const lower = cleaned.toLowerCase();
+
+  if (/unauthorized|forbidden|\b401\b|\b403\b/.test(lower)) {
+    return "Please sign in and try again.";
+  }
+
+  const failedToMatch = cleaned.match(/^failed to\s+(.+)$/i);
+  if (failedToMatch?.[1]) {
+    const action = failedToMatch[1].replace(/[.]+$/g, "").trim();
+    if (action) return `We couldn't ${action}. Please try again.`;
+  }
+
+  const looksTechnical =
+    /\b(api|status|exception|stack|undefined|null|json|syntaxerror|typeerror|referenceerror|networkerror)\b/i.test(
+      cleaned
+    ) ||
+    /\b\d{3}\b/.test(cleaned) ||
+    /\/api\//i.test(cleaned) ||
+    cleaned.length > 180;
+
+  if (looksTechnical) {
+    return "Something went wrong. Please try again.";
+  }
+
+  return cleaned;
+}
+
+function sanitizeToastContent<T extends { title?: React.ReactNode; description?: React.ReactNode; variant?: ToastProps["variant"] }>(
+  input: T
+): T {
+  if (input.variant !== "destructive") return input;
+
+  let nextTitle = input.title;
+  let nextDescription = input.description;
+
+  if (typeof input.title === "string") {
+    const lowerTitle = input.title.toLowerCase().trim();
+    if (/unauthorized|forbidden|\b401\b|\b403\b/.test(lowerTitle)) {
+      nextTitle = "Please sign in";
+    } else if (/error|exception/.test(lowerTitle)) {
+      nextTitle = "Something went wrong";
+    } else if (lowerTitle.startsWith("failed to ")) {
+      const action = input.title.slice("Failed to ".length).trim().replace(/[.]+$/g, "");
+      nextTitle = action ? `Couldn't ${action}` : "Something went wrong";
+    }
+  }
+
+  if (typeof input.description === "string") {
+    nextDescription = toFriendlyErrorText(input.description);
+  }
+
+  return {
+    ...input,
+    title: nextTitle,
+    description: nextDescription,
+  };
+}
+
 function toast({ ...props }: Toast) {
   const id = genId()
+  const sanitizedProps = sanitizeToastContent(props)
 
   const update = (props: ToasterToast) =>
     dispatch({
       type: "UPDATE_TOAST",
-      toast: { ...props, id },
+      toast: { ...sanitizeToastContent(props), id },
     })
   const dismiss = () => dispatch({ type: "DISMISS_TOAST", toastId: id })
 
   dispatch({
     type: "ADD_TOAST",
     toast: {
-      ...props,
+      ...sanitizedProps,
       id,
       open: true,
       onOpenChange: (open) => {

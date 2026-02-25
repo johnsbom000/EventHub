@@ -1,5 +1,5 @@
 import React, { useMemo, useState, useEffect, useRef } from "react";
-import { Link, useParams } from "wouter";
+import { Link, useLocation, useParams } from "wouter";
 import { useMutation, useQuery } from "@tanstack/react-query";
 import { apiRequest, queryClient } from "@/lib/queryClient";
 
@@ -21,6 +21,13 @@ import {
 } from "@/components/ui/select";
 
 import { getFreshAccessToken } from "@/lib/authToken";
+import { POPULAR_FOR_OPTIONS } from "@/constants/eventTypes";
+import {
+  DEFAULT_COVER_RATIO,
+  type CoverRatio,
+  normalizeCoverRatio,
+} from "@/lib/listingPhotos";
+import { InlinePhotoEditor, type ListingPhotoCrop } from "@/components/listings/InlinePhotoEditor";
 
 import { LocationPicker } from "@/components/LocationPicker";
 import mapboxgl from "mapbox-gl";
@@ -42,29 +49,8 @@ type AnyListing = {
   listingData?: any;
 };
 
-const POPULAR_FOR_OPTIONS = [
-  "Weddings",
-  "Corporate",
-  "Baby Showers",
-  "Photoshoots",
-  "Birthdays",
-  "Bridal Showers",
-  "Graduations",
-  "Holiday Parties",
-] as const;
-
 type PricingMode = "single_service" | "package" | "a_la_carte";
 type ServiceAreaMode = "radius" | "nationwide" | "global";
-
-const pricingModeConfig = {
-  headline: "How will you list your services?",
-  subhead: "Choose a simple structure. You can create more listings later.",
-  cards: [
-    { mode: "single_service" as PricingMode, title: "Single Item", desc: "Single service with simple pricing." },
-    { mode: "package" as PricingMode, title: "Package", desc: "Bundled services into named packages." },
-    { mode: "a_la_carte" as PricingMode, title: "A La Carte", desc: "Customers choose individual props with individual pricing." },
-  ],
-};
 
 // ---- Helpers ----
 const toNumOrEmpty = (v: any) => {
@@ -72,6 +58,23 @@ const toNumOrEmpty = (v: any) => {
   const s = String(v).trim();
   return s;
 };
+
+function normalizeIncludedBullet(raw: string): string {
+  const cleaned = (raw ?? "")
+    .replace(/[^a-zA-Z0-9\s&/,'-]/g, "")
+    .replace(/\s+/g, " ")
+    .trim()
+    .replace(/[.]+$/g, "")
+    .trim()
+    .slice(0, 80);
+
+  if (!cleaned) return "";
+  return cleaned.charAt(0).toUpperCase() + cleaned.slice(1);
+}
+
+function normalizePhotoCoverRatio(raw: unknown): CoverRatio {
+  return normalizeCoverRatio(raw);
+}
 
 function YesNoButtons({
   value,
@@ -171,6 +174,7 @@ function makeCircleGeoJSON(center: { lat: number; lng: number }, radiusMiles: nu
 export default function VendorListingEdit() {
   const params = useParams() as { id?: string };
   const listingId = params?.id;
+  const [, setLocation] = useLocation();
   const { toast } = useToast();
 
   const sidebarStyle = useMemo(
@@ -198,22 +202,36 @@ export default function VendorListingEdit() {
     queryKey: ["/api/vendor/profile"],
   });
 
-  const { data: rentalTypes = [] } = useQuery<{ slug: string; label: string }[]>({
-    queryKey: ["/api/rental-types"],
-  });
-
-  // Rental types (for prop type selection UI)
-
   const listing = (data as AnyListing | undefined) ?? undefined;
 
   // ---- Draft state (this is what we edit inline) ----
   const [draft, setDraft] = useState<any>(null);
+  const [includedInput, setIncludedInput] = useState("");
 
   // Init draft once listing is loaded
   useEffect(() => {
     if (!listing) return;
 
     const ld = listing.listingData || {};
+    const rawPhotoNames: string[] = Array.isArray(ld?.photos?.names)
+      ? ld.photos.names.filter((name: unknown): name is string => typeof name === "string")
+      : [];
+    const storedCoverIndex = Number(ld?.photos?.coverPhotoIndex);
+    const safeStoredCoverIndex =
+      Number.isInteger(storedCoverIndex) && storedCoverIndex >= 0 && storedCoverIndex < rawPhotoNames.length
+        ? storedCoverIndex
+        : 0;
+    const coverPhotoName = rawPhotoNames[safeStoredCoverIndex];
+    const orderedPhotoNames = coverPhotoName
+      ? [coverPhotoName, ...rawPhotoNames.filter((name) => name !== coverPhotoName)]
+      : rawPhotoNames;
+    const rawCropsByName =
+      ld?.photos?.cropsByName && typeof ld.photos.cropsByName === "object" ? ld.photos.cropsByName : {};
+    const orderedCropsByName: Record<string, ListingPhotoCrop> = {};
+    orderedPhotoNames.forEach((name) => {
+      const crop = rawCropsByName?.[name];
+      if (crop && typeof crop === "object") orderedCropsByName[name] = crop as ListingPhotoCrop;
+    });
 
     // Normalize shape into what we need on this screen
     const initial = {
@@ -223,9 +241,16 @@ export default function VendorListingEdit() {
       // Title / Description
       listingTitle: String(ld.listingTitle || listing.title || ""),
       listingDescription: String(ld.listingDescription || ""),
+      whatsIncluded: Array.isArray(ld.whatsIncluded)
+        ? ld.whatsIncluded.filter((item: unknown): item is string => typeof item === "string")
+        : [],
 
-      // Prop Types
-      propTypes: Array.isArray(ld.propTypes) ? ld.propTypes : [],
+      // Rental Types (fallback to legacy propTypes)
+      rentalTypes: Array.isArray(ld.rentalTypes)
+        ? ld.rentalTypes
+        : Array.isArray(ld.propTypes)
+          ? ld.propTypes
+          : [],
       quantitiesByPropType: ld.quantitiesByPropType || {},
 
       // Popular For
@@ -241,11 +266,15 @@ export default function VendorListingEdit() {
 
       // Photos (persist in ld.photos.names for now; also keep previews locally)
       photos: {
-        names: Array.isArray(ld?.photos?.names) ? ld.photos.names : [],
-        count: Array.isArray(ld?.photos?.names) ? ld.photos.names.length : 0,
+        names: orderedPhotoNames,
+        count: orderedPhotoNames.length,
+        coverPhotoIndex: orderedPhotoNames.length > 0 ? 0 : 0,
+        coverPhotoRatio: normalizePhotoCoverRatio(ld?.photos?.coverPhotoRatio ?? DEFAULT_COVER_RATIO),
+        coverPhotoName: orderedPhotoNames[0] ?? null,
+        cropsByName: orderedCropsByName,
       },
 
-      _photoPreviewsByName: (Array.isArray(ld?.photos?.names) ? ld.photos.names : []).reduce(
+      _photoPreviewsByName: orderedPhotoNames.reduce(
         (acc: Record<string, string>, name: string) => {
           const isHeic = String(name).toLowerCase().endsWith(".heic") || String(name).toLowerCase().endsWith(".heif");
           if (!isHeic) acc[name] = `/uploads/listings/${name}`;
@@ -306,49 +335,34 @@ export default function VendorListingEdit() {
     })();
   }, [vendorProfile, draft?.serviceCenter, draft?.serviceLocation, draft]);
 
-  // ---- Prop type logic (copied behavior from wizard, simplified) ----
-  const setPricingMode = (_mode: PricingMode) => {
-    // MVP: listing types are locked to single_service
-    return;
-  };
+  const addIncludedItem = (raw: string) => {
+    const normalized = normalizeIncludedBullet(raw);
+    if (!normalized) return;
 
-  const setPropQuantity = (slug: string, raw: string) => {
-    const cleaned = raw.replace(/[^\d]/g, "");
-    setDraft((d: any) => ({
-      ...d,
-      quantitiesByPropType: {
-        ...(d.quantitiesByPropType || {}),
-        [slug]: cleaned,
-      },
-    }));
-  };
-
-  const togglePropType = (slug: string) => {
     setDraft((d: any) => {
       if (!d) return d;
-      const mode: PricingMode = d.pricingMode;
+      const existing = Array.isArray(d.whatsIncluded) ? d.whatsIncluded : [];
+      const hasDuplicate = existing.some((item: string) => item.toLowerCase() === normalized.toLowerCase());
+      if (hasDuplicate || existing.length >= 20) return d;
 
-      if (mode === "single_service") {
-        const isSelected = d.propTypes?.[0] === slug;
-        return {
-          ...d,
-          propTypes: isSelected ? [] : [slug],
-          quantitiesByPropType: isSelected ? {} : { [slug]: "1" },
-        };
-      }
+      return {
+        ...d,
+        whatsIncluded: [...existing, normalized],
+      };
+    });
 
-      const has = (d.propTypes || []).includes(slug);
-      const nextPropTypes = has ? d.propTypes.filter((x: string) => x !== slug) : [...d.propTypes, slug];
+    setIncludedInput("");
+  };
 
-      let nextQty = d.quantitiesByPropType || {};
-      if (has) {
-        const { [slug]: _removed, ...rest } = nextQty;
-        nextQty = rest;
-      } else {
-        nextQty = { ...nextQty, [slug]: nextQty[slug] ?? "1" };
-      }
-
-      return { ...d, propTypes: nextPropTypes, quantitiesByPropType: nextQty };
+  const removeIncludedItem = (itemToRemove: string) => {
+    setDraft((d: any) => {
+      if (!d) return d;
+      return {
+        ...d,
+        whatsIncluded: (Array.isArray(d.whatsIncluded) ? d.whatsIncluded : []).filter(
+          (item: string) => item !== itemToRemove
+        ),
+      };
     });
   };
 
@@ -452,7 +466,17 @@ export default function VendorListingEdit() {
 
       return {
         ...d,
-        photos: { names: nextNames, count: nextNames.length },
+        photos: {
+          names: nextNames,
+          count: nextNames.length,
+          coverPhotoIndex: nextNames.length > 0 ? 0 : 0,
+          coverPhotoRatio: normalizePhotoCoverRatio(d?.photos?.coverPhotoRatio ?? DEFAULT_COVER_RATIO),
+          coverPhotoName: nextNames[0] ?? null,
+          cropsByName:
+            d?.photos?.cropsByName && typeof d.photos.cropsByName === "object"
+              ? d.photos.cropsByName
+              : {},
+        },
         _photoPreviewsByName: nextMap,
       };
     });
@@ -466,6 +490,8 @@ export default function VendorListingEdit() {
     setDraft((d: any) => {
       const names: string[] = Array.isArray(d?.photos?.names) ? d.photos.names : [];
       const map = { ...(d._photoPreviewsByName || {}) };
+      const nextCropsByName: Record<string, ListingPhotoCrop> =
+        d?.photos?.cropsByName && typeof d.photos.cropsByName === "object" ? { ...d.photos.cropsByName } : {};
 
       let nextNames = [...names];
 
@@ -479,6 +505,10 @@ export default function VendorListingEdit() {
         // move preview mapping temp -> real filename
         delete map[tempName];
         map[u.filename] = `/uploads/listings/${u.filename}`;
+        if (nextCropsByName[tempName]) {
+          nextCropsByName[u.filename] = nextCropsByName[tempName];
+          delete nextCropsByName[tempName];
+        }
 
         // revoke blob later (Safari-safe)
         if (blobPreview && blobPreview.startsWith("blob:")) {
@@ -492,7 +522,14 @@ export default function VendorListingEdit() {
 
       const nextDraft = {
         ...d,
-        photos: { names: nextNames, count: nextNames.length },
+        photos: {
+          names: nextNames,
+          count: nextNames.length,
+          coverPhotoIndex: nextNames.length > 0 ? 0 : 0,
+          coverPhotoRatio: normalizePhotoCoverRatio(d?.photos?.coverPhotoRatio ?? DEFAULT_COVER_RATIO),
+          coverPhotoName: nextNames[0] ?? null,
+          cropsByName: nextCropsByName,
+        },
         _photoPreviewsByName: map,
       };
 
@@ -518,15 +555,27 @@ export default function VendorListingEdit() {
       setDraft((d: any) => {
         const names: string[] = Array.isArray(d?.photos?.names) ? d.photos.names : [];
         const map = { ...(d._photoPreviewsByName || {}) };
+        const nextCropsByName: Record<string, ListingPhotoCrop> =
+          d?.photos?.cropsByName && typeof d.photos.cropsByName === "object" ? { ...d.photos.cropsByName } : {};
 
         const tempNames = new Set(tempEntries.map((x) => x.tempName));
         const nextNames = names.filter((n) => !tempNames.has(n));
 
-        tempEntries.forEach((x) => delete map[x.tempName]);
+        tempEntries.forEach((x) => {
+          delete map[x.tempName];
+          delete nextCropsByName[x.tempName];
+        });
 
         return {
           ...d,
-          photos: { names: nextNames, count: nextNames.length },
+          photos: {
+            names: nextNames,
+            count: nextNames.length,
+            coverPhotoIndex: nextNames.length > 0 ? 0 : 0,
+            coverPhotoRatio: normalizePhotoCoverRatio(d?.photos?.coverPhotoRatio ?? DEFAULT_COVER_RATIO),
+            coverPhotoName: nextNames[0] ?? null,
+            cropsByName: nextCropsByName,
+          },
           _photoPreviewsByName: map,
         };
       });
@@ -549,6 +598,8 @@ export default function VendorListingEdit() {
       const names: string[] = Array.isArray(d?.photos?.names) ? d.photos.names : [];
       const map: Record<string, string> =
         d?._photoPreviewsByName && typeof d._photoPreviewsByName === "object" ? { ...d._photoPreviewsByName } : {};
+      const nextCropsByName: Record<string, ListingPhotoCrop> =
+        d?.photos?.cropsByName && typeof d.photos.cropsByName === "object" ? { ...d.photos.cropsByName } : {};
 
       const name = names[idx];
       const nextNames = names.filter((_: any, i: number) => i !== idx);
@@ -560,11 +611,80 @@ export default function VendorListingEdit() {
         } catch {}
         delete map[String(name)];
       }
+      if (name) delete nextCropsByName[String(name)];
 
       return {
         ...d,
-        photos: { names: nextNames, count: nextNames.length },
+        photos: {
+          names: nextNames,
+          count: nextNames.length,
+          coverPhotoIndex: nextNames.length > 0 ? 0 : 0,
+          coverPhotoRatio: normalizePhotoCoverRatio(d?.photos?.coverPhotoRatio ?? DEFAULT_COVER_RATIO),
+          coverPhotoName: nextNames[0] ?? null,
+          cropsByName: nextCropsByName,
+        },
         _photoPreviewsByName: map,
+      };
+    });
+  };
+
+  const removePhotoByName = (photoName: string) => {
+    const names: string[] = Array.isArray(draft?.photos?.names) ? draft.photos.names : [];
+    const idx = names.findIndex((name) => name === photoName);
+    if (idx >= 0) removePhotoAt(idx);
+  };
+
+  const reorderPhotosByName = (orderedNames: string[]) => {
+    setDraft((d: any) => {
+      if (!d) return d;
+      const currentNames: string[] = Array.isArray(d?.photos?.names) ? d.photos.names : [];
+      if (orderedNames.length !== currentNames.length) return d;
+
+      const previewMap: Record<string, string> =
+        d?._photoPreviewsByName && typeof d._photoPreviewsByName === "object" ? { ...d._photoPreviewsByName } : {};
+      const nextCropsByName: Record<string, ListingPhotoCrop> = {};
+      const currentCropsByName: Record<string, ListingPhotoCrop> =
+        d?.photos?.cropsByName && typeof d.photos.cropsByName === "object" ? d.photos.cropsByName : {};
+      orderedNames.forEach((name) => {
+        if (currentCropsByName[name]) nextCropsByName[name] = currentCropsByName[name];
+      });
+
+      return {
+        ...d,
+        photos: {
+          ...(d.photos || {}),
+          names: orderedNames,
+          count: orderedNames.length,
+          coverPhotoIndex: orderedNames.length > 0 ? 0 : 0,
+          coverPhotoRatio: normalizePhotoCoverRatio(d?.photos?.coverPhotoRatio ?? DEFAULT_COVER_RATIO),
+          coverPhotoName: orderedNames[0] ?? null,
+          cropsByName: nextCropsByName,
+        },
+        _photoPreviewsByName: previewMap,
+      };
+    });
+  };
+
+  const setPhotoCropByName = (photoName: string, crop: ListingPhotoCrop | null) => {
+    setDraft((d: any) => {
+      if (!d) return d;
+      const nextCropsByName: Record<string, ListingPhotoCrop> =
+        d?.photos?.cropsByName && typeof d.photos.cropsByName === "object" ? { ...d.photos.cropsByName } : {};
+      if (crop) nextCropsByName[photoName] = crop;
+      else delete nextCropsByName[photoName];
+
+      return {
+        ...d,
+        photos: {
+          ...(d.photos || {}),
+          names: Array.isArray(d?.photos?.names) ? d.photos.names : [],
+          count: Array.isArray(d?.photos?.names) ? d.photos.names.length : 0,
+          coverPhotoIndex: Array.isArray(d?.photos?.names) && d.photos.names.length > 0 ? 0 : 0,
+          coverPhotoRatio: normalizePhotoCoverRatio(d?.photos?.coverPhotoRatio ?? DEFAULT_COVER_RATIO),
+          coverPhotoName:
+            Array.isArray(d?.photos?.names) && d.photos.names.length > 0 ? d.photos.names[0] : null,
+          cropsByName: nextCropsByName,
+        },
       };
     });
   };
@@ -572,17 +692,14 @@ export default function VendorListingEdit() {
   // ---- Derived summaries / publish gating ----
   const title = String(draft?.listingTitle ?? "");
   const description = String(draft?.listingDescription ?? "");
-  const propTypes: string[] = Array.isArray(draft?.propTypes) ? draft.propTypes : [];
-
   const pricingRate = draft?.pricing?.rate;
   const hasTitle = title.trim() !== "";
   const hasDescription = description.trim() !== "";
-  const hasProps = propTypes.length > 0;
 
   const hasPricing =
     pricingRate !== null && pricingRate !== undefined && `${pricingRate}`.trim() !== "";
 
-  const canPublish = hasTitle && hasDescription && hasProps && hasPricing;
+  const canPublish = hasTitle && hasDescription && hasPricing;
 
   // ---- Save mutation ----
   const saveMutation = useMutation({
@@ -596,7 +713,9 @@ export default function VendorListingEdit() {
         pricingMode: draft.pricingMode,
         listingTitle: draft.listingTitle,
         listingDescription: draft.listingDescription,
-        propTypes: draft.propTypes,
+        whatsIncluded: Array.isArray(draft.whatsIncluded) ? draft.whatsIncluded : [],
+        rentalTypes: draft.rentalTypes,
+        propTypes: draft.rentalTypes, // legacy compatibility for existing listing readers
         quantitiesByPropType: draft.quantitiesByPropType,
         popularFor: draft.popularFor,
         pricing: {
@@ -609,6 +728,16 @@ export default function VendorListingEdit() {
         photos: {
           names: Array.isArray(draft?.photos?.names) ? draft.photos.names : [],
           count: Array.isArray(draft?.photos?.names) ? draft.photos.names.length : 0,
+          coverPhotoIndex: Array.isArray(draft?.photos?.names) && draft.photos.names.length > 0 ? 0 : 0,
+          coverPhotoRatio: normalizePhotoCoverRatio(draft?.photos?.coverPhotoRatio ?? DEFAULT_COVER_RATIO),
+          coverPhotoName:
+            Array.isArray(draft?.photos?.names) && draft.photos.names.length > 0
+              ? draft.photos.names[0] ?? null
+              : null,
+          cropsByName:
+            draft?.photos?.cropsByName && typeof draft.photos.cropsByName === "object"
+              ? draft.photos.cropsByName
+              : {},
         },
         deliverySetup: draft.deliverySetup,
         serviceAreaMode: draft.serviceAreaMode,
@@ -639,6 +768,7 @@ export default function VendorListingEdit() {
       await queryClient.invalidateQueries({ queryKey: ["/api/vendor/listings"] });
       await queryClient.invalidateQueries({ queryKey: ["/api/vendor/listings", listingId] });
       toast({ title: "Saved", description: "Your changes were saved." });
+      setLocation("/vendor/listings");
     },
     onError: (err) => {
       toast({
@@ -674,6 +804,8 @@ export default function VendorListingEdit() {
   });
 
   const status = String(listing?.status || "—");
+  const normalizedStatus = status.trim().toLowerCase();
+  const showPublishAction = normalizedStatus === "draft" || normalizedStatus === "inactive";
 
   // ---- Location derived center + circle (for future map preview) ----
   const center =
@@ -838,6 +970,38 @@ export default function VendorListingEdit() {
     }
   }, [circleFeature, center]);
 
+  const selectedPopularFor = Array.isArray(draft?.popularFor) ? draft.popularFor : [];
+  const allPopularForSelected = POPULAR_FOR_OPTIONS.every((option) => selectedPopularFor.includes(option));
+  const photoNames: string[] = Array.isArray(draft?.photos?.names) ? draft.photos.names : [];
+  const coverPhotoRatio = normalizePhotoCoverRatio(draft?.photos?.coverPhotoRatio ?? DEFAULT_COVER_RATIO);
+  const getPhotoPreviewSrc = (name: string) =>
+    draft?._photoPreviewsByName?.[name] || `/uploads/listings/${name}`;
+  const inlinePhotos = photoNames.map((name) => ({
+    id: name,
+    name,
+    src: getPhotoPreviewSrc(name),
+  }));
+
+  const toggleSelectAllPopularFor = () => {
+    setDraft((d: any) => {
+      const current = Array.isArray(d?.popularFor) ? d.popularFor : [];
+      const knownOptions = new Set<string>(POPULAR_FOR_OPTIONS);
+      const hasAllSelected = POPULAR_FOR_OPTIONS.every((option) => current.includes(option));
+
+      if (hasAllSelected) {
+        return {
+          ...d,
+          popularFor: current.filter((value: string) => !knownOptions.has(value)),
+        };
+      }
+
+      return {
+        ...d,
+        popularFor: Array.from(new Set([...current, ...POPULAR_FOR_OPTIONS])),
+      };
+    });
+  };
+
   return (
     <SidebarProvider style={sidebarStyle}>
       <div className="flex h-screen w-full">
@@ -855,13 +1019,15 @@ export default function VendorListingEdit() {
                 {saveMutation.isPending ? "Saving…" : "Save changes"}
               </Button>
 
-              <Button
-                disabled={!canPublish || publishMutation.isPending || !draft}
-                onClick={() => publishMutation.mutate()}
-                style={{ backgroundColor: "#9EDBC0", color: "white" }}
-              >
-                {publishMutation.isPending ? "Publishing…" : "Publish"}
-              </Button>
+              {showPublishAction && (
+                <Button
+                  disabled={!canPublish || publishMutation.isPending || !draft}
+                  onClick={() => publishMutation.mutate()}
+                  style={{ backgroundColor: "#9EDBC0", color: "white" }}
+                >
+                  {publishMutation.isPending ? "Publishing…" : "Publish"}
+                </Button>
+              )}
 
               <Link href="/vendor/listings">
                 <Button variant="outline">Back to listings</Button>
@@ -898,127 +1064,7 @@ export default function VendorListingEdit() {
                 </Card>
               ) : (
                 <div className="space-y-6">
-                  {/* 1) Listing Type */}
-                  <Card className="p-6 bg-muted/30">
-                    <div className="space-y-4">
-                      <div>
-                        <div className="text-xl font-semibold">Listing Type</div>
-                        <div className="text-sm text-muted-foreground">
-                          {pricingModeConfig.subhead}
-                        </div>
-                      </div>
-
-                      <div className="grid grid-cols-1 md:grid-cols-3 gap-4">
-                        {pricingModeConfig.cards.map((c) => (
-                          <Card
-                            key={c.mode}
-                            className={`p-5 cursor-pointer hover:border-primary ${
-                              draft.pricingMode === c.mode ? "border-primary" : ""
-                            }`}
-                            onClick={() => setPricingMode(c.mode)}
-                          >
-                            <div className="font-semibold mb-1">{c.title}</div>
-                            <div className="text-sm text-muted-foreground">{c.desc}</div>
-                          </Card>
-                        ))}
-                      </div>
-
-                      {draft.pricingMode === "single_service" && (
-                        <div className="text-sm text-muted-foreground">
-                          Single Item = select exactly <strong>1</strong> prop type next.
-                        </div>
-                      )}
-                      {draft.pricingMode === "package" && (
-                        <div className="text-sm text-muted-foreground">
-                          Package = select <strong>1+</strong> prop types, then set one bundle price.
-                        </div>
-                      )}
-                      {draft.pricingMode === "a_la_carte" && (
-                        <div className="text-sm text-muted-foreground">
-                          A La Carte = select <strong>1+</strong> prop types, set quantities, then set pricing per prop.
-                        </div>
-                      )}
-                    </div>
-                  </Card>
-
-                  {/* 2) Prop Types */}
-                  <Card className="p-6 bg-muted/30">
-                    <div className="space-y-4">
-                      <div>
-                        <div className="text-xl font-semibold">Prop Types</div>
-                        <div className="text-sm text-muted-foreground">
-                          {draft.pricingMode === "single_service"
-                            ? "Select exactly 1 prop type for this Single Item listing. (Required)"
-                            : "Select all prop types included in this listing. (Required)"}
-                        </div>
-                      </div>
-
-                      <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
-                        {(rentalTypes.length > 0 ? rentalTypes : []).map((r: { slug: string; label: string }) => {
-                          const slug = r.slug as string;
-                          const label = r.label as string;
-
-                          const checked = draft.propTypes.includes(slug);
-                          const showQty = checked && draft.pricingMode === "a_la_carte";
-                          const qtyVal = draft.quantitiesByPropType?.[slug] ?? "1";
-
-                          return (
-                            <label
-                              key={slug}
-                              className={[
-                                "flex items-center justify-between gap-3 rounded-lg border px-4 py-3 cursor-pointer",
-                                checked ? "border-primary bg-primary/5" : "border-border hover:bg-muted",
-                              ].join(" ")}
-                            >
-                              <div className="flex items-center gap-3">
-                                <input
-                                  type="checkbox"
-                                  checked={checked}
-                                  onChange={() => togglePropType(slug)}
-                                />
-                                <span className="font-medium">{label}</span>
-                              </div>
-
-                              {showQty && (
-                                <div className="flex items-center gap-2">
-                                  <span className="text-xs text-muted-foreground">Qty</span>
-                                  <Input
-                                    className="w-20 h-9"
-                                    value={qtyVal}
-                                    inputMode="numeric"
-                                    onClick={(e) => e.preventDefault()}
-                                    onChange={(e) => setPropQuantity(slug, e.target.value)}
-                                    placeholder="1"
-                                  />
-                                </div>
-                              )}
-                            </label>
-                          );
-                        })}
-                      </div>
-
-                      {draft.propTypes.length === 0 && (
-                        <div className="text-sm text-destructive">Select at least 1 prop type.</div>
-                      )}
-                      {draft.pricingMode === "single_service" && draft.propTypes.length !== 1 && (
-                        <div className="text-sm text-destructive">
-                          Single Item listings must have exactly 1 prop type selected.
-                        </div>
-                      )}
-                      {draft.pricingMode === "a_la_carte" &&
-                        draft.propTypes.length > 0 &&
-                        draft.propTypes.some((slug: string) => {
-                          const q = Number(draft.quantitiesByPropType?.[slug]);
-                          return !q || q < 1;
-                        }) && (
-                          <div className="text-sm text-destructive">
-                            Each selected prop must have a quantity of at least 1.
-                          </div>
-                        )}
-                    </div>
-                  </Card>
-
-                  {/* 3) Title & Description */}
+                  {/* 1) Title & Description */}
                   <Card className="p-6 bg-muted/30">
                     <div className="space-y-4">
                       <div>
@@ -1044,20 +1090,82 @@ export default function VendorListingEdit() {
                           placeholder="Describe this listing…"
                         />
                       </div>
+
+                      <div className="space-y-3">
+                        <Label>What&apos;s Included</Label>
+
+                        {(Array.isArray(draft.whatsIncluded) ? draft.whatsIncluded : []).length > 0 && (
+                          <ul className="space-y-1">
+                            {(Array.isArray(draft.whatsIncluded) ? draft.whatsIncluded : []).map((item: string) => (
+                              <li key={item} className="flex items-center justify-between rounded-md border px-3 py-2 text-sm">
+                                <span className="flex items-start gap-2">
+                                  <span aria-hidden>•</span>
+                                  <span>{item}</span>
+                                </span>
+                                <button
+                                  type="button"
+                                  className="text-muted-foreground hover:text-foreground"
+                                  onClick={() => removeIncludedItem(item)}
+                                  aria-label={`Remove ${item}`}
+                                >
+                                  ×
+                                </button>
+                              </li>
+                            ))}
+                          </ul>
+                        )}
+
+                        <div className="flex gap-2">
+                          <Input
+                            value={includedInput}
+                            onChange={(e) => setIncludedInput(e.target.value)}
+                            placeholder="Type an included item…"
+                            spellCheck={true}
+                            autoCorrect="on"
+                            onKeyDown={(e) => {
+                              if (e.key === "Enter") {
+                                e.preventDefault();
+                                addIncludedItem(includedInput);
+                              }
+                            }}
+                          />
+                          <Button
+                            type="button"
+                            disabled={includedInput.trim().length === 0}
+                            onClick={() => addIncludedItem(includedInput)}
+                            className={
+                              includedInput.trim().length > 0
+                                ? "bg-primary text-primary-foreground hover:bg-primary/90"
+                                : "bg-muted text-muted-foreground"
+                            }
+                          >
+                            Add to listing
+                          </Button>
+                        </div>
+
+                        <div className="text-xs text-muted-foreground">
+                          Rules: Each bullet is capitalized, ends without a period, and duplicates are prevented.
+                        </div>
+                      </div>
                     </div>
                   </Card>
 
-                  {/* 4) Popular For */}
+                  {/* 2) Popular For */}
                   <Card className="p-6 bg-muted/30">
                     <div className="space-y-4">
                       <div>
                         <div className="text-xl font-semibold">Popular For</div>
-                        <div className="text-sm text-muted-foreground">Optional. Select all that apply.</div>
+                        <div className="mt-2 flex flex-wrap items-center justify-between gap-3">
+                          <div className="text-sm text-muted-foreground">Optional. Select all that apply.</div>
+                          <Button type="button" variant="outline" onClick={toggleSelectAllPopularFor}>
+                            {allPopularForSelected ? "Deselect all" : "Select all"}
+                          </Button>
+                        </div>
                       </div>
 
                       <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
                         {POPULAR_FOR_OPTIONS.map((opt) => {
-                          const checked = draft.popularFor.includes(opt);
+                          const checked = selectedPopularFor.includes(opt);
                           return (
                             <label
                               key={opt}
@@ -1072,7 +1180,9 @@ export default function VendorListingEdit() {
                                 onChange={() =>
                                   setDraft((d: any) => ({
                                     ...d,
-                                    popularFor: checked ? d.popularFor.filter((x: string) => x !== opt) : [...d.popularFor, opt],
+                                    popularFor: checked
+                                      ? (Array.isArray(d.popularFor) ? d.popularFor.filter((x: string) => x !== opt) : [])
+                                      : Array.from(new Set([...(Array.isArray(d.popularFor) ? d.popularFor : []), opt])),
                                   }))
                                 }
                               />
@@ -1084,7 +1194,7 @@ export default function VendorListingEdit() {
                     </div>
                   </Card>
 
-                  {/* 5) Pricing (baseline – you can expand later) */}
+                  {/* 3) Pricing (baseline – you can expand later) */}
                   <Card className="p-6 bg-muted/30">
                     <div className="space-y-4">
                       <div>
@@ -1170,67 +1280,43 @@ export default function VendorListingEdit() {
                       />
 
                       <div className="flex items-center gap-2">
-                        <Button
-                          type="button"
-                          variant="outline"
-                          onClick={() => photoInputRef.current?.click()}
-                        >
+                        <Button type="button" variant="outline" onClick={() => photoInputRef.current?.click()}>
                           Add photos
                         </Button>
-                        <div className="text-sm text-muted-foreground">
-                          Count: {Array.isArray(draft?.photos?.names) ? draft.photos.names.length : 0}
-                        </div>
+                        <div className="text-sm text-muted-foreground">Count: {photoNames.length}</div>
                       </div>
 
-                      {Array.isArray(draft?.photos?.names) && draft.photos.names.length > 0 ? (
-                        <div className="grid grid-cols-2 sm:grid-cols-3 gap-3">
-                          {draft.photos.names.map((name: string, idx: number) => {
-                            const preview = draft._photoPreviewsByName?.[name];
-                            const isHeic = String(name).toLowerCase().endsWith(".heic");
-
-                            return (
-                              <div key={`${name}-${idx}`} className="rounded-lg border overflow-hidden bg-background">
-                                <div className="aspect-square bg-muted flex items-center justify-center">
-                                  {!isHeic ? (
-                                    <img
-                                      src={preview || `/uploads/listings/${name}`}
-                                      alt={name}
-                                      className="w-full h-full object-cover"
-                                      onError={(e) => {
-                                        // if neither preview nor server file works, show the fallback text
-                                        const img = e.currentTarget;
-                                        img.style.display = "none";
-                                        const parent = img.parentElement;
-                                        if (parent && !parent.querySelector("[data-fallback='1']")) {
-                                          const div = document.createElement("div");
-                                          div.setAttribute("data-fallback", "1");
-                                          div.className = "text-xs text-muted-foreground px-3 text-center";
-                                          div.innerHTML = `No preview<br/><span style="word-break:break-all">${String(name)}</span>`;
-                                          parent.appendChild(div);
-                                        }
-                                      }}
-                                    />
-                                  ) : (
-                                    <div className="text-xs text-muted-foreground px-3 text-center">
-                                      HEIC preview not supported <br />
-                                      <span className="break-all">{name}</span>
-                                    </div>
-                                  )}
-                                </div>
-
-                                <div className="p-2 flex items-center justify-between gap-2">
-                                  <div className="text-xs truncate text-muted-foreground">{name}</div>
-                                  <Button type="button" variant="ghost" size="sm" onClick={() => removePhotoAt(idx)}>
-                                    Remove
-                                  </Button>
-                                </div>
-                              </div>
-                            );
-                          })}
-                        </div>
-                      ) : (
-                        <div className="text-sm text-muted-foreground">No photos yet.</div>
-                      )}
+                      <InlinePhotoEditor
+                        photos={inlinePhotos}
+                        coverRatio={coverPhotoRatio}
+                        cropsByPhotoId={
+                          draft?.photos?.cropsByName && typeof draft.photos.cropsByName === "object"
+                            ? draft.photos.cropsByName
+                            : {}
+                        }
+                        onAddPhotos={() => photoInputRef.current?.click()}
+                        onRemovePhoto={removePhotoByName}
+                        onReorderPhotos={reorderPhotosByName}
+                        onCoverRatioChange={(ratio) =>
+                          setDraft((d: any) => ({
+                            ...d,
+                            photos: {
+                              ...(d.photos || {}),
+                              names: Array.isArray(d?.photos?.names) ? d.photos.names : [],
+                              count: Array.isArray(d?.photos?.names) ? d.photos.names.length : 0,
+                              coverPhotoIndex: Array.isArray(d?.photos?.names) && d.photos.names.length > 0 ? 0 : 0,
+                              coverPhotoRatio: normalizePhotoCoverRatio(ratio),
+                              coverPhotoName:
+                                Array.isArray(d?.photos?.names) && d.photos.names.length > 0 ? d.photos.names[0] : null,
+                              cropsByName:
+                                d?.photos?.cropsByName && typeof d.photos.cropsByName === "object"
+                                  ? d.photos.cropsByName
+                                  : {},
+                            },
+                          }))
+                        }
+                        onCropChange={setPhotoCropByName}
+                      />
                     </div>
                   </Card>
 
@@ -1482,7 +1568,6 @@ export default function VendorListingEdit() {
                         Missing:
                         {!hasTitle ? " title," : ""}
                         {!hasDescription ? " description," : ""}
-                        {!hasProps ? " at least 1 prop type," : ""}
                         {!hasPricing ? " pricing rate," : ""}{" "}
                         <span className="text-xs">(same gate everywhere)</span>
                       </div>

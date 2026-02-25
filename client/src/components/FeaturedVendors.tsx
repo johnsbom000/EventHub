@@ -3,25 +3,25 @@ import venueImage from "@assets/generated_images/Elegant_venue_category_image_2d
 import cateringImage from "@assets/generated_images/Catering_service_category_image_cf900d0e.png";
 import photographyImage from "@assets/generated_images/Photography_service_category_image_42830a2e.png";
 
-const LANDING_CATEGORY = "prop-decor";
+const LANDING_CATEGORY = "rentals";
 
 const vendors = [
   {
     id: "pd-1",
-    name: "Modern Event Props",
-    categoryId: "prop-decor",
-    category: "Prop & Decor Rentals",
+    name: "Modern Event Rentals",
+    categoryId: "rentals",
+    category: "Rentals",
     rating: 4.9,
     reviewCount: 84,
     location: "New York, NY",
     startingPrice: "$750",
-    image: venueImage, // replace later with a prop/decor-specific image if you want
+    image: venueImage, // replace later with a rental-specific image if you want
   },
   {
     id: "pd-2",
     name: "Styled Spaces Co.",
-    categoryId: "prop-decor",
-    category: "Prop & Decor Rentals",
+    categoryId: "rentals",
+    category: "Rentals",
     rating: 4.8,
     reviewCount: 61,
     location: "Los Angeles, CA",
@@ -30,9 +30,9 @@ const vendors = [
   },
   {
     id: "pd-3",
-    name: "Signature Event Decor",
-    categoryId: "prop-decor",
-    category: "Prop & Decor Rentals",
+    name: "Signature Event Rentals",
+    categoryId: "rentals",
+    category: "Rentals",
     rating: 5.0,
     reviewCount: 102,
     location: "Chicago, IL",

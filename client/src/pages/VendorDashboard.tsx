@@ -28,6 +28,14 @@ type VendorStats = {
   revenueGrowth?: number | null;
   profileViews?: number | null;
   profileViewsGrowth?: number | null;
+  recentBookings?: Array<{
+    id: string;
+    status?: string | null;
+    totalAmount?: number | null;
+    eventDate?: string | null;
+    eventLocation?: string | null;
+    createdAt?: string | null;
+  }>;
 };
 
 type VendorProfileResponse = {
@@ -315,6 +323,8 @@ export default function VendorDashboard() {
   } as React.CSSProperties;
 
   const showLoading = !isAuthenticated || isVendorLoading || isStatsLoading || isProfileLoading;
+  const formatMoneyFromCents = (cents: number) =>
+    new Intl.NumberFormat("en-US", { style: "currency", currency: "USD" }).format((cents || 0) / 100);
 
   if (showLoading) {
     return (
@@ -359,10 +369,12 @@ export default function VendorDashboard() {
             </CardHeader>
             <CardContent>
               <div className="text-2xl font-bold" data-testid="stat-revenue">
-                ${(stats?.revenue ?? 0).toLocaleString()}
+                {formatMoneyFromCents(Number(stats?.revenue ?? 0))}
               </div>
               <p className="text-xs text-muted-foreground flex items-center gap-1">
-                <TrendingUp className="h-3 w-3" />+{stats?.revenueGrowth ?? 0}% from last month
+                <TrendingUp className="h-3 w-3" />
+                {Number(stats?.revenueGrowth ?? 0) >= 0 ? "+" : ""}
+                {stats?.revenueGrowth ?? 0}% from last month
               </p>
             </CardContent>
           </Card>
@@ -377,7 +389,9 @@ export default function VendorDashboard() {
                 {(stats?.profileViews ?? 0).toLocaleString()}
               </div>
               <p className="text-xs text-muted-foreground flex items-center gap-1">
-                <TrendingUp className="h-3 w-3" />+{stats?.profileViewsGrowth ?? 0}% this week
+                <TrendingUp className="h-3 w-3" />
+                {Number(stats?.profileViewsGrowth ?? 0) >= 0 ? "+" : ""}
+                {stats?.profileViewsGrowth ?? 0}% this week
               </p>
             </CardContent>
           </Card>
@@ -408,9 +422,36 @@ export default function VendorDashboard() {
             <CardDescription>Your latest bookings and inquiries</CardDescription>
           </CardHeader>
           <CardContent>
-            <div className="text-sm text-muted-foreground text-center py-8">
-              No recent bookings yet. Your upcoming bookings will appear here.
-            </div>
+            {!stats?.recentBookings || stats.recentBookings.length === 0 ? (
+              <div className="text-sm text-muted-foreground text-center py-8">
+                No recent bookings yet. Your upcoming bookings will appear here.
+              </div>
+            ) : (
+              <div className="space-y-3">
+                {stats.recentBookings.slice(0, 5).map((booking) => (
+                  <div
+                    key={booking.id}
+                    className="rounded-lg border p-3 flex items-center justify-between gap-3"
+                  >
+                    <div>
+                      <div className="font-medium">Booking #{booking.id.slice(0, 8)}</div>
+                      <div className="text-sm text-muted-foreground">
+                        {booking.eventDate || "Date not set"}
+                        {booking.eventLocation ? ` • ${booking.eventLocation}` : ""}
+                      </div>
+                    </div>
+                    <div className="text-right">
+                      <div className="text-sm capitalize text-muted-foreground">
+                        {String(booking.status || "pending")}
+                      </div>
+                      <div className="font-medium">
+                        {formatMoneyFromCents(Number(booking.totalAmount ?? 0))}
+                      </div>
+                    </div>
+                  </div>
+                ))}
+              </div>
+            )}
           </CardContent>
         </Card>
 

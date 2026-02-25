@@ -1,5 +1,4 @@
-@import url("https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700;800&display=swap");
-@import url("https://fonts.googleapis.com/css2?family=Playfair+Display:wght@400;500;600;700;800&display=swap");
+@import url("https://fonts.googleapis.com/css2?family=Damion&family=Tienne:wght@400;700&display=swap");
 @tailwind base;
 @tailwind components;
 @tailwind utilities;
@@ -78,8 +77,8 @@
   --chart-4: 173 75% 42%;
   --chart-5: 220 80% 55%;
 
-  --font-sans: "Inter", -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif;
-  --font-heading: "Playfair Display", Georgia, serif;
+  --font-sans: "Tienne", Georgia, serif;
+  --font-heading: "Tienne", Georgia, serif;
   --font-mono: Menlo, monospace;
   --radius: .5rem; /* 8px */
   --shadow-2xs: 0px 1px 2px 0px hsl(240 5% 12% / 0.05);
@@ -358,4 +357,70 @@
   .border.hover-elevate:not(.no-hover-interaction-elevate)::after {
     inset: -1px;
   }
+}
+
+.eventhub-stream-chat .str-chat {
+  --str-chat__font-family: var(--font-sans);
+  --str-chat__primary-color: hsl(var(--primary));
+  --str-chat__active-primary-color: hsl(var(--primary));
+  --str-chat__surface-color: hsl(var(--card));
+  --str-chat__primary-surface-color: hsl(var(--background));
+  --str-chat__secondary-surface-color: hsl(var(--muted));
+  --str-chat__text-color: hsl(var(--foreground));
+  --str-chat__secondary-text-color: hsl(var(--muted-foreground));
+  --str-chat__border-radius-circle: 9999px;
+}
+
+.eventhub-stream-chat,
+.eventhub-stream-chat .str-chat,
+.eventhub-stream-chat .str-chat__channel,
+.eventhub-stream-chat .str-chat__main-panel,
+.eventhub-stream-chat .str-chat__window {
+  height: 100%;
+  min-height: 0;
+}
+
+.eventhub-stream-chat .str-chat__channel,
+.eventhub-stream-chat .str-chat__main-panel,
+.eventhub-stream-chat .str-chat__window {
+  display: flex;
+  flex-direction: column;
+}
+
+.eventhub-stream-chat .str-chat__list {
+  flex: 1;
+  min-height: 0;
+}
+
+.eventhub-stream-chat .str-chat__message-input {
+  flex-shrink: 0;
+  background: hsl(var(--background));
+  border-top: 1px solid hsl(var(--border));
+  padding-bottom: 0.125rem;
+}
+
+.eventhub-stream-chat .str-chat__message-simple-content {
+  border-radius: 12px;
+}
+
+.eventhub-stream-chat .str-chat__send-button {
+  color: hsl(var(--foreground));
+}
+
+.eventhub-stream-chat .str-chat__edit-message-form-options {
+  display: flex;
+  justify-content: flex-end;
+  align-items: center;
+  gap: 0.875rem;
+}
+
+.eventhub-stream-chat .str-chat__edit-message-cancel,
+.eventhub-stream-chat .str-chat__edit-message-send {
+  text-transform: none;
+  letter-spacing: 0;
+}
+
+.eventhub-stream-chat .str-chat__channel-header {
+  border-bottom: 1px solid hsl(var(--border));
+  background: hsl(var(--background));
 }

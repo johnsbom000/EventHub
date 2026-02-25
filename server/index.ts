@@ -1,6 +1,7 @@
 import dotenv from "dotenv";
 import path from "path";
 import { fileURLToPath } from "url";
+
 const __filename = fileURLToPath(import.meta.url);
 const __dirname = path.dirname(__filename);
 
@@ -30,11 +31,14 @@ declare module 'http' {
   }
 }
 app.use(express.json({
+  // Customer profile photos are sent as base64 data URLs in JSON.
+  // 2MB binary expands above 2.6MB as base64, so default parser size is insufficient.
+  limit: "6mb",
   verify: (req, _res, buf) => {
     req.rawBody = buf;
   }
 }));
-app.use(express.urlencoded({ extended: false }));
+app.use(express.urlencoded({ extended: false, limit: "6mb" }));
 
 app.use((req, res, next) => {
   const start = Date.now();

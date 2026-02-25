@@ -96,7 +96,7 @@ export async function createDashboardLoginLink(accountId: string): Promise<strin
 // Create a payment intent with platform fee
 export async function createBookingPaymentIntent(params: {
   amount: number; // in cents
-  platformFeePercent: number; // e.g., 15 for 15%
+  platformFeePercent: number; // e.g., 8 for 8%
   vendorStripeAccountId: string;
   customerId?: string;
   description: string;

@@ -76,12 +76,13 @@ export function requireCustomerAuth(req: Request, res: Response, next: NextFunct
   const token = authHeader.substring(7);
   const payload = verifyToken(token);
 
-  if (!payload || (payload.type !== "customer" && payload.type !== "admin")) {
-    return res.status(401).json({ message: "Invalid or expired token" });
+  if (payload && (payload.type === "customer" || payload.type === "admin")) {
+    (req as any).customerAuth = payload;
+    return next();
   }
 
-  (req as any).customerAuth = payload;
-  next();
+  // Fallback for Auth0 access tokens during migration.
+  return requireDualAuthAuth0(req, res, next);
 }
 
 export function requireDualAuth(req: Request, res: Response, next: NextFunction) {
@@ -94,19 +95,20 @@ export function requireDualAuth(req: Request, res: Response, next: NextFunction)
   const token = authHeader.substring(7);
   const payload = verifyToken(token);
 
-  if (!payload) {
-    return res.status(401).json({ message: "Invalid or expired token" });
+  if (payload) {
+    if (payload.type === "customer" || payload.type === "admin") {
+      (req as any).customerAuth = payload;
+    } else if (payload.type === "vendor") {
+      (req as any).vendorAuth = payload;
+    } else {
+      return res.status(401).json({ message: "Invalid token type" });
+    }
+
+    return next();
   }
 
-  if (payload.type === "customer" || payload.type === "admin") {
-    (req as any).customerAuth = payload;
-  } else if (payload.type === "vendor") {
-    (req as any).vendorAuth = payload;
-  } else {
-    return res.status(401).json({ message: "Invalid token type" });
-  }
-
-  next();
+  // Fallback for Auth0 access tokens during migration.
+  return requireDualAuthAuth0(req, res, next);
 }
 
 export function requireAdminAuth(req: Request, res: Response, next: NextFunction) {

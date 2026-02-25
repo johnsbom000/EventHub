@@ -267,7 +267,7 @@ export const bookings = pgTable("bookings", {
   guestCount: integer("guest_count"),
   specialRequests: text("special_requests"),
   totalAmount: integer("total_amount").notNull(), // in cents
-  platformFee: integer("platform_fee").notNull(), // 15% of total
+  platformFee: integer("platform_fee").notNull(), // vendor fee portion in cents
   vendorPayout: integer("vendor_payout").notNull(), // totalAmount - platformFee
   depositAmount: integer("deposit_amount").notNull(), // down payment
   depositPaidAt: timestamp("deposit_paid_at"), // track when deposit was paid for 48hr refund policy

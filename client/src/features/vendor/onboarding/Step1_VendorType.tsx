@@ -28,7 +28,7 @@ const VENDOR_TYPES: VendorTypeOption[] = [
   { id: "florist", label: "Florist", icon: Flower2 },
   { id: "baker_dessert", label: "Baker / Desserts", icon: CakeSlice },
   { id: "hair_makeup", label: "Hair & Makeup", icon: Sparkles },
-  { id: "prop-decor", label: "Prop & Decor Rental", icon: Sofa },
+  { id: "prop-decor", label: "Rental", icon: Sofa },
 ];
 
 interface Step1VendorTypeProps {

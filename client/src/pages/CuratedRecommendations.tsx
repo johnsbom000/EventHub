@@ -68,7 +68,7 @@ export default function CuratedRecommendations() {
     florist: "Florists",
     catering: "Catering Services",
     dj: "DJs & Entertainment",
-    "prop-decor": "Props & Décor Rentals",
+    "prop-decor": "Rentals",
   };
 
   const getAvailabilityStatus = (vendor: Vendor, eventDate: string) => {

@@ -4,8 +4,8 @@ import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card";
-import { Calendar } from "lucide-react";
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
+import BrandWordmark from "@/components/BrandWordmark";
 
 export default function Login() {
   const [, setLocation] = useLocation();
@@ -31,8 +31,7 @@ export default function Login() {
     <div className="min-h-screen flex items-center justify-center bg-card/50 px-4">
       <div className="w-full max-w-md">
         <Link href="/" className="flex items-center justify-center gap-2 mb-8">
-          <Calendar className="h-8 w-8 text-primary" />
-          <span className="font-serif text-2xl font-bold">EventVibe</span>
+          <BrandWordmark className="text-[2.4rem]" />
         </Link>
 
         <Card>

@@ -48,6 +48,7 @@ import {
 } from "@/components/ui/command";
 import { Badge } from "@/components/ui/badge";
 import { apiRequest } from "@/lib/queryClient";
+import { EVENT_TYPE_OPTIONS } from "@/constants/eventTypes";
 import type { InsertEvent, PhotographerDetails, VideographerDetails, FloristDetails, CateringDetails, DJDetails, PropDecorDetails } from "@shared/schema";
 
 const VENDOR_OPTIONS = [
@@ -56,7 +57,7 @@ const VENDOR_OPTIONS = [
   { value: 'florist', label: 'Florist' },
   { value: 'catering', label: 'Catering' },
   { value: 'dj', label: 'DJ/Music' },
-  { value: 'prop-decor', label: 'Prop/Decor Rental' },
+  { value: 'prop-decor', label: 'Rental' },
   { value: 'planner', label: 'Planner/Coordinator' },
   { value: 'hair', label: 'Hair Stylist' },
   { value: 'makeup', label: 'Makeup Artist' },
@@ -427,15 +428,11 @@ const EventPlanner = () => {
                       <SelectValue placeholder="Select event type" />
                     </SelectTrigger>
                     <SelectContent>
-                      <SelectItem value="wedding">Wedding</SelectItem>
-                      <SelectItem value="corporate">Corporate Event</SelectItem>
-                      <SelectItem value="birthday">Birthday</SelectItem>
-                      <SelectItem value="anniversary">Anniversary</SelectItem>
-                      <SelectItem value="baby-shower">Baby Shower</SelectItem>
-                      <SelectItem value="graduation">Graduation</SelectItem>
-                      <SelectItem value="conference">Conference</SelectItem>
-                      <SelectItem value="gala">Gala</SelectItem>
-                      <SelectItem value="other">Other</SelectItem>
+                      {EVENT_TYPE_OPTIONS.map((type) => (
+                        <SelectItem key={type.value} value={type.value}>
+                          {type.label}
+                        </SelectItem>
+                      ))}
                     </SelectContent>
                   </Select>
                 </div>
@@ -1755,12 +1752,12 @@ function PropDecorQuestionnaire({ details, onChange, onNext, onBack, isLast, isP
   return (
     <Card>
       <CardHeader>
-        <CardTitle>Prop / Décor Rental Details</CardTitle>
-        <CardDescription>Tell us what you need for your event décor</CardDescription>
+        <CardTitle>Rental Details</CardTitle>
+        <CardDescription>Tell us what rentals you need for your event</CardDescription>
       </CardHeader>
       <CardContent className="space-y-6">
         <div className="space-y-2">
-          <Label htmlFor="propdecor-items">What props / décor do you need?</Label>
+          <Label htmlFor="propdecor-items">What rentals do you need?</Label>
           <Textarea
             id="propdecor-items"
             placeholder="e.g., tables, chairs, linens, backdrops, lighting, centerpiece stands..."

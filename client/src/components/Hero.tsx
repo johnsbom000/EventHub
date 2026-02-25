@@ -6,20 +6,9 @@ import { Calendar, Briefcase, Users } from "lucide-react";
 import { LocationPicker } from "@/components/LocationPicker";
 import { useLocationContext } from "../context/LocationContext";
 import type { LocationResult } from "@/types/location";
+import { EVENT_TYPE_OPTIONS } from "@/constants/eventTypes";
 
-const LANDING_CATEGORY_KEY = "prop-decor";
-
-const eventTypes = [
-  { value: "wedding", label: "Wedding" },
-  { value: "corporate", label: "Corporate Event" },
-  { value: "birthday", label: "Birthday" },
-  { value: "anniversary", label: "Anniversary" },
-  { value: "baby-shower", label: "Baby Shower" },
-  { value: "graduation", label: "Graduation" },
-  { value: "conference", label: "Conference" },
-  { value: "gala", label: "Gala" },
-  { value: "other", label: "Other" },
-];
+const LANDING_CATEGORY_KEY = "rentals";
 
 export default function Hero() {
   const [, setLocation] = useLocation();
@@ -42,7 +31,7 @@ export default function Hero() {
   const handleSearch = () => {
     const params = new URLSearchParams();
 
-    // Lock landing page browsing to Prop & Decor Rentals only
+    // Lock landing page browsing to rental listings only
     params.set("category", LANDING_CATEGORY_KEY);
 
     if (searchLocation) params.set("location", searchLocation.label);
@@ -93,7 +82,7 @@ export default function Hero() {
                 data-testid="select-event-type"
               >
                 <option value="">Event type</option>
-                {eventTypes.map((type) => (
+                {EVENT_TYPE_OPTIONS.map((type) => (
                   <option key={type.value} value={type.value}>
                     {type.label}
                   </option>
@@ -124,7 +113,7 @@ export default function Hero() {
               <div className="h-14 w-full px-3 flex items-center gap-2 text-left border-0 bg-transparent hover:bg-muted/50 rounded-lg">
                     <Users className="h-4 w-4 text-muted-foreground shrink-0" />
                 <span className="text-sm text-foreground/80 truncate">
-                  Prop &amp; Decor Rentals
+                  Rentals
                     </span>
                   </div>
             </div>

@@ -2,6 +2,7 @@ import React, { Component, ReactNode, ErrorInfo } from "react";
 import { createRoot } from "react-dom/client";
 import App from "./App";
 import "./index.css";
+import "stream-chat-react/dist/css/v2/index.css";
 import { LocationProvider } from "./context/LocationContext";
 import { Auth0Provider } from "@auth0/auth0-react";
 import { useAuth0 } from "@auth0/auth0-react";
@@ -25,7 +26,7 @@ class ErrorBoundary extends Component<{ children: ReactNode }, { hasError: boole
   render() {
     if (this.state.hasError) {
       return (
-        <div style={{ padding: "20px", fontFamily: "sans-serif" }}>
+        <div style={{ padding: "20px", fontFamily: "\"Tienne\", Georgia, serif" }}>
           <h1>Something went wrong</h1>
           <p>Please check the console for more details.</p>
         </div>
@@ -76,6 +77,7 @@ const root = createRoot(rootElement);
 
 root.render(
   <React.StrictMode>
+    <ErrorBoundary>
       <Auth0Provider
         domain="dev-u831fugzvigrqe8g.us.auth0.com"
         clientId="gris26WuQ5P9me2vXPJBSuzKNpJrR5nW"
@@ -98,6 +100,6 @@ root.render(
           <App />
         </LocationProvider>
       </Auth0Provider>
+    </ErrorBoundary>
   </React.StrictMode>
 );
-

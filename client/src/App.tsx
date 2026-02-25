@@ -23,8 +23,7 @@ import VendorBookings from "@/pages/VendorBookings";
 import VendorListings from "@/pages/VendorListings";
 import VendorCreateListing from "@/pages/VendorCreateListing";
 import VendorListingEdit from "@/pages/VendorListingEdit";
-// Messaging is intentionally hidden for now (route removed, code kept)
-// import VendorMessages from "@/pages/VendorMessages";
+import VendorMessages from "@/pages/VendorMessages";
 import VendorPayments from "@/pages/VendorPayments";
 import VendorReviews from "@/pages/VendorReviews";
 import VendorNotifications from "@/pages/VendorNotifications";
@@ -35,6 +34,7 @@ import UIDemo from "@/pages/UIDemo";
 import NotFound from "@/pages/not-found";
 import AuthTest from "@/pages/AuthTest";
 import ListingDetail from "@/pages/ListingDetail";
+import Checkout from "@/pages/Checkout";
 
 function Router() {
   return (
@@ -50,6 +50,7 @@ function Router() {
         <Route path="/dashboard/:section" component={CustomerDashboard} />
         <Route path="/browse" component={BrowseVendors} />
         <Route path="/listing/:id" component={ListingDetail} />
+        <Route path="/checkout/:listingId" component={Checkout} />
         <Route path="/planner" component={EventPlanner} />
         <Route path="/recommendations/:eventId" component={CuratedRecommendations} />
 
@@ -63,7 +64,7 @@ function Router() {
         <Route path="/vendor/listings" component={VendorListings} />
         <Route path="/vendor/listings/new" component={VendorCreateListing} />
         <Route path="/vendor/listings/:id" component={VendorListingEdit} />
-        {/* /vendor/messages intentionally disabled for now */}
+        <Route path="/vendor/messages" component={VendorMessages} />
         <Route path="/vendor/payments" component={VendorPayments} />
         <Route path="/vendor/reviews" component={VendorReviews} />
         <Route path="/vendor/notifications" component={VendorNotifications} />

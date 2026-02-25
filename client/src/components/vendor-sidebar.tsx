@@ -1,4 +1,4 @@
-import { Calendar, Home, LayoutGrid, MessageSquare, DollarSign, Star, Bell, Settings, Menu } from "lucide-react";
+import { Calendar, Home, LayoutGrid, MessageSquare, DollarSign, Star, Bell, Settings } from "lucide-react";
 import { Link, useLocation } from "wouter";
 import { useQuery } from "@tanstack/react-query";
 import {
@@ -15,7 +15,9 @@ import {
 } from "@/components/ui/sidebar";
 import { Button } from "@/components/ui/button";
 import { Avatar, AvatarFallback } from "@/components/ui/avatar";
+import { Badge } from "@/components/ui/badge";
 import { useAuth0 } from "@auth0/auth0-react";
+import BrandWordmark from "@/components/BrandWordmark";
 
 interface VendorAccount {
   businessName: string;
@@ -38,6 +40,11 @@ const menuItems = [
     title: "Listings",
     url: "/vendor/listings",
     icon: LayoutGrid,
+  },
+  {
+    title: "Messages",
+    url: "/vendor/messages",
+    icon: MessageSquare,
   },
   {
     title: "Payments",
@@ -79,17 +86,21 @@ export function VendorSidebar() {
       },
     });
 
+    const { data: unreadData } = useQuery<{ unreadCount: number }>({
+      queryKey: ["/api/vendor/messages/unread-count"],
+      enabled: isAuthenticated,
+      refetchInterval: 10000,
+      staleTime: 0,
+    });
+
+    const unreadCount = Math.max(0, Number(unreadData?.unreadCount || 0));
+
   return (
     <Sidebar>
       <SidebarHeader className="p-4">
-        <div className="flex items-center gap-2">
-          <div className="w-8 h-8 rounded-md bg-primary flex items-center justify-center">
-            <Menu className="w-4 h-4 text-primary-foreground" />
-          </div>
-          <div className="flex flex-col">
-            <span className="font-semibold text-sm">Event Hub</span>
-            <span className="text-xs text-muted-foreground">Vendor Portal</span>
-          </div>
+        <div className="flex flex-col">
+          <BrandWordmark className="text-[1.9rem]" />
+          <span className="text-xs text-muted-foreground">Vendor Portal</span>
         </div>
       </SidebarHeader>
       <SidebarContent>
@@ -103,6 +114,11 @@ export function VendorSidebar() {
                     <Link href={item.url} data-testid={`link-${item.title.toLowerCase()}`}>
                       <item.icon className="w-4 h-4" />
                       <span>{item.title}</span>
+                      {item.title === "Messages" && unreadCount > 0 ? (
+                        <Badge className="ml-auto h-5 min-w-5 justify-center rounded-full bg-cyan-600 px-1 text-[10px] text-white">
+                          {unreadCount}
+                        </Badge>
+                      ) : null}
                     </Link>
                   </SidebarMenuButton>
                 </SidebarMenuItem>

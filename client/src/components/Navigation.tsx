@@ -3,7 +3,7 @@ import { Link, useLocation } from "wouter";
 import { Button } from "@/components/ui/button";
 import { useState, useEffect } from "react";
 import { useQuery } from "@tanstack/react-query";
-import Logo from "@/components/Logo";
+import BrandWordmark from "@/components/BrandWordmark";
 import AuthModal from "@/components/AuthModal";
 import {
   DropdownMenu,
@@ -13,7 +13,7 @@ import {
   DropdownMenuSeparator,
   DropdownMenuTrigger,
 } from "@/components/ui/dropdown-menu";
-import { Avatar, AvatarFallback } from "@/components/ui/avatar";
+import { Avatar, AvatarFallback, AvatarImage } from "@/components/ui/avatar";
 import {
   User,
   MessageSquare,
@@ -38,6 +38,8 @@ interface VendorAccount {
 interface Customer {
   id: string;
   name: string;
+  displayName?: string | null;
+  profilePhotoDataUrl?: string | null;
   email: string;
 }
 
@@ -68,7 +70,7 @@ export default function Navigation() {
   // Fetch customer account if customer token exists (legacy)
   const { data: customer } = useQuery<Customer>({
     queryKey: ["/api/customer/me"],
-    enabled: false,
+    enabled: isAuthenticated && !vendorMeLoading && !vendorAccount,
     retry: false,
   });
 
@@ -120,7 +122,7 @@ export default function Navigation() {
     if (userRole === "vendor" && vendorAccount) {
       return vendorAccount.businessName;
     } else if (userRole === "customer" && customer) {
-      return customer.name;
+      return customer.displayName?.trim() || customer.name;
     }
     // Auth0 fallback
     const auth0Name =
@@ -132,6 +134,7 @@ export default function Navigation() {
   };
 
   const isLoggedIn = isAuthenticated || !!userRole;
+  const navActionButtonClass = "rounded-lg px-3";
 
   return (
     <nav className="sticky top-0 z-50 bg-white border-b border-border">
@@ -142,8 +145,7 @@ export default function Navigation() {
             className="flex items-center gap-2 hover-elevate active-elevate-2 px-3 py-2 rounded-lg -ml-3"
             data-testid="link-home"
           >
-            <Logo className="h-6 w-6" />
-            <span className="font-serif text-xl font-bold">Event Hub</span>
+            <BrandWordmark className="text-[2rem]" />
           </Link>
 
           <div className="flex items-center gap-4">
@@ -166,13 +168,41 @@ export default function Navigation() {
             {/* Vendor Logged In State */}
             {isLoggedIn && userRole === "vendor" && (
               <>
-                <Link
-                  href="/vendor/dashboard"
-                  className="text-sm font-medium hover:underline cursor-pointer"
-                  data-testid="link-vendor-dashboard"
-                >
-                  Vendor Dashboard
+                <Link href="/vendor/dashboard">
+                  <Button
+                    variant="ghost"
+                    size="default"
+                    className={navActionButtonClass}
+                    data-testid="link-vendor-dashboard"
+                  >
+                    Vendor Dashboard
+                  </Button>
                 </Link>
+
+                {location.startsWith("/dashboard") ? (
+                  <Link href="/">
+                    <Button
+                      variant="ghost"
+                      size="default"
+                      className={navActionButtonClass}
+                      data-testid="link-vendor-back-to-marketplace"
+                    >
+                      <Store className="h-4 w-4 mr-2" />
+                      Back to Marketplace
+                    </Button>
+                  </Link>
+                ) : (
+                  <Link href="/dashboard/events">
+                    <Button
+                      variant="ghost"
+                      size="default"
+                      className={navActionButtonClass}
+                      data-testid="link-vendor-my-events"
+                    >
+                      My Events
+                    </Button>
+                  </Link>
+                )}
 
                 <DropdownMenu>
                   <DropdownMenuTrigger asChild>
@@ -209,6 +239,13 @@ export default function Navigation() {
                     >
                       <MessageSquare className="mr-2 h-4 w-4" />
                       <span>Messages</span>
+                    </DropdownMenuItem>
+                    <DropdownMenuItem
+                      onClick={() => setLocation("/dashboard/events")}
+                      data-testid="menu-item-vendor-my-events"
+                    >
+                      <Calendar className="mr-2 h-4 w-4" />
+                      <span>My Events</span>
                     </DropdownMenuItem>
                     <DropdownMenuItem
                       onClick={() => setLocation("/vendor/notifications")}
@@ -254,6 +291,7 @@ export default function Navigation() {
                     <Button
                       variant="ghost"
                       size="default"
+                      className={navActionButtonClass}
                       data-testid="link-back-to-marketplace"
                     >
                       <Store className="h-4 w-4 mr-2" />
@@ -265,9 +303,9 @@ export default function Navigation() {
                     <Button
                       variant="ghost"
                       size="default"
+                      className={navActionButtonClass}
                       data-testid="link-my-events"
                     >
-                      <Calendar className="h-4 w-4 mr-2" />
                       My Events
                     </Button>
                   </Link>
@@ -282,6 +320,13 @@ export default function Navigation() {
                       data-testid="button-customer-profile"
                     >
                       <Avatar className="h-8 w-8">
+                        {customer?.profilePhotoDataUrl && (
+                          <AvatarImage
+                            src={customer.profilePhotoDataUrl}
+                            alt="Customer profile photo"
+                            className="object-cover"
+                          />
+                        )}
                         <AvatarFallback className="bg-primary text-primary-foreground">
                           {getInitials(getDisplayName())}
                         </AvatarFallback>

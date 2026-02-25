@@ -37,10 +37,10 @@ export default function Home() {
           <div className="flex items-end justify-between gap-4 mb-4">
             <div>
               <h2 className="text-2xl md:text-3xl font-bold text-foreground">
-                Featured Prop & Decor Rentals
+                Featured Rentals
               </h2>
               <p className="text-muted-foreground mt-1">
-                Browse curated decor + prop rentals. Click a card to view details.
+                Browse curated rentals. Click a card to view details.
               </p>
             </div>
 
