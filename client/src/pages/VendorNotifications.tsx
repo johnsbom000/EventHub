@@ -20,10 +20,8 @@ type VendorNotification = {
 };
 
 export default function VendorNotifications() {
-  const sidebarStyle = {
-    "--sidebar-width": "16rem",
-    "--sidebar-width-icon": "3rem",
-  };
+  const notificationToggleClass =
+    "h-7 w-[52px] rounded-full border border-[#4a6a7d]/75 shadow-[inset_0_1px_0_hsl(var(--background)/0.55),0_1px_2px_hsl(var(--foreground)/0.09)] data-[state=checked]:bg-[hsl(var(--secondary-accent)/0.55)] data-[state=unchecked]:bg-white dark:data-[state=unchecked]:bg-[#4a6a7d] focus-visible:ring-[#4a6a7d] [&>span]:h-[22px] [&>span]:w-[22px] [&>span]:border [&>span]:border-[hsl(var(--secondary-accent)/0.95)] dark:[&>span]:border-[#F0EEE9] [&>span]:bg-[hsl(var(--secondary-accent)/0.95)] dark:[&>span]:bg-[#F0EEE9] [&>span]:shadow-[0_1px_3px_hsl(var(--foreground)/0.22)] data-[state=checked]:[&>span]:translate-x-[26px] data-[state=unchecked]:[&>span]:translate-x-[2px]";
 
   const { isAuthenticated } = useAuth0();
   const [, setLocation] = useLocation();
@@ -171,7 +169,12 @@ export default function VendorNotifications() {
                   Get notified when customers book your services
                 </p>
               </div>
-              <Switch id="new-bookings" defaultChecked data-testid="switch-new-bookings" />
+              <Switch
+                id="new-bookings"
+                defaultChecked
+                className={notificationToggleClass}
+                data-testid="switch-new-bookings"
+              />
             </div>
 
             <div className="flex items-center justify-between">
@@ -181,7 +184,12 @@ export default function VendorNotifications() {
                   When customers request to change event dates
                 </p>
               </div>
-              <Switch id="reschedules" defaultChecked data-testid="switch-reschedules" />
+              <Switch
+                id="reschedules"
+                defaultChecked
+                className={notificationToggleClass}
+                data-testid="switch-reschedules"
+              />
             </div>
 
             <div className="flex items-center justify-between">
@@ -191,7 +199,12 @@ export default function VendorNotifications() {
                   Alert when bookings are cancelled
                 </p>
               </div>
-              <Switch id="cancellations" defaultChecked data-testid="switch-cancellations" />
+              <Switch
+                id="cancellations"
+                defaultChecked
+                className={notificationToggleClass}
+                data-testid="switch-cancellations"
+              />
             </div>
 
             <div className="flex items-center justify-between">
@@ -201,7 +214,12 @@ export default function VendorNotifications() {
                   Notifications about payment receipts and payouts
                 </p>
               </div>
-              <Switch id="payments" defaultChecked data-testid="switch-payments" />
+              <Switch
+                id="payments"
+                defaultChecked
+                className={notificationToggleClass}
+                data-testid="switch-payments"
+              />
             </div>
           </CardContent>
         </Card>

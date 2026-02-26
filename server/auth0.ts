@@ -34,6 +34,10 @@ export interface Auth0Payload {
   sub: string;
   email?: string;
   email_verified?: boolean;
+  name?: string;
+  nickname?: string;
+  given_name?: string;
+  family_name?: string;
 }
 
 /**
@@ -72,7 +76,15 @@ export function verifyAuth0Token(token: string): Promise<Auth0Payload> {
  *
  * IMPORTANT: This MUST be time-bounded to avoid hanging protected routes.
  */
-async function fetchUserInfoEmail(accessToken: string): Promise<string | undefined> {
+type UserInfoProfile = {
+  email?: string;
+  name?: string;
+  nickname?: string;
+  given_name?: string;
+  family_name?: string;
+};
+
+async function fetchUserInfoProfile(accessToken: string): Promise<UserInfoProfile | null> {
   const controller = new AbortController();
   const t = setTimeout(() => controller.abort(), 2000);
 
@@ -90,15 +102,15 @@ async function fetchUserInfoEmail(accessToken: string): Promise<string | undefin
         resp.statusText,
         text ? `:: ${text}` : ""
       );
-      return undefined;
+      return null;
     }
 
-    const data = (await resp.json()) as { email?: string };
-    return data?.email;
+    const data = (await resp.json()) as UserInfoProfile;
+    return data ?? null;
   } catch (e: any) {
     // AbortError or network errors should not block auth
     console.warn("AUTH0 /userinfo exception:", e?.name || "", e?.message || e);
-    return undefined;
+    return null;
   } finally {
     clearTimeout(t);
   }
@@ -123,12 +135,22 @@ export async function requireAuth0(req: Request, res: Response, next: NextFuncti
       sub: payload.sub,
       email: payload.email,
       email_verified: payload.email_verified,
+      name: payload.name,
+      nickname: payload.nickname,
+      given_name: payload.given_name,
+      family_name: payload.family_name,
     };
 
-    // Fallback: resolve email via /userinfo if missing
-    if (!auth0.email) {
-      const email = await fetchUserInfoEmail(token);
-      if (email) auth0.email = email;
+    // Fallback: resolve missing profile claims via /userinfo
+    if (!auth0.email || !auth0.name || !auth0.given_name || !auth0.family_name || !auth0.nickname) {
+      const userInfo = await fetchUserInfoProfile(token);
+      if (userInfo) {
+        if (!auth0.email && userInfo.email) auth0.email = userInfo.email;
+        if (!auth0.name && userInfo.name) auth0.name = userInfo.name;
+        if (!auth0.nickname && userInfo.nickname) auth0.nickname = userInfo.nickname;
+        if (!auth0.given_name && userInfo.given_name) auth0.given_name = userInfo.given_name;
+        if (!auth0.family_name && userInfo.family_name) auth0.family_name = userInfo.family_name;
+      }
     }
 
     // Attach to request for downstream middleware/routes

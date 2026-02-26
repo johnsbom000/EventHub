@@ -5,6 +5,7 @@ import { useState, useEffect } from "react";
 import { useQuery } from "@tanstack/react-query";
 import BrandWordmark from "@/components/BrandWordmark";
 import AuthModal from "@/components/AuthModal";
+import { Switch } from "@/components/ui/switch";
 import {
   DropdownMenu,
   DropdownMenuContent,
@@ -21,10 +22,13 @@ import {
   Settings,
   Globe,
   HelpCircle,
+  Home,
   LogOut,
   Calendar,
   Briefcase,
   Store,
+  Sun,
+  Moon,
 } from "lucide-react";
 
 type UserRole = "customer" | "vendor" | null;
@@ -43,10 +47,16 @@ interface Customer {
   email: string;
 }
 
+const THEME_STORAGE_KEY = "eventhub-theme";
+
 export default function Navigation() {
   const [location, setLocation] = useLocation();
+  const hideAvatarNotifications = location === "/";
   const [userRole, setUserRole] = useState<UserRole>(null);
   const [authModalOpen, setAuthModalOpen] = useState(false);
+  const [themeMode, setThemeMode] = useState<"light" | "dark">(() =>
+    typeof document !== "undefined" && document.documentElement.classList.contains("dark") ? "dark" : "light"
+  );
   const { isAuthenticated, user, logout: auth0Logout } = useAuth0();
   useEffect(() => {
     if (user) console.log("AUTH0 USER OBJECT:", user);
@@ -134,21 +144,49 @@ export default function Navigation() {
   };
 
   const isLoggedIn = isAuthenticated || !!userRole;
-  const navActionButtonClass = "rounded-lg px-3";
+  const navActionButtonClass = "rounded-md px-3 font-sans text-[1.01rem] font-medium text-[#4a6a7d] dark:text-[#f5f0e8]";
+  const applyTheme = (mode: "light" | "dark") => {
+    setThemeMode(mode);
+    if (typeof document !== "undefined") {
+      document.documentElement.classList.toggle("dark", mode === "dark");
+    }
+    if (typeof window !== "undefined") {
+      window.localStorage.setItem(THEME_STORAGE_KEY, mode);
+    }
+  };
 
   return (
-    <nav className="sticky top-0 z-50 bg-white border-b border-border">
+    <nav className="sticky top-0 z-50 bg-[#f5f0e8] dark:bg-[#16222d] border-b border-[rgba(74,106,125,0.15)]">
       <div className="w-full px-6 lg:px-10">
         <div className="flex justify-between items-center h-16">
           <Link
             href="/"
-            className="flex items-center gap-2 hover-elevate active-elevate-2 px-3 py-2 rounded-lg -ml-3"
+            className="flex items-center gap-2 px-3 py-2 rounded-md -ml-3"
             data-testid="link-home"
           >
-            <BrandWordmark className="text-[2rem]" />
+            <BrandWordmark
+              className="text-[2.72rem]"
+              eventClassName="text-[#e07a6a] font-normal"
+              hubClassName="text-[#4a6a7d] font-normal"
+            />
           </Link>
 
           <div className="flex items-center gap-4">
+            <div className="flex items-center gap-3">
+              <span className="text-[0.84rem] font-sans font-medium uppercase tracking-[0.12em] text-[#9aacb4]">
+                {themeMode === "dark" ? "Dark" : "Light"}
+              </span>
+              <Sun className="h-4 w-4 text-[#9aacb4]" />
+              <Switch
+                checked={themeMode === "dark"}
+                onCheckedChange={(checked) => applyTheme(checked ? "dark" : "light")}
+                className="h-6 w-11 border-0 transition-colors duration-300 ease-in-out data-[state=checked]:bg-[#9dd4cc] data-[state=unchecked]:bg-[#4a6a7d] [&>span]:ml-[3px] [&>span]:h-[18px] [&>span]:w-[18px] [&>span]:bg-white dark:[&>span]:bg-[#F0EEE9] [&>span]:shadow-none [&>span]:transition-transform [&>span]:duration-300 [&>span]:ease-in-out [&>span]:data-[state=checked]:translate-x-5 [&>span]:data-[state=unchecked]:translate-x-0"
+                aria-label="Toggle light and dark mode"
+                data-testid="switch-theme-mode"
+              />
+              <Moon className="h-4 w-4 text-[#9aacb4]" />
+            </div>
+
             {/* Auth Modal */}
             <AuthModal open={authModalOpen} onOpenChange={setAuthModalOpen} />
 
@@ -157,7 +195,7 @@ export default function Navigation() {
               <Button
                 variant="default"
                 size="default"
-                className="bg-primary"
+                className="editorial-login-btn h-[54px] min-w-[232px] px-7 text-[1.15rem] leading-none"
                 onClick={() => setAuthModalOpen(true)}
                 data-testid="button-login-signup"
               >
@@ -234,13 +272,6 @@ export default function Navigation() {
                       <span>Profile</span>
                     </DropdownMenuItem>
                     <DropdownMenuItem
-                      onClick={() => setLocation("/vendor/messages")}
-                      data-testid="menu-item-messages"
-                    >
-                      <MessageSquare className="mr-2 h-4 w-4" />
-                      <span>Messages</span>
-                    </DropdownMenuItem>
-                    <DropdownMenuItem
                       onClick={() => setLocation("/dashboard/events")}
                       data-testid="menu-item-vendor-my-events"
                     >
@@ -248,12 +279,21 @@ export default function Navigation() {
                       <span>My Events</span>
                     </DropdownMenuItem>
                     <DropdownMenuItem
-                      onClick={() => setLocation("/vendor/notifications")}
-                      data-testid="menu-item-notifications"
+                      onClick={() => setLocation("/vendor/dashboard")}
+                      data-testid="menu-item-vendor-dashboard"
                     >
-                      <Bell className="mr-2 h-4 w-4" />
-                      <span>Notifications</span>
+                      <Home className="mr-2 h-4 w-4" />
+                      <span>Vendor Dashboard</span>
                     </DropdownMenuItem>
+                    {!hideAvatarNotifications ? (
+                      <DropdownMenuItem
+                        onClick={() => setLocation("/vendor/notifications")}
+                        data-testid="menu-item-notifications"
+                      >
+                        <Bell className="mr-2 h-4 w-4" />
+                        <span>Notifications</span>
+                      </DropdownMenuItem>
+                    ) : null}
                     <DropdownMenuSeparator />
                     <DropdownMenuItem
                       onClick={() => setLocation("/vendor/dashboard")}
@@ -354,13 +394,15 @@ export default function Navigation() {
                       <MessageSquare className="mr-2 h-4 w-4" />
                       <span>Messages</span>
                     </DropdownMenuItem>
-                    <DropdownMenuItem
-                      onClick={() => setLocation("/dashboard")}
-                      data-testid="menu-item-notifications"
-                    >
-                      <Bell className="mr-2 h-4 w-4" />
-                      <span>Notifications</span>
-                    </DropdownMenuItem>
+                    {!hideAvatarNotifications ? (
+                      <DropdownMenuItem
+                        onClick={() => setLocation("/dashboard")}
+                        data-testid="menu-item-notifications"
+                      >
+                        <Bell className="mr-2 h-4 w-4" />
+                        <span>Notifications</span>
+                      </DropdownMenuItem>
+                    ) : null}
                     <DropdownMenuSeparator />
                     <DropdownMenuItem
                       onClick={() => setLocation("/vendor/onboarding")}

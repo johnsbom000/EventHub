@@ -1,13 +1,17 @@
 import { useQuery } from "@tanstack/react-query";
 import { useAuth0 } from "@auth0/auth0-react";
+import { useState } from "react";
 
 import VendorShell from "@/components/VendorShell";
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card";
 import { Button } from "@/components/ui/button";
 import { DollarSign } from "lucide-react";
+import { useToast } from "@/hooks/use-toast";
+import { redirectVendorToStripeSetup } from "@/lib/vendorStripe";
 
 type VendorPaymentHistoryItem = {
   id: string;
+  itemTitle?: string | null;
   netAmount?: number | null;
   grossAmount?: number | null;
   status?: string | null;
@@ -20,6 +24,10 @@ type VendorPaymentsResponse = {
   history?: VendorPaymentHistoryItem[];
 };
 
+type VendorMe = {
+  stripeOnboardingComplete?: boolean | null;
+};
+
 function formatUsdFromCents(cents: number) {
   return new Intl.NumberFormat("en-US", {
     style: "currency",
@@ -29,6 +37,13 @@ function formatUsdFromCents(cents: number) {
 
 export default function VendorPayments() {
   const { isAuthenticated } = useAuth0();
+  const { toast } = useToast();
+  const [isStripeSetupLoading, setIsStripeSetupLoading] = useState(false);
+
+  const { data: vendorAccount } = useQuery<VendorMe>({
+    queryKey: ["/api/vendor/me"],
+    enabled: isAuthenticated,
+  });
 
   const { data } = useQuery<VendorPaymentsResponse>({
     queryKey: ["/api/vendor/payments"],
@@ -37,6 +52,21 @@ export default function VendorPayments() {
   const history = Array.isArray(data?.history) ? data!.history! : [];
   const totalNetEarned = Number(data?.totalNetEarned ?? 0);
   const upcomingNetPayout = Number(data?.upcomingNetPayout ?? 0);
+  const showPaymentSetupCard = vendorAccount?.stripeOnboardingComplete === false;
+
+  const handleCompletePaymentSetup = async () => {
+    try {
+      setIsStripeSetupLoading(true);
+      await redirectVendorToStripeSetup();
+    } catch (error: any) {
+      setIsStripeSetupLoading(false);
+      toast({
+        title: "Unable to open Stripe setup",
+        description: error?.message || "Please try again.",
+        variant: "destructive",
+      });
+    }
+  };
 
   return (
     <VendorShell>
@@ -53,7 +83,7 @@ export default function VendorPayments() {
         <div className="grid grid-cols-1 md:grid-cols-2 gap-6">
           <Card>
             <CardHeader className="flex flex-row items-center justify-between gap-1 space-y-0 pb-2">
-              <CardTitle className="text-sm font-medium">Net Earned</CardTitle>
+              <CardTitle className="text-[20px]">Net Earned</CardTitle>
               <DollarSign className="h-4 w-4 text-muted-foreground" />
             </CardHeader>
             <CardContent>
@@ -66,7 +96,7 @@ export default function VendorPayments() {
 
           <Card>
             <CardHeader className="flex flex-row items-center justify-between gap-1 space-y-0 pb-2">
-              <CardTitle className="text-sm font-medium">Upcoming Net Payout</CardTitle>
+              <CardTitle className="text-[20px]">Upcoming Net Payout</CardTitle>
               <DollarSign className="h-4 w-4 text-muted-foreground" />
             </CardHeader>
             <CardContent>
@@ -93,19 +123,13 @@ export default function VendorPayments() {
                 <p className="text-muted-foreground">
                   Your payment history will appear here once you receive bookings.
                 </p>
-
-                <div className="mt-6 flex justify-center">
-                  <Button data-testid="button-setup-stripe">
-                    Set Up Stripe For Payment
-                  </Button>
-                </div>
               </div>
             ) : (
               <div className="space-y-3">
                 {history.map((payment) => (
                   <div key={payment.id} className="rounded-lg border p-4 flex items-center justify-between gap-3">
                     <div>
-                      <div className="font-medium">Booking #{payment.id.slice(0, 8)}</div>
+                      <div className="font-medium">{payment.itemTitle || `Booking #${payment.id.slice(0, 8)}`}</div>
                       <div className="text-sm text-muted-foreground">
                         {payment.eventDate || "Date not set"}
                       </div>
@@ -120,6 +144,26 @@ export default function VendorPayments() {
             )}
           </CardContent>
         </Card>
+
+        {showPaymentSetupCard && (
+          <Card className="border-[hsl(var(--secondary-accent)/0.45)] bg-[hsl(var(--secondary-accent)/0.12)]">
+            <CardHeader>
+              <CardTitle className="text-[20px]">Complete Your Setup</CardTitle>
+              <CardDescription>
+                Connect your Stripe account to start accepting payments from customers.
+              </CardDescription>
+            </CardHeader>
+            <CardContent>
+              <Button
+                data-testid="button-setup-stripe"
+                onClick={handleCompletePaymentSetup}
+                disabled={isStripeSetupLoading}
+              >
+                {isStripeSetupLoading ? "Opening Stripe..." : "Complete Payment Setup"}
+              </Button>
+            </CardContent>
+          </Card>
+        )}
       </div>
     </VendorShell>
   );

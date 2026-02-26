@@ -37,7 +37,7 @@ export default function VendorCard({
       <CardContent className="p-4 space-y-3">
         <div className="flex items-start justify-between gap-2">
           <h3 className="font-semibold text-lg leading-tight" data-testid={`text-vendor-name-${id}`}>{name}</h3>
-          <Badge variant="secondary" className="shrink-0">{category}</Badge>
+          <Badge variant="secondary" className="shrink-0 editorial-category-pill">{category}</Badge>
         </div>
         
         <div className="flex items-center gap-1 text-sm">
@@ -54,7 +54,7 @@ export default function VendorCard({
         <div className="flex items-center justify-between pt-2">
           <div>
             <span className="text-xs text-muted-foreground">Starting at</span>
-            <p className="font-semibold text-lg" data-testid={`text-price-${id}`}>{startingPrice}</p>
+            <p className="font-semibold text-lg editorial-price" data-testid={`text-price-${id}`}>{startingPrice}</p>
           </div>
           <Link href={`/vendor/${id}`}>
             <Button variant="outline" size="sm" data-testid={`button-view-profile-${id}`}>

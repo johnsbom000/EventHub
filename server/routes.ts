@@ -139,6 +139,25 @@ async function requireVendorAccountAuth0(req: any, res: any, next: any) {
   }
 }
 
+async function getVendorAccountFromRequest(req: any) {
+  const cached = req.vendorAccount;
+  if (cached?.id) return cached;
+
+  const vendorId = typeof req?.vendorAuth?.id === "string" ? req.vendorAuth.id.trim() : "";
+  if (!vendorId) return undefined;
+
+  const rows = await db
+    .select()
+    .from(vendorAccounts)
+    .where(eq(vendorAccounts.id, vendorId))
+    .limit(1);
+  const account = rows[0];
+  if (account) {
+    req.vendorAccount = account;
+  }
+  return account;
+}
+
 /**
  * Convenience combo for vendor routes:
  * - verify Auth0 token
@@ -176,6 +195,72 @@ function collectRateValues(source: unknown): number[] {
     if (rate != null) next.push(rate);
   }
   return next;
+}
+
+function asTrimmedString(value: unknown): string {
+  return typeof value === "string" ? value.trim() : "";
+}
+
+function normalizeListingTitleCandidate(value: unknown): string | null {
+  const title = typeof value === "string" ? value.trim() : "";
+  if (!title) return null;
+  const normalized = title.toLowerCase();
+  if (
+    normalized === "listing" ||
+    normalized === "untitled listing" ||
+    normalized === "new unspecified listing" ||
+    normalized === "new unspecified lisitng" ||
+    normalized === "untitled"
+  ) {
+    return null;
+  }
+  return title;
+}
+
+function parseAddressLabel(label: string): {
+  streetAddress: string;
+  city: string;
+  state: string;
+  zipCode: string;
+} {
+  const parts = label
+    .split(",")
+    .map((segment) => segment.trim())
+    .filter(Boolean);
+
+  if (parts.length < 2) {
+    return { streetAddress: "", city: "", state: "", zipCode: "" };
+  }
+
+  if (parts.length === 2) {
+    return {
+      streetAddress: "",
+      city: parts[0] ?? "",
+      state: parts[1] ?? "",
+      zipCode: "",
+    };
+  }
+
+  const streetAddress = parts[0] ?? "";
+  const city = parts[1] ?? "";
+  const stateZipChunk = parts[2] ?? "";
+  const stateZipMatch = stateZipChunk.match(/^(.+?)\s+(\d{5})(?:-\d{4})?$/);
+
+  if (stateZipMatch) {
+    return {
+      streetAddress,
+      city,
+      state: stateZipMatch[1].trim(),
+      zipCode: stateZipMatch[2].trim(),
+    };
+  }
+
+  return {
+    streetAddress,
+    city,
+    state: stateZipChunk,
+    zipCode: "",
+  };
 }
 
 function hasValidListingPrice(listingDataRaw: unknown): boolean {
@@ -768,18 +853,220 @@ function requireCustomerAnyAuth(req: any, res: any, next: any) {
   return requireDualAuthAuth0(req, res, next);
 }
 
+function isMachineGeneratedCustomerName(value: unknown): boolean {
+  const name = typeof value === "string" ? value.trim() : "";
+  if (!name) return true;
+  if (/^auth0[_-]/i.test(name)) return true;
+  if (/^auth0[_-]?google[_-]?oauth2[_-]?\d+$/i.test(name)) return true;
+  if (/^google[_-]?oauth2[_-]?\d+$/i.test(name)) return true;
+  if (/^[a-z0-9_]{28,}$/i.test(name) && /\d/.test(name)) return true;
+  return false;
+}
+
+function isSyntheticAuth0LocalEmail(value: unknown): boolean {
+  const email = typeof value === "string" ? value.trim().toLowerCase() : "";
+  if (!email) return false;
+  if (!email.endsWith("@eventhub.local")) return false;
+  const local = email.split("@")[0] || "";
+  return local.startsWith("auth0_");
+}
+
+function normalizeIdentityEmailCandidate(value: unknown): string | undefined {
+  const normalized = typeof value === "string" ? value.trim().toLowerCase() : "";
+  if (!normalized) return undefined;
+  if (isSyntheticAuth0LocalEmail(normalized)) return undefined;
+  return normalized;
+}
+
+async function resolveCanonicalIdentityEmail(params: {
+  sub?: string;
+  auth0Email?: string;
+  userId?: string;
+}): Promise<string | undefined> {
+  const auth0Email = normalizeIdentityEmailCandidate(params.auth0Email);
+  if (auth0Email) return auth0Email;
+
+  const userId = params.userId?.trim();
+  if (userId) {
+    try {
+      const vendorByUserId = await db
+        .select({ email: vendorAccounts.email })
+        .from(vendorAccounts)
+        .where(eq(vendorAccounts.userId, userId))
+        .limit(1);
+      const byUserIdEmail = normalizeIdentityEmailCandidate(vendorByUserId[0]?.email);
+      if (byUserIdEmail) return byUserIdEmail;
+    } catch {
+      // Ignore and continue to other fallbacks.
+    }
+  }
+
+  const sub = params.sub?.trim();
+  if (!sub) return undefined;
+
+  try {
+    const vendorBySub = await db
+      .select({ email: vendorAccounts.email })
+      .from(vendorAccounts)
+      .where(eq(vendorAccounts.auth0Sub, sub))
+      .limit(1);
+    return normalizeIdentityEmailCandidate(vendorBySub[0]?.email);
+  } catch {
+    return undefined;
+  }
+}
+
+async function safelyBackfillCustomerEmail(params: {
+  userId: string;
+  currentEmail: string;
+  nextEmail?: string;
+}) {
+  const currentEmail = params.currentEmail.trim().toLowerCase();
+  const nextEmail = normalizeIdentityEmailCandidate(params.nextEmail);
+  if (!nextEmail || nextEmail === currentEmail) return currentEmail;
+
+  const canRepair = isSyntheticAuth0LocalEmail(currentEmail) || !currentEmail;
+  if (!canRepair) return currentEmail;
+
+  const conflict = await db
+    .select({ id: users.id })
+    .from(users)
+    .where(and(drizzleSql`lower(${users.email}) = ${nextEmail}`, drizzleSql`${users.id} <> ${params.userId}`))
+    .limit(1);
+
+  if (conflict.length > 0) {
+    return nextEmail;
+  }
+
+  const [updated] = await db
+    .update(users)
+    .set({
+      email: nextEmail,
+      updatedAt: new Date(),
+    })
+    .where(eq(users.id, params.userId))
+    .returning({ email: users.email });
+
+  return updated?.email?.trim().toLowerCase() || nextEmail;
+}
+
+function toHumanNameFromEmail(email: string | undefined): string | null {
+  const normalized = (email || "").trim().toLowerCase();
+  if (!normalized) return null;
+  const local = normalized.split("@")[0] || "";
+  if (!local) return null;
+  if (local.startsWith("auth0_")) return null;
+
+  const words = local
+    .replace(/[._-]+/g, " ")
+    .split(/\s+/)
+    .map((part) => part.trim())
+    .filter(Boolean)
+    .slice(0, 3);
+
+  if (words.length === 0) return null;
+  const titled = words.map((word) => word.charAt(0).toUpperCase() + word.slice(1));
+  return titled.join(" ");
+}
+
+async function resolvePreferredCustomerName(params: {
+  sub?: string;
+  email?: string;
+  auth0Name?: string;
+}): Promise<string | null> {
+  const auth0Name = (params.auth0Name || "").trim();
+  if (auth0Name && !isMachineGeneratedCustomerName(auth0Name)) {
+    return auth0Name;
+  }
+
+  const email = params.email?.trim().toLowerCase();
+  return toHumanNameFromEmail(email);
+}
+
+async function resolveVendorBusinessNameForIdentity(params: {
+  sub?: string;
+  email?: string;
+}): Promise<string | null> {
+  const sub = params.sub?.trim();
+  const email = params.email?.trim().toLowerCase();
+
+  if (sub) {
+    const bySub = await db
+      .select({ businessName: vendorAccounts.businessName })
+      .from(vendorAccounts)
+      .where(eq(vendorAccounts.auth0Sub, sub))
+      .limit(1);
+    const name = bySub[0]?.businessName?.trim();
+    if (name) return name;
+  }
+
+  if (email) {
+    const byEmail = await db
+      .select({ businessName: vendorAccounts.businessName })
+      .from(vendorAccounts)
+      .where(drizzleSql`lower(${vendorAccounts.email}) = ${email}`)
+      .limit(1);
+    const name = byEmail[0]?.businessName?.trim();
+    if (name) return name;
+  }
+
+  return null;
+}
+
 async function resolveCustomerAuthFromRequest(
   req: any,
   opts?: { createIfMissing?: boolean }
 ): Promise<{ id: string; email: string; type: "customer" | "admin" } | null> {
-  if (req?.customerAuth?.id) {
-    return req.customerAuth;
-  }
-
-  const auth0 = req?.auth0 as { sub?: string; email?: string } | undefined;
+  const auth0 = req?.auth0 as {
+    sub?: string;
+    email?: string;
+    name?: string;
+    nickname?: string;
+    given_name?: string;
+    family_name?: string;
+  } | undefined;
   const sub = auth0?.sub?.trim();
   const emailFromAuth0 = auth0?.email?.toLowerCase().trim();
-  let email = emailFromAuth0;
+  const auth0Name =
+    auth0?.name?.trim() ||
+    [auth0?.given_name, auth0?.family_name].filter(Boolean).join(" ").trim() ||
+    auth0?.nickname?.trim() ||
+    "";
+  const existingCustomerAuthId =
+    typeof req?.customerAuth?.id === "string" ? req.customerAuth.id.trim() : "";
+  if (existingCustomerAuthId) {
+    const existingAuthEmail =
+      typeof req?.customerAuth?.email === "string" ? req.customerAuth.email.trim().toLowerCase() : "";
+    const [existingUser] = await db
+      .select({ id: users.id, email: users.email, role: users.role })
+      .from(users)
+      .where(eq(users.id, existingCustomerAuthId))
+      .limit(1);
+
+    if (existingUser?.id) {
+      const canonicalIdentityEmail = await resolveCanonicalIdentityEmail({
+        sub,
+        auth0Email: emailFromAuth0,
+        userId: existingUser.id,
+      });
+
+      const resolvedEmail = await safelyBackfillCustomerEmail({
+        userId: existingUser.id,
+        currentEmail: existingUser.email,
+        nextEmail: canonicalIdentityEmail || existingAuthEmail,
+      });
+
+      req.customerAuth = {
+        id: existingUser.id,
+        email: resolvedEmail,
+        type: existingUser.role === "admin" ? "admin" : "customer",
+      };
+      return req.customerAuth;
+    }
+  }
+
+  const canonicalIdentityEmail = await resolveCanonicalIdentityEmail({ sub, auth0Email: emailFromAuth0 });
+  let email = canonicalIdentityEmail;
 
   // Prefer stable Auth0 subject matching when available (works even if email is missing in token).
   if (sub) {
@@ -790,10 +1077,31 @@ async function resolveCustomerAuthFromRequest(
       const subRows = extractRows<{ id?: string; email?: string; role?: string }>(subLookup);
       const subUser = subRows[0];
       if (subUser?.id && subUser?.email) {
+        let resolvedUserId = subUser.id;
+        let resolvedUserEmail = subUser.email.trim().toLowerCase();
+        let resolvedUserRole = subUser.role;
+        const canonicalForSubUser =
+          canonicalIdentityEmail ||
+          (await resolveCanonicalIdentityEmail({
+            sub,
+            auth0Email: emailFromAuth0,
+            userId: resolvedUserId,
+          }));
+        const resolvedEmail =
+          canonicalForSubUser ||
+          normalizeIdentityEmailCandidate(resolvedUserEmail) ||
+          resolvedUserEmail;
+
+        resolvedUserEmail = await safelyBackfillCustomerEmail({
+          userId: resolvedUserId,
+          currentEmail: resolvedUserEmail,
+          nextEmail: resolvedEmail,
+        });
+
         return {
-          id: subUser.id,
-          email: subUser.email,
-          type: subUser.role === "admin" ? "admin" : "customer",
+          id: resolvedUserId,
+          email: resolvedUserEmail,
+          type: resolvedUserRole === "admin" ? "admin" : "customer",
         };
       }
     } catch {
@@ -815,8 +1123,15 @@ async function resolveCustomerAuthFromRequest(
     .where(drizzleSql`lower(${users.email}) = ${email}`)
     .limit(1);
 
+  const preferredName = await resolvePreferredCustomerName({
+    sub,
+    email,
+    auth0Name,
+  });
+  const vendorBusinessName = await resolveVendorBusinessNameForIdentity({ sub, email });
+
   if (!userRow && opts?.createIfMissing) {
-    const generatedName = email.split("@")[0] || "Customer";
+    const generatedName = preferredName || toHumanNameFromEmail(email) || "Customer";
     const hashed = await hashPassword(crypto.randomUUID());
 
     [userRow] = await db
@@ -836,6 +1151,43 @@ async function resolveCustomerAuthFromRequest(
         await db.execute(drizzleSql`update users set auth0_sub = ${sub} where id = ${userRow.id}`);
       } catch {
         // Ignore if users.auth0_sub is unavailable in this environment.
+      }
+    }
+  }
+
+  if (userRow && opts?.createIfMissing && preferredName) {
+    const currentName = typeof userRow.name === "string" ? userRow.name.trim() : "";
+    const currentDisplayName =
+      typeof userRow.displayName === "string" ? userRow.displayName.trim() : "";
+    const preferredNameNormalized = preferredName.toLowerCase();
+    const vendorBusinessNameNormalized = vendorBusinessName?.trim().toLowerCase() || "";
+    const currentNameNormalized = currentName.toLowerCase();
+    const currentDisplayNameNormalized = currentDisplayName.toLowerCase();
+    const currentLooksLikeVendorBusiness =
+      !!vendorBusinessNameNormalized &&
+      (currentNameNormalized === vendorBusinessNameNormalized ||
+        currentDisplayNameNormalized === vendorBusinessNameNormalized);
+
+    const shouldRepairName =
+      isMachineGeneratedCustomerName(currentName) ||
+      (currentLooksLikeVendorBusiness && currentNameNormalized !== preferredNameNormalized);
+    const shouldRepairDisplayName =
+      isMachineGeneratedCustomerName(currentDisplayName) ||
+      (currentLooksLikeVendorBusiness && currentDisplayNameNormalized !== preferredNameNormalized);
+
+    if (shouldRepairName || shouldRepairDisplayName) {
+      const [updatedRow] = await db
+        .update(users)
+        .set({
+          name: shouldRepairName ? preferredName : userRow.name,
+          displayName: shouldRepairDisplayName ? preferredName : userRow.displayName,
+          updatedAt: new Date(),
+        })
+        .where(eq(users.id, userRow.id))
+        .returning();
+
+      if (updatedRow) {
+        userRow = updatedRow;
       }
     }
   }
@@ -1356,13 +1708,16 @@ app.post(
       }
       const user = userAccounts[0];
       const { defaultLocation, profilePhotoDataUrl } = splitCustomerDefaultLocation(user.defaultLocation);
+      const responseEmail =
+        normalizeIdentityEmailCandidate(customerAuth.email) ||
+        user.email;
 
       res.json({
         id: user.id,
         name: user.name,
         displayName: user.displayName ?? null,
         profilePhotoDataUrl,
-        email: user.email,
+        email: responseEmail,
         role: user.role,
         defaultLocation,
         createdAt: user.createdAt,
@@ -1697,6 +2052,7 @@ app.post(
         onlineProfiles: {
           businessPhone: onboardingData.businessPhone,
           businessEmail: onboardingData.businessEmail,
+          streetAddress: onboardingData.streetAddress,
           state: onboardingData.state,
           zipCode: onboardingData.zipCode,
 
@@ -1858,7 +2214,64 @@ app.post(
         return res.status(404).json({ error: "Vendor profile not found" });
       }
 
-      return res.json(profiles[0]);
+      const existingProfile = profiles[0];
+      const onlineRaw = existingProfile.onlineProfiles;
+      const onlineProfiles =
+        onlineRaw && typeof onlineRaw === "object" && !Array.isArray(onlineRaw)
+          ? ({ ...(onlineRaw as Record<string, unknown>) } as Record<string, unknown>)
+          : ({} as Record<string, unknown>);
+
+      let didBackfill = false;
+
+      const fallbackEmail = asTrimmedString(vendorAuth?.email);
+      if (!asTrimmedString(onlineProfiles.businessEmail) && fallbackEmail) {
+        onlineProfiles.businessEmail = fallbackEmail;
+        didBackfill = true;
+      }
+
+      const marketLabel = asTrimmedString((onlineProfiles.marketLocation as any)?.label);
+      const fallbackLabel =
+        asTrimmedString(existingProfile.serviceAddress) ||
+        asTrimmedString(existingProfile.address) ||
+        marketLabel;
+      const parsedAddress = fallbackLabel
+        ? parseAddressLabel(fallbackLabel)
+        : { streetAddress: "", city: "", state: "", zipCode: "" };
+
+      if (!asTrimmedString(onlineProfiles.streetAddress) && parsedAddress.streetAddress) {
+        onlineProfiles.streetAddress = parsedAddress.streetAddress;
+        didBackfill = true;
+      }
+
+      if (!asTrimmedString(onlineProfiles.city) && parsedAddress.city) {
+        onlineProfiles.city = parsedAddress.city;
+        didBackfill = true;
+      }
+
+      if (!asTrimmedString(onlineProfiles.state) && parsedAddress.state) {
+        onlineProfiles.state = parsedAddress.state;
+        didBackfill = true;
+      }
+
+      if (!asTrimmedString(onlineProfiles.zipCode) && parsedAddress.zipCode) {
+        onlineProfiles.zipCode = parsedAddress.zipCode;
+        didBackfill = true;
+      }
+
+      if (didBackfill) {
+        const [updatedProfile] = await db
+          .update(vendorProfiles)
+          .set({
+            onlineProfiles,
+            updatedAt: new Date(),
+          })
+          .where(eq(vendorProfiles.id, existingProfile.id))
+          .returning();
+
+        return res.json(updatedProfile ?? { ...existingProfile, onlineProfiles });
+      }
+
+      return res.json({ ...existingProfile, onlineProfiles });
     } catch (error: any) {
       console.error("GET /api/vendor/profile failed:", error);
       return res.status(500).json({ error: error?.message ?? "Unknown error" });
@@ -2063,7 +2476,14 @@ app.post(
         return res.status(404).json({ error: "Listing not found" });
       }
 
-      const ld: any = existing[0]?.listingData || {};
+      const incomingListingData = req.body?.listingData;
+      const incomingTitle = req.body?.title;
+
+      if (incomingListingData !== undefined && (typeof incomingListingData !== "object" || incomingListingData === null || Array.isArray(incomingListingData))) {
+        return res.status(400).json({ error: "listingData must be a JSON object." });
+      }
+
+      const ld: any = (incomingListingData !== undefined ? incomingListingData : existing[0]?.listingData) || {};
 
       // ---- Publish validation (hard requirements) ----
       const mode = String(ld.serviceAreaMode || "").trim(); // radius | nationwide | global
@@ -2102,27 +2522,50 @@ app.post(
       const radiusOk =
         mode !== "radius" ? true : Number.isFinite(Number(radiusMiles)) && Number(radiusMiles) > 0;
 
-      if (!modeOk || !hasLoc || !titleOk || !descOk || !photosOk || !priceOk || !radiusOk || (mode === "radius" && !hasCenter)) {
+      const missing = {
+        serviceAreaMode: !modeOk,
+        serviceLocation: !hasLoc,
+        listingTitle: !titleOk,
+        listingDescription: !descOk,
+        photos: !photosOk,
+        price: !priceOk,
+        serviceCenter: mode === "radius" ? !hasCenter : false,
+        serviceRadiusMiles: mode === "radius" ? !radiusOk : false,
+      };
+
+      if (Object.values(missing).some(Boolean)) {
+        const reasons: string[] = [];
+        if (missing.listingTitle) reasons.push("Add listing title.");
+        if (missing.listingDescription) reasons.push("Add listing description (at least 10 characters).");
+        if (missing.photos) reasons.push("Add at least 1 photo.");
+        if (missing.price) reasons.push("Add a valid price.");
+        if (missing.serviceAreaMode) reasons.push("Select service area mode.");
+        if (missing.serviceLocation) reasons.push("Select service location.");
+        if (missing.serviceCenter) reasons.push("For radius mode, set service center.");
+        if (missing.serviceRadiusMiles) reasons.push("For radius mode, set service radius miles.");
+
         return res.status(400).json({
           error: "Listing incomplete — cannot publish",
-          missing: {
-            serviceAreaMode: !modeOk,
-            serviceLocation: !hasLoc,
-            listingTitle: !titleOk,
-            listingDescription: !descOk,
-            photos: !photosOk,
-            price: !priceOk,
-            serviceCenter: mode === "radius" ? !hasCenter : false,
-            serviceRadiusMiles: mode === "radius" ? !radiusOk : false,
-          },
+          missing,
+          reasons,
         });
       }
+      const publishUpdatePayload: any = {
+        status: "active",
+        updatedAt: new Date(),
+      };
+
+      if (incomingListingData !== undefined) {
+        publishUpdatePayload.listingData = incomingListingData;
+      }
+
+      if (typeof incomingTitle === "string" && incomingTitle.trim()) {
+        publishUpdatePayload.title = incomingTitle.trim();
+      }
+
       const [updated] = await db
         .update(vendorListings)
-        .set({
-          status: "active",
-          updatedAt: new Date(),
-        })
+        .set(publishUpdatePayload)
         .where(and(eq(vendorListings.id, id), eq(vendorListings.accountId, vendorAuth.id)))
         .returning();
 
@@ -2419,9 +2862,7 @@ app.post(
   app.post("/api/vendor/connect/onboard", ...requireVendorAuth0, async (req, res) => {
     try {
       const { accountType, businessName } = stripeOnboardingSchema.parse(req.body);
-      const vendorAuth = (req as any).vendorAuth;
-
-      const account = await storage.getVendorAccount(vendorAuth.id);
+      const account = await getVendorAccountFromRequest(req);
       if (!account) {
         return res.status(404).json({ error: "Account not found" });
       }
@@ -2438,10 +2879,13 @@ app.post(
         accountType,
       });
 
-      await storage.updateVendorAccount(account.id, {
-        stripeConnectId: result.accountId,
-        stripeAccountType: accountType,
-      });
+      await db
+        .update(vendorAccounts)
+        .set({
+          stripeConnectId: result.accountId,
+          stripeAccountType: accountType,
+        })
+        .where(eq(vendorAccounts.id, account.id));
 
       res.json({
         accountId: result.accountId,
@@ -2454,8 +2898,7 @@ app.post(
 
   app.get("/api/vendor/connect/status", ...requireVendorAuth0, async (req, res) => {
     try {
-      const vendorAuth = (req as any).vendorAuth;
-      const account = await storage.getVendorAccount(vendorAuth.id);
+      const account = await getVendorAccountFromRequest(req);
 
       if (!account || !account.stripeConnectId) {
         return res.json({ connected: false });
@@ -2465,9 +2908,10 @@ app.post(
       const status = await checkAccountOnboardingStatus(account.stripeConnectId);
 
       if (status.complete && !account.stripeOnboardingComplete) {
-        await storage.updateVendorAccount(account.id, {
-          stripeOnboardingComplete: true,
-        });
+        await db
+          .update(vendorAccounts)
+          .set({ stripeOnboardingComplete: true })
+          .where(eq(vendorAccounts.id, account.id));
       }
 
       res.json({
@@ -2483,8 +2927,7 @@ app.post(
 
   app.get("/api/vendor/connect/dashboard", ...requireVendorAuth0, async (req, res) => {
     try {
-      const vendorAuth = (req as any).vendorAuth;
-      const account = await storage.getVendorAccount(vendorAuth.id);
+      const account = await getVendorAccountFromRequest(req);
 
       if (!account || !account.stripeConnectId) {
         return res.status(400).json({ error: "No Stripe account connected" });
@@ -2494,6 +2937,74 @@ app.post(
       const url = await createDashboardLoginLink(account.stripeConnectId);
 
       res.json({ url });
+    } catch (error: any) {
+      res.status(500).json({ error: error.message });
+    }
+  });
+
+  app.get("/api/vendor/connect/setup-link", ...requireVendorAuth0, async (req, res) => {
+    try {
+      const account = await getVendorAccountFromRequest(req);
+
+      if (!account) {
+        return res.status(404).json({ error: "Account not found" });
+      }
+
+      const accountType = account.stripeAccountType === "standard" ? "standard" : "express";
+      const businessName = (account.businessName || "").trim() || "EventHub Vendor";
+
+      if (!account.stripeConnectId) {
+        const { createConnectAccount } = await import("./stripe");
+        const result = await createConnectAccount({
+          email: account.email,
+          businessName,
+          accountType,
+        });
+
+        if (!result.onboardingUrl) {
+          return res.status(500).json({ error: "Could not generate Stripe onboarding link" });
+        }
+
+        await db
+          .update(vendorAccounts)
+          .set({
+            stripeConnectId: result.accountId,
+            stripeAccountType: accountType,
+            stripeOnboardingComplete: false,
+          })
+          .where(eq(vendorAccounts.id, account.id));
+
+        return res.json({ url: result.onboardingUrl });
+      }
+
+      const { checkAccountOnboardingStatus, createDashboardLoginLink, createAccountOnboardingLink } = await import("./stripe");
+      const status = await checkAccountOnboardingStatus(account.stripeConnectId);
+
+      if (status.complete) {
+        if (!account.stripeOnboardingComplete) {
+          await db
+            .update(vendorAccounts)
+            .set({ stripeOnboardingComplete: true })
+            .where(eq(vendorAccounts.id, account.id));
+        }
+
+        if (accountType === "standard") {
+          return res.json({ url: "https://dashboard.stripe.com" });
+        }
+
+        const url = await createDashboardLoginLink(account.stripeConnectId);
+        return res.json({ url });
+      }
+
+      if (account.stripeOnboardingComplete) {
+        await db
+          .update(vendorAccounts)
+          .set({ stripeOnboardingComplete: false })
+          .where(eq(vendorAccounts.id, account.id));
+      }
+
+      const url = await createAccountOnboardingLink(account.stripeConnectId);
+      return res.json({ url });
     } catch (error: any) {
       res.status(500).json({ error: error.message });
     }
@@ -2519,7 +3030,9 @@ app.post(
       const normalizeAmountToCents = (value: unknown) => {
         const n = Number(value ?? 0);
         if (!Number.isFinite(n) || n <= 0) return 0;
-        return n % 100 === 0 ? n : n * 100;
+        if (!Number.isInteger(n)) return Math.round(n * 100);
+        if (n < 1000) return n * 100;
+        return n;
       };
 
       const vendorRefCol = await getBookingsVendorRefColumn();
@@ -2648,16 +3161,20 @@ app.post(
             ? 100
             : 0;
 
-      const recentBookings = bookingRows
+      const recentBookingRows = bookingRows
         .slice()
         .sort((a, b) => {
           const da = a.createdAt ? new Date(a.createdAt).getTime() : 0;
           const dbt = b.createdAt ? new Date(b.createdAt).getTime() : 0;
           return dbt - da;
         })
-        .slice(0, 6)
-        .map((r) => ({
+        .slice(0, 6);
+
+      const recentBookingsWithContext = await attachBookingItemContext(recentBookingRows as any);
+
+      const recentBookings = recentBookingsWithContext.map((r: any) => ({
           id: r.id,
+          itemTitle: typeof r.itemTitle === "string" && r.itemTitle.trim().length > 0 ? r.itemTitle.trim() : null,
           status: String(r.status || "pending").toLowerCase(),
           totalAmount: normalizeAmountToCents(r.totalAmount),
           eventDate: r.eventDate,
@@ -2689,13 +3206,35 @@ app.post(
     return Promise.all(
       rows.map(async (row) => {
         const itemRes: any = await db.execute(drizzleSql`
-          select bi.title, bi.item_data as "itemData"
+          select
+            bi.title,
+            bi.listing_id as "listingId",
+            bi.item_data as "itemData",
+            vl.title as "listingTitle",
+            vl.listing_data as "listingData"
           from booking_items bi
+          left join vendor_listings vl on vl.id = bi.listing_id
           where bi.booking_id = ${row.id}
           limit 1
         `);
-        const [item] = extractRows<{ title?: string | null; itemData?: any }>(itemRes);
+        const [item] = extractRows<{
+          title?: string | null;
+          listingId?: string | null;
+          itemData?: any;
+          listingTitle?: string | null;
+          listingData?: any;
+        }>(itemRes);
         const itemData = item?.itemData && typeof item.itemData === "object" ? item.itemData : {};
+        const listingData = item?.listingData && typeof item.listingData === "object" ? item.listingData : {};
+
+        const itemTitleFromItem = normalizeListingTitleCandidate(item?.title);
+        const itemTitleFromItemData =
+          normalizeListingTitleCandidate(itemData?.listingTitle) ??
+          normalizeListingTitleCandidate(itemData?.listingSnapshot?.title);
+        const itemTitleFromListing =
+          normalizeListingTitleCandidate(item?.listingTitle) ??
+          normalizeListingTitleCandidate(listingData?.listingTitle);
+        const resolvedItemTitle = itemTitleFromItem ?? itemTitleFromItemData ?? itemTitleFromListing;
 
         const notesFromItem =
           typeof itemData?.customerNotes === "string" && itemData.customerNotes.trim().length > 0
@@ -2716,7 +3255,7 @@ app.post(
 
         return {
           ...row,
-          itemTitle: item?.title ?? null,
+          itemTitle: resolvedItemTitle,
           customerEventTitle: customerEventTitleFromItem ?? row.eventTitle ?? null,
           customerNotes: notesFromItem ?? notesFallback,
           customerQuestions: questionsFromItem,
@@ -3481,7 +4020,9 @@ app.post(
         })
         .reduce((sum, r) => sum + toNetCents(r), 0);
 
-      const history = rows.map((r) => {
+      const historyBase = rows
+        .filter((r) => String(r.status || "").toLowerCase() === "completed")
+        .map((r) => {
         const baseAmountCents = baseAmountByBookingId.get(r.id) ?? normalizeAmountToCents(r.totalAmount);
         const grossCents = baseAmountCents + Math.round(baseAmountCents * CUSTOMER_FEE_RATE);
         const netCents = toNetCents(r);
@@ -3495,10 +4036,18 @@ app.post(
         };
       });
 
+      const historyWithContext = await attachBookingItemContext(historyBase as any);
+
       return res.json({
         totalNetEarned,
         upcomingNetPayout,
-        history,
+        history: historyWithContext.map((entry: any) => ({
+          ...entry,
+          itemTitle:
+            typeof entry?.itemTitle === "string" && entry.itemTitle.trim().length > 0
+              ? entry.itemTitle.trim()
+              : null,
+        })),
       });
     } catch (error: any) {
       res.status(500).json({ error: error.message });
@@ -3507,8 +4056,7 @@ app.post(
 
   app.get("/api/vendor/notifications", ...requireVendorAuth0, async (req, res) => {
     try {
-      const vendorAuth = (req as any).vendorAuth;
-      const account = await storage.getVendorAccount(vendorAuth.id);
+      const account = await getVendorAccountFromRequest(req);
 
       if (!account?.id) {
         return res.json([]);
@@ -3543,8 +4091,7 @@ app.post(
 
   app.get("/api/vendor/reviews", ...requireVendorAuth0, async (req, res) => {
     try {
-      const vendorAuth = (req as any).vendorAuth;
-      const account = await storage.getVendorAccount(vendorAuth.id);
+      const account = await getVendorAccountFromRequest(req);
 
       if (!account?.id) {
         return res.json([]);
@@ -3683,6 +4230,7 @@ app.post(
       id: string;
       eventId?: string | null;
       eventTitle?: string | null;
+      vendorDisplayName?: string | null;
       vendorBusinessName?: string | null;
     }
   >(rows: T[]) {
@@ -3767,7 +4315,11 @@ app.post(
           reviewRating !== null ||
           reviewBody !== null;
         const vendorName =
+          row.vendorDisplayName ||
           row.vendorBusinessName ||
+          (typeof itemData?.vendorDisplayName === "string" && itemData.vendorDisplayName.trim().length > 0
+            ? itemData.vendorDisplayName.trim()
+            : null) ||
           (typeof itemData?.vendorBusinessName === "string" && itemData.vendorBusinessName.trim().length > 0
             ? itemData.vendorBusinessName.trim()
             : null) ||
@@ -3813,10 +4365,12 @@ app.post(
             eventStartTime: bookings.eventStartTime,
             eventLocation: bookings.eventLocation,
             createdAt: bookings.createdAt,
+            vendorDisplayName: drizzleSql<string | null>`coalesce(nullif(${users.displayName}, ''), nullif(${users.name}, ''))`,
             vendorBusinessName: vendorAccounts.businessName,
           })
           .from(bookings)
           .leftJoin(vendorAccounts, eq(vendorAccounts.id, bookings.vendorAccountId))
+          .leftJoin(users, eq(users.id, vendorAccounts.userId))
           .leftJoin(events, eq(events.id, bookings.eventId))
           .where(eq(bookings.customerId, customerAuth.id))
           .orderBy(desc(bookings.createdAt));
@@ -3836,9 +4390,11 @@ app.post(
             b.event_start_time as "eventStartTime",
             b.event_location as "eventLocation",
             b.created_at as "createdAt",
+            coalesce(nullif(u.display_name, ''), nullif(u.name, '')) as "vendorDisplayName",
             va.business_name as "vendorBusinessName"
           from bookings b
           left join vendor_accounts va on va.id = b.vendor_id
+          left join users u on u.id = va.user_id
           left join events e on e.id = b.event_id
           where b.customer_id = ${customerAuth.id}
           order by b.created_at desc
@@ -3858,11 +4414,13 @@ app.post(
           b.event_start_time as "eventStartTime",
           b.event_location as "eventLocation",
           b.created_at as "createdAt",
+          coalesce(nullif(u.display_name, ''), nullif(u.name, '')) as "vendorDisplayName",
           va.business_name as "vendorBusinessName"
         from bookings b
         left join booking_items bi on bi.booking_id = b.id
         left join vendor_listings vl on vl.id = bi.listing_id
         left join vendor_accounts va on va.id = vl.account_id
+        left join users u on u.id = va.user_id
         left join events e on e.id = b.event_id
         where b.customer_id = ${customerAuth.id}
         order by b.id, b.created_at desc

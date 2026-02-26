@@ -8,6 +8,13 @@ import { Auth0Provider } from "@auth0/auth0-react";
 import { useAuth0 } from "@auth0/auth0-react";
 import { setTokenGetter } from "@/lib/authToken";
 
+const THEME_STORAGE_KEY = "eventhub-theme";
+if (typeof window !== "undefined") {
+  const persistedTheme = window.localStorage.getItem(THEME_STORAGE_KEY);
+  const initialTheme = persistedTheme === "dark" ? "dark" : "light";
+  document.documentElement.classList.toggle("dark", initialTheme === "dark");
+}
+
 // Simple error boundary to catch runtime errors
 class ErrorBoundary extends Component<{ children: ReactNode }, { hasError: boolean }> {
   constructor(props: { children: ReactNode }) {
@@ -26,7 +33,7 @@ class ErrorBoundary extends Component<{ children: ReactNode }, { hasError: boole
   render() {
     if (this.state.hasError) {
       return (
-        <div style={{ padding: "20px", fontFamily: "\"Tienne\", Georgia, serif" }}>
+        <div style={{ padding: "20px", fontFamily: "\"DM Sans\", \"Segoe UI\", sans-serif" }}>
           <h1>Something went wrong</h1>
           <p>Please check the console for more details.</p>
         </div>

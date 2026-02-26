@@ -1,5 +1,5 @@
 import { useMemo, useState } from "react";
-import { Card, CardContent } from "@/components/ui/card";
+import { Card } from "@/components/ui/card";
 import { Dialog, DialogContent, DialogTitle } from "@/components/ui/dialog";
 import type { ListingPublic } from "@/types/listing";
 import { useLocation } from "wouter";
@@ -11,13 +11,40 @@ import {
   getListingPhotoUrls,
   moveCoverToFront,
 } from "@/lib/listingPhotos";
-import { getListingDisplayPrice } from "@/lib/listingPrice";
+import { getListingDisplayPrice, getListingDisplayPricingUnit } from "@/lib/listingPrice";
+
+function ShareSquareIcon() {
+  return (
+    <svg
+      viewBox="0 0 24 24"
+      fill="none"
+      stroke="currentColor"
+      strokeWidth="2"
+      strokeLinecap="round"
+      strokeLinejoin="round"
+      aria-hidden="true"
+      className="h-[30px] w-[30px]"
+    >
+      <path d="M12 14V3.5" />
+      <path d="m8.5 6.8 3.5-3.3 3.5 3.3" />
+      <path d="M6.4 10.2v8.4c0 1.1.9 2 2 2h7.2c1.1 0 2-.9 2-2v-8.4" />
+    </svg>
+  );
+}
 
 interface ListingCardProps {
   listing: ListingPublic;
+  priceScale?: "default" | "double";
+  titleScale?: "default" | "oneAndHalf";
+  titleFont?: "sans" | "heading";
 }
 
-export default function ListingCard({ listing }: ListingCardProps) {
+export default function ListingCard({
+  listing,
+  priceScale = "default",
+  titleScale = "default",
+  titleFont = "sans",
+}: ListingCardProps) {
   const [, setLocation] = useLocation();
   const [shareOpen, setShareOpen] = useState(false);
   const [shareFeedback, setShareFeedback] = useState("");
@@ -25,6 +52,8 @@ export default function ListingCard({ listing }: ListingCardProps) {
 
   const title = listingAny.listingData?.listingTitle ?? listingAny.title ?? listing.serviceType ?? "Service";
   const priceValue = getListingDisplayPrice(listingAny);
+  const pricingUnit = getListingDisplayPricingUnit(listingAny);
+  const showPerHourSuffix = pricingUnit === "per_hour";
 
   const allPhotoUrls = getListingPhotoUrls(listingAny);
   const coverIndex = getCoverPhotoIndex(listingAny, allPhotoUrls);
@@ -64,8 +93,8 @@ export default function ListingCard({ listing }: ListingCardProps) {
 
   return (
     <>
-      <Card
-        className="group relative cursor-pointer border-none bg-transparent shadow-none overflow-visible"
+      <div
+        className="listing-card-scale-exempt group relative"
         data-testid={`card-listing-${listingId ?? "unknown"}`}
         role="link"
         tabIndex={0}
@@ -77,75 +106,96 @@ export default function ListingCard({ listing }: ListingCardProps) {
           }
         }}
       >
-        <div
-          className="relative overflow-hidden rounded-[1.6rem] bg-muted"
-          style={{ aspectRatio: coverAspectRatio }}
-        >
-          {cover ? (
-            <img
-              src={cover}
-              alt={title}
-              className="h-full w-full object-cover transition-transform duration-300 group-hover:scale-[1.02]"
-            />
-          ) : (
-            <div className="h-full w-full flex items-center justify-center text-sm text-muted-foreground">
-              No photo yet
+        <Card className="cursor-pointer overflow-hidden rounded-[12px] border-0 bg-white shadow-[0_4px_24px_rgba(74,106,125,0.10)] dark:bg-[#22303c]">
+          <div
+            className="relative overflow-hidden bg-muted"
+            style={{ aspectRatio: coverAspectRatio }}
+          >
+            {cover ? (
+              <img
+                src={cover}
+                alt={title}
+                className="h-full w-full object-cover transition-transform duration-300 group-hover:scale-[1.02]"
+              />
+            ) : (
+              <div className="h-full w-full flex items-center justify-center text-sm text-muted-foreground">
+                No photo yet
+              </div>
+            )}
+
+            <div className="pointer-events-none absolute inset-0 bg-[#1a2530]/0 transition-colors duration-300 group-hover:bg-[#1a2530]/45 group-focus-within:bg-[#1a2530]/45" />
+
+            <div className="absolute inset-x-3 bottom-3 flex items-center justify-between opacity-0 transition-opacity duration-300 group-hover:opacity-100 group-focus-within:opacity-100">
+              <button
+                type="button"
+                onClick={(e) => {
+                  e.stopPropagation();
+                  handleOpenListing();
+                }}
+                className="inline-flex items-center gap-2 rounded-full border border-[rgba(74,106,125,0.2)] bg-white/95 px-4 py-2 text-[1.01rem] font-sans font-medium text-[#2a3a42] shadow-sm backdrop-blur-sm"
+                data-testid={`button-view-listing-${listingId ?? "unknown"}`}
+              >
+                <ArrowUpRight className="h-4 w-4" />
+                View Listing
+              </button>
+              <button
+                type="button"
+                onClick={(e) => {
+                  e.stopPropagation();
+                  setShareFeedback("");
+                  setShareOpen(true);
+                }}
+                className="inline-flex h-11 w-11 items-center justify-center text-white/95 transition-colors hover:text-white focus-visible:text-white"
+                aria-label="Share listing"
+                data-testid={`button-share-listing-${listingId ?? "unknown"}`}
+              >
+                <ShareSquareIcon />
+              </button>
             </div>
-          )}
-
-          <div className="pointer-events-none absolute inset-0 bg-black/0 transition-colors duration-300 group-hover:bg-black/50 group-focus-within:bg-black/50" />
-
-          <div className="absolute inset-x-3 bottom-3 flex items-center justify-between opacity-0 transition-opacity duration-300 group-hover:opacity-100 group-focus-within:opacity-100">
-            <button
-              type="button"
-              onClick={(e) => {
-                e.stopPropagation();
-                handleOpenListing();
-              }}
-              className="inline-flex items-center gap-2 rounded-full bg-white/95 px-4 py-2 text-sm font-semibold text-slate-900 shadow-sm backdrop-blur-sm"
-              data-testid={`button-view-listing-${listingId ?? "unknown"}`}
-            >
-              <ArrowUpRight className="h-4 w-4" />
-              View Listing
-            </button>
-            <button
-              type="button"
-              onClick={(e) => {
-                e.stopPropagation();
-                setShareFeedback("");
-                setShareOpen(true);
-              }}
-              className="inline-flex h-11 w-11 items-center justify-center rounded-full bg-white/95 text-slate-900 shadow-sm backdrop-blur-sm"
-              aria-label="Share listing"
-              data-testid={`button-share-listing-${listingId ?? "unknown"}`}
-            >
-              <Share2 className="h-4 w-4" />
-            </button>
           </div>
+        </Card>
+
+        <div
+          className={`flex items-start justify-between gap-3 px-1 ${
+            priceScale === "double" ? "mt-1" : "mt-2"
+          }`}
+        >
+          <h3
+            className={`line-clamp-2 ${titleFont === "heading" ? "font-heading" : "font-sans"} font-semibold leading-tight text-[#2a3a42] dark:text-[#f5f0e8] ${
+              titleScale === "oneAndHalf" ? "text-[1.575rem]" : "text-[1.05rem]"
+            }`}
+          >
+            {title}
+          </h3>
+          <p
+            className={`shrink-0 font-heading font-bold text-[#e07a6a] ${
+              priceScale === "double"
+                ? "text-[2.176rem] leading-none"
+                : "text-[1.28rem]"
+            }`}
+          >
+            {typeof priceValue === "number" ? (
+              <>
+                ${priceValue.toLocaleString()}
+                {showPerHourSuffix ? <span className="text-[0.6em] font-bold"> / Hour</span> : null}
+              </>
+            ) : (
+              "—"
+            )}
+          </p>
         </div>
-
-        <CardContent className="px-2 pb-1 pt-3">
-          <div className="flex items-start justify-between gap-3">
-            <h3 className="line-clamp-2 font-semibold leading-tight text-[clamp(1.2rem,1.55vw,1.55rem)] text-slate-900">
-              {title}
-            </h3>
-            <p className="shrink-0 font-semibold text-[clamp(1.16rem,1.35vw,1.38rem)] text-slate-900">
-              {typeof priceValue === "number" ? `$${priceValue.toLocaleString()}` : "—"}
-            </p>
-          </div>
-        </CardContent>
-      </Card>
+      </div>
 
       <Dialog open={shareOpen} onOpenChange={setShareOpen}>
-        <DialogContent className="rounded-3xl border border-slate-200/80 p-6 sm:max-w-[540px]">
-          <DialogTitle className="text-center text-2xl font-semibold text-slate-900">Share Listing</DialogTitle>
-          <p className="-mt-2 line-clamp-1 text-center text-sm text-slate-500">{title}</p>
+        <DialogContent className="rounded-3xl border border-border bg-card p-6 sm:max-w-[540px]">
+          <DialogTitle className="text-center text-[1.74rem] font-semibold text-foreground">Share Listing</DialogTitle>
+          <p className="-mt-2 line-clamp-1 text-center text-[1.01rem] text-muted-foreground">{title}</p>
 
           <div className="mt-2 grid grid-cols-2 gap-3 sm:grid-cols-4">
             <button
               type="button"
               onClick={handleCopyLink}
-              className="flex flex-col items-center gap-2 rounded-2xl border border-slate-200 px-3 py-3 text-sm font-medium text-slate-700 transition hover:bg-slate-50"
+              className="flex flex-col items-center gap-2 rounded-2xl border border-border px-3 py-3 text-[1.01rem] font-medium text-foreground transition hover:bg-accent hover:text-accent-foreground"
             >
               <Link2 className="h-5 w-5" />
               Copy link
@@ -157,7 +207,7 @@ export default function ListingCard({ listing }: ListingCardProps) {
                 if (typeof window === "undefined") return;
                 window.location.href = smsHref;
               }}
-              className="flex flex-col items-center gap-2 rounded-2xl border border-slate-200 px-3 py-3 text-sm font-medium text-slate-700 transition hover:bg-slate-50"
+              className="flex flex-col items-center gap-2 rounded-2xl border border-border px-3 py-3 text-[1.01rem] font-medium text-foreground transition hover:bg-accent hover:text-accent-foreground"
             >
               <MessageCircle className="h-5 w-5" />
               Messages
@@ -169,7 +219,7 @@ export default function ListingCard({ listing }: ListingCardProps) {
                 if (typeof window === "undefined") return;
                 window.location.href = emailHref;
               }}
-              className="flex flex-col items-center gap-2 rounded-2xl border border-slate-200 px-3 py-3 text-sm font-medium text-slate-700 transition hover:bg-slate-50"
+              className="flex flex-col items-center gap-2 rounded-2xl border border-border px-3 py-3 text-[1.01rem] font-medium text-foreground transition hover:bg-accent hover:text-accent-foreground"
             >
               <Mail className="h-5 w-5" />
               Email
@@ -184,15 +234,15 @@ export default function ListingCard({ listing }: ListingCardProps) {
                 }
                 setShareFeedback("Link copied. Paste it in Messenger.");
               }}
-              className="flex flex-col items-center gap-2 rounded-2xl border border-slate-200 px-3 py-3 text-sm font-medium text-slate-700 transition hover:bg-slate-50"
+              className="flex flex-col items-center gap-2 rounded-2xl border border-border px-3 py-3 text-[1.01rem] font-medium text-foreground transition hover:bg-accent hover:text-accent-foreground"
             >
               <Share2 className="h-5 w-5" />
               Messenger
             </button>
           </div>
 
-          <div className="break-all rounded-2xl bg-slate-50 px-4 py-3 text-sm text-slate-600">{shareUrl}</div>
-          {shareFeedback ? <p className="text-sm font-medium text-emerald-700">{shareFeedback}</p> : null}
+          <div className="break-all rounded-2xl bg-background px-4 py-3 text-[1.01rem] text-muted-foreground">{shareUrl}</div>
+          {shareFeedback ? <p className="text-[1.01rem] font-medium text-primary-foreground">{shareFeedback}</p> : null}
         </DialogContent>
       </Dialog>
     </>

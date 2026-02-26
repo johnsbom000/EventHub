@@ -492,7 +492,7 @@ const EventPlanner = () => {
                               {singleDate ? format(singleDate, "PPP") : <span>Pick a date</span>}
                             </Button>
                           </PopoverTrigger>
-                          <PopoverContent className="w-auto p-0">
+                          <PopoverContent className="w-auto rounded-[12px] border border-border bg-popover p-0">
                             <Calendar
                               mode="single"
                               selected={singleDate}
@@ -619,7 +619,7 @@ const EventPlanner = () => {
                       <Search className="h-6 w-6 text-primary" />
                     </div>
                     <div className="flex-1">
-                      <CardTitle className="text-xl">Browse Vendors</CardTitle>
+                      <CardTitle className="text-[20px]">Browse Vendors</CardTitle>
                       <CardDescription className="mt-2">
                         View all vendors filtered by your location, date, and selected vendor types. Perfect if you want to explore options on your own.
                       </CardDescription>
@@ -635,7 +635,7 @@ const EventPlanner = () => {
                       <Sparkles className="h-6 w-6 text-accent-foreground" />
                     </div>
                     <div className="flex-1">
-                      <CardTitle className="text-xl">Get a Curated List</CardTitle>
+                      <CardTitle className="text-[20px]">Get a Curated List</CardTitle>
                       <CardDescription className="mt-2">
                         Answer detailed questions about each vendor type to receive personalized recommendations. We'll match you with the perfect vendors for your specific needs.
                       </CardDescription>

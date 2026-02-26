@@ -1,6 +1,6 @@
 # Event Hub Decisions Log
 
-Last updated: February 24, 2026
+Last updated: February 26, 2026
 
 ## Purpose
 This file tracks decisions that affect product scope, architecture, and launch tradeoffs.
@@ -15,6 +15,286 @@ Template for new entries:
 - Revisit trigger:
 
 ---
+
+## [2026-02-26] Remove Messages item from vendor/customer portal avatar dropdowns
+- Context: The circular avatar dropdowns in vendor and customer portals should not include a `Messages` option.
+- Decision: Remove the `Messages` dropdown item from `VendorShell` and `CustomerDashboard` avatar menus only.
+- Why: Matches requested portal-level menu scope while preserving existing sidebar navigation and message routes.
+- Impact: Vendor/customer portal avatar dropdowns no longer show `Messages`; other menu items and messaging functionality remain available through existing portal navigation.
+- Revisit trigger: If account dropdown options are centralized and message entry points are redefined across portal surfaces.
+
+## [2026-02-26] Remove avatar-dropdown Notifications item on landing and dashboard shells
+- Context: The circular avatar dropdown should not show a `Notifications` option on the landing page, customer dashboard, or vendor dashboard.
+- Decision: Hide `Notifications` in `Navigation` only when route is `/` (landing), and remove `Notifications` menu items from `CustomerDashboard` and `VendorShell` avatar dropdown menus.
+- Why: Matches the requested UI scope while preserving existing notifications route and other menu behavior outside those contexts.
+- Impact: `Notifications` no longer appears in avatar dropdowns on landing/customer-dashboard/vendor-dashboard surfaces; other menu options and routes remain intact.
+- Revisit trigger: If account-menu items are centralized into a shared configuration with role/surface-level menu policies.
+
+## [2026-02-26] Increase customer listing-card text emphasis and share icon size
+- Context: Customer-facing listing cards on Home and Browse needed stronger visual emphasis for listing title/price and a larger send-listing icon.
+- Decision: In shared `ListingCard`, increase title weight from `font-medium` to `font-semibold`, increase price weight from `font-semibold` to `font-bold`, and increase the send icon from `20px` to `30px`.
+- Why: Meets the requested visual adjustments while keeping spacing/layout and responsive behavior unchanged by editing one shared component.
+- Impact: All customer-facing listing cards that use `ListingCard` now render bolder title/price text and a larger send icon consistently across Home and Browse.
+- Revisit trigger: If card metadata wraps or icon affordance needs tuning after visual QA on smaller breakpoints.
+
+## [2026-02-26] Normalize customer profile email away from synthetic Auth0 fallback addresses
+- Context: Customer/My Events profile email could show synthetic values like `auth0_...@eventhub.local` for vendor-linked Auth0 users, even when a real account email existed.
+- Decision: In customer identity resolution, treat synthetic Auth0-local emails as placeholders, prefer canonical real email from Auth0 claims, then vendor account email by Auth0 sub, and auto-backfill the customer `users.email` when safely unique.
+- Why: Fixes the root identity data source instead of UI-only masking, and keeps profile/booking flows aligned to real account contact info.
+- Impact: Customer profile email now auto-fills with the real account email for affected users, and repaired values persist for subsequent requests.
+- Revisit trigger: If customer/vendor identities are later unified under a dedicated account-linking model with enforced canonical email ownership.
+
+## [2026-02-26] Extend customer email repair to JWT-auth path and vendor link by userId
+- Context: Some sessions still returned synthetic `@eventhub.local` email because `resolveCustomerAuthFromRequest` exited early when `req.customerAuth` already existed, bypassing Auth0-based repair logic.
+- Decision: Normalize/repair email even in the early `req.customerAuth` branch, add canonical fallback lookup via `vendor_accounts.user_id`, and make `/api/customer/me` prefer resolved auth email when profile row is still synthetic.
+- Why: Ensures one consistent canonical-email path regardless of token/middleware branch and avoids UI-specific workarounds.
+- Impact: Vendor-linked My Events profiles now resolve real account email even when request context originates from pre-populated customer auth state.
+- Revisit trigger: If identity/account-linking is centralized and this compatibility repair logic can be replaced by a single authoritative account record.
+
+## [2026-02-26] Use vendor-style avatar dropdown on customer dashboard for vendor-linked accounts
+- Context: Vendor-linked users in the customer (`My Events`) dashboard needed the top-right avatar/dropdown to visually match the vendor portal shell, while still reflecting the customer person identity.
+- Decision: In `CustomerDashboard`, switch to a vendor-style dropdown variant when a vendor account exists: no profile image, `Vendor Account` label, vendor-style menu options (including Vendor Dashboard and Notifications), and avatar initials derived from customer real name (first + last initial).
+- Why: Keeps cross-portal vendor experience cohesive without leaking business-name initials into customer booking identity.
+- Impact: Vendor-linked users now see a matching vendor-style header control on My Events; non-vendor customers keep the existing customer avatar behavior.
+- Revisit trigger: If account menus are centralized into a shared role-aware component across all shells.
+
+## [2026-02-26] Fix customer-dashboard vendor detection query for header account menu variant
+- Context: The customer header dropdown kept rendering the non-vendor variant because vendor-account detection never resolved during My Events rendering.
+- Decision: Use an explicit authenticated query function for `/api/vendor/me` in `CustomerDashboard` (with Auth0 bearer token) and treat non-OK responses as non-vendor only.
+- Why: Ensures vendor-linked accounts are detected reliably in customer shell context so the intended vendor-style dropdown branch actually renders.
+- Impact: Vendor accounts now correctly see the vendor-style header menu variant in My Events; non-vendor accounts remain unchanged.
+- Revisit trigger: If header account-menu role detection is centralized into shared auth context/state.
+
+## [2026-02-26] Stabilize vendor-mode customer header avatar to prevent blank/unstyled circle state
+- Context: In My Events, vendor-linked users could briefly render customer profile-photo avatar state first, then switch to vendor mode, resulting in a blank/unstyled avatar circle instead of the filled vendor-style avatar.
+- Decision: Gate customer-photo rendering until vendor-account lookup resolves and key the avatar by role mode (`vendor`/`customer`) to force a clean remount when mode changes.
+- Why: Ensures the same visual treatment as vendor portal without transient Radix avatar image-state artifacts.
+- Impact: Vendor-linked customer dashboard header now consistently shows filled vendor-style initials avatar color/state.
+- Revisit trigger: If avatar/header controls are unified into one shared shell component with role-aware rendering.
+
+## [2026-02-26] Use non-generic listing-title fallback chain for vendor booking surfaces
+- Context: Vendor dashboard recent activity could display stale generic booking-item titles like `New unspecified listing` even when the linked listing has a proper current title.
+- Decision: In `attachBookingItemContext`, normalize generic placeholder titles to null and resolve item title via fallback chain: booking-item title -> booking-item JSON snapshot title -> linked `vendor_listings` title/listingData title.
+- Why: Keeps vendor-facing booking cards aligned with actual listing names while preserving booking snapshot metadata when meaningful.
+- Impact: Recent Activity (and other vendor booking surfaces using this helper) now avoid generic placeholder titles and show real listing titles when available.
+- Revisit trigger: If booking items are later migrated to immutable normalized title snapshots and runtime fallback is no longer required.
+
+## [2026-02-25] Set Browse Vendors page background to Cloud Dancer `#f0eee9`
+- Context: Browse Vendors background needed to match the specified light neutral tone.
+- Decision: Update the Browse Vendors page surface wrapper color to `#f0eee9`.
+- Why: Aligns the page background with the requested palette value.
+- Impact: Browse Vendors main background now renders `#f0eee9` while preserving existing behavior and layout.
+- Revisit trigger: If browse-page colors are later centralized into semantic page-level tokens.
+
+## [2026-02-25] Apply unified light-gray surface tone to Browse Vendors background and input controls
+- Context: Browse Vendors needed the page background and input boxes aligned to a specific light-gray swatch.
+- Decision: Set a scoped swatch class on Browse Vendors wrappers and apply the same swatch to all page input controls (search, location, min/max price, availability date, and sort trigger).
+- Why: Delivers the requested visual uniformity on the browse surface without changing behavior or global theme tokens.
+- Impact: Browse Vendors now uses a consistent swatch color for page background and input-like controls.
+- Revisit trigger: If browse-page theming is later refactored into dedicated page-level tokens.
+
+## [2026-02-25] Adjust notification toggle to gold thumb with lighter-gold checked track
+- Context: Notification switch thumb needed to match the gold accent, and checked track needed to be a lighter shade of that same gold.
+- Decision: Set notification toggle thumb fill/border to secondary-accent gold and reduce checked-track intensity to a lighter tint while keeping unchecked track white.
+- Why: Matches requested visual hierarchy and keeps ON/OFF readability.
+- Impact: Toggles now use gold thumb + lighter-gold ON track with white OFF track.
+- Revisit trigger: If switch colors are standardized globally across dashboard pages.
+
+## [2026-02-25] Set notification toggles to blue thumb with gold/white track states
+- Context: Notification switches needed clearer state mapping and specific brand-color treatment for thumb and track.
+- Decision: In vendor notifications, style switch thumb as solid brand blue and set track to gold when checked and white when unchecked.
+- Why: Matches requested visual language and improves state clarity without changing switch behavior.
+- Impact: Notification toggles now render with explicit blue knob + gold/white track states.
+- Revisit trigger: If switch appearance is later unified globally across all pages.
+
+## [2026-02-25] Increase visual definition of notification toggles on vendor notifications page
+- Context: Notification preference switches looked like plain pills and lacked clear toggle affordance in the current dashboard color context.
+- Decision: Apply a page-scoped switch class in `VendorNotifications` with stronger track border/shadow, higher-contrast thumb, and explicit checked/unchecked differentiation.
+- Why: Improves scanability and interaction clarity without changing switch behavior or global component defaults.
+- Impact: Toggles on vendor notifications now read clearly as switches while preserving existing state handling.
+- Revisit trigger: If switch definition should be standardized globally across all dashboard pages.
+
+## [2026-02-25] Match dashboard base surfaces to screenshot by using the base background tone
+- Context: Prior white-surface override made dashboard surfaces too bright versus the provided screenshot.
+- Decision: Update scoped dashboard surface override so `background`, `card`, and `sidebar` use the base background tone token instead of the brighter card-white token.
+- Why: Aligns vendor/dashboard main background colors with the screenshot while keeping input and component behavior unchanged.
+- Impact: Dashboard canvas and large containers now render in the softer base light tone seen in the reference.
+- Revisit trigger: If final visual QA asks for stronger contrast between canvas and card surfaces.
+
+## [2026-02-25] Unify dashboard background and large container surfaces to the lighter white tone
+- Context: The initial dashboard white-surface swap still left visual mismatch; requested result was the lighter white on both page background and larger non-input boxes.
+- Decision: Update scoped dashboard override so both `--background` and `--card` resolve to the lighter white token inside vendor and customer dashboard wrappers.
+- Why: Matches the exact visual request while preserving input styles and global theme behavior.
+- Impact: Vendor dashboard and customer dashboard (`My Events` area) now render the canvas and large cards in the same lighter white tone.
+- Revisit trigger: If dashboard needs separate contrast hierarchy again for accessibility or information density.
+
+## [2026-02-25] Invert light-surface pair on vendor and customer dashboard containers
+- Context: Vendor dashboard and customer dashboard (`My Events` area) needed the two light surface tones (“dark white” and “light white”) flipped relative to each other.
+- Decision: Add scoped `.swap-dashboard-whites` token override that swaps `--background` and `--card`, and apply it to `VendorShell` and `CustomerDashboard` wrappers only.
+- Why: Delivers requested color inversion without changing global site theme or modifying component behavior.
+- Impact: Dashboard canvases and card surfaces now render with swapped light-surface hierarchy in both light and dark modes for those dashboard sections only.
+- Revisit trigger: If dashboard visual system is later split into dedicated tokens instead of scoped overrides.
+
+## [2026-02-25] Prefer vendor personal display name over business name on customer My Events labels
+- Context: My Events booking labels were showing vendor shop/business names where users expected vendor personal display names.
+- Decision: Extend customer bookings payload to include vendor display name from linked `users` records, prefer that name when building booking display titles, and keep business name as fallback only.
+- Why: Aligns customer-facing booking labels with expected person-first identity while preserving backward compatibility for vendors without linked profile names.
+- Impact: `My Events` now shows `listing from {vendor personal name}` when available, with shop name fallback for incomplete account links.
+- Revisit trigger: If vendor identity model formalizes separate public-facing person name and business label fields.
+
+## [2026-02-25] Replace Auth0 machine fallback names with human display names in customer profile resolution
+- Context: Some authenticated users (including vendor-linked accounts using customer dashboard surfaces) were seeing machine-generated names like `auth0_google_oauth2_...` because fallback identity creation used synthetic email local-parts when Auth0 email/name claims were missing.
+- Decision: Update customer auth resolution to prefer human names from Auth0 claims, then a humanized email local-part; additionally auto-repair existing user rows whose `name`/`displayName` match machine fallback patterns (and shop-name fallback remnants from prior logic).
+- Why: Preserves current auth/database flow while fixing user-facing identity quality and expected initials without schema changes.
+- Impact: Affected profiles now resolve to readable person-style names and initials match those names instead of machine identifiers.
+- Revisit trigger: If user identity model is split into separate customer/vendor personas with explicit per-role profile names.
+
+## [2026-02-25] Persist vendor Street Address in dashboard profile details without schema changes
+- Context: Vendor profile details had verified address selection but no dedicated Street Address input to visibly store and restore the street line after LocationPicker selection.
+- Decision: Add a `Street Address` field in Vendor Dashboard Profile Details, auto-fill it from LocationPicker selection parsing, and persist it through existing `/api/vendor/profile` payload by storing in `onlineProfiles.streetAddress` with service-address parsing fallback.
+- Why: Meets the requested UX while keeping backend/schema unchanged and preserving existing profile save behavior.
+- Impact: Vendors can see/edit/save the street line directly; selecting an address hydrates the field; reset/hydration restores it consistently.
+- Revisit trigger: If vendor profiles get dedicated structured address columns (street/city/state/zip) and JSON fallback should be migrated.
+
+## [2026-02-25] Propagate landing control/accent styling to vendor and customer dashboards
+- Context: Dashboard routes still had hardcoded legacy cyan/green/yellow styles that diverged from the landing page’s themed control system and secondary-accent behavior in light/dark mode.
+- Decision: Replace dashboard-specific hardcoded colors with shared theme tokens/components, including secondary-accent styling for unread badges, publish/status actions, selected review stars, warning cards, and destructive/error text states.
+- Why: Keeps booking-critical dashboard flows visually consistent with landing without backend/schema changes, while preserving existing functionality and launch velocity.
+- Impact: Vendor and customer dashboard controls now inherit the same token-driven accent behavior as landing in both light and dark mode, reducing one-off style drift.
+- Revisit trigger: If a dedicated dashboard design system diverges intentionally from landing tokens or if broader component variants are introduced for accent actions.
+
+## [2026-02-25] Scale landing hero/search section components by 15% on desktop only
+- Context: The landing hero block (headline, supporting copy, search fields, and CTA) needed to render larger while preserving its existing composition and mobile behavior.
+- Decision: Increase hero/search typography, control heights, paddings, and spacing by ~15% at `lg` breakpoints and keep current mobile/tablet base values unchanged.
+- Why: Matches requested visual sizing while preserving established proportions and reducing risk to the MVP booking entry surface.
+- Impact: Desktop hero/search reads noticeably larger with the same visual hierarchy; mobile responsiveness and interaction flow remain unchanged.
+- Revisit trigger: If QA finds desktop overflow/wrapping issues on narrower laptop widths or if brand scale tokens are standardized.
+
+## [2026-02-25] Apply a second proportional +15% desktop scale pass to hero/search
+- Context: After the first desktop-only scaling pass, the hero/search surface still needed to read larger while retaining the same composition and mobile behavior.
+- Decision: Multiply existing `lg` hero/search size tokens by another 15% (typography, spacing, control/icon/button sizing) without changing base mobile/tablet values.
+- Why: Preserves proportional visual hierarchy and keeps the requested responsive behavior intact.
+- Impact: Desktop hero/search now renders larger again with unchanged interactions and unchanged mobile sizing.
+- Revisit trigger: If narrower desktop breakpoints show clipping or if final brand type scale tokens are standardized.
+
+## [2026-02-25] Standardize form dropdowns on shared themed select styling
+- Context: Form dropdowns were visually inconsistent with the current editorial theme, especially native browser select menus.
+- Decision: Use the shared `ui/select` component styles as the dropdown baseline for form surfaces, replace remaining native form `<select>` controls with `Select`, and align LocationPicker suggestion menus to the same popover/accent styling system in light and dark mode.
+- Why: Ensures consistent colors, borders, radius, and typography across form dropdown interactions while preserving existing form behavior.
+- Impact: Event-type/event-selection dropdowns and form suggestion lists now render with unified theme styling in both light and dark modes.
+- Revisit trigger: If a dedicated design token set for form controls is introduced or dropdown density needs per-surface tuning.
+
+## [2026-02-25] Standardize calendar/date-picker theming across custom and native date inputs
+- Context: Date-picking surfaces were visually inconsistent with the current theme, especially browser-native date picker controls.
+- Decision: Restyle shared `ui/calendar` day/caption/nav tokens, set calendar popovers to themed border/radius/background classes, and add global `input[type="date"]` theming hooks (color-scheme, typography, and WebKit picker-indicator styling) for light/dark modes.
+- Why: Delivers consistent calendar visuals site-wide while preserving existing date selection behavior and native picker functionality.
+- Impact: Custom calendar dropdowns now match theme tokens more closely, and native date-input controls are themed as far as browser support allows in both light and dark modes.
+- Revisit trigger: If date inputs are later migrated to fully custom calendar pickers for complete cross-browser visual control.
+
+## [2026-02-25] Expand hero location field width and remove right mini pin control
+- Context: The hero location input was too narrow to read typed location values clearly, and the extra right-side mini pin icon crowded the field.
+- Decision: Increase hero search-shell width and rebalance desktop grid proportions so the location segment is substantially wider (~2.3x target), reduce horizontal margins, and hide the location button in the hero `LocationPicker` while keeping it available elsewhere.
+- Why: Improves scanability and typing clarity in the highest-priority browse entry surface without backend/schema changes or flow changes.
+- Impact: Hero location section now occupies much more horizontal space, typed values are more visible, and the right mini pin is removed in hero only; other location pickers keep existing behavior.
+- Revisit trigger: If other pages request the same no-pin behavior or if small-laptop QA shows column crowding in the hero bar.
+
+## [2026-02-25] Increase desktop hero field-label typography by 10%
+- Context: The hero filter labels (`Location`, `Event Type`, `Date`, `Category`) needed stronger visibility in the desktop search bar.
+- Decision: Increase only the desktop (`lg`) label font size tokens for those four labels by exactly 10%, leaving other typography and spacing unchanged.
+- Why: Improves readability while preserving current hierarchy and responsive behavior.
+- Impact: Desktop hero labels render larger without changing layout structure, interactions, or non-desktop sizing.
+- Revisit trigger: If further desktop readability tuning is requested for hero metadata text.
+
+## [2026-02-25] Introduce #c9a06a as a discreet secondary accent across interactive states
+- Context: UI needed a surprising but restrained secondary accent that complements existing primary tokens instead of replacing them.
+- Decision: Add a dedicated secondary-accent token (`#c9a06a` in light mode, tuned lighter in dark mode) and apply it to secondary interactive states: switch checked state + focus ring, link hover/underline color, secondary badge variant, select item focus/checked states, and calendar hover/today highlights.
+- Why: Creates a cohesive secondary accent system across key interactions while preserving current primary color hierarchy.
+- Impact: Gold appears consistently in secondary interactions across light/dark mode with no behavioral changes and no backend/schema changes.
+- Revisit trigger: If brand direction requests expanding gold usage beyond secondary interactions or tightening it further.
+
+## [2026-02-25] Double listing-card price typography on landing and browse-vendors surfaces
+- Context: Price values under listing cards were too small relative to the requested emphasis on marketplace pricing.
+- Decision: Add a scoped `priceScale` prop to `ListingCard` and set it to `double` only in `Home` and `BrowseVendors`, resulting in exactly 2x price text size on those two surfaces.
+- Why: Meets the visual requirement without affecting other pages or card contexts.
+- Impact: Listing-card price text is now significantly more prominent on landing and browse-vendors pages; no backend/schema or interaction changes.
+- Revisit trigger: If card metadata density or wrapping becomes an issue at smaller widths.
+
+## [2026-02-25] Increase listing-card title typography by 1.5x on landing and browse-vendors surfaces
+- Context: After increasing listing-card prices, listing titles under cards still needed stronger visual presence on the same two marketplace surfaces.
+- Decision: Add a scoped `titleScale` prop to `ListingCard` and set it to `oneAndHalf` only in `Home` and `BrowseVendors`, resulting in exactly 1.5x title text size there.
+- Why: Keeps scope aligned with the requested pages and preserves existing behavior/layout elsewhere.
+- Impact: Listing titles under cards are now more prominent on landing and browse-vendors pages without backend/schema or interaction changes.
+- Revisit trigger: If card text wrapping or metadata balance needs tuning at smaller viewport widths.
+
+## [2026-02-25] Tighten listing-card metadata gap and reduce enlarged price size on landing/browse surfaces
+- Context: After doubling listing-card prices on landing and browse-vendors pages, the price baseline looked visually too far from the image and too large relative to adjacent title text.
+- Decision: For `ListingCard` instances using `priceScale="double"`, reduce metadata top margin (`mt-2` to `mt-1`) and reduce price size by ~15% (`2.56rem` to `2.176rem`) with tighter line-height.
+- Why: Restores balanced vertical rhythm while keeping the requested emphasis and same page scope.
+- Impact: Price now sits closer to the image with cushion closer to the title, and the enlarged price remains prominent but less overpowering on landing and browse-vendors surfaces only.
+- Revisit trigger: If additional spacing harmonization is requested after visual QA on narrow columns.
+
+## [2026-02-25] Apply gold accent to four specific hero/navigation/home text targets
+- Context: Four specific landing-facing text/icon targets needed the secondary gold accent while preserving all other color behavior.
+- Decision: Set only these targets to gold in light mode (`#c9a06a`) with a lighter companion in dark mode (`#d9b78c`): hero subtitle text, hero `Pros,` wordmark span, navigation theme-toggle label + sun/moon icons row, and the featured-rentals helper subtitle.
+- Why: Meets the requested targeted color shift without broad token/theme changes.
+- Impact: Only the specified surfaces now render gold-toned accents consistently across light/dark and desktop/mobile; no functional changes.
+- Revisit trigger: If brand review asks to extend or narrow gold usage beyond these exact targets.
+
+## [2026-02-25] Revert targeted gold accent on hero subtitle/theme-row/helper subtitle/pros span
+- Context: The most recent targeted gold pass needed to be rolled back.
+- Decision: Restore previous colors for the four scoped targets only: hero subtitle, hero `Pros,` span, navigation theme toggle label/icons row, and home featured-rentals helper subtitle.
+- Why: Honor explicit rollback request while keeping all other styling and behavior untouched.
+- Impact: Those four surfaces now use their prior non-gold colors again in both light and dark experiences.
+- Revisit trigger: If targeted gold usage is re-requested with updated scope.
+
+## [2026-02-25] Restore landing-page brand/logo script style and Pinterest-style listing metadata placement
+- Context: The latest landing-page polish pass moved logo wordmarks away from Damion and pulled listing title/price back inside the card shell, which no longer matched the requested visual direction.
+- Decision: Re-enable Damion as the logo font token in `BrandWordmark`, keep split color styling where used, remove the hero eyebrow line, and move listing title/price into a separate metadata row beneath the image card.
+- Why: Aligns the homepage with the requested Pinterest-inspired listing treatment and prior EventHub logo styling while preserving current behavior and routing.
+- Impact: Logo marks now render in Damion across nav/footer/auth surfaces, the hero is simplified, and listing images are visually separated from title/price text without functional flow changes.
+- Revisit trigger: If brand guidelines are finalized with a different permanent logo typeface or listing-card information hierarchy.
+
+## [2026-02-25] Increase landing-page typography scale by 5% with proportional responsive sizing
+- Context: Landing-page text needed a universal legibility bump without changing layout behavior or interaction flows.
+- Decision: Increase explicit text sizes across `Navigation`, `Hero`, `Home` featured header block, `ListingCard`, and `Footer` by ~5%, including proportional updates to hero `clamp(...)` values.
+- Why: Meets the requested visual refinement while preserving existing responsive scaling dynamics and component structure.
+- Impact: Home landing text renders consistently larger across desktop/mobile with no functional changes.
+- Revisit trigger: If mobile QA shows crowding in search or card metadata rows.
+
+## [2026-02-25] Increase landing-page typography again for stronger visual hierarchy
+- Context: A prior 5% increase was still visually smaller than desired for the landing experience.
+- Decision: Apply another proportional landing-only typography bump (~10% over the current values) across nav, hero, featured header, listing card metadata/dialog, and footer text sizes.
+- Why: Match requested larger type direction while preserving existing responsive clamps and component behavior.
+- Impact: All visible landing-page text now renders noticeably larger with no routing, data, or interaction changes.
+- Revisit trigger: If text wrapping/crowding appears at smaller breakpoints during QA.
+
+## [2026-02-25] Refine landing primary button styling to screenshot-matched shape and weight
+- Context: Landing `Search` and `Login / Sign up` buttons needed tighter visual matching to provided references.
+- Decision: Update `editorial-search-btn` and `editorial-login-btn` to softer 14px corners with fixed border weight and adjusted letter spacing/weight, and tune their landing dimensions/text sizing in `Hero` and `Navigation`.
+- Why: Preserve existing button behavior while matching the intended visual look more closely.
+- Impact: Landing primary CTAs now read closer to the provided mock references with no functional change.
+- Revisit trigger: If final brand QA specifies different radius/size tokens for global buttons.
+
+## [2026-02-25] Force landing Search/Login color tokens to override default button variant utilities
+- Context: Landing buttons still rendered steel blue because shared default button utility classes overrode custom editorial color declarations.
+- Decision: Apply explicit priority (`!important`) to `background-color`, `border-color`, and `color` for `.editorial-search-btn` and `.editorial-login-btn` (including hover state).
+- Why: Ensure the requested mint/coral button colors render consistently without changing component logic or shared button behavior.
+- Impact: `Search` now reliably renders mint with steel-blue text and `Login / Sign up` reliably renders coral with white text in light mode.
+- Revisit trigger: If shared button system is refactored to semantic variants that remove utility-order conflicts.
+
+## [2026-02-25] Invert landing hero surface colors using Cloud Dancer background
+- Context: Landing hero needed the outer canvas and inner search shell light tones swapped for closer visual match to design reference.
+- Decision: Set hero light-mode background to Cloud Dancer `#F0EEE9` and set the search container surface to `#f5f0e8`; keep dark-mode values unchanged.
+- Why: Achieves requested visual inversion without touching search behavior or component structure.
+- Impact: Landing hero now shows a warmer outer background with a subtly deeper inner search panel contrast.
+- Revisit trigger: If final design QA requests removal of the radial tint or a single flat background color.
+
+## [2026-02-25] Remove hero-to-listings seam by using flat shared Cloud Dancer surface
+- Context: A faint horizontal seam remained visible between hero and featured listings after color inversion.
+- Decision: Remove hero radial gradient and set both landing root/main background surfaces to flat `#F0EEE9` in light mode.
+- Why: Ensures continuous visual surface between hero and listings while preserving all existing component behavior.
+- Impact: Landing page now renders as one continuous Cloud Dancer background with no visible break line between sections.
+- Revisit trigger: If future design direction reintroduces sectional background contrast intentionally.
 
 ## [2026-02-24] Make customer display-name updates flow through shared customer profile API state
 - Context: Updating display name in Customer Dashboard profile did not update the profile header name or top-right nav avatar initials.
@@ -729,3 +1009,311 @@ Template for new entries:
 - Why: Fine-tunes legibility while keeping the prior responsive behavior and avoiding broader card/layout changes.
 - Impact: Listing title and price under cards are modestly larger than the previous revision across viewport sizes.
 - Revisit trigger: If card text crowds on smaller devices or metadata density increases.
+
+## [2026-02-25] Apply editorial palette and typography system with persisted light/dark theme toggle
+- Context: Website UI needed a cohesive editorial restyle using a strict color palette plus two-brand-font system, while preserving existing booking/navigation behavior.
+- Decision: Replace global theme tokens with the new palette (light and dark), switch typography tokens to `Cormorant Garamond` for headings/logo/price styling and `DM Sans` for body/controls, add targeted editorial button/pill style classes for login/search/CTA/category treatments, and add a navigation theme toggle persisted via `localStorage` (`eventhub-theme`) with default light mode.
+- Why: Delivers requested visual direction quickly without changing routing, data, or core component logic, and keeps theme behavior predictable across sessions.
+- Impact: Primary customer/vendor surfaces now use the editorial palette and typography baseline, specified CTA/button/pill treatments are standardized, and users can switch/persist light/dark theme from navigation.
+- Revisit trigger: If post-launch design QA identifies specific pages/components still using legacy hard-coded colors that should be migrated to semantic theme tokens.
+
+## [2026-02-25] Tighten landing page to screenshot-matched editorial composition and token fidelity
+- Context: Initial editorial pass needed closer visual parity with the provided reference (logo treatment, hero rhythm, search bar structure, card/section typography, and footer palette usage) while keeping behavior unchanged.
+- Decision: Refine landing-only styling for navigation, hero, search shell, featured listings header, listing cards, and footer using strict palette colors and updated Google font weights (`Cormorant Garamond` + `DM Sans`), while retaining existing toggle persistence and page logic.
+- Why: Improves launch-facing polish and visual consistency without introducing functional risk or scope creep beyond the landing surface.
+- Impact: Home page now presents closer screenshot alignment in both light/dark modes, including refined logo wordmark contrast, compact editorial type hierarchy, screenshot-style search bar controls, and palette-accurate footer styling.
+- Revisit trigger: If post-launch accessibility review requires contrast/size adjustments at specific breakpoints.
+
+## [2026-02-25] Scope listing-card title font to heading style only on Home and Browse
+- Context: Listing title text under cards needed to use Cormorant Garamond on Landing and Browse Vendors, without affecting other pages that might reuse the shared card.
+- Decision: Add a `titleFont` prop to shared `ListingCard` with default `sans`, and pass `titleFont=\"heading\"` only from `Home` and `BrowseVendors`.
+- Why: Delivers requested typography change with minimal risk and keeps shared component behavior stable by default.
+- Impact: Card titles beneath listings now render in Cormorant Garamond on Landing and Browse Vendors only; other current/future `ListingCard` usages keep default sans titles unless explicitly opted in.
+- Revisit trigger: If product direction requires heading-font card titles globally across all listing-card surfaces.
+
+## [2026-02-25] Replace listing-card overlay share glyph with iOS-style white icon
+- Context: The listing-card share action icon used a node-link glyph that did not match the requested iOS-style share symbol.
+- Decision: Replace the overlay share glyph in `ListingCard` with a square-and-up-arrow icon rendered in white, and remove extra icon chrome styling from that control.
+- Why: Aligns listing-card affordance with requested visual direction while preserving existing share modal behavior.
+- Impact: On home and browse listing cards, the share action now appears as a white iOS-style share icon over the image overlay with unchanged click behavior.
+- Revisit trigger: If we standardize all share affordances platform-wide to a single icon system with shared reusable icon components.
+
+## [2026-02-25] Apply cream interior fill for Browse Sort/Filters cards with parchment page background
+- Context: Browse Vendors filter rail needed the Sort and Filters box interiors to use the same cream tone as the hero search interior while the surrounding page remains parchment.
+- Decision: Set Sort and Filters card backgrounds to `#F5F0E8` and keep Browse page surface class at `#F0EEE9`.
+- Why: Aligns filter panel visual hierarchy with the requested palette and preserves contrast between page background and card interiors.
+- Impact: Browse filter rail cards now render cream interiors against the existing parchment page background without structural or behavioral changes.
+- Revisit trigger: If filter rail styling is later tokenized into shared semantic surface roles instead of page-specific hex values.
+
+## [2026-02-25] Force readable dark-mode contrast for Browse Sort/Filters controls on cream cards
+- Context: After applying cream card interiors, dark mode inherited light text tokens (`text-foreground`/`text-muted-foreground`) inside those cards, causing filter labels and selected values to appear washed out.
+- Decision: Keep cream card background and explicitly set card/control text to dark ink on `BrowseVendors` (`text-[#2a3a42]`, darker placeholder/border classes for inputs/select trigger, and fixed helper-text color).
+- Why: Preserves requested card colors while ensuring control readability in both themes.
+- Impact: Sort/Filters labels, selected values, placeholders, and helper text remain visible in dark mode with no behavior changes.
+- Revisit trigger: If browse filters are later moved to fully semantic tokens that already handle mixed-surface contrast automatically.
+
+## [2026-02-25] Keep listing-card title ink readable in dark mode and remove card outlines
+- Context: On browse/landing dark mode, listing titles became too light against the fixed light page surface and card edges showed visible outlines not desired in current visual direction.
+- Decision: Remove dark-mode title color override in `ListingCard` so titles keep the same dark ink color, and set listing media card border to `border-0`.
+- Why: Maintains readable typography on light surfaces while eliminating unwanted card-edge outlines.
+- Impact: Listing titles remain legible in dark mode on landing/browse surfaces, and listing cards no longer render border lines around image tiles.
+- Revisit trigger: If listing surfaces move back to a truly dark background where title contrast should switch to light ink again.
+
+## [2026-02-25] Replace featured listings multi-column layout with stable responsive grid on Home
+- Context: Featured Rentals cards were jumping/reflowing on hover, causing listings to appear/disappear in unexpected positions.
+- Decision: Replace CSS multi-column masonry layout in Home listings with an explicit responsive CSS grid (`grid-cols-1..5`) and remove hover z-index wrapper behavior.
+- Why: CSS column balancing can reshuffle cards during hover/height changes; grid keeps deterministic card placement.
+- Impact: Featured Rentals cards remain visible and stable in correct positions during mouse movement/hover, with no booking/navigation behavior changes.
+- Revisit trigger: If we intentionally reintroduce masonry behavior, use a dedicated layout approach that does not rebalance on hover.
+
+## [2026-02-25] Set dark-mode toggle thumb circles to parchment tone
+- Context: Toggle thumb circles in dark mode appeared too dark and did not match the requested visual style.
+- Decision: Apply `#F0EEE9` to dark-mode switch thumbs in shared `Switch`, plus dark-mode thumb overrides in navigation theme toggle and vendor notifications toggles.
+- Why: Keeps dark-mode toggles readable and visually aligned with the existing parchment palette.
+- Impact: Toggle circles now render as `#F0EEE9` in dark mode across shared and custom-styled switches without changing toggle logic.
+- Revisit trigger: If toggle theming is fully centralized into semantic tokens and component variants.
+
+## [2026-02-25] Match dark-mode off toggle tracks to light-mode visual style
+- Context: In dark mode, some toggles (notably notification preferences) used a white off-state track that looked inconsistent with the desired defined off-state style.
+- Decision: Set dark-mode unchecked tracks to `#4a6a7d` in shared `Switch` and notification toggle overrides while preserving existing checked-state colors and behavior.
+- Why: Makes dark-mode off toggles visually consistent with the preferred light-mode off-toggle appearance.
+- Impact: Off toggles in dark mode now present a defined dark-blue track with the existing light thumb color across shared/custom toggle implementations.
+- Revisit trigger: If toggles are migrated to a centralized semantic state-token system with dedicated light/dark state mappings.
+
+## [2026-02-25] Surface explicit publish-blocker reasons consistently across vendor publish flows
+- Context: Publish failures returned backend validation flags, but vendor UI showed generic errors and sometimes raw payload text, making it unclear what needed to be fixed.
+- Decision: Keep publish gate rules unchanged, enrich publish 400 response with optional `reasons` (while preserving `error` + `missing`), and introduce a shared client formatter used by both `VendorListings` and `VendorListingEdit` to render the same human-readable reason list.
+- Why: Improves booking-flow reliability and launch speed by reducing vendor confusion without schema changes or validation logic drift.
+- Impact: Failed publish attempts now show concrete actionable requirements (title, description, photos, price, service area/mode, radius center/radius) in a consistent format on both publish entry points; unknown/non-validation errors still fall back to a safe generic message.
+- Revisit trigger: If publish rules are expanded (e.g., additional required fields), update the backend reason mapping and shared formatter in lockstep.
+
+## [2026-02-25] Apply edit-listing cream/mint palette to scoped surfaces and tan action buttons
+- Context: Vendor Edit Listing page needed specific surface/background colors and replacement of tan (`#c9a06a`) action-button styling with mint/steel treatment.
+- Decision: On `VendorListingEdit`, set page + sidebar surfaces to `#F0EEE9`, set the six requested section cards (Title & Description, Popular For, Pricing, Photos, Delivery / Setup, Status) to `#F5F0E8`, and replace tan action button classes (Publish + Yes/No selected states) with `#9dd4cc` background and `#4a6a7d` text.
+- Why: Aligns page-level visual hierarchy with the requested palette while keeping scope isolated to the Edit Listing experience.
+- Impact: Edit Listing now renders with parchment page/sidebar background, cream section panels, and mint/steel action buttons instead of tan accents.
+- Revisit trigger: If secondary accent usage is re-standardized globally and these page-local class overrides should be tokenized.
+
+## [2026-02-25] Remove vendor listings card outlines while preserving card layout
+- Context: Vendor Listings cards (active/inactive/draft rows) displayed a visible outer outline that was no longer desired.
+- Decision: Remove only the outer border on listing row cards in `VendorListings` by adding `border-0` to the card wrapper class.
+- Why: Eliminates the unwanted outline without changing card content structure, spacing, actions, or hover behavior.
+- Impact: Vendor listing cards now render without outer outline lines, while all listing controls and metadata remain unchanged.
+- Revisit trigger: If vendor card design is later standardized to include explicit framed card outlines again.
+
+## [2026-02-25] Propagate vendor-dashboard surface style across non-excluded routes
+- Context: Product direction required vendor-dashboard styling parity (buttons/toggles/outline language tied to dashboard surface tokens) across the app, excluding Landing, Browse Vendors, and My Event dashboard routes.
+- Decision: Add route-scoped `vendor-dashboard-parity` class toggling in `AppContent` for all routes except `/`, `/browse*`, and `/dashboard*`, and define parity surface token overrides in `index.css` (`background`, `card`, `sidebar`, `popover`).
+- Why: Provides broad style consistency via shared theme tokens without per-page rewrites and preserves explicitly excluded surfaces.
+- Impact: Non-excluded pages now inherit vendor-dashboard base surface styling by default; Landing, Browse Vendors, and My Event dashboard retain their existing distinct styling.
+- Revisit trigger: If route-level theming becomes fully declarative per layout/page type and this global class toggle should be replaced.
+
+## [2026-02-25] Force exact sidebar/main background parity on Vendor Listing Edit
+- Context: Vendor Listing Edit sidebar appeared visually different from the main page background due token-driven sidebar slot styling overriding page-level hex classes.
+- Decision: Apply explicit `#F0EEE9` overrides to sidebar root plus sidebar header/content/footer slots on `VendorListingEdit`.
+- Why: Ensures the left sidebar and main background render as the exact same color on the edit listing route.
+- Impact: Sidebar and main background now match precisely on Vendor Listing Edit.
+- Revisit trigger: If sidebar slot backgrounds are centralized under shared route theme tokens with guaranteed parity.
+
+## [2026-02-25] Set edit-listing input/select/location field interiors to cream
+- Context: Vendor Listing Edit needed all form field interiors (inputs, textareas, select triggers, location picker input) to match the cream field surface used in the page design.
+- Decision: Add a shared page-local field surface class (`#F5F0E8`) and apply it to all editable inputs/textareas/select triggers, plus the location picker input via scoped class override.
+- Why: Keeps field interiors visually consistent with the requested panel palette while remaining isolated to the edit listing route.
+- Impact: All input/selection/location entry surfaces on Vendor Listing Edit now render with `#F5F0E8` interiors.
+- Revisit trigger: If form field surfaces are moved to a global semantic token that should replace page-local class overrides.
+
+## [2026-02-25] Change edit-listing form field interiors from cream to white
+- Context: With cream section backgrounds, cream input interiors lacked contrast and appeared too similar to surrounding card surfaces.
+- Decision: Update the shared edit-listing field surface class and location-picker input override from `#F5F0E8` to `#FFFFFF`.
+- Why: Improves field contrast/readability while staying scoped to Vendor Listing Edit.
+- Impact: Input boxes, selection boxes, and location picker input on Vendor Listing Edit now render with white interiors.
+- Revisit trigger: If form field contrast is later standardized across vendor pages using shared semantic field tokens.
+
+## [2026-02-25] Set edit-listing Popular For option box interiors to white
+- Context: Event-type option boxes in the Popular For section still visually blended with the cream card background.
+- Decision: Force both checked and unchecked Popular For option label backgrounds to `#FFFFFF` on Vendor Listing Edit.
+- Why: Matches requested white interior treatment for selection boxes and improves contrast/readability.
+- Impact: Popular For option boxes now render white interiors regardless of checked state.
+- Revisit trigger: If selectable option chips are later tokenized with dedicated active/inactive surface states.
+
+## [2026-02-25] Unify Vendor Listing Edit surfaces and field interiors to one parchment tone
+- Context: After iterative adjustments, mixed card/input fills on Vendor Listing Edit created unnecessary contrast variation.
+- Decision: Set section card backgrounds, input/select/location-picker interiors, and Popular For option box interiors all to `#F0EEE9` on Vendor Listing Edit.
+- Why: Delivers a single-surface look per updated direction and removes conflicting white/cream overrides.
+- Impact: Main background, section cards, and form/selection surfaces now use the same `#F0EEE9` color on the Edit Listing page.
+- Revisit trigger: If form affordance contrast requirements later call for separate field/card surface tokens.
+
+## [2026-02-25] Align Edit Listing Add Photos and Select All button state styling to active Add to listing style
+- Context: On Vendor Listing Edit, `Add photos` and `Select all` buttons needed to visually align with the active `Add to listing` button treatment while preserving existing behavior.
+- Decision: Add a shared `activeFillButtonClass` (`bg-primary text-primary-foreground hover:bg-primary/90`), apply it to `Add photos` at all times, and apply it to `Select all` only when `allPopularForSelected` is true (outline otherwise).
+- Why: Creates consistent action emphasis and state feedback without changing upload/select logic.
+- Impact: `Add photos` is now always filled in active style; `Select all` toggles between outline and filled style based on full-selection state.
+- Revisit trigger: If button hierarchy on edit forms is redesigned with a centralized action priority system.
+
+## [2026-02-25] Persist latest edit payload when publishing from Vendor Listing Edit
+- Context: Publishing directly from Vendor Listing Edit activated listings without persisting unsaved in-form edits (title/pricing/delivery/etc.), causing published data to lag behind visible draft changes unless users clicked Save first.
+- Decision: Reuse a shared payload builder in `VendorListingEdit` for both Save and Publish, send `listingData` + `title` with publish requests, and update publish endpoint to validate against and persist optional incoming payload before setting `status=active`.
+- Why: Ensures publish action reflects the user’s latest edits and removes a data-loss/confusion path in core listing flow.
+- Impact: Clicking Publish on Vendor Listing Edit now saves current draft changes and publishes in one step; validation messages still come from backend publish rules.
+- Revisit trigger: If publish/save flows are consolidated into a single backend command endpoint with explicit transaction semantics.
+
+## [2026-02-25] Keep one Add Photos action on Edit Listing and align Save Changes with primary filled action style
+- Context: Vendor Listing Edit showed two Add Photos buttons (one steel-blue primary and one outline inside the photo editor), and top Save Changes appeared as outline instead of matching the primary action style.
+- Decision: Add an optional `showAddPhotosButton` prop to `InlinePhotoEditor` and disable it on `VendorListingEdit`, while styling top `Save changes` with the same filled action class used by the steel-blue Add Photos button.
+- Why: Removes duplicated upload affordances and keeps top-level edit actions visually consistent without changing existing behavior.
+- Impact: Vendor Listing Edit now shows exactly one Add Photos button (steel-blue) and one steel-blue Save Changes button; photo upload/save functionality remains unchanged.
+- Revisit trigger: If shared photo-editor behavior is standardized and the page-specific Add Photos control is moved fully into or out of the editor component.
+
+## [2026-02-25] Append hourly suffix on public listing-card prices for per-hour listings
+- Context: Featured/Browse listing cards showed the numeric price only, making hourly-priced listings ambiguous.
+- Decision: Add a shared pricing-unit reader in `listingPrice` and render ` / Hour` after the price on `ListingCard` when the effective unit is `per_hour`.
+- Why: Clarifies pricing semantics directly in cards without changing rate calculations or non-hourly displays.
+- Impact: Public listing cards now show values like `$75 / Hour` for hourly listings while per-day/other listings remain unchanged.
+- Revisit trigger: If card-level pricing copy is redesigned (e.g., unit badges or localized unit strings).
+
+## [2026-02-25] Increase Vendor Dashboard top stat-card title text to 18px
+- Context: The three top dashboard stat-card titles (Total Bookings, Revenue, Profile Views) needed larger title typography.
+- Decision: Change those `CardTitle` classes in `VendorDashboard` from `text-sm` to `text-[18px]`.
+- Why: Improves readability and visual emphasis of key metrics.
+- Impact: Only the three top stat-box titles on Vendor Dashboard render at 18px; values/subtext and other pages remain unchanged.
+- Revisit trigger: If dashboard typography is centralized into shared heading tokens.
+
+## [2026-02-25] Standardize Vendor Dashboard card titles to 20px
+- Context: Dashboard card titles had mixed sizing/weight (`18px` stat titles, `text-lg` setup card, and default sizes in other cards).
+- Decision: Set all `CardTitle` instances in `VendorDashboard` to `text-[20px]` and remove the stat-title `font-medium` override so card-title weight is consistent.
+- Why: Creates a uniform, clearer heading hierarchy across dashboard cards.
+- Impact: Card titles for Total Bookings, Revenue, Profile Views, Complete Your Setup, Recent Activity, Quick Actions, and Profile Details now all render at 20px with consistent title weight.
+- Revisit trigger: If global heading tokens are introduced and dashboard-specific title sizing should be inherited from shared typography scales.
+
+## [2026-02-25] Normalize CardTitle typography to 20px where titles were <=20px
+- Context: Card-title sizes were inconsistent across pages (`text-sm`, `text-lg`, `text-xl`, and `text-[20px]`) and some stat cards used `font-medium` overrides.
+- Decision: Update all explicit `CardTitle` usages at or below 20px to `text-[20px]`, and remove `font-medium` overrides on top stat titles so default `CardTitle` weight applies.
+- Why: Keeps heading hierarchy consistent while respecting scope guardrails by not changing card titles already above 20px.
+- Impact: Card titles on affected pages now render at 20px with consistent weight; larger card titles (e.g., `text-2xl`/default) are unchanged.
+- Revisit trigger: If heading scales are centralized into global typography tokens and per-page class overrides should be removed.
+
+## [2026-02-25] Apply global 15% UI scale with ListingCard size exemption
+- Context: Product direction requested a broad 15% size increase across UI controls/typography/surfaces while keeping public listing cards unchanged in size/title/price.
+- Decision: Introduce global scale tokens in `index.css` and apply `html { zoom: 1.15; }`, then add an inverse scale class (`.listing-card-scale-exempt`) to `ListingCard` root using `zoom: 0.8695652174`.
+- Why: Delivers a consistent site-wide size lift with minimal per-component rewrites and explicitly protects listing card visual baseline.
+- Impact: Non-listing-card UI renders ~15% larger across pages; `ListingCard` container/title/price remain at previous baseline on Home and Browse.
+- Revisit trigger: If we migrate to a tokenized typography/spacing system where size scaling is controlled by semantic tokens instead of zoom-based global scaling.
+
+## [2026-02-25] Align Customer Dashboard to vendor portal shell and exclude vendor back button from global scale
+- Context: Customer My Events dashboard needed the same structural shell pattern as vendor portal (persistent left sidebar + in-shell header), and vendor portal text scaling needed an exception for `Back to Marketplace`.
+- Decision: Replace `CustomerDashboard` custom top-nav + inline menu layout with a sidebar-shell layout (`SidebarProvider`, sidebar trigger header, and persistent left `CustomerSidebar`), and add a reusable `.no-global-scale` utility applied to vendor `Back to Marketplace` buttons.
+- Why: Creates consistent dashboard layout language between customer and vendor experiences while honoring the explicit back-button sizing exception.
+- Impact: Customer dashboard routes now render with a vendor-shell-style left sidebar; vendor back-to-marketplace buttons remain at baseline scale while other vendor portal text remains scaled.
+- Revisit trigger: If dashboard shells are consolidated into a single configurable shared shell component with role-based sidebars.
+
+## [2026-02-25] Backfill vendor profile contact/address fields on read and persist onboarding street address
+- Context: Existing vendors could have empty Business Email and Street Address in Vendor Dashboard because onboarding did not store `onlineProfiles.streetAddress`, and profile reads returned raw `onlineProfiles` values without fallback normalization.
+- Decision: Write `streetAddress` into `onlineProfiles` during onboarding; on `GET /api/vendor/profile`, normalize/backfill missing `onlineProfiles` values (`businessEmail` from account email and address parts from existing saved address labels) and persist that backfill; add a client fallback so Business Email hydrates from account email when profile field is empty.
+- Why: Keeps dashboard profile fields populated for both new and existing vendors without schema changes, and aligns visible data with what vendors already provided during signup/onboarding.
+- Impact: New onboarding records include `onlineProfiles.streetAddress`; older profiles are auto-repaired on first profile read; Vendor Dashboard now reliably shows Business Email even before manual resave.
+- Revisit trigger: If profile/contact fields are moved from JSONB into dedicated typed columns and migration backfills are introduced.
+
+## [2026-02-26] Improve dark-mode readability for public listing titles
+- Context: Listing card titles on dark mode became unreadable against dark page backgrounds on Home and Browse.
+- Decision: Set `ListingCard` title text to use `dark:text-[#f5f0e8]`, matching the dark-mode section heading color used on Home (`Featured Rentals`), while keeping light-mode color unchanged.
+- Why: Fixes readability with minimal risk and preserves existing typography, sizing, and price styling.
+- Impact: Listing titles on landing and browse cards are clearly visible in dark mode; no changes to light mode or other listing card text styles.
+- Revisit trigger: If public-page typography colors are centralized into semantic tokens for section and card title parity.
+
+## [2026-02-26] Vendor bookings now prioritize payout visibility with explicit fee breakdown in details
+- Context: Vendor booking cards were showing gross booking totals, which could diverge from listing prices and obscure what vendors actually earn.
+- Decision: On `VendorBookings`, show only `Estimated payout` in list/calendar booking cards and move full fee visibility (listing price, customer fee, customer total, EventHub fee, estimated payout) into the expanded `View details` panel.
+- Why: Keeps high-signal earnings visible at a glance while preserving transparency in a dedicated details surface.
+- Impact: Vendors see payout-first amounts in booking lists; booking details now include a complete fee breakdown and still include notes/questions when present.
+- Revisit trigger: If a dedicated booking-details page/modal is introduced and fee rows should be centralized there.
+
+## [2026-02-26] Normalize mixed legacy booking amount units for vendor stats and bookings UI
+- Context: Some booking totals were being interpreted inconsistently between legacy dollar rows and newer cent-based rows, causing inflated displays (e.g., `$26,250`).
+- Decision: Update vendor-side normalization to treat non-integer values as dollars, small integers (`<1000`) as legacy dollars, and larger integers as cents.
+- Why: Reduces false upscaling for cent-based totals while still preserving readability for older dollar-based rows.
+- Impact: Vendor dashboard recent booking amounts and vendor booking cards now render with more reliable cent normalization across mixed historical data.
+- Revisit trigger: If a one-time database migration guarantees all monetary values are stored uniformly in cents.
+
+## [2026-02-26] Use “Decline” label for vendor booking rejection actions
+- Context: Vendor booking action buttons used the word “Cancel,” which read ambiguously in request-review flows.
+- Decision: Rename vendor-side rejection button copy from `Cancel`/`Cancelling...` to `Decline`/`Declining...` while keeping the backend status transition as `cancelled`.
+- Why: Improves action clarity for vendors without changing booking-state behavior.
+- Impact: Pending/confirmed booking rejection actions now display “Decline” wording in Vendor Bookings UI.
+- Revisit trigger: If booking status semantics are renamed from `cancelled` to a dedicated `declined` state in API/database.
+
+## [2026-02-26] Add vendor shell avatar dropdown next to Back to Marketplace
+- Context: Vendor portal pages using `VendorShell` needed a top-right profile circle dropdown (matching marketplace nav behavior) immediately to the right of `Back to Marketplace`.
+- Decision: Extend `VendorShell` header with a right-side avatar trigger + dropdown menu (Profile, Messages, My Events, Notifications, Account settings, Languages & currency, Help Center, Sign out), sourcing initials from `/api/vendor/me` and using Auth0 logout for sign out.
+- Why: Provides consistent, quick account navigation on vendor pages without requiring users to use sidebar-only navigation.
+- Impact: All `VendorShell` routes now display the profile circle dropdown beside the Back button; existing routing behavior remains unchanged.
+- Revisit trigger: If header/account controls are centralized into a shared authenticated shell component across vendor and customer dashboards.
+
+## [2026-02-26] Add Vendor Dashboard entry to vendor-only header dropdown
+- Context: Vendors needed a direct `Vendor Dashboard` shortcut in the new top-right avatar dropdown, positioned directly under `My Events`.
+- Decision: Add a `Vendor Dashboard` dropdown item in `VendorShell` under `My Events` linking to `/vendor/dashboard`.
+- Why: Improves navigation parity with sidebar routes and matches requested menu ordering.
+- Impact: Vendor-only header dropdown now includes `Vendor Dashboard` beneath `My Events`.
+- Revisit trigger: If dropdown navigation is consolidated into a shared config-driven menu system.
+
+## [2026-02-26] Remove Messages from vendor top-nav avatar dropdown and add explicit Vendor Dashboard item
+- Context: The vendor avatar dropdown in the marketplace top navigation still showed `Messages`, which is ambiguous because vendor and My Events messaging streams differ.
+- Decision: Remove `Messages` from the vendor-only top-nav dropdown (`Navigation`) and add an explicit `Vendor Dashboard` item directly under `My Events`.
+- Why: Clarifies navigation destinations and avoids cross-dashboard messaging confusion.
+- Impact: Vendor top-nav dropdown now lists `My Events` followed by `Vendor Dashboard`, with no `Messages` option.
+- Revisit trigger: If messaging streams are unified and a single cross-role messages entry becomes valid again.
+
+## [2026-02-26] Align Browse Vendors dark surfaces with landing dark theme
+- Context: Browse Vendors page stayed on light parchment backgrounds in dark mode, creating white sections while landing page correctly used the dark navy theme.
+- Decision: Update `BrowseVendors` surface and control classes to add dark-theme variants (`dark:bg-background`, dark card surfaces/borders, and dark input surface/text/placeholder colors) while preserving existing light-mode colors.
+- Why: Ensures dark mode visual consistency between landing and browse experiences without changing filtering behavior or layout.
+- Impact: In dark mode, browse page background, sort/filter cards, and form controls now render with the same dark surface language as landing instead of light white backgrounds.
+- Revisit trigger: If browse and landing both migrate to shared page-surface utility tokens/components.
+
+## [2026-02-26] Show listing title in Vendor Dashboard recent activity rows
+- Context: Vendor Dashboard `Recent Activity` rows still showed `Booking #...` identifiers while Vendor Bookings list had already shifted to listing-title-first labeling.
+- Decision: Enrich `/api/vendor/stats` recent bookings with `itemTitle` via booking-item context lookup and render `itemTitle` in `VendorDashboard` recent activity, keeping booking-id as fallback.
+- Why: Keeps dashboard recent activity naming consistent with bookings view and improves quick scanning for vendors.
+- Impact: Recent activity cards now display listing titles (when available) instead of raw booking numbers.
+- Revisit trigger: If booking title normalization is centralized in a shared backend serializer used by both stats and bookings endpoints.
+
+## [2026-02-26] Route vendor payment-setup buttons directly to Stripe Connect links
+- Context: `Complete Payment Setup` actions were sending vendors to internal `/vendor/onboarding`, which created theme mismatch confusion and did not start Stripe account setup.
+- Decision: Add `/api/vendor/connect/setup-link` to generate the correct Stripe destination (create account + onboarding link when needed, resume onboarding when incomplete, dashboard link when complete), and wire Vendor Dashboard/Account/Payments setup buttons to redirect to that URL.
+- Why: Aligns button behavior with user expectation and Stripe Connect flow while keeping onboarding wizard available for actual vendor profile onboarding.
+- Impact: Clicking payment setup now opens Stripe instead of the internal onboarding form; setup CTA visibility on payments respects `stripeOnboardingComplete`.
+- Revisit trigger: If onboarding/payment setup flows are split into explicit dedicated screens with separate role-based entry points.
+
+## [2026-02-26] Resolve Stripe setup-link “Account not found” by using DB-backed vendor account context
+- Context: Vendors received `Unable to open Stripe setup: Account not found` because Stripe connect routes looked up accounts through `storage.getVendorAccount`, which reads in-memory state while Auth0 vendor resolution is database-backed.
+- Decision: Add a shared `getVendorAccountFromRequest` helper that uses `req.vendorAccount` (set by Auth0 vendor middleware) with DB fallback, and switch vendor connect + related vendor-account reads to this helper; replace connect-route account updates with direct DB updates.
+- Why: Keeps account lookup/update source consistent with authenticated vendor identity and avoids memory-vs-DB drift.
+- Impact: Payment setup button now resolves existing vendor accounts correctly and can open Stripe onboarding/dashboard links.
+- Revisit trigger: If storage layer is refactored to a single DB-backed implementation for vendor account reads/writes.
+
+## [2026-02-26] Move vendor account storage methods from in-memory map to Postgres
+- Context: `storage.getVendorAccount()` and related vendor-account methods still used in-memory `Map` state, which can diverge from authenticated DB-backed account resolution and cause route-level inconsistencies.
+- Decision: Refactor `getVendorAccount`, `getVendorAccountById`, `getVendorAccountByEmail`, `createVendorAccount`, and `updateVendorAccount` in `storage.ts` to use `vendor_accounts` table reads/writes via Drizzle.
+- Why: Eliminates in-memory/vendor-account drift and aligns storage behavior with the authenticated source of truth.
+- Impact: Vendor account reads/updates now persist and resolve from Postgres consistently across requests and routes.
+- Revisit trigger: If storage interface is split into explicit DB and in-memory implementations for tests versus production.
+
+## [2026-02-26] Restrict vendor payment history list to completed bookings only
+- Context: Vendor Payments history was showing pending/cancelled/confirmed rows, but the required behavior is to show only completed bookings as payment history.
+- Decision: Filter `/api/vendor/payments` history rows to `status === completed` before building response records.
+- Why: Keeps payment-history semantics aligned with realized/completed earnings rather than in-flight or cancelled jobs.
+- Impact: Payment History list now includes only completed bookings; pending/cancelled/confirmed rows no longer appear there.
+- Revisit trigger: If payments UI later adds explicit tabs/sections for pending or cancelled payout-related items.
+
+## [2026-02-26] Move vendor payment setup CTA into dedicated section below payment history
+- Context: Payments tab briefly flashed the setup CTA inside empty-state content during refresh because `vendorAccount` starts undefined and the previous inline condition evaluated truthy.
+- Decision: Remove the setup CTA from the payment-history empty state and render a dedicated `Complete Your Setup` card below Payment History only when `stripeOnboardingComplete === false`.
+- Why: Eliminates refresh flicker and keeps setup affordance in a stable location while preserving behavior for incomplete Stripe accounts.
+- Impact: No temporary setup-button flash on reload; vendors with incomplete Stripe setup see a persistent setup section below payment history.
+- Revisit trigger: If payments page is redesigned with a unified status/alerts rail for onboarding blockers.
+
+## [2026-02-26] Use listing title instead of booking number in vendor payments history rows
+- Context: Vendor Payments history rows still showed `Booking #...` while vendor-facing booking surfaces use listing-title-first labels.
+- Decision: Enrich `/api/vendor/payments` completed-history rows with `itemTitle` via booking-item context and render `itemTitle` in `VendorPayments` with booking-id fallback.
+- Why: Improves scanability and keeps naming consistent across vendor portal booking/payment views.
+- Impact: Payments history now hides booking number when listing title is available and shows listing title in its place.
+- Revisit trigger: If booking/listing label formatting is centralized into one shared serializer for all vendor endpoints.

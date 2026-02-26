@@ -28,6 +28,7 @@ import {
   normalizeCoverRatio,
 } from "@/lib/listingPhotos";
 import { InlinePhotoEditor, type ListingPhotoCrop } from "@/components/listings/InlinePhotoEditor";
+import { getPublishFailureToastContent } from "@/lib/publishFailureToast";
 
 import { LocationPicker } from "@/components/LocationPicker";
 import mapboxgl from "mapbox-gl";
@@ -83,17 +84,25 @@ function YesNoButtons({
   value: boolean;
   onChange: (v: boolean) => void;
 }) {
+  const selectedButtonClass =
+    "border-[#88bdb4] bg-[#9dd4cc] text-[#4a6a7d] hover:bg-[#8ec9c0]";
+
   return (
     <div className="flex items-center gap-2">
       <Button
         type="button"
         variant={value ? "default" : "outline"}
+        className={value ? selectedButtonClass : undefined}
         onClick={() => onChange(true)}
-        style={value ? { backgroundColor: "#9EDBC0", color: "white" } : undefined}
       >
         Yes
       </Button>
-      <Button type="button" variant={!value ? "default" : "outline"} onClick={() => onChange(false)}>
+      <Button
+        type="button"
+        variant={!value ? "default" : "outline"}
+        className={!value ? selectedButtonClass : undefined}
+        onClick={() => onChange(false)}
+      >
         No
       </Button>
     </div>
@@ -185,6 +194,10 @@ export default function VendorListingEdit() {
       }) as React.CSSProperties,
     []
   );
+  const mintActionButtonClass = "border-[#88bdb4] bg-[#9dd4cc] text-[#4a6a7d] hover:bg-[#8ec9c0]";
+  const activeFillButtonClass = "bg-primary text-primary-foreground hover:bg-primary/90";
+  const creamSectionCardClass = "p-6 bg-[#F0EEE9]";
+  const fieldSurfaceClass = "bg-[#F0EEE9]";
 
   // Listing fetch
   const { data, isLoading, error } = useQuery({
@@ -701,65 +714,72 @@ export default function VendorListingEdit() {
 
   const canPublish = hasTitle && hasDescription && hasPricing;
 
+  const buildPersistPayload = () => {
+    if (!draft) return null;
+
+    const nextListingData = {
+      ...(listing?.listingData || {}),
+      pricingMode: draft.pricingMode,
+      listingTitle: draft.listingTitle,
+      listingDescription: draft.listingDescription,
+      whatsIncluded: Array.isArray(draft.whatsIncluded) ? draft.whatsIncluded : [],
+      rentalTypes: draft.rentalTypes,
+      propTypes: draft.rentalTypes, // legacy compatibility for existing listing readers
+      quantitiesByPropType: draft.quantitiesByPropType,
+      popularFor: draft.popularFor,
+      pricing: {
+        ...(listing?.listingData?.pricing || {}),
+        rate: draft.pricing?.rate,
+        unit: draft.pricing?.unit ?? draft.pricingUnit ?? "per_day",
+      },
+      pricingUnit: draft.pricingUnit ?? draft.pricing?.unit ?? "per_day",
+      minimumHours: draft.minimumHours,
+      photos: {
+        names: Array.isArray(draft?.photos?.names) ? draft.photos.names : [],
+        count: Array.isArray(draft?.photos?.names) ? draft.photos.names.length : 0,
+        coverPhotoIndex: Array.isArray(draft?.photos?.names) && draft.photos.names.length > 0 ? 0 : 0,
+        coverPhotoRatio: normalizePhotoCoverRatio(draft?.photos?.coverPhotoRatio ?? DEFAULT_COVER_RATIO),
+        coverPhotoName:
+          Array.isArray(draft?.photos?.names) && draft.photos.names.length > 0
+            ? draft.photos.names[0] ?? null
+            : null,
+        cropsByName:
+          draft?.photos?.cropsByName && typeof draft.photos.cropsByName === "object"
+            ? draft.photos.cropsByName
+            : {},
+      },
+      deliverySetup: draft.deliverySetup,
+      serviceAreaMode: draft.serviceAreaMode,
+      serviceRadiusMiles: draft.serviceRadiusMiles,
+      serviceCenter: draft.serviceCenter,
+      serviceLocation: draft.serviceLocation
+      ? {
+          ...draft.serviceLocation,
+          country:
+            draft.serviceLocation.country ||
+            // fallback from label if missing
+            (draft.serviceLocation.label?.includes("United States")
+              ? "United States"
+              : null),
+        }
+      : null,
+    };
+
+    return {
+      listingData: nextListingData,
+      title: draft.listingTitle?.trim() || listing?.title || "Untitled Listing",
+    };
+  };
+
   // ---- Save mutation ----
   const saveMutation = useMutation({
     mutationFn: async () => {
       if (!listingId) throw new Error("Missing listing id");
       if (!draft) throw new Error("Nothing to save");
+      const payload = buildPersistPayload();
+      if (!payload) throw new Error("Nothing to save");
 
-      // Persist into listingData in a clean way
-      const nextListingData = {
-        ...(listing?.listingData || {}),
-        pricingMode: draft.pricingMode,
-        listingTitle: draft.listingTitle,
-        listingDescription: draft.listingDescription,
-        whatsIncluded: Array.isArray(draft.whatsIncluded) ? draft.whatsIncluded : [],
-        rentalTypes: draft.rentalTypes,
-        propTypes: draft.rentalTypes, // legacy compatibility for existing listing readers
-        quantitiesByPropType: draft.quantitiesByPropType,
-        popularFor: draft.popularFor,
-        pricing: {
-          ...(listing?.listingData?.pricing || {}),
-          rate: draft.pricing?.rate,
-          unit: draft.pricing?.unit ?? draft.pricingUnit ?? "per_day",
-        },
-        pricingUnit: draft.pricingUnit ?? draft.pricing?.unit ?? "per_day",
-        minimumHours: draft.minimumHours,
-        photos: {
-          names: Array.isArray(draft?.photos?.names) ? draft.photos.names : [],
-          count: Array.isArray(draft?.photos?.names) ? draft.photos.names.length : 0,
-          coverPhotoIndex: Array.isArray(draft?.photos?.names) && draft.photos.names.length > 0 ? 0 : 0,
-          coverPhotoRatio: normalizePhotoCoverRatio(draft?.photos?.coverPhotoRatio ?? DEFAULT_COVER_RATIO),
-          coverPhotoName:
-            Array.isArray(draft?.photos?.names) && draft.photos.names.length > 0
-              ? draft.photos.names[0] ?? null
-              : null,
-          cropsByName:
-            draft?.photos?.cropsByName && typeof draft.photos.cropsByName === "object"
-              ? draft.photos.cropsByName
-              : {},
-        },
-        deliverySetup: draft.deliverySetup,
-        serviceAreaMode: draft.serviceAreaMode,
-        serviceRadiusMiles: draft.serviceRadiusMiles,
-        serviceCenter: draft.serviceCenter,
-        serviceLocation: draft.serviceLocation
-        ? {
-            ...draft.serviceLocation,
-            country:
-              draft.serviceLocation.country ||
-              // fallback from label if missing
-              (draft.serviceLocation.label?.includes("United States")
-                ? "United States"
-                : null),
-          }
-        : null,
-      };
-
-      const res = await apiRequest("PATCH", `/api/vendor/listings/${listingId}`, {
-        listingData: nextListingData,
-        title: draft.listingTitle?.trim() || listing?.title || "Untitled Listing",
-      });
+      const res = await apiRequest("PATCH", `/api/vendor/listings/${listingId}`, payload);
 
       if (!res.ok) throw new Error("Failed to save changes");
       return res.json();
@@ -783,7 +803,10 @@ export default function VendorListingEdit() {
   const publishMutation = useMutation({
     mutationFn: async () => {
       if (!listingId) throw new Error("Missing listing id");
-      const res = await apiRequest("PATCH", `/api/vendor/listings/${listingId}/publish`);
+      const payload = buildPersistPayload();
+      if (!payload) throw new Error("Nothing to publish");
+
+      const res = await apiRequest("PATCH", `/api/vendor/listings/${listingId}/publish`, payload);
       if (!res.ok) throw new Error("Failed to publish listing");
       return res.json();
     },
@@ -795,9 +818,10 @@ export default function VendorListingEdit() {
       });
     },
     onError: (err) => {
+      const publishError = getPublishFailureToastContent(err);
       toast({
-        title: "Failed to publish",
-        description: (err as Error)?.message || "Publish failed",
+        title: publishError.title,
+        description: publishError.description,
         variant: "destructive",
       });
     },
@@ -862,7 +886,7 @@ export default function VendorListingEdit() {
         type: "fill",
         source: "radius",
         paint: {
-          "fill-color": "#9EDBC0",
+          "fill-color": "#c9a06a",
           "fill-opacity": 0.25,
         },
       });
@@ -872,7 +896,7 @@ export default function VendorListingEdit() {
         type: "line",
         source: "radius",
         paint: {
-          "line-color": "#9EDBC0",
+          "line-color": "#c9a06a",
           "line-width": 2,
         },
       });
@@ -1003,16 +1027,16 @@ export default function VendorListingEdit() {
   };
 
   return (
-    <SidebarProvider style={sidebarStyle}>
-      <div className="flex h-screen w-full">
-        <VendorSidebar />
+    <SidebarProvider style={sidebarStyle} className="bg-[#F0EEE9]">
+      <div className="flex h-screen w-full bg-[#F0EEE9]">
+        <VendorSidebar className="!bg-[#F0EEE9] [&_[data-slot=sidebar-header]]:bg-[#F0EEE9] [&_[data-slot=sidebar-content]]:bg-[#F0EEE9] [&_[data-slot=sidebar-footer]]:bg-[#F0EEE9]" />
 
         <div className="flex flex-col flex-1">
-          <header className="flex items-center justify-between p-4 border-b">
+          <header className="flex items-center justify-between p-4 border-b bg-[#F0EEE9]">
             <SidebarTrigger />
             <div className="flex items-center gap-2">
               <Button
-                variant="outline"
+                className={activeFillButtonClass}
                 onClick={() => saveMutation.mutate()}
                 disabled={saveMutation.isPending || !draft}
               >
@@ -1023,7 +1047,7 @@ export default function VendorListingEdit() {
                 <Button
                   disabled={!canPublish || publishMutation.isPending || !draft}
                   onClick={() => publishMutation.mutate()}
-                  style={{ backgroundColor: "#9EDBC0", color: "white" }}
+                  className={mintActionButtonClass}
                 >
                   {publishMutation.isPending ? "Publishing…" : "Publish"}
                 </Button>
@@ -1035,7 +1059,7 @@ export default function VendorListingEdit() {
             </div>
           </header>
 
-          <main className="flex-1 overflow-auto">
+          <main className="flex-1 overflow-auto bg-[#F0EEE9]">
             <div className="max-w-5xl mx-auto px-6 py-8">
               <div className="mb-6">
                 <h1 className="text-3xl font-bold">Edit listing</h1>
@@ -1054,7 +1078,7 @@ export default function VendorListingEdit() {
                 </Card>
               ) : error ? (
                 <Card className="p-6">
-                  <p className="text-sm text-red-600">
+                  <p className="text-sm text-destructive">
                     {(error as Error)?.message || "Error loading listing"}
                   </p>
                 </Card>
@@ -1065,7 +1089,7 @@ export default function VendorListingEdit() {
               ) : (
                 <div className="space-y-6">
                   {/* 1) Title & Description */}
-                  <Card className="p-6 bg-muted/30">
+                  <Card className={creamSectionCardClass}>
                     <div className="space-y-4">
                       <div>
                         <div className="text-xl font-semibold">Title &amp; Description</div>
@@ -1078,6 +1102,7 @@ export default function VendorListingEdit() {
                           value={draft.listingTitle}
                           onChange={(e) => setDraft((d: any) => ({ ...d, listingTitle: e.target.value }))}
                           placeholder="Listing title"
+                          className={fieldSurfaceClass}
                         />
                       </div>
 
@@ -1088,6 +1113,7 @@ export default function VendorListingEdit() {
                           onChange={(e) => setDraft((d: any) => ({ ...d, listingDescription: e.target.value }))}
                           rows={6}
                           placeholder="Describe this listing…"
+                          className={fieldSurfaceClass}
                         />
                       </div>
 
@@ -1120,6 +1146,7 @@ export default function VendorListingEdit() {
                             value={includedInput}
                             onChange={(e) => setIncludedInput(e.target.value)}
                             placeholder="Type an included item…"
+                            className={fieldSurfaceClass}
                             spellCheck={true}
                             autoCorrect="on"
                             onKeyDown={(e) => {
@@ -1151,13 +1178,18 @@ export default function VendorListingEdit() {
                   </Card>
 
                   {/* 2) Popular For */}
-                  <Card className="p-6 bg-muted/30">
+                  <Card className={creamSectionCardClass}>
                     <div className="space-y-4">
                       <div>
                         <div className="text-xl font-semibold">Popular For</div>
                         <div className="mt-2 flex flex-wrap items-center justify-between gap-3">
                           <div className="text-sm text-muted-foreground">Optional. Select all that apply.</div>
-                          <Button type="button" variant="outline" onClick={toggleSelectAllPopularFor}>
+                          <Button
+                            type="button"
+                            variant={allPopularForSelected ? "default" : "outline"}
+                            className={allPopularForSelected ? activeFillButtonClass : undefined}
+                            onClick={toggleSelectAllPopularFor}
+                          >
                             {allPopularForSelected ? "Deselect all" : "Select all"}
                           </Button>
                         </div>
@@ -1171,7 +1203,7 @@ export default function VendorListingEdit() {
                               key={opt}
                               className={[
                                 "flex items-center gap-3 rounded-lg border px-4 py-3 cursor-pointer",
-                                checked ? "border-primary bg-primary/5" : "border-border hover:bg-muted",
+                                checked ? "border-primary bg-[#F0EEE9]" : "border-border bg-[#F0EEE9] hover:bg-[#F0EEE9]",
                               ].join(" ")}
                             >
                               <input
@@ -1195,7 +1227,7 @@ export default function VendorListingEdit() {
                   </Card>
 
                   {/* 3) Pricing (baseline – you can expand later) */}
-                  <Card className="p-6 bg-muted/30">
+                  <Card className={creamSectionCardClass}>
                     <div className="space-y-4">
                       <div>
                         <div className="text-xl font-semibold">Pricing</div>
@@ -1215,6 +1247,7 @@ export default function VendorListingEdit() {
                             }
                             inputMode="numeric"
                             placeholder="e.g. 250"
+                            className={fieldSurfaceClass}
                           />
                         </div>
 
@@ -1230,7 +1263,7 @@ export default function VendorListingEdit() {
                               }))
                             }
                           >
-                            <SelectTrigger>
+                            <SelectTrigger className={fieldSurfaceClass}>
                               <SelectValue placeholder="Select unit" />
                             </SelectTrigger>
                             <SelectContent>
@@ -1254,6 +1287,7 @@ export default function VendorListingEdit() {
                             }
                             inputMode="numeric"
                             placeholder="e.g. 2"
+                            className={fieldSurfaceClass}
                           />
                         </div>
                       )}
@@ -1261,7 +1295,7 @@ export default function VendorListingEdit() {
                   </Card>
 
                   {/* 6) Photos */}
-                  <Card className="p-6 bg-muted/30">
+                  <Card className={creamSectionCardClass}>
                     <div className="space-y-4">
                       <div>
                         <div className="text-xl font-semibold">Photos</div>
@@ -1280,7 +1314,11 @@ export default function VendorListingEdit() {
                       />
 
                       <div className="flex items-center gap-2">
-                        <Button type="button" variant="outline" onClick={() => photoInputRef.current?.click()}>
+                        <Button
+                          type="button"
+                          className={activeFillButtonClass}
+                          onClick={() => photoInputRef.current?.click()}
+                        >
                           Add photos
                         </Button>
                         <div className="text-sm text-muted-foreground">Count: {photoNames.length}</div>
@@ -1295,6 +1333,7 @@ export default function VendorListingEdit() {
                             : {}
                         }
                         onAddPhotos={() => photoInputRef.current?.click()}
+                        showAddPhotosButton={false}
                         onRemovePhoto={removePhotoByName}
                         onReorderPhotos={reorderPhotosByName}
                         onCoverRatioChange={(ratio) =>
@@ -1321,7 +1360,7 @@ export default function VendorListingEdit() {
                   </Card>
 
                   {/* 7) Delivery / Setup */}
-                  <Card className="p-6 bg-muted/30">
+                  <Card className={creamSectionCardClass}>
                     <div className="space-y-6">
                       <div>
                         <div className="text-xl font-semibold">Delivery / Setup</div>
@@ -1343,6 +1382,7 @@ export default function VendorListingEdit() {
                             }));
                           }}
                           placeholder="Search the center point for this listing..."
+                          className="[&_input]:bg-[#F0EEE9]"
                         />
                       </div>
 
@@ -1359,7 +1399,7 @@ export default function VendorListingEdit() {
                             }));
                           }}
                         >
-                          <SelectTrigger>
+                          <SelectTrigger className={fieldSurfaceClass}>
                             <SelectValue placeholder="Select service area" />
                           </SelectTrigger>
                           <SelectContent>
@@ -1406,7 +1446,7 @@ export default function VendorListingEdit() {
                             )}
 
                             {!!errorMsg && (
-                              <div className="absolute inset-0 flex items-center justify-center text-sm text-red-600 bg-background/70 px-6 text-center">
+                              <div className="absolute inset-0 flex items-center justify-center bg-background/70 px-6 text-center text-sm text-destructive">
                                 {errorMsg}
                               </div>
                             )}
@@ -1474,6 +1514,7 @@ export default function VendorListingEdit() {
                                   }
                                   inputMode="numeric"
                                   placeholder="e.g. 75"
+                                  className={fieldSurfaceClass}
                                 />
                               </div>
                             )}
@@ -1533,6 +1574,7 @@ export default function VendorListingEdit() {
                                   }
                                   inputMode="numeric"
                                   placeholder="e.g. 50"
+                                  className={fieldSurfaceClass}
                                 />
                               </div>
                             )}
@@ -1542,7 +1584,7 @@ export default function VendorListingEdit() {
                     </div>
                   </Card>
                   {/* Status + publish gate */}
-                  <Card className="p-6">
+                  <Card className={creamSectionCardClass}>
                     <div className="flex items-center justify-between gap-6">
                       <div>
                         <div className="text-xl font-semibold">Status</div>
@@ -1557,7 +1599,7 @@ export default function VendorListingEdit() {
                       <Button
                         disabled={!canPublish || publishMutation.isPending}
                         onClick={() => publishMutation.mutate()}
-                        style={{ backgroundColor: "#9EDBC0", color: "white" }}
+                        className={mintActionButtonClass}
                       >
                         {publishMutation.isPending ? "Publishing…" : "Publish"}
                       </Button>

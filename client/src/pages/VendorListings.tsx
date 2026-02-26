@@ -11,6 +11,7 @@ import { useToast } from "@/hooks/use-toast";
 import { useLocation } from "wouter";
 import VendorShell from "@/components/VendorShell";
 import { getListingRentalTypes } from "@/lib/rentalTypes";
+import { getPublishFailureToastContent } from "@/lib/publishFailureToast";
 import {
   coverRatioToAspectRatio,
   getCoverPhotoIndex,
@@ -121,10 +122,11 @@ export default function VendorListings() {
         description: "Your listing is now live and visible to customers.",
       });
     },
-    onError: (error: any) => {
+    onError: (error: unknown) => {
+      const publishError = getPublishFailureToastContent(error);
       toast({
-        title: "Failed to publish",
-        description: error?.message || "Unknown error",
+        title: publishError.title,
+        description: publishError.description,
         variant: "destructive",
       });
     },
@@ -254,7 +256,7 @@ export default function VendorListings() {
 
     return (
       <Card
-        className="w-[320px] shrink-0 overflow-hidden hover-elevate cursor-pointer group"
+        className="w-[320px] shrink-0 overflow-hidden border-0 hover-elevate cursor-pointer group"
         onClick={() => handleEditListing(listing.id)}
         data-testid={`card-listing-${listing.id}`}
       >
@@ -273,13 +275,16 @@ export default function VendorListings() {
 
           <div className="absolute top-3 left-3 z-10">
             {isDraft ? (
-              <Badge style={{ backgroundColor: "#9EDBC0", color: "white", borderColor: "#8CCBB0" }}>
+              <Badge variant="secondary">
                 {statusLabel}
               </Badge>
             ) : (
-              <Badge variant="secondary" className="bg-white/90 hover:bg-white" style={{ borderColor: "#9EDBC0" }}>
-                <Edit className="w-3 h-3 mr-1" style={{ color: "#9EDBC0" }} />
-                <span style={{ color: "#9EDBC0" }}>{statusLabel}</span>
+              <Badge
+                variant="outline"
+                className="border-[hsl(var(--secondary-accent)/0.6)] bg-[hsl(var(--secondary-accent)/0.12)] text-[hsl(var(--secondary-accent))]"
+              >
+                <Edit className="w-3 h-3 mr-1" />
+                <span>{statusLabel}</span>
               </Badge>
             )}
           </div>
@@ -315,7 +320,7 @@ export default function VendorListings() {
 
           <div className="flex items-center justify-between">
             <div className="flex items-center gap-1">
-              <span className="font-semibold" style={{ color: "#9EDBC0" }}>
+              <span className="font-semibold text-[hsl(var(--secondary-accent))]">
                 {price}
               </span>
             </div>
@@ -337,8 +342,7 @@ export default function VendorListings() {
           <div className="grid grid-cols-2 gap-2 mt-4 pt-4 border-t">
             {(isDraft || isInactive) && (
               <Button
-                className="w-full min-w-0 px-2"
-                style={{ backgroundColor: "#9EDBC0", color: "white" }}
+                className="w-full min-w-0 border border-[hsl(var(--secondary-accent)/0.55)] bg-[hsl(var(--secondary-accent))] px-2 text-[hsl(var(--secondary-accent-foreground))] hover:bg-[hsl(var(--secondary-accent)/0.9)]"
                 onClick={(e) => {
                   e.stopPropagation();
                   handlePublishListing(listing.id);

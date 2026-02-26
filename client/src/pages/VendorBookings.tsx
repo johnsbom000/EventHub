@@ -13,6 +13,8 @@ type VendorBooking = {
   id: string;
   status?: string | null;
   totalAmount?: number | null;
+  platformFee?: number | null;
+  vendorPayout?: number | null;
   createdAt?: string | null;
   eventDate?: string | null;
   eventStartTime?: string | null;
@@ -25,9 +27,54 @@ type VendorBooking = {
 type TabKey = "all" | "upcoming" | "pending" | "completed" | "cancelled";
 type ViewMode = "calendar" | "list";
 
-function normalizeAmountToCents(value: number) {
-  if (!Number.isFinite(value) || value <= 0) return 0;
-  return value % 100 === 0 ? value : value * 100;
+function normalizeAmountToCents(value: unknown) {
+  const n = Number(value ?? 0);
+  // Keep MVP behavior stable while repairing mixed legacy rows:
+  // - new booking flow writes cents (usually >= 1,000)
+  // - older rows may be whole dollars (e.g. 370)
+  // - decimals are treated as dollars
+  if (!Number.isFinite(n) || n <= 0) return 0;
+  if (!Number.isInteger(n)) return Math.round(n * 100);
+  if (n < 1000) return n * 100;
+  return n;
+}
+
+function formatUsd(cents: number) {
+  return new Intl.NumberFormat(undefined, {
+    style: "currency",
+    currency: "USD",
+  }).format((cents || 0) / 100);
+}
+
+function deriveBookingAmounts(booking: VendorBooking) {
+  const customerTotalCents = normalizeAmountToCents(booking.totalAmount ?? 0);
+  const vendorFeeCents = normalizeAmountToCents(booking.platformFee ?? 0);
+  const storedPayoutCents = normalizeAmountToCents(booking.vendorPayout ?? 0);
+
+  if (storedPayoutCents > 0 || vendorFeeCents > 0) {
+    const listingPriceCents = Math.max(0, storedPayoutCents + vendorFeeCents);
+    const customerFeeCents = Math.max(0, customerTotalCents - listingPriceCents);
+    return {
+      customerTotalCents,
+      listingPriceCents,
+      customerFeeCents,
+      vendorFeeCents,
+      estimatedPayoutCents: storedPayoutCents > 0 ? storedPayoutCents : Math.max(0, listingPriceCents - vendorFeeCents),
+    };
+  }
+
+  // Fallback if legacy row is missing fee/payout columns.
+  const listingPriceCents = Math.max(0, Math.round(customerTotalCents / 1.05));
+  const customerFeeCents = Math.max(0, customerTotalCents - listingPriceCents);
+  const derivedVendorFeeCents = Math.max(0, Math.round(listingPriceCents * 0.08));
+  const estimatedPayoutCents = Math.max(0, listingPriceCents - derivedVendorFeeCents);
+  return {
+    customerTotalCents,
+    listingPriceCents,
+    customerFeeCents,
+    vendorFeeCents: derivedVendorFeeCents,
+    estimatedPayoutCents,
+  };
 }
 
 export default function VendorBookings() {
@@ -79,11 +126,23 @@ export default function VendorBookings() {
           id: b.id,
           date: d,
           amount: normalizeAmountToCents(b.totalAmount ?? 0),
+          ...deriveBookingAmounts(b),
           status: normalizeStatus(b.status),
           raw: b,
         };
       })
-      .filter(Boolean) as Array<{ id: string; date: Date; amount: number; status: string; raw: VendorBooking }>;
+      .filter(Boolean) as Array<{
+        id: string;
+        date: Date;
+        amount: number;
+        customerTotalCents: number;
+        listingPriceCents: number;
+        customerFeeCents: number;
+        vendorFeeCents: number;
+        estimatedPayoutCents: number;
+        status: string;
+        raw: VendorBooking;
+      }>;
   }, [bookings]);
 
   const tabFilteredItems = useMemo(() => {
@@ -401,11 +460,8 @@ export default function VendorBookings() {
                             {items.slice(0, 3).map((it) => (
                               <div key={it.id} className="text-xs truncate">
                                 • {it.status || "booking"}
-                                {it.amount != null
-                                  ? ` — ${new Intl.NumberFormat(undefined, {
-                                      style: "currency",
-                                      currency: "USD",
-                                    }).format(it.amount / 100)}`
+                                {it.estimatedPayoutCents != null
+                                  ? ` — ${formatUsd(it.estimatedPayoutCents)}`
                                   : ""}
                               </div>
                             ))}
@@ -453,39 +509,58 @@ export default function VendorBookings() {
                       <div className="mt-1 text-sm text-foreground font-medium">{item.raw.customerEventTitle}</div>
                     ) : null}
                     <div className="mt-1 text-sm">
-                      {new Intl.NumberFormat(undefined, {
-                        style: "currency",
-                        currency: "USD",
-                      }).format((item.amount || 0) / 100)}
+                      <span className="text-muted-foreground">Estimated payout: </span>
+                      <span className="font-medium">{formatUsd(item.estimatedPayoutCents || 0)}</span>
                     </div>
-                    {(item.raw.customerNotes || item.raw.customerQuestions) ? (
-                      <div className="mt-3">
-                        <Button
-                          size="sm"
-                          variant="outline"
-                          onClick={() => setExpandedBookingId(expandedBookingId === item.id ? null : item.id)}
-                        >
-                          {expandedBookingId === item.id ? "Hide details" : "View details"}
-                        </Button>
+                    <div className="mt-3">
+                      <Button
+                        size="sm"
+                        variant="outline"
+                        onClick={() => setExpandedBookingId(expandedBookingId === item.id ? null : item.id)}
+                      >
+                        {expandedBookingId === item.id ? "Hide details" : "View details"}
+                      </Button>
 
-                        {expandedBookingId === item.id ? (
-                          <div className="mt-3 rounded-md border bg-muted/30 p-3 space-y-2">
-                            {item.raw.customerNotes ? (
-                              <div>
-                                <div className="text-xs uppercase tracking-wide text-muted-foreground">Notes</div>
-                                <div className="text-sm">{item.raw.customerNotes}</div>
-                              </div>
-                            ) : null}
-                            {item.raw.customerQuestions ? (
-                              <div>
-                                <div className="text-xs uppercase tracking-wide text-muted-foreground">Questions</div>
-                                <div className="text-sm">{item.raw.customerQuestions}</div>
-                              </div>
-                            ) : null}
+                      {expandedBookingId === item.id ? (
+                        <div className="mt-3 rounded-md border bg-muted/30 p-3 space-y-3">
+                          <div className="space-y-1">
+                            <div className="text-xs uppercase tracking-wide text-muted-foreground">Fee Breakdown</div>
+                            <div className="text-sm flex items-center justify-between gap-3">
+                              <span className="text-muted-foreground">Listing price</span>
+                              <span>{formatUsd(item.listingPriceCents)}</span>
+                            </div>
+                            <div className="text-sm flex items-center justify-between gap-3">
+                              <span className="text-muted-foreground">Customer service fee (5%)</span>
+                              <span>{formatUsd(item.customerFeeCents)}</span>
+                            </div>
+                            <div className="text-sm flex items-center justify-between gap-3">
+                              <span className="text-muted-foreground">Customer total</span>
+                              <span>{formatUsd(item.customerTotalCents)}</span>
+                            </div>
+                            <div className="text-sm flex items-center justify-between gap-3">
+                              <span className="text-muted-foreground">EventHub fee (8%)</span>
+                              <span>-{formatUsd(item.vendorFeeCents)}</span>
+                            </div>
+                            <div className="pt-1 text-sm font-medium flex items-center justify-between gap-3">
+                              <span>Estimated payout</span>
+                              <span>{formatUsd(item.estimatedPayoutCents)}</span>
+                            </div>
                           </div>
-                        ) : null}
-                      </div>
-                    ) : null}
+                          {item.raw.customerNotes ? (
+                            <div>
+                              <div className="text-xs uppercase tracking-wide text-muted-foreground">Notes</div>
+                              <div className="text-sm">{item.raw.customerNotes}</div>
+                            </div>
+                          ) : null}
+                          {item.raw.customerQuestions ? (
+                            <div>
+                              <div className="text-xs uppercase tracking-wide text-muted-foreground">Questions</div>
+                              <div className="text-sm">{item.raw.customerQuestions}</div>
+                            </div>
+                          ) : null}
+                        </div>
+                      ) : null}
+                    </div>
                     {item.status === "pending" ? (
                       <div className="mt-3 flex items-center gap-2">
                         <Button
@@ -510,8 +585,8 @@ export default function VendorBookings() {
                           disabled={bookingActionMutation.isPending}
                         >
                           {bookingActionMutation.isPending && actionBookingId === item.id
-                            ? "Cancelling..."
-                            : "Cancel"}
+                            ? "Declining..."
+                            : "Decline"}
                         </Button>
                       </div>
                     ) : null}
@@ -539,13 +614,13 @@ export default function VendorBookings() {
                           disabled={bookingActionMutation.isPending}
                         >
                           {bookingActionMutation.isPending && actionBookingId === item.id
-                            ? "Cancelling..."
-                            : "Cancel"}
+                            ? "Declining..."
+                            : "Decline"}
                         </Button>
                       </div>
                     ) : null}
                     {bookingActionMutation.isError && actionBookingId === item.id ? (
-                      <div className="mt-2 text-sm text-red-600">
+                      <div className="mt-2 text-sm text-destructive">
                         {bookingActionMutation.error instanceof Error
                           ? bookingActionMutation.error.message
                           : "Failed to update booking"}

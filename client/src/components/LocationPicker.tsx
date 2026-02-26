@@ -10,6 +10,7 @@ interface LocationPickerProps {
   onChange: (value: LocationResult | null) => void;
   placeholder?: string;
   className?: string;
+  showCurrentLocationButton?: boolean;
 }
 
 export function LocationPicker({
@@ -17,6 +18,7 @@ export function LocationPicker({
   onChange,
   placeholder = "Search for a location...",
   className,
+  showCurrentLocationButton = true,
 }: LocationPickerProps) {
   const [query, setQuery] = useState("");
   const [suggestions, setSuggestions] = useState<LocationResult[]>([]);
@@ -157,7 +159,10 @@ export function LocationPicker({
             }
           }}
           placeholder={placeholder}
-          className="h-12 pl-10 pr-20 w-full text-base"
+          className={cn(
+            "h-12 w-full pl-10 text-base",
+            showCurrentLocationButton ? "pr-20" : "pr-10"
+          )}
           autoComplete="off"
           spellCheck={false}
         />
@@ -166,36 +171,51 @@ export function LocationPicker({
           <button
             type="button"
             onClick={handleClear}
-            className="absolute right-12 text-muted-foreground hover:text-foreground"
+            className={cn(
+              "absolute text-muted-foreground hover:text-foreground",
+              showCurrentLocationButton ? "right-12" : "right-3"
+            )}
           >
             <X className="h-4 w-4" />
           </button>
         )}
 
         {isLoading ? (
-          <Loader2 className="absolute right-12 h-4 w-4 animate-spin text-muted-foreground" />
-        ) : (
-          <ChevronDown className="absolute right-12 h-4 w-4 text-muted-foreground" />
-        )}
-
-        <div className="absolute right-2">
-          <LocationButton
-            onLocationFound={handleUseMyLocation}
-            variant="ghost"
-            size="icon"
-            className="h-8 w-8"
+          <Loader2
+            className={cn(
+              "absolute h-4 w-4 animate-spin text-muted-foreground",
+              showCurrentLocationButton ? "right-12" : "right-3"
+            )}
           />
-        </div>
+        ) : !query ? (
+          <ChevronDown
+            className={cn(
+              "absolute h-4 w-4 text-muted-foreground",
+              showCurrentLocationButton ? "right-12" : "right-3"
+            )}
+          />
+        ) : null}
+
+        {showCurrentLocationButton ? (
+          <div className="absolute right-2">
+            <LocationButton
+              onLocationFound={handleUseMyLocation}
+              variant="ghost"
+              size="icon"
+              className="h-8 w-8"
+            />
+          </div>
+        ) : null}
       </div>
 
       {/* ✅ Suggestions Dropdown */}
       {isOpen && suggestions.length > 0 && (
-        <div className="absolute z-50 mt-1 w-full rounded-md border bg-white shadow-lg">
+        <div className="absolute z-50 mt-1 w-full rounded-[12px] border border-border bg-popover text-popover-foreground shadow-lg">
           <ul className="max-h-60 overflow-auto py-1">
             {suggestions.map((item) => (
               <li
                 key={item.id}
-                className="cursor-pointer px-4 py-2 text-sm hover:bg-muted"
+                className="cursor-pointer rounded-[10px] px-4 py-2 text-sm font-sans transition-colors hover:bg-accent hover:text-accent-foreground"
                 onClick={() => handleSelect(item)}
               >
                 {item.label}

@@ -18,7 +18,7 @@ export default function CTASection() {
             </Button>
           </Link>
           <Link href="/browse">
-            <Button size="lg" variant="outline" className="min-w-[180px] border-primary-foreground/30 text-primary-foreground hover:bg-primary-foreground/10" data-testid="button-cta-explore">
+            <Button size="lg" variant="outline" className="min-w-[180px] editorial-cta-outline" data-testid="button-cta-explore">
               Explore Vendors
             </Button>
           </Link>

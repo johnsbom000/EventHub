@@ -26,20 +26,20 @@ export default function Home() {
   }, [publicListings]);
 
   return (
-    <div className="min-h-screen flex flex-col bg-white">
+    <div className="min-h-screen flex flex-col bg-[#f0eee9] dark:bg-background">
       <Navigation />
 
-      <main className="flex-1 bg-background">
+      <main className="flex-1 bg-[#f0eee9] dark:bg-background">
         <Hero />
 
         {/* Featured Listings under the hero */}
-        <section className="w-full px-8 lg:px-12 py-10">
-          <div className="flex items-end justify-between gap-4 mb-4">
+        <section className="w-full px-8 lg:px-12 py-12">
+          <div className="mb-5 flex items-end justify-between gap-4">
             <div>
-              <h2 className="text-2xl md:text-3xl font-bold text-foreground">
+              <h2 className="font-heading text-[2.31rem] font-normal text-[#2a3a42] dark:text-[#f5f0e8]">
                 Featured Rentals
               </h2>
-              <p className="text-muted-foreground mt-1">
+              <p className="mt-1 font-sans text-[0.95rem] text-[#9aacb4]">
                 Browse curated rentals. Click a card to view details.
               </p>
             </div>
@@ -47,7 +47,7 @@ export default function Home() {
             {/* Optional: link to /browse */}
             <a
               href="/browse"
-              className="text-sm font-medium text-primary hover:underline"
+              className="font-sans text-[0.92rem] font-medium uppercase tracking-[0.1em] text-[#e07a6a]"
               data-testid="link-view-all"
             >
               View all
@@ -66,13 +66,13 @@ export default function Home() {
               <p className="text-muted-foreground">No listings available yet.</p>
             </div>
           ) : (
-            <div className="w-full columns-1 sm:columns-2 md:columns-3 lg:columns-4 xl:columns-5 [column-gap:1rem]">
+            <div className="grid w-full grid-cols-1 gap-4 sm:grid-cols-2 md:grid-cols-3 lg:grid-cols-4 2xl:grid-cols-5">
               {featuredListings.map((listing) => (
                 <div
                   key={listing.id}
-                  className="mb-4 break-inside-avoid inline-block w-full relative hover:z-10"
+                  className="w-full"
                 >
-                  <ListingCard listing={listing} />
+                  <ListingCard listing={listing} priceScale="double" titleScale="oneAndHalf" titleFont="heading" />
                 </div>
               ))}
             </div>

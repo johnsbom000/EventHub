@@ -12,12 +12,15 @@ import { Textarea } from "@/components/ui/textarea";
 import { Label } from "@/components/ui/label";
 import { LocationPicker } from "@/components/LocationPicker";
 import type { LocationResult } from "@/types/location";
+import { useToast } from "@/hooks/use-toast";
+import { redirectVendorToStripeSetup } from "@/lib/vendorStripe";
 
 
-import { Calendar, DollarSign, Users, TrendingUp, Loader2, ArrowLeft } from "lucide-react";
+import { Calendar, DollarSign, Users, TrendingUp, Loader2 } from "lucide-react";
 
 type VendorMe = {
   businessName?: string | null;
+  email?: string | null;
   stripeOnboardingComplete?: boolean | null;
 };
 
@@ -30,6 +33,7 @@ type VendorStats = {
   profileViewsGrowth?: number | null;
   recentBookings?: Array<{
     id: string;
+    itemTitle?: string | null;
     status?: string | null;
     totalAmount?: number | null;
     eventDate?: string | null;
@@ -103,6 +107,15 @@ function parseFromLabel(label: string): {
   return { streetAddress, city, state, zipCode };
 }
 
+function emptyParsedAddress() {
+  return {
+    streetAddress: "",
+    city: "",
+    state: "",
+    zipCode: "",
+  };
+}
+
 function pickCoords(loc: any): { lat: number; lng: number } | null {
   const lng =
     loc?.lng ??
@@ -121,9 +134,10 @@ function pickCoords(loc: any): { lat: number; lng: number } | null {
 }
 
 export default function VendorDashboard() {
-  const { isAuthenticated, getAccessTokenSilently } = useAuth0();
+  const { isAuthenticated, isLoading: isAuthLoading, getAccessTokenSilently } = useAuth0();
   const [, setLocation] = useLocation();
   const qc = useQueryClient();
+  const { toast } = useToast();
 
   const { data: vendorAccount, isLoading: isVendorLoading } = useQuery<VendorMe>({
     queryKey: ["/api/vendor/me"],
@@ -159,6 +173,7 @@ export default function VendorDashboard() {
   const [homeBaseLocationDraft, setHomeBaseLocationDraft] = useState<{ lat: number; lng: number } | null>(null);
   const [serviceRadiusMilesDraft, setServiceRadiusMilesDraft] = useState<number>(0);
   const [serviceDescriptionDraft, setServiceDescriptionDraft] = useState("");
+  const [isStripeSetupLoading, setIsStripeSetupLoading] = useState(false);
 
   // hydrate drafts
   useEffect(() => {
@@ -173,7 +188,9 @@ export default function VendorDashboard() {
 
     const online = (p?.onlineProfiles ?? {}) as any;
     setBusinessPhoneDraft(typeof online?.businessPhone === "string" ? online.businessPhone : "");
-    setBusinessEmailDraft(typeof online?.businessEmail === "string" ? online.businessEmail : "");
+    const normalizedBusinessEmail =
+      typeof online?.businessEmail === "string" ? online.businessEmail.trim() : "";
+    setBusinessEmailDraft(normalizedBusinessEmail || vendorAccount?.email || "");
         
         // ---- Location hydration (LocationPicker-first) ----
         const addrLabel = (p?.serviceAddress || p?.address || "").trim();
@@ -198,12 +215,7 @@ export default function VendorDashboard() {
           addrLabel ||
           "";
 
-            const parsedRaw = labelForParsing ? parseFromLabel(labelForParsing) : {
-              streetAddress: "",
-              city: "",
-              state: "",
-              zipCode: "",
-            };
+            const parsedRaw = labelForParsing ? parseFromLabel(labelForParsing) : emptyParsedAddress();
 
             // If label is city-only (e.g. "St. George, Utah"), do NOT treat it as street
             const isCityOnlyLabel =
@@ -222,7 +234,11 @@ export default function VendorDashboard() {
             console.log("[hydrate] parsed:", parsed);
             console.log("[hydrate] online.state/zip:", online?.state, online?.zipCode);
 
-        setStreetAddressDraft(parsed.streetAddress || "");
+        setStreetAddressDraft(
+          typeof online?.streetAddress === "string" && online.streetAddress.trim()
+            ? online.streetAddress
+            : parsed.streetAddress || ""
+        );
         setCityDraft((online?.city as string) || p?.city || parsed.city || "");
         setStateDraft(
           online?.state && online.state.trim()
@@ -239,7 +255,7 @@ export default function VendorDashboard() {
     setServiceRadiusMilesDraft(Number.isFinite(p?.serviceRadius as any) ? (p?.serviceRadius as number) : 0);
 
     setServiceDescriptionDraft(p?.serviceDescription || "");
-  }, [vendorProfile]);
+  }, [vendorProfile, vendorAccount?.email]);
 
   const saveProfile = useMutation({
     mutationFn: async () => {
@@ -268,6 +284,7 @@ export default function VendorDashboard() {
         ...(vendorProfile?.onlineProfiles ?? {}),
         businessPhone: businessPhoneDraft,
         businessEmail: businessEmailDraft,
+        streetAddress: streetAddressDraft,
         state: stateDraft,
         zipCode: zipCodeDraft,
 
@@ -317,14 +334,33 @@ export default function VendorDashboard() {
     },
   });
 
-  const sidebarStyle = {
-    "--sidebar-width": "16rem",
-    "--sidebar-width-icon": "3rem",
-  } as React.CSSProperties;
+  const handleCompletePaymentSetup = async () => {
+    try {
+      setIsStripeSetupLoading(true);
+      await redirectVendorToStripeSetup();
+    } catch (error: any) {
+      setIsStripeSetupLoading(false);
+      toast({
+        title: "Unable to open Stripe setup",
+        description: error?.message || "Please try again.",
+        variant: "destructive",
+      });
+    }
+  };
 
-  const showLoading = !isAuthenticated || isVendorLoading || isStatsLoading || isProfileLoading;
+  useEffect(() => {
+    if (!isAuthLoading && !isAuthenticated) {
+      setLocation("/vendor/login");
+    }
+  }, [isAuthLoading, isAuthenticated, setLocation]);
+
+  const showLoading = isAuthLoading || isVendorLoading || isStatsLoading || isProfileLoading;
   const formatMoneyFromCents = (cents: number) =>
     new Intl.NumberFormat("en-US", { style: "currency", currency: "USD" }).format((cents || 0) / 100);
+
+  if (!isAuthLoading && !isAuthenticated) {
+    return null;
+  }
 
   if (showLoading) {
     return (
@@ -349,7 +385,7 @@ export default function VendorDashboard() {
         <div className="grid grid-cols-1 md:grid-cols-3 gap-6">
           <Card>
             <CardHeader className="flex flex-row items-center justify-between pb-2">
-              <CardTitle className="text-sm font-medium">Total Bookings</CardTitle>
+              <CardTitle className="text-[20px]">Total Bookings</CardTitle>
               <Calendar className="h-4 w-4 text-muted-foreground" />
             </CardHeader>
             <CardContent>
@@ -364,7 +400,7 @@ export default function VendorDashboard() {
 
           <Card>
             <CardHeader className="flex flex-row items-center justify-between pb-2">
-              <CardTitle className="text-sm font-medium">Revenue</CardTitle>
+              <CardTitle className="text-[20px]">Revenue</CardTitle>
               <DollarSign className="h-4 w-4 text-muted-foreground" />
             </CardHeader>
             <CardContent>
@@ -381,7 +417,7 @@ export default function VendorDashboard() {
 
           <Card>
             <CardHeader className="flex flex-row items-center justify-between pb-2">
-              <CardTitle className="text-sm font-medium">Profile Views</CardTitle>
+              <CardTitle className="text-[20px]">Profile Views</CardTitle>
               <Users className="h-4 w-4 text-muted-foreground" />
             </CardHeader>
             <CardContent>
@@ -398,19 +434,20 @@ export default function VendorDashboard() {
         </div>
 
         {!vendorAccount?.stripeOnboardingComplete && (
-          <Card className="border-yellow-500/50 bg-yellow-500/5">
+          <Card className="border-[hsl(var(--secondary-accent)/0.45)] bg-[hsl(var(--secondary-accent)/0.12)]">
             <CardHeader>
-              <CardTitle className="text-lg">Complete Your Setup</CardTitle>
+              <CardTitle className="text-[20px]">Complete Your Setup</CardTitle>
               <CardDescription>
                 Connect your Stripe account to start accepting payments from customers.
               </CardDescription>
             </CardHeader>
             <CardContent>
               <Button
-                onClick={() => setLocation("/vendor/onboarding")}
+                onClick={handleCompletePaymentSetup}
+                disabled={isStripeSetupLoading}
                 data-testid="button-complete-setup"
               >
-                Complete Payment Setup
+                {isStripeSetupLoading ? "Opening Stripe..." : "Complete Payment Setup"}
               </Button>
             </CardContent>
           </Card>
@@ -418,7 +455,7 @@ export default function VendorDashboard() {
 
         <Card>
           <CardHeader>
-            <CardTitle>Recent Activity</CardTitle>
+            <CardTitle className="text-[20px]">Recent Activity</CardTitle>
             <CardDescription>Your latest bookings and inquiries</CardDescription>
           </CardHeader>
           <CardContent>
@@ -434,7 +471,7 @@ export default function VendorDashboard() {
                     className="rounded-lg border p-3 flex items-center justify-between gap-3"
                   >
                     <div>
-                      <div className="font-medium">Booking #{booking.id.slice(0, 8)}</div>
+                      <div className="font-medium">{booking.itemTitle || `Booking #${booking.id.slice(0, 8)}`}</div>
                       <div className="text-sm text-muted-foreground">
                         {booking.eventDate || "Date not set"}
                         {booking.eventLocation ? ` • ${booking.eventLocation}` : ""}
@@ -457,7 +494,7 @@ export default function VendorDashboard() {
 
         <Card>
           <CardHeader>
-            <CardTitle>Quick Actions</CardTitle>
+            <CardTitle className="text-[20px]">Quick Actions</CardTitle>
             <CardDescription>Common tasks and shortcuts</CardDescription>
           </CardHeader>
           <CardContent className="flex flex-wrap gap-2">
@@ -490,7 +527,7 @@ export default function VendorDashboard() {
 
         <Card>
           <CardHeader>
-            <CardTitle>Profile Details</CardTitle>
+            <CardTitle className="text-[20px]">Profile Details</CardTitle>
             <CardDescription>
               Edit the same details collected during vendor onboarding.
             </CardDescription>
@@ -557,7 +594,12 @@ export default function VendorDashboard() {
                   setMarketLocationDraft(loc);
                   setHomeBaseLocationDraft(coords);
 
-                  setStreetAddressDraft(parsed.streetAddress || label);
+                  const streetFromPicker =
+                    (loc as any).address ||
+                    (loc as any).street ||
+                    parsed.streetAddress ||
+                    "";
+                  setStreetAddressDraft(streetFromPicker);
                   setCityDraft((loc as any).city || parsed.city || "");
                   setStateDraft((loc as any).state || parsed.state || "");
                   setZipCodeDraft((loc as any).zipCode || parsed.zipCode || "");
@@ -574,6 +616,19 @@ export default function VendorDashboard() {
                   Tip: pick from the dropdown so we can verify the address.
                 </p>
               )}
+            </div>
+
+            <div className="space-y-2">
+              <Label>Street Address</Label>
+              <Input
+                value={streetAddressDraft}
+                onChange={(e) => {
+                  setStreetAddressDraft(e.target.value);
+                  setHomeBaseLocationDraft(null);
+                  setMarketLocationDraft(null);
+                }}
+                placeholder="Street address"
+              />
             </div>
 
             <div className="grid gap-4 md:grid-cols-3">
@@ -645,26 +700,41 @@ export default function VendorDashboard() {
               <Button
                 variant="outline"
                 onClick={() => {
+                  const online = (vendorProfile?.onlineProfiles as any) ?? {};
+                  const marketLocation = (online?.marketLocation as LocationResult) ?? null;
+                  const addressLabel =
+                    ((marketLocation as any)?.label as string) ||
+                    ((marketLocation as any)?.place_name as string) ||
+                    (vendorProfile?.serviceAddress || vendorProfile?.address || "").trim();
+                  const parsed = addressLabel ? parseFromLabel(addressLabel) : emptyParsedAddress();
+
                   setBusinessNameDraft(vendorAccount?.businessName || "");
                   setBusinessPhoneDraft(
-                    typeof (vendorProfile?.onlineProfiles as any)?.businessPhone === "string"
-                      ? (vendorProfile?.onlineProfiles as any).businessPhone
+                    typeof online?.businessPhone === "string"
+                      ? online.businessPhone
                       : ""
                   );
-                  setStreetAddressDraft((vendorProfile?.serviceAddress || vendorProfile?.address || "").trim());
-                  setCityDraft(vendorProfile?.city || "");
+                  const normalizedBusinessEmail =
+                    typeof online?.businessEmail === "string" ? online.businessEmail.trim() : "";
+                  setBusinessEmailDraft(normalizedBusinessEmail || vendorAccount?.email || "");
+                  setStreetAddressDraft(
+                    typeof online?.streetAddress === "string" && online.streetAddress.trim()
+                      ? online.streetAddress
+                      : parsed.streetAddress || ""
+                  );
+                  setCityDraft(vendorProfile?.city || parsed.city || "");
                   setStateDraft(
-                    typeof (vendorProfile?.onlineProfiles as any)?.state === "string"
-                      ? (vendorProfile?.onlineProfiles as any).state
+                    typeof online?.state === "string"
+                      ? online.state
                       : ""
                   );
                   setZipCodeDraft(
-                    typeof (vendorProfile?.onlineProfiles as any)?.zipCode === "string"
-                      ? (vendorProfile?.onlineProfiles as any).zipCode
+                    typeof online?.zipCode === "string"
+                      ? online.zipCode
                       : ""
                   );
-                  setMarketLocationDraft(((vendorProfile?.onlineProfiles as any)?.marketLocation as LocationResult) ?? null);
-                  const hb = (vendorProfile?.onlineProfiles as any)?.homeBaseLocation;
+                  setMarketLocationDraft(marketLocation);
+                  const hb = online?.homeBaseLocation;
                   setHomeBaseLocationDraft(
                     hb && Number.isFinite(hb.lat) && Number.isFinite(hb.lng)
                       ? { lat: Number(hb.lat), lng: Number(hb.lng) }

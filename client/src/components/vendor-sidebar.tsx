@@ -18,6 +18,7 @@ import { Avatar, AvatarFallback } from "@/components/ui/avatar";
 import { Badge } from "@/components/ui/badge";
 import { useAuth0 } from "@auth0/auth0-react";
 import BrandWordmark from "@/components/BrandWordmark";
+import { cn } from "@/lib/utils";
 
 interface VendorAccount {
   businessName: string;
@@ -63,7 +64,7 @@ const menuItems = [
   },
 ];
 
-export function VendorSidebar() {
+export function VendorSidebar({ className }: { className?: string } = {}) {
   const [location] = useLocation();
   
     const { isAuthenticated, getAccessTokenSilently } = useAuth0();
@@ -96,7 +97,7 @@ export function VendorSidebar() {
     const unreadCount = Math.max(0, Number(unreadData?.unreadCount || 0));
 
   return (
-    <Sidebar>
+    <Sidebar className={cn(className)}>
       <SidebarHeader className="p-4">
         <div className="flex flex-col">
           <BrandWordmark className="text-[1.9rem]" />
@@ -115,7 +116,7 @@ export function VendorSidebar() {
                       <item.icon className="w-4 h-4" />
                       <span>{item.title}</span>
                       {item.title === "Messages" && unreadCount > 0 ? (
-                        <Badge className="ml-auto h-5 min-w-5 justify-center rounded-full bg-cyan-600 px-1 text-[10px] text-white">
+                        <Badge variant="secondary" className="ml-auto h-5 min-w-5 justify-center rounded-full px-1 text-[10px]">
                           {unreadCount}
                         </Badge>
                       ) : null}

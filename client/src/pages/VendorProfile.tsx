@@ -147,7 +147,7 @@ export default function VendorProfile() {
             <div className="flex items-end justify-between gap-6 flex-wrap">
               <div className="space-y-3">
                 <div className="flex items-center gap-2 flex-wrap">
-                  <Badge variant="secondary" className="text-sm" data-testid="badge-category">
+                  <Badge variant="secondary" className="text-sm editorial-category-pill" data-testid="badge-category">
                     {vendor.category}
                   </Badge>
                   {vendor.verified && (
@@ -389,7 +389,7 @@ export default function VendorProfile() {
           <div className="space-y-6">
             <Card className="p-6">
               <h3 className="text-lg font-semibold mb-2">Starting price</h3>
-              <div className="text-3xl font-bold text-primary" data-testid="text-starting-price">
+              <div className="text-3xl font-bold text-primary editorial-price" data-testid="text-starting-price">
                 ${vendor.basePrice.toLocaleString()}
               </div>
               {vendor.priceRangeMax && (

@@ -33,7 +33,7 @@ export function CreateListingIntroStep({ formData, goNext, goBack }: CreateListi
         <Button variant="outline" onClick={goBack} data-testid="button-back">
           Back
         </Button>
-        <Button onClick={goNext} size="lg" data-testid="button-get-started">
+        <Button onClick={goNext} size="lg" className="editorial-cta-outline" data-testid="button-get-started">
           Get Started
         </Button>
       </div>

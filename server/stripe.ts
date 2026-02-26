@@ -20,6 +20,22 @@ export interface ConnectAccountOnboardingResult {
   dashboardUrl?: string; // For both types
 }
 
+const connectAppBaseUrl = process.env.REPLIT_DEV_DOMAIN || "http://localhost:5000";
+
+function getConnectRedirectUrl(path: string) {
+  return `${connectAppBaseUrl}${path}`;
+}
+
+export async function createAccountOnboardingLink(accountId: string): Promise<string> {
+  const accountLink = await stripe.accountLinks.create({
+    account: accountId,
+    refresh_url: getConnectRedirectUrl("/vendor/connect/refresh"),
+    return_url: getConnectRedirectUrl("/vendor/connect/return"),
+    type: "account_onboarding",
+  });
+  return accountLink.url;
+}
+
 // Create a Stripe Connect account for a vendor
 export async function createConnectAccount(
   params: CreateConnectAccountParams
@@ -41,17 +57,11 @@ export async function createConnectAccount(
       },
     });
 
-    // Create Account Link for onboarding
-    const accountLink = await stripe.accountLinks.create({
-      account: account.id,
-      refresh_url: `${process.env.REPLIT_DEV_DOMAIN || "http://localhost:5000"}/vendor/connect/refresh`,
-      return_url: `${process.env.REPLIT_DEV_DOMAIN || "http://localhost:5000"}/vendor/connect/return`,
-      type: "account_onboarding",
-    });
+    const onboardingUrl = await createAccountOnboardingLink(account.id);
 
     return {
       accountId: account.id,
-      onboardingUrl: accountLink.url,
+      onboardingUrl,
     };
   } else {
     // Create Standard account (full control, existing Stripe account)
@@ -59,17 +69,11 @@ export async function createConnectAccount(
       type: "standard",
     });
 
-    // Create Account Link for linking existing account
-    const accountLink = await stripe.accountLinks.create({
-      account: account.id,
-      refresh_url: `${process.env.REPLIT_DEV_DOMAIN || "http://localhost:5000"}/vendor/connect/refresh`,
-      return_url: `${process.env.REPLIT_DEV_DOMAIN || "http://localhost:5000"}/vendor/connect/return`,
-      type: "account_onboarding",
-    });
+    const onboardingUrl = await createAccountOnboardingLink(account.id);
 
     return {
       accountId: account.id,
-      onboardingUrl: accountLink.url,
+      onboardingUrl,
     };
   }
 }

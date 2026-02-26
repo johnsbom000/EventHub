@@ -1,12 +1,15 @@
 import { useQuery } from "@tanstack/react-query";
 import { useAuth0 } from "@auth0/auth0-react";
 import { useLocation } from "wouter";
+import { useState } from "react";
 
 import { SidebarProvider, SidebarTrigger } from "@/components/ui/sidebar";
 import { VendorSidebar } from "@/components/vendor-sidebar";
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card";
 import { Button } from "@/components/ui/button";
 import { Calendar, DollarSign, Users, TrendingUp, Loader2, ArrowLeft } from "lucide-react";
+import { useToast } from "@/hooks/use-toast";
+import { redirectVendorToStripeSetup } from "@/lib/vendorStripe";
 
 /**
  * Typed responses from the API
@@ -30,6 +33,8 @@ type VendorStats = {
 export default function VendorAccount() {
   const { isAuthenticated } = useAuth0();
   const [, setLocation] = useLocation();
+  const { toast } = useToast();
+  const [isStripeSetupLoading, setIsStripeSetupLoading] = useState(false);
 
   const { data: vendorAccount, isLoading: isVendorLoading } = useQuery<VendorMe>({
     queryKey: ["/api/vendor/me"],
@@ -40,6 +45,20 @@ export default function VendorAccount() {
     queryKey: ["/api/vendor/stats"],
     enabled: isAuthenticated,
   });
+
+  const handleCompletePaymentSetup = async () => {
+    try {
+      setIsStripeSetupLoading(true);
+      await redirectVendorToStripeSetup();
+    } catch (error: any) {
+      setIsStripeSetupLoading(false);
+      toast({
+        title: "Unable to open Stripe setup",
+        description: error?.message || "Please try again.",
+        variant: "destructive",
+      });
+    }
+  };
 
   const sidebarStyle = {
     "--sidebar-width": "16rem",
@@ -63,8 +82,8 @@ export default function VendorAccount() {
           <header className="flex items-center justify-between p-4 border-b">
             <SidebarTrigger data-testid="button-sidebar-toggle" />
             <Button
-              variant="outline"
-              className="bg-[#9edbc0] text-white"
+              variant="default"
+              className="no-global-scale editorial-login-btn h-[54px] min-w-[232px] px-7 text-[1.15rem] leading-none"
               onClick={() => setLocation("/")}
               data-testid="button-back-marketplace"
             >
@@ -87,7 +106,7 @@ export default function VendorAccount() {
               <div className="grid grid-cols-1 md:grid-cols-3 gap-6">
                 <Card>
                   <CardHeader className="flex flex-row items-center justify-between pb-2">
-                    <CardTitle className="text-sm font-medium">Total Bookings</CardTitle>
+                    <CardTitle className="text-[20px]">Total Bookings</CardTitle>
                     <Calendar className="h-4 w-4 text-muted-foreground" />
                   </CardHeader>
                   <CardContent>
@@ -103,7 +122,7 @@ export default function VendorAccount() {
 
                 <Card>
                   <CardHeader className="flex flex-row items-center justify-between pb-2">
-                    <CardTitle className="text-sm font-medium">Revenue</CardTitle>
+                    <CardTitle className="text-[20px]">Revenue</CardTitle>
                     <DollarSign className="h-4 w-4 text-muted-foreground" />
                   </CardHeader>
                   <CardContent>
@@ -119,7 +138,7 @@ export default function VendorAccount() {
 
                 <Card>
                   <CardHeader className="flex flex-row items-center justify-between pb-2">
-                    <CardTitle className="text-sm font-medium">Profile Views</CardTitle>
+                    <CardTitle className="text-[20px]">Profile Views</CardTitle>
                     <Users className="h-4 w-4 text-muted-foreground" />
                   </CardHeader>
                   <CardContent>
@@ -135,19 +154,20 @@ export default function VendorAccount() {
               </div>
 
               {!vendorAccount?.stripeOnboardingComplete && (
-                <Card className="border-yellow-500/50 bg-yellow-500/5">
+                <Card className="border-[hsl(var(--secondary-accent)/0.45)] bg-[hsl(var(--secondary-accent)/0.12)]">
                   <CardHeader>
-                    <CardTitle className="text-lg">Complete Your Setup</CardTitle>
+                    <CardTitle className="text-[20px]">Complete Your Setup</CardTitle>
                     <CardDescription>
                       Connect your Stripe account to start accepting payments from customers.
                     </CardDescription>
                   </CardHeader>
                   <CardContent>
                     <Button
-                      onClick={() => setLocation("/vendor/onboarding")}
+                      onClick={handleCompletePaymentSetup}
+                      disabled={isStripeSetupLoading}
                       data-testid="button-complete-setup"
                     >
-                      Complete Payment Setup
+                      {isStripeSetupLoading ? "Opening Stripe..." : "Complete Payment Setup"}
                     </Button>
                   </CardContent>
                 </Card>

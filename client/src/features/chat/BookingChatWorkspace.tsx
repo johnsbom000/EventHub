@@ -384,7 +384,7 @@ export function BookingChatWorkspace({ role }: { role: Role }) {
     <div className="grid gap-6 md:grid-cols-[320px_1fr]">
       <Card className="flex h-[72vh] min-h-[560px] flex-col overflow-hidden md:h-[76vh]">
         <CardHeader className="shrink-0 border-b">
-          <CardTitle className="text-lg">
+          <CardTitle className="text-[20px]">
             {role === "customer" ? (showEventList ? "Events" : "Vendors") : "Conversations"}
           </CardTitle>
         </CardHeader>

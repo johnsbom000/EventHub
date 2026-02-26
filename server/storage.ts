@@ -21,11 +21,12 @@ import {
   type InsertNotification,
   type ReviewReply,
   type InsertReviewReply,
+  vendorAccounts,
 } from "@shared/schema";
 import { randomUUID } from "crypto";
 import { db } from "./db";
 import { notifications } from "@shared/schema";
-import { and, desc, eq } from "drizzle-orm";
+import { and, desc, eq, sql as drizzleSql } from "drizzle-orm";
 
 export interface IStorage {
   getUser(id: string): Promise<User | undefined>;
@@ -147,60 +148,69 @@ export class MemStorage implements IStorage {
 
   /* ---------------- Vendor Accounts ---------------- */
 
-  async getVendorAccount(id: string) {
-    return this.vendorAccounts.get(id);
+  async getVendorAccount(id: string): Promise<VendorAccount | undefined> {
+    const rows = await db
+      .select()
+      .from(vendorAccounts)
+      .where(eq(vendorAccounts.id, id))
+      .limit(1);
+    return rows[0] as VendorAccount | undefined;
   }
 
-  async getVendorAccountByEmail(email: string) {
-    return Array.from(this.vendorAccounts.values()).find(
-      (a) => a.email === email
-    );
+  async getVendorAccountByEmail(email: string): Promise<VendorAccount | undefined> {
+    const normalizedEmail = String(email || "").trim().toLowerCase();
+    if (!normalizedEmail) return undefined;
+
+    const rows = await db
+      .select()
+      .from(vendorAccounts)
+      .where(drizzleSql`lower(${vendorAccounts.email}) = ${normalizedEmail}`)
+      .limit(1);
+
+    return rows[0] as VendorAccount | undefined;
   }
 
   async getVendorAccountById(id: string): Promise<VendorAccount | undefined> {
-    return this.vendorAccounts.get(id);
+    return this.getVendorAccount(id);
   }
 
   async createVendorAccount(insert: InsertVendorAccount): Promise<VendorAccount> {
-    const id = randomUUID();
-    const now = new Date();
+    const [account] = await db
+      .insert(vendorAccounts)
+      .values({
+        email: insert.email,
+        password: insert.password,
+        businessName: insert.businessName,
+        userId: insert.userId ?? null,
+        auth0Sub: insert.auth0Sub ?? null,
+        stripeConnectId: insert.stripeConnectId ?? null,
+        stripeAccountType: insert.stripeAccountType ?? null,
+        stripeOnboardingComplete: insert.stripeOnboardingComplete ?? false,
+        profileComplete: insert.profileComplete ?? false,
+        active: insert.active ?? true,
+      })
+      .returning();
 
-    const account: VendorAccount = {
-      id,
-      email: insert.email,
-      password: insert.password,
-      businessName: insert.businessName,
-
-      userId: insert.userId ?? null,
-      auth0Sub: insert.auth0Sub ?? null,
-
-      stripeConnectId: insert.stripeConnectId ?? null,
-      stripeAccountType: insert.stripeAccountType ?? null,
-      stripeOnboardingComplete: insert.stripeOnboardingComplete ?? null,
-      profileComplete: insert.profileComplete ?? null,
-      active: insert.active ?? null,
-
-      createdAt: now,
-    };
-
-    this.vendorAccounts.set(id, account);
-    return account;
+    return account as VendorAccount;
   }
 
   async updateVendorAccount(
     id: string,
     updates: Partial<VendorAccount>
   ): Promise<VendorAccount | undefined> {
-    const existing = this.vendorAccounts.get(id);
-    if (!existing) return undefined;
+    const { id: _ignoredId, createdAt: _ignoredCreatedAt, ...mutableUpdates } = updates;
 
-    const updated: VendorAccount = {
-      ...existing,
-      ...updates,
-    };
+    if (Object.keys(mutableUpdates).length === 0) {
+      return this.getVendorAccount(id);
+    }
 
-    this.vendorAccounts.set(id, updated);
-    return updated;
+    const rows = await db
+      .update(vendorAccounts)
+      .set(mutableUpdates as any)
+      .where(eq(vendorAccounts.id, id))
+      .returning();
+
+    return rows[0] as VendorAccount | undefined;
   }
 
   /* ---------------- Vendor Profiles ---------------- */

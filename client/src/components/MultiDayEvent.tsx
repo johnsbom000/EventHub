@@ -52,7 +52,7 @@ export function MultiDayEvent({ value, onChange }: MultiDayEventProps) {
                   {day.date ? format(day.date, "MMM d") : <span>Pick date</span>}
                 </Button>
               </PopoverTrigger>
-              <PopoverContent className="w-auto p-0">
+              <PopoverContent className="w-auto rounded-[12px] border border-border bg-popover p-0">
                 <CalendarComponent
                   mode="single"
                   selected={day.date}

@@ -24,7 +24,7 @@ export default function CustomerPlanEvent() {
             <div className="h-12 w-12 rounded-full bg-primary/10 flex items-center justify-center mb-4">
               <Search className="h-6 w-6 text-primary" />
             </div>
-            <CardTitle className="text-xl">Browse vendors</CardTitle>
+            <CardTitle className="text-[20px]">Browse vendors</CardTitle>
             <CardDescription className="text-base">
               Explore our curated marketplace of professional event vendors
             </CardDescription>

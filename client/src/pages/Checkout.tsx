@@ -10,6 +10,13 @@ import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
 import { Textarea } from "@/components/ui/textarea";
+import {
+  Select,
+  SelectContent,
+  SelectItem,
+  SelectTrigger,
+  SelectValue,
+} from "@/components/ui/select";
 import { LocationPicker } from "@/components/LocationPicker";
 import type { LocationResult } from "@/types/location";
 import { getListingRentalTypes } from "@/lib/rentalTypes";
@@ -681,22 +688,25 @@ function CheckoutContent({
             {customerEvents.length > 0 ? (
               <div className="space-y-2">
                 <Label htmlFor="existing-event">Add to existing event</Label>
-                <select
-                  id="existing-event"
-                  className="w-full h-11 rounded-md border border-input bg-background px-3 text-sm"
-                  value={selectedCustomerEventId}
-                  onChange={(e) => {
+                <Select
+                  value={selectedCustomerEventId || undefined}
+                  onValueChange={(value) => {
                     setEventMode("existing");
-                    setSelectedCustomerEventId(e.target.value);
+                    setSelectedCustomerEventId(value);
                     setNewEventQueuedTitle("");
                   }}
                 >
-                  {customerEvents.map((evt) => (
-                    <option key={evt.id} value={evt.id}>
-                      {evt.title}
-                    </option>
-                  ))}
-                </select>
+                  <SelectTrigger id="existing-event" className="h-11 w-full text-sm">
+                    <SelectValue placeholder="Select an event" />
+                  </SelectTrigger>
+                  <SelectContent>
+                    {customerEvents.map((evt) => (
+                      <SelectItem key={evt.id} value={evt.id}>
+                        {evt.title}
+                      </SelectItem>
+                    ))}
+                  </SelectContent>
+                </Select>
               </div>
             ) : (
               <div className="text-sm text-muted-foreground">Create your first event</div>

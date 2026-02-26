@@ -197,6 +197,9 @@ export default function BrowseVendors() {
   const [, setLocation] = useLocation();
   const searchString = useSearch();
   const hydratedFromUrlRef = useRef(false);
+  const browseSurfaceClass = "bg-[#F0EEE9] dark:bg-background";
+  const browseInputClass =
+    "bg-[#efefef] text-[#2a3a42] placeholder:text-[#8fa2ad] border-[rgba(74,106,125,0.24)] dark:bg-[hsl(var(--card))] dark:text-[#f5f0e8] dark:placeholder:text-[#9aacb4] dark:border-[hsl(var(--card-border))]";
 
   const [showFilters, setShowFilters] = useState(false);
 
@@ -491,11 +494,11 @@ export default function BrowseVendors() {
   ]);
 
   return (
-    <div className="min-h-screen flex flex-col bg-white">
+    <div className={`min-h-screen flex flex-col ${browseSurfaceClass}`}>
       <Navigation />
 
-      <main className="flex-1 bg-background">
-        <div className="bg-white border-b py-8">
+      <main className={`flex-1 ${browseSurfaceClass}`}>
+        <div className={`${browseSurfaceClass} border-b border-border py-8`}>
           <div className="w-full px-8 lg:px-12">
             <h1 className="text-3xl md:text-4xl font-bold mb-4 text-foreground" data-testid="text-page-title">
               Rentals
@@ -510,7 +513,7 @@ export default function BrowseVendors() {
                   placeholder="Search listings..."
                   value={searchQuery}
                   onChange={(e) => setSearchQuery(e.target.value)}
-                  className="pr-10"
+                  className={`${browseInputClass} pr-10`}
                   data-testid="input-search"
                 />
                 <Search className="absolute right-3 top-1/2 -translate-y-1/2 h-5 w-5 text-muted-foreground" />
@@ -538,13 +541,13 @@ export default function BrowseVendors() {
           <div className="flex gap-6 lg:gap-8">
             <aside className={`${showFilters ? "block" : "hidden"} md:block w-full md:w-80 shrink-0`}>
               <div className="sticky top-24 space-y-4">
-                <Card>
+                <Card className="border-[#D2BD93] bg-[#F5F0E8] text-[#2a3a42] dark:border-[hsl(var(--card-border))] dark:bg-[hsl(var(--card))] dark:text-[#f5f0e8]">
                   <CardHeader>
-                    <CardTitle className="text-lg">Sort</CardTitle>
+                    <CardTitle className="text-[20px]">Sort</CardTitle>
                   </CardHeader>
                   <CardContent>
                     <Select value={sortBy} onValueChange={(value) => setSortBy(value as SortBy)}>
-                      <SelectTrigger className="w-full" data-testid="select-sort">
+                      <SelectTrigger className={`w-full ${browseInputClass}`} data-testid="select-sort">
                         <SelectValue placeholder="Sort by" />
                       </SelectTrigger>
                       <SelectContent>
@@ -556,9 +559,9 @@ export default function BrowseVendors() {
                   </CardContent>
                 </Card>
 
-                <Card>
+                <Card className="border-[#D2BD93] bg-[#F5F0E8] text-[#2a3a42] dark:border-[hsl(var(--card-border))] dark:bg-[hsl(var(--card))] dark:text-[#f5f0e8]">
                   <CardHeader>
-                    <CardTitle className="text-lg">Filters</CardTitle>
+                    <CardTitle className="text-[20px]">Filters</CardTitle>
                   </CardHeader>
                   <CardContent className="space-y-6">
                     <div className="space-y-2">
@@ -571,6 +574,7 @@ export default function BrowseVendors() {
                           setLocationQuery(e.target.value);
                           setSearchLocationLabel(e.target.value);
                         }}
+                        className={browseInputClass}
                         data-testid="input-filter-location"
                       />
                     </div>
@@ -582,7 +586,7 @@ export default function BrowseVendors() {
                           type="number"
                           min="0"
                           placeholder="Min"
-                          className="[appearance:textfield] [&::-webkit-inner-spin-button]:appearance-none [&::-webkit-outer-spin-button]:appearance-none"
+                          className={`${browseInputClass} [appearance:textfield] [&::-webkit-inner-spin-button]:appearance-none [&::-webkit-outer-spin-button]:appearance-none`}
                           value={minPrice}
                           onChange={(e) => setMinPrice(e.target.value)}
                           data-testid="input-filter-price-min"
@@ -591,7 +595,7 @@ export default function BrowseVendors() {
                           type="number"
                           min="0"
                           placeholder="Max"
-                          className="[appearance:textfield] [&::-webkit-inner-spin-button]:appearance-none [&::-webkit-outer-spin-button]:appearance-none"
+                          className={`${browseInputClass} [appearance:textfield] [&::-webkit-inner-spin-button]:appearance-none [&::-webkit-outer-spin-button]:appearance-none`}
                           value={maxPrice}
                           onChange={(e) => setMaxPrice(e.target.value)}
                           data-testid="input-filter-price-max"
@@ -627,6 +631,7 @@ export default function BrowseVendors() {
                         type="date"
                         value={availabilityDate}
                         onChange={(e) => setAvailabilityDate(e.target.value)}
+                        className={browseInputClass}
                         data-testid="input-filter-availability-date"
                       />
                     </div>
@@ -634,7 +639,7 @@ export default function BrowseVendors() {
                     <div className="space-y-2">
                       <Label>Tags</Label>
                       {availableTags.length === 0 ? (
-                        <p className="text-xs text-muted-foreground">No tags available yet.</p>
+                        <p className="text-xs text-[#8fa2ad]">No tags available yet.</p>
                       ) : (
                         <div className="max-h-36 overflow-auto space-y-2 pr-1">
                           {availableTags.map((tag) => {
@@ -720,10 +725,10 @@ export default function BrowseVendors() {
                   <p className="text-muted-foreground">No listings found matching your criteria.</p>
                 </div>
               ) : (
-                <div className="w-full columns-1 sm:columns-2 md:columns-3 lg:columns-4 xl:columns-5 [column-gap:1rem]">
+                <div className="grid w-full grid-cols-1 gap-4 sm:grid-cols-2 md:grid-cols-3 lg:grid-cols-4 2xl:grid-cols-5">
                   {filteredListings.map((listing) => (
-                    <div key={listing.id} className="mb-4 break-inside-avoid inline-block w-full">
-                      <ListingCard listing={listing} />
+                    <div key={listing.id} className="w-full">
+                      <ListingCard listing={listing} priceScale="double" titleScale="oneAndHalf" titleFont="heading" />
                     </div>
                   ))}
                 </div>

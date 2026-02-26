@@ -7,6 +7,12 @@ const toOptionalNumber = (value: unknown): number | null => {
   return null;
 };
 
+const normalizeUnit = (value: unknown): string | null => {
+  if (typeof value !== "string") return null;
+  const trimmed = value.trim().toLowerCase();
+  return trimmed ? trimmed : null;
+};
+
 const collectRatesFromRecord = (source: unknown): number[] => {
   if (!source || typeof source !== "object") return [];
   const rates: number[] = [];
@@ -54,4 +60,21 @@ export function getListingDisplayPrice(listing: unknown): number | null {
   const positive = candidates.filter((value) => value > 0);
   if (positive.length === 0) return null;
   return Math.min(...positive);
+}
+
+export function getListingDisplayPricingUnit(listing: unknown): string | null {
+  const listingAny = (listing && typeof listing === "object" ? listing : {}) as Record<string, any>;
+  const listingData =
+    listingAny.listingData && typeof listingAny.listingData === "object"
+      ? (listingAny.listingData as Record<string, any>)
+      : {};
+
+  return (
+    normalizeUnit(listingData?.pricing?.unit) ??
+    normalizeUnit(listingData?.pricingUnit) ??
+    normalizeUnit(listingData?.pricing?.pricingUnit) ??
+    normalizeUnit(listingAny?.pricing?.unit) ??
+    normalizeUnit(listingAny?.pricingUnit) ??
+    null
+  );
 }

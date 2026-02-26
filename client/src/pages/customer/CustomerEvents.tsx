@@ -5,6 +5,13 @@ import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Textarea } from "@/components/ui/textarea";
+import {
+  Select,
+  SelectContent,
+  SelectItem,
+  SelectTrigger,
+  SelectValue,
+} from "@/components/ui/select";
 import { Calendar, Clock, MapPin, Star } from "lucide-react";
 import { format } from "date-fns";
 import { apiRequest } from "@/lib/queryClient";
@@ -34,6 +41,7 @@ type CustomerBooking = {
   listingId?: string | null;
   itemTitle?: string | null;
   displayTitle?: string | null;
+  vendorDisplayName?: string | null;
   vendorBusinessName?: string | null;
   reviewSubmitted?: boolean;
   reviewRating?: number | null;
@@ -70,9 +78,15 @@ function getBookingTitle(booking: CustomerBooking) {
   const listingTitle = typeof booking.itemTitle === "string" && booking.itemTitle.trim().length > 0
     ? booking.itemTitle.trim()
     : null;
-  const vendorName = typeof booking.vendorBusinessName === "string" && booking.vendorBusinessName.trim().length > 0
-    ? booking.vendorBusinessName.trim()
-    : null;
+  const vendorDisplayName =
+    typeof booking.vendorDisplayName === "string" && booking.vendorDisplayName.trim().length > 0
+      ? booking.vendorDisplayName.trim()
+      : null;
+  const vendorBusinessName =
+    typeof booking.vendorBusinessName === "string" && booking.vendorBusinessName.trim().length > 0
+      ? booking.vendorBusinessName.trim()
+      : null;
+  const vendorName = vendorDisplayName || vendorBusinessName;
 
   if (listingTitle && vendorName) {
     return `${listingTitle} from ${vendorName}`;
@@ -307,7 +321,7 @@ export default function CustomerEvents({ customer }: CustomerEventsProps) {
                           <Card key={booking.id} className="rounded-xl shadow-sm" data-testid={`booking-card-${booking.id}`}>
                             <CardHeader className="pb-2">
                               <div className="flex items-center justify-between gap-3">
-                                <CardTitle className="text-lg">{getBookingTitle(booking)}</CardTitle>
+                                <CardTitle className="text-[20px]">{getBookingTitle(booking)}</CardTitle>
                                 <Badge variant="outline" className="capitalize">
                                   {booking.status}
                                 </Badge>
@@ -380,7 +394,7 @@ export default function CustomerEvents({ customer }: CustomerEventsProps) {
                                                   <Star
                                                     className={`h-5 w-5 ${
                                                       selected
-                                                        ? "fill-yellow-400 text-yellow-500"
+                                                        ? "fill-[hsl(var(--secondary-accent))] text-[hsl(var(--secondary-accent))]"
                                                         : "text-muted-foreground"
                                                     }`}
                                                   />
@@ -452,7 +466,7 @@ export default function CustomerEvents({ customer }: CustomerEventsProps) {
                                   )}
 
                                   {reviewErrorByBooking[booking.id] ? (
-                                    <p className="text-xs text-red-600">{reviewErrorByBooking[booking.id]}</p>
+                                    <p className="text-xs text-destructive">{reviewErrorByBooking[booking.id]}</p>
                                   ) : null}
                                 </div>
                               ) : null}
@@ -462,23 +476,26 @@ export default function CustomerEvents({ customer }: CustomerEventsProps) {
 
                                 {customerEvents.length > 0 ? (
                                   <div className="flex flex-wrap items-center gap-2">
-                                    <select
-                                      className="h-9 rounded-md border border-input bg-background px-3 text-sm"
-                                      value={selectedExistingEventId}
-                                      onChange={(e) =>
+                                    <Select
+                                      value={selectedExistingEventId || undefined}
+                                      onValueChange={(value) =>
                                         setTargetEventByBooking((prev) => ({
                                           ...prev,
-                                          [booking.id]: e.target.value,
+                                          [booking.id]: value,
                                         }))
                                       }
                                     >
-                                      <option value="">Select an event</option>
-                                      {customerEvents.map((evt) => (
-                                        <option key={evt.id} value={evt.id}>
-                                          {evt.title}
-                                        </option>
-                                      ))}
-                                    </select>
+                                      <SelectTrigger className="h-9 w-auto min-w-[220px] text-sm">
+                                        <SelectValue placeholder="Select an event" />
+                                      </SelectTrigger>
+                                      <SelectContent>
+                                        {customerEvents.map((evt) => (
+                                          <SelectItem key={evt.id} value={evt.id}>
+                                            {evt.title}
+                                          </SelectItem>
+                                        ))}
+                                      </SelectContent>
+                                    </Select>
 
                                     <Button
                                       size="sm"
@@ -533,7 +550,7 @@ export default function CustomerEvents({ customer }: CustomerEventsProps) {
                                 </div>
 
                                 {actionErrorByBooking[booking.id] ? (
-                                  <p className="text-xs text-red-600">{actionErrorByBooking[booking.id]}</p>
+                                  <p className="text-xs text-destructive">{actionErrorByBooking[booking.id]}</p>
                                 ) : null}
                               </div>
                             </CardContent>

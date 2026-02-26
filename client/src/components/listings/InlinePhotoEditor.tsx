@@ -28,6 +28,7 @@ type InlinePhotoEditorProps = {
   coverRatio: CoverRatio;
   cropsByPhotoId: Record<string, ListingPhotoCrop>;
   onAddPhotos: () => void;
+  showAddPhotosButton?: boolean;
   onRemovePhoto: (photoId: string) => void;
   onReorderPhotos: (orderedPhotoIds: string[]) => void;
   onCoverRatioChange: (next: CoverRatio) => void;
@@ -126,6 +127,7 @@ export function InlinePhotoEditor({
   coverRatio,
   cropsByPhotoId,
   onAddPhotos,
+  showAddPhotosButton = true,
   onRemovePhoto,
   onReorderPhotos,
   onCoverRatioChange,
@@ -266,9 +268,11 @@ export function InlinePhotoEditor({
     return (
       <div className="rounded-lg border border-dashed p-8 text-center text-sm text-muted-foreground space-y-3">
         <div>No photos added yet.</div>
-        <Button type="button" variant="outline" onClick={onAddPhotos}>
-          Add photos
-        </Button>
+        {showAddPhotosButton && (
+          <Button type="button" variant="outline" onClick={onAddPhotos}>
+            Add photos
+          </Button>
+        )}
       </div>
     );
   }
@@ -282,9 +286,11 @@ export function InlinePhotoEditor({
             Drag photos to reorder. The first photo is always your cover photo.
           </div>
         </div>
-        <Button type="button" variant="outline" onClick={onAddPhotos}>
-          Add photos
-        </Button>
+        {showAddPhotosButton && (
+          <Button type="button" variant="outline" onClick={onAddPhotos}>
+            Add photos
+          </Button>
+        )}
       </div>
 
       {selectedPhoto && (
