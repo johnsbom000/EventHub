@@ -16,6 +16,7 @@ export interface ListingPublic extends Pick<
   id: string;         // listingId
   vendorId: string;   // vendorId
   vendorName?: string;
+  vendorProfileImageUrl?: string | null;
 
   // Optional computed fields for display (derived, not entered)
   coverPhoto?: string;      // first photo URL

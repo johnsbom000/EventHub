@@ -20,7 +20,6 @@ import {
 import { LocationPicker } from "@/components/LocationPicker";
 import type { LocationResult } from "@/types/location";
 import { getListingRentalTypes } from "@/lib/rentalTypes";
-import { loginWithPopupFirst } from "@/lib/auth0Login";
 
 type CheckoutRouteParams = { listingId: string };
 type SavedCustomerLocation = {
@@ -184,7 +183,7 @@ function CheckoutContent({
 
   const stripe = useStripe();
   const elements = useElements();
-  const { isAuthenticated, loginWithPopup, loginWithRedirect, getAccessTokenSilently, user } = useAuth0();
+  const { isAuthenticated, loginWithRedirect, getAccessTokenSilently, user } = useAuth0();
 
   useEffect(() => {
     if (user?.email && !contactEmail) {
@@ -441,13 +440,8 @@ function CheckoutContent({
     if (!isAuthenticated) {
       const returnTo = `${window.location.pathname}${window.location.search}${window.location.hash}`;
       try {
-        await loginWithPopupFirst({
-          loginWithPopup,
-          loginWithRedirect,
-          popupOptions: {},
-          redirectOptions: {
-            appState: { returnTo },
-          },
+        await loginWithRedirect({
+          appState: { returnTo },
         });
       } catch (error: any) {
         setSubmitError(error?.message || "Unable to start login. Please try again.");

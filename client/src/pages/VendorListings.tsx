@@ -274,7 +274,7 @@ export default function VendorListings() {
           )}
 
           <div className="absolute top-3 left-3 z-10">
-            {isDraft ? (
+            {isDraft || isActive ? (
               <Badge variant="secondary">
                 {statusLabel}
               </Badge>
@@ -414,7 +414,7 @@ export default function VendorListings() {
         </Card>
       ) : listings.length > 0 ? (
         <div className="overflow-x-auto -mx-6 px-6">
-          <div className="flex gap-4 pb-4 pr-4">
+          <div className="flex items-start gap-4 pb-4 pr-4">
             {listings.map((listing: AnyListing) => (
               <ListingCardRow key={listing.id} listing={listing} status={status} />
             ))}

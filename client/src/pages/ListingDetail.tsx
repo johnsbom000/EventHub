@@ -5,7 +5,6 @@ import { ChevronLeft, MapPin, Star, CheckCircle, Truck, Wrench, X } from "lucide
 import { useAuth0 } from "@auth0/auth0-react";
 import { format } from "date-fns";
 import { getFirstListingRentalType } from "@/lib/rentalTypes";
-import { loginWithPopupFirst } from "@/lib/auth0Login";
 import {
   coverRatioToAspectRatio,
   getCoverPhotoIndex,
@@ -576,6 +575,15 @@ export default function ListingDetailPage() {
           <section className="space-y-3">
             <h2 className="text-xl font-semibold">Vendor</h2>
             <p className="text-muted-foreground">Hosted by {data.vendorName}</p>
+            {data.vendorId ? (
+              <button
+                type="button"
+                onClick={() => setLocation(`/shop/${data.vendorId}`)}
+                className="inline-flex items-center rounded-full border border-[rgba(74,106,125,0.24)] bg-white/90 px-4 py-2 text-sm font-medium text-[#2a3a42] transition-colors hover:bg-white dark:border-[hsl(var(--card-border))] dark:bg-[#22303c] dark:text-[#f5f0e8]"
+              >
+                Visit {data.vendorName}
+              </button>
+            ) : null}
           </section>
         </div>
 
@@ -669,7 +677,7 @@ function ReservationCard({
   const [isRouting, setIsRouting] = useState(false);
   const [bookingError, setBookingError] = useState<string | null>(null);
 
-  const { isAuthenticated, loginWithPopup, loginWithRedirect } = useAuth0();
+  const { isAuthenticated, loginWithRedirect } = useAuth0();
 
   const priceText = money(price);
   const unitText = formatPricingUnit(pricingUnit);
@@ -682,13 +690,8 @@ function ReservationCard({
     if (!isAuthenticated) {
       const returnTo = `${window.location.pathname}${window.location.search}${window.location.hash}`;
       try {
-        await loginWithPopupFirst({
-          loginWithPopup,
-          loginWithRedirect,
-          popupOptions: {},
-          redirectOptions: {
-            appState: { returnTo },
-          },
+        await loginWithRedirect({
+          appState: { returnTo },
         });
       } catch (error: any) {
         setBookingError(error?.message || "Unable to start login. Please try again.");

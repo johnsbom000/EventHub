@@ -1,4 +1,4 @@
-import ListingCard from "@/components/ListingCard";
+import MasonryListingGrid from "@/components/MasonryListingGrid";
 import type { ListingPublic } from "@/types/listing";
 import { useMemo } from "react";
 import { useQuery } from "@tanstack/react-query";
@@ -66,16 +66,7 @@ export default function Home() {
               <p className="text-muted-foreground">No listings available yet.</p>
             </div>
           ) : (
-            <div className="grid w-full grid-cols-1 gap-4 sm:grid-cols-2 md:grid-cols-3 lg:grid-cols-4 2xl:grid-cols-5">
-              {featuredListings.map((listing) => (
-                <div
-                  key={listing.id}
-                  className="w-full"
-                >
-                  <ListingCard listing={listing} priceScale="double" titleScale="oneAndHalf" titleFont="heading" />
-                </div>
-              ))}
-            </div>
+            <MasonryListingGrid listings={featuredListings} />
           )}
         </section>
       </main>

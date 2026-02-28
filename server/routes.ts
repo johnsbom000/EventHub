@@ -1205,6 +1205,8 @@ export async function registerRoutes(app: Express): Promise<Server> {
   // --- Listing photo uploads (local disk) ---
   const listingUploadsDir = path.join(process.cwd(), "server/uploads/listings");
   if (!fs.existsSync(listingUploadsDir)) fs.mkdirSync(listingUploadsDir, { recursive: true });
+  const vendorShopUploadsDir = path.join(process.cwd(), "server/uploads/vendor-shops");
+  if (!fs.existsSync(vendorShopUploadsDir)) fs.mkdirSync(vendorShopUploadsDir, { recursive: true });
 
   // One-time startup reconciliation so legacy active listings without valid prices
   // are immediately hidden from public browse after deploy.
@@ -1230,7 +1232,7 @@ export async function registerRoutes(app: Express): Promise<Server> {
     cleanupTimer.unref();
   }
 
-  const upload = multer({
+  const listingUpload = multer({
     storage: multer.diskStorage({
       destination: (_req, _file, cb) => cb(null, listingUploadsDir),
       filename: (_req, file, cb) => {
@@ -1253,7 +1255,7 @@ export async function registerRoutes(app: Express): Promise<Server> {
 app.post(
   "/api/uploads/listing-photo",
   requireDualAuthAuth0,
-  upload.single("photo"),
+  listingUpload.single("photo"),
   async (req: any, res) => {
     console.log(">>> HIT /api/uploads/listing-photo", req.method, req.path);
     // multer rejected the file OR no file was provided
@@ -1267,6 +1269,40 @@ app.post(
     });
   }
 );
+
+  const vendorShopUpload = multer({
+    storage: multer.diskStorage({
+      destination: (_req, _file, cb) => cb(null, vendorShopUploadsDir),
+      filename: (_req, file, cb) => {
+        const ext = path.extname(file.originalname || "").toLowerCase();
+        const safeExt = ext && ext.length <= 8 ? ext : ".jpg";
+        const base = `${Date.now()}-${Math.random().toString(16).slice(2)}`;
+        cb(null, `${base}${safeExt}`);
+      },
+    }),
+    limits: { fileSize: 10 * 1024 * 1024 },
+    fileFilter: (_req, file, cb) => {
+      const ok = ["image/jpeg", "image/png", "image/webp"].includes(file.mimetype);
+      if (!ok) return cb(null, false);
+      return cb(null, true);
+    },
+  });
+
+  app.post(
+    "/api/uploads/vendor-shop-photo",
+    ...requireVendorAuth0,
+    vendorShopUpload.single("photo"),
+    async (req: any, res) => {
+      if (!req.file) {
+        return res.status(400).json({ error: "Only JPG, PNG, or WebP allowed (max 10MB)." });
+      }
+
+      return res.json({
+        url: `/uploads/vendor-shops/${req.file.filename}`,
+        filename: req.file.filename,
+      });
+    }
+  );
 
   // Location search (used by LocationPicker autocomplete)
   app.get("/api/locations/search", async (req, res) => {
@@ -2148,6 +2184,22 @@ app.post(
       }
     );
 
+  const updateVendorProfileSchema = z
+    .object({
+      serviceType: z.string().min(1).optional(),
+      experience: z.number().int().optional(),
+      qualifications: z.array(z.string()).optional(),
+      onlineProfiles: z.any().optional(),
+      address: z.string().optional(),
+      city: z.string().optional(),
+      travelMode: z.string().optional(),
+      serviceRadius: z.number().nullable().optional(),
+      serviceAddress: z.string().nullable().optional(),
+      photos: z.array(z.string()).optional(),
+      serviceDescription: z.string().optional(),
+    })
+    .passthrough();
+
   /**
    * POST /api/vendor/profile ✅ Auth0-only
    */
@@ -2297,15 +2349,54 @@ app.post(
 
       const existing = profiles[0];
 
-      // Allow partial updates, but validate against the schema by merging
-      const merged = { ...existing, ...req.body };
-      const validated = createVendorProfileSchema.parse(merged);
+      const parsed = updateVendorProfileSchema.safeParse(req.body ?? {});
+      if (!parsed.success) {
+        return res.status(400).json({ error: "Validation failed", details: parsed.error.errors });
+      }
+
+      const payload = parsed.data as Record<string, unknown>;
+      const updates: Record<string, unknown> = {};
+
+      if (payload.serviceType !== undefined) updates.serviceType = payload.serviceType;
+      if (payload.experience !== undefined) updates.experience = payload.experience;
+      if (payload.qualifications !== undefined) updates.qualifications = payload.qualifications;
+      if (payload.address !== undefined) updates.address = payload.address;
+      if (payload.city !== undefined) updates.city = payload.city;
+      if (payload.travelMode !== undefined) updates.travelMode = payload.travelMode;
+      if (payload.serviceRadius !== undefined) updates.serviceRadius = payload.serviceRadius;
+      if (payload.serviceAddress !== undefined) updates.serviceAddress = payload.serviceAddress;
+      if (payload.photos !== undefined) updates.photos = payload.photos;
+      if (payload.serviceDescription !== undefined) updates.serviceDescription = payload.serviceDescription ?? "";
+
+      if (payload.onlineProfiles !== undefined) {
+        if (payload.onlineProfiles == null) {
+          updates.onlineProfiles = null;
+        } else if (typeof payload.onlineProfiles === "object" && !Array.isArray(payload.onlineProfiles)) {
+          const existingOnlineProfiles =
+            existing.onlineProfiles && typeof existing.onlineProfiles === "object" && !Array.isArray(existing.onlineProfiles)
+              ? (existing.onlineProfiles as Record<string, unknown>)
+              : {};
+          updates.onlineProfiles = {
+            ...existingOnlineProfiles,
+            ...(payload.onlineProfiles as Record<string, unknown>),
+          };
+        } else {
+          return res.status(400).json({
+            error: "Validation failed",
+            details: [{ message: "onlineProfiles must be an object" }],
+          });
+        }
+      }
+
+      if (Object.keys(updates).length === 0) {
+        return res.status(400).json({ error: "No updates provided" });
+      }
 
       const [updated] = await db
         .update(vendorProfiles)
         .set({
-          ...validated,
-          accountId: existing.accountId, // never change
+          ...updates,
+          updatedAt: new Date(),
         })
         .where(eq(vendorProfiles.id, existing.id))
         .returning();
@@ -2620,6 +2711,97 @@ app.post(
     return res.json(rows);
   });
 
+  // Public vendor shop (guest browsing)
+  // Returns one vendor's public shop details + active listings. No auth.
+  app.get("/api/vendors/public/:vendorId/shop", async (req, res) => {
+    try {
+      res.setHeader("Cache-Control", "no-store");
+
+      const vendorId = asTrimmedString(req.params?.vendorId);
+      if (!vendorId) {
+        return res.status(400).json({ error: "Invalid vendor id" });
+      }
+
+      const vendorRows = await db
+        .select({
+          id: vendorAccounts.id,
+          businessName: vendorAccounts.businessName,
+          serviceDescription: vendorProfiles.serviceDescription,
+          city: vendorProfiles.city,
+          serviceType: vendorProfiles.serviceType,
+          onlineProfiles: vendorProfiles.onlineProfiles,
+        })
+        .from(vendorAccounts)
+        .leftJoin(vendorProfiles, eq(vendorProfiles.accountId, vendorAccounts.id))
+        .where(eq(vendorAccounts.id, vendorId))
+        .limit(1);
+
+      const vendor = vendorRows[0];
+      if (!vendor) {
+        return res.status(404).json({ error: "Vendor not found" });
+      }
+
+      const onlineProfiles =
+        vendor.onlineProfiles && typeof vendor.onlineProfiles === "object" && !Array.isArray(vendor.onlineProfiles)
+          ? (vendor.onlineProfiles as Record<string, unknown>)
+          : {};
+      const aboutBusiness =
+        asTrimmedString((onlineProfiles as any).aboutBusiness) || asTrimmedString(vendor.serviceDescription);
+      const aboutOwner = asTrimmedString((onlineProfiles as any).aboutOwner);
+      const profileImageUrl = asTrimmedString((onlineProfiles as any).shopProfileImageUrl);
+      const yearsInBusiness = asTrimmedString((onlineProfiles as any).yearsInBusiness);
+      const hobbies = asTrimmedString((onlineProfiles as any).hobbies);
+      const likesDislikes = asTrimmedString((onlineProfiles as any).likesDislikes);
+      const homeState = asTrimmedString((onlineProfiles as any).homeState);
+      const funFacts = asTrimmedString((onlineProfiles as any).funFacts);
+
+      const listings = await db
+        .select({
+          id: vendorListings.id,
+          title: vendorListings.title,
+          listingData: vendorListings.listingData,
+          serviceType: vendorProfiles.serviceType,
+          city: vendorProfiles.city,
+          vendorId: vendorAccounts.id,
+          vendorName: vendorAccounts.businessName,
+        })
+        .from(vendorListings)
+        .innerJoin(vendorAccounts, eq(vendorListings.accountId, vendorAccounts.id))
+        .leftJoin(vendorProfiles, eq(vendorListings.profileId, vendorProfiles.id))
+        .where(and(eq(vendorListings.accountId, vendorId), eq(vendorListings.status, "active")));
+
+      const pricedListings = listings.filter((listing) => hasValidListingPrice((listing as any)?.listingData));
+
+      const listingsWithVendorMeta = pricedListings.map((listing: any) => ({
+        ...listing,
+        vendorProfileImageUrl: profileImageUrl || null,
+      }));
+
+      return res.json({
+        vendor: {
+          id: vendor.id,
+          businessName: vendor.businessName,
+          aboutBusiness: aboutBusiness || null,
+          aboutOwner: aboutOwner || null,
+          profileImageUrl: profileImageUrl || null,
+          yearsInBusiness: yearsInBusiness || null,
+          hobbies: hobbies || null,
+          likesDislikes: likesDislikes || null,
+          homeState: homeState || null,
+          funFacts: funFacts || null,
+          city: vendor.city,
+          serviceType: vendor.serviceType,
+        },
+        listings: listingsWithVendorMeta,
+      });
+    } catch (error: any) {
+      console.error("GET /api/vendors/public/:vendorId/shop failed:", error);
+      return res.status(500).json({
+        error: error?.message ?? "Unknown error",
+      });
+    }
+  });
+
   // Public Listings (guest browsing)
   // Returns only active listings. No auth.
   app.get("/api/listings/public", async (req, res) => {
@@ -2636,13 +2818,28 @@ app.post(
           city: vendorProfiles.city,
           vendorId: vendorAccounts.id,
           vendorName: vendorAccounts.businessName,
+          vendorOnlineProfiles: vendorProfiles.onlineProfiles,
         })
         .from(vendorListings)
         .innerJoin(vendorProfiles, eq(vendorListings.profileId, vendorProfiles.id))
         .innerJoin(vendorAccounts, eq(vendorProfiles.accountId, vendorAccounts.id))
         .where(eq(vendorListings.status, "active"));
       const pricedListings = listings.filter((listing) => hasValidListingPrice((listing as any)?.listingData));
-      return res.json(pricedListings);
+      const listingsWithVendorMeta = pricedListings.map((listing: any) => {
+        const onlineProfiles =
+          listing.vendorOnlineProfiles &&
+          typeof listing.vendorOnlineProfiles === "object" &&
+          !Array.isArray(listing.vendorOnlineProfiles)
+            ? (listing.vendorOnlineProfiles as Record<string, unknown>)
+            : {};
+        const vendorProfileImageUrl = asTrimmedString((onlineProfiles as any).shopProfileImageUrl);
+        const { vendorOnlineProfiles: _ignored, ...safeListing } = listing;
+        return {
+          ...safeListing,
+          vendorProfileImageUrl: vendorProfileImageUrl || null,
+        };
+      });
+      return res.json(listingsWithVendorMeta);
     } catch (error: any) {
       console.error("GET /api/listings/public failed:", error);
       return res.status(500).json({
@@ -2679,6 +2876,7 @@ app.post(
           city: vendorProfiles.city,
           vendorId: vendorAccounts.id,
           vendorName: vendorAccounts.businessName,
+          vendorOnlineProfiles: vendorProfiles.onlineProfiles,
         })
         .from(vendorListings)
         .innerJoin(vendorProfiles, eq(vendorListings.profileId, vendorProfiles.id))
@@ -2686,7 +2884,23 @@ app.post(
         .where(and(eq(vendorListings.status, "active"), eq(vendorListings.id, id)))
         .limit(1);
 
-      const listing = rows[0];
+      const listingRaw = rows[0];
+      const onlineProfiles =
+        listingRaw?.vendorOnlineProfiles &&
+        typeof listingRaw.vendorOnlineProfiles === "object" &&
+        !Array.isArray(listingRaw.vendorOnlineProfiles)
+          ? (listingRaw.vendorOnlineProfiles as Record<string, unknown>)
+          : {};
+      const vendorProfileImageUrl = asTrimmedString((onlineProfiles as any).shopProfileImageUrl);
+      const listing = listingRaw
+        ? (() => {
+            const { vendorOnlineProfiles: _ignored, ...safeListing } = listingRaw as any;
+            return {
+              ...safeListing,
+              vendorProfileImageUrl: vendorProfileImageUrl || null,
+            };
+          })()
+        : null;
       if (!listing) return res.status(404).json({ error: "Not found" });
 
       const reviewsResult: any = await db.execute(drizzleSql`

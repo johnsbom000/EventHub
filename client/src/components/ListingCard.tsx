@@ -1,4 +1,4 @@
-import { useMemo, useState } from "react";
+import { useEffect, useMemo, useState } from "react";
 import { Card } from "@/components/ui/card";
 import { Dialog, DialogContent, DialogTitle } from "@/components/ui/dialog";
 import type { ListingPublic } from "@/types/listing";
@@ -37,6 +37,7 @@ interface ListingCardProps {
   priceScale?: "default" | "double";
   titleScale?: "default" | "oneAndHalf";
   titleFont?: "sans" | "heading";
+  showVendorShopButton?: boolean;
 }
 
 export default function ListingCard({
@@ -44,10 +45,12 @@ export default function ListingCard({
   priceScale = "default",
   titleScale = "default",
   titleFont = "sans",
+  showVendorShopButton = false,
 }: ListingCardProps) {
   const [, setLocation] = useLocation();
   const [shareOpen, setShareOpen] = useState(false);
   const [shareFeedback, setShareFeedback] = useState("");
+  const [coverLoadFailed, setCoverLoadFailed] = useState(false);
   const listingAny = listing as any;
 
   const title = listingAny.listingData?.listingTitle ?? listingAny.title ?? listing.serviceType ?? "Service";
@@ -61,8 +64,20 @@ export default function ListingCard({
   const cover = orderedPhotos[0] ?? null;
   const coverAspectRatio = coverRatioToAspectRatio(getCoverPhotoRatio(listingAny));
 
+  useEffect(() => {
+    setCoverLoadFailed(false);
+  }, [cover]);
+
   const listingId = listingAny.id ?? listingAny.listingId ?? listingAny.listing?.id ?? listingAny.vendorListingId;
   const listingPath = `/listing/${listingId}`;
+  const vendorId = String(
+    listingAny.vendorId ??
+      listingAny.accountId ??
+      listingAny.vendor?.id ??
+      ""
+  ).trim();
+  const vendorShopPath = vendorId ? `/shop/${vendorId}` : null;
+  const vendorShopLabel = String(listingAny.vendorName ?? listingAny.vendor?.businessName ?? "Vendor").trim() || "Vendor";
   const shareUrl = useMemo(() => {
     if (typeof window === "undefined") return listingPath;
     return `${window.location.origin}${listingPath}`;
@@ -86,6 +101,11 @@ export default function ListingCard({
     }
   };
 
+  const handleOpenVendorShop = () => {
+    if (!vendorShopPath) return;
+    setLocation(vendorShopPath);
+  };
+
   const smsHref = `sms:?&body=${encodeURIComponent(`Check out this listing on EventHub: ${shareUrl}`)}`;
   const emailHref = `mailto:?subject=${encodeURIComponent(
     "Check out this EventHub listing"
@@ -94,7 +114,7 @@ export default function ListingCard({
   return (
     <>
       <div
-        className="listing-card-scale-exempt group relative"
+        className="listing-card-scale-exempt group relative w-full"
         data-testid={`card-listing-${listingId ?? "unknown"}`}
         role="link"
         tabIndex={0}
@@ -107,18 +127,20 @@ export default function ListingCard({
         }}
       >
         <Card className="cursor-pointer overflow-hidden rounded-[12px] border-0 bg-white shadow-[0_4px_24px_rgba(74,106,125,0.10)] dark:bg-[#22303c]">
-          <div
-            className="relative overflow-hidden bg-muted"
-            style={{ aspectRatio: coverAspectRatio }}
-          >
-            {cover ? (
+          <div className="relative overflow-hidden bg-muted">
+            {cover && !coverLoadFailed ? (
               <img
                 src={cover}
                 alt={title}
-                className="h-full w-full object-cover transition-transform duration-300 group-hover:scale-[1.02]"
+                className="block w-full object-cover transition-transform duration-300 group-hover:scale-[1.02]"
+                style={{ aspectRatio: coverAspectRatio }}
+                onError={() => setCoverLoadFailed(true)}
               />
             ) : (
-              <div className="h-full w-full flex items-center justify-center text-sm text-muted-foreground">
+              <div
+                className="flex w-full items-center justify-center bg-[rgba(74,106,125,0.14)] text-sm font-medium text-[#2a3a42] dark:bg-[hsl(var(--card-border)/0.5)] dark:text-[#f5f0e8]"
+                style={{ aspectRatio: coverAspectRatio }}
+              >
                 No photo yet
               </div>
             )}
@@ -184,6 +206,22 @@ export default function ListingCard({
             )}
           </p>
         </div>
+
+        {showVendorShopButton && vendorShopPath ? (
+          <div className="mt-2 px-1">
+            <button
+              type="button"
+              onClick={(event) => {
+                event.stopPropagation();
+                handleOpenVendorShop();
+              }}
+              className="inline-flex max-w-full items-center rounded-full border border-[rgba(74,106,125,0.24)] bg-white/90 px-3 py-1.5 text-xs font-medium text-[#2a3a42] transition-colors hover:bg-white dark:border-[hsl(var(--card-border))] dark:bg-[#22303c] dark:text-[#f5f0e8]"
+              data-testid={`button-visit-vendor-shop-${listingId ?? "unknown"}`}
+            >
+              <span className="truncate">Visit {vendorShopLabel}</span>
+            </button>
+          </div>
+        ) : null}
       </div>
 
       <Dialog open={shareOpen} onOpenChange={setShareOpen}>
@@ -242,7 +280,7 @@ export default function ListingCard({
           </div>
 
           <div className="break-all rounded-2xl bg-background px-4 py-3 text-[1.01rem] text-muted-foreground">{shareUrl}</div>
-          {shareFeedback ? <p className="text-[1.01rem] font-medium text-primary-foreground">{shareFeedback}</p> : null}
+          {shareFeedback ? <p className="text-[1.01rem] font-medium text-primary">{shareFeedback}</p> : null}
         </DialogContent>
       </Dialog>
     </>

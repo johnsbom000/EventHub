@@ -7,7 +7,6 @@ import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
 import { useToast } from "@/hooks/use-toast";
 import { Alert, AlertDescription } from "@/components/ui/alert";
-import { loginWithPopupFirst } from "@/lib/auth0Login";
 import BrandWordmark from "@/components/BrandWordmark";
 
 interface AuthModalProps {
@@ -17,7 +16,7 @@ interface AuthModalProps {
 
 export default function AuthModal({ open, onOpenChange }: AuthModalProps) {
   const { toast } = useToast();
-  const { loginWithPopup, loginWithRedirect } = useAuth0();
+  const { loginWithRedirect } = useAuth0();
 
   const [activeTab, setActiveTab] = useState<"login" | "signup">("login");
 
@@ -52,18 +51,7 @@ export default function AuthModal({ open, onOpenChange }: AuthModalProps) {
     try {
       // Close the modal immediately so the UI feels responsive.
       onOpenChange(false);
-      const result = await loginWithPopupFirst({
-        loginWithPopup,
-        loginWithRedirect,
-        popupOptions: {
-          authorizationParams: opts?.authorizationParams,
-        },
-        redirectOptions,
-      });
-
-      if (result === "cancelled") {
-        onOpenChange(true);
-      }
+      await loginWithRedirect(redirectOptions);
     } catch (err: any) {
       // Re-open modal so user can try again
       onOpenChange(true);
@@ -149,7 +137,7 @@ export default function AuthModal({ open, onOpenChange }: AuthModalProps) {
 
             <Alert>
               <AlertDescription>
-                We’ll open secure Auth0 sign-in in a popup. If popups are blocked, we’ll redirect you.
+                We’ll open secure Auth0 sign-in in the same tab and bring you back here after login.
               </AlertDescription>
             </Alert>
           </TabsContent>
@@ -194,7 +182,7 @@ export default function AuthModal({ open, onOpenChange }: AuthModalProps) {
 
             <Alert>
               <AlertDescription>
-                We’ll open Auth0 account creation in a popup. If blocked, we’ll redirect and return you to Event Hub.
+                We’ll open Auth0 account creation in the same tab and bring you back here after login.
               </AlertDescription>
             </Alert>
           </TabsContent>

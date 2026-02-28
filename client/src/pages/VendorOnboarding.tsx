@@ -9,12 +9,12 @@ import { useToast } from "@/hooks/use-toast";
 import Navigation from "@/components/Navigation";
 import { useAuth0 } from "@auth0/auth0-react";
 
-// Step components (rental-only flow)
+// Step components (Prop/Decor-only flow)
 import Step2_BusinessDetails from "@/features/vendor/onboarding/Step2_BusinessDetails";
 import Step3_Market from "@/features/vendor/onboarding/Step3_Market";
 import Step4_Confirm from "@/features/vendor/onboarding/Step4_Confirm";
 
-// Temporary: hide vendor type selection while we are rental-only.
+// Temporary: hide vendor type selection while we are Prop/Decor-only.
 // Flip to false when we re-enable multi-vendor onboarding.
 const SINGLE_VENDOR_MODE = true;
 

@@ -16,6 +16,62 @@ Template for new entries:
 
 ---
 
+## [2026-02-26] Add editable circular shop profile image workflow and expand optional Vendor Shop public fields
+- Context: Vendor Shop needed customer-avatar-style photo adjustment (drag + scale + save), additional optional storytelling fields, and customer-facing conditional rendering that hides any empty vendor-shop-managed fields.
+- Decision: Implement circular shop photo editing UI in `/vendor/shop` mirroring customer avatar interaction, upload finalized cropped image via `/api/uploads/vendor-shop-photo`, persist `aboutBusiness`, `aboutOwner`, `yearsInBusiness`, `hobbies`, `likesDislikes`, `homeState`, `funFacts`, and `shopProfileImageUrl` in `vendor_profiles.onlineProfiles`, and conditionally render those fields only when non-empty on `/shop/:vendorId`.
+- Why: Adds richer vendor personalization while preserving scope discipline by reusing existing JSON profile storage and existing upload infrastructure.
+- Impact: Vendors can upload/reposition/edit shop image and manage expanded optional profile content; public shop hides blank fields; listing cards show vendor image + business name inside the card when a shop image exists; prior below-card vendor image/name chip is removed.
+- Revisit trigger: If vendor public profile metadata outgrows JSON storage and should move to typed schema with dedicated media/CDN pipeline.
+
+## [2026-02-26] Split public shop narrative fields and add vendor shop profile image across shop + listing cards
+- Context: Vendor Shop needed separate customer-facing narratives for business and owner, plus a configurable shop profile image that appears on listing cards and next to business name on the public shop page; blank optional fields should not be hinted at to customers.
+- Decision: Store `aboutBusiness`, `aboutOwner`, and `shopProfileImageUrl` in `vendor_profiles.onlineProfiles`, add authenticated upload endpoint `/api/uploads/vendor-shop-photo`, expose only safe public fields in vendor shop/listing public APIs, and render customer-facing sections conditionally only when values are non-empty.
+- Why: Delivers requested storefront storytelling and branding without schema migrations, while preserving privacy by avoiding exposure of unrelated `onlineProfiles` values.
+- Impact: Vendors can independently manage business/owner copy and shop image in Vendor Shop editor; listing cards now show vendor profile image when configured; public shop displays image beside business name and hides empty optional sections.
+- Revisit trigger: If vendor public profile fields are promoted to first-class typed DB columns or a centralized media service replaces local upload storage.
+
+## [2026-02-26] Align Home and Browse listing-stack spacing with Vendor Shop masonry spacing
+- Context: Listing stack spacing was tuned on Vendor Shop to reduce vertical whitespace, and the same behavior needed to remain consistent as listing volume grows on Home and Browse Vendors.
+- Decision: Apply the same masonry-column listing container and card wrapper spacing (`break-inside-avoid` + tight bottom margin) on Home featured listings and Browse Vendors results.
+- Why: Keeps cross-surface listing rhythm predictable and prevents grid-row whitespace growth with mixed image heights.
+- Impact: Home, Browse Vendors, vendor shop, and public shop now share consistent stacked-card spacing behavior as more listings are added.
+- Revisit trigger: If a shared reusable listing-layout component is introduced to centralize all marketplace listing surfaces.
+
+## [2026-02-26] Use masonry columns for Vendor Shop listings with tighter proportional vertical spacing
+- Context: Vendor Shop listing stacks had excessive vertical gaps, especially with mixed image heights, and needed spacing tuned so inter-card gap is about 2x the image-to-title/price gap.
+- Decision: Replace Vendor Shop listing grids with responsive masonry-style column layouts on `/vendor/shop` and `/shop/:vendorId`, and wrap each card with `break-inside-avoid` plus tight bottom spacing.
+- Why: CSS grid row alignment creates large empty vertical blocks for mixed-height cards; masonry columns preserve card size while significantly reducing stacked whitespace.
+- Impact: Vendor/public shop pages now stack listings tightly with consistent readable spacing and reduced dead space.
+- Revisit trigger: If listing cards gain fixed-height media or a dedicated masonry component is introduced globally.
+
+## [2026-02-26] Increase Vendor Shop listing card footprint by reducing shop-grid density
+- Context: Vendor Shop cards became visually too small in both vendor portal and public customer-mode views due to high column density within the split-layout shop pages.
+- Decision: Reduce Vendor Shop listing grids to larger-card density (`1/2/3` responsive columns) on both `/vendor/shop` and `/shop/:vendorId`, and increase the vendor-portal `Active Listings` heading size.
+- Why: Restores readable card scale while preserving existing listing-card typography parity and overall page structure.
+- Impact: Vendor and public shop listings render larger and easier to scan; vendor-portal section heading has stronger visual hierarchy.
+- Revisit trigger: If shop page layout is redesigned to full-width listings or a dedicated masonry/card-size system.
+
+## [2026-02-26] Add customer-mode exit control on public Vendor Shop for vendor-owner sessions
+- Context: Vendors can enter customer mode from `/vendor/shop` but had no direct way to return from the public shop view.
+- Decision: On `/shop/:vendorId`, detect vendor-owner session via `/api/vendor/me` and show a top-right `Exit Customer Mode` button that routes back to `/vendor/shop` only when the logged-in vendor owns the viewed shop.
+- Why: Keeps customer-mode preview reversible in one click without exposing vendor-only navigation to non-owner visitors.
+- Impact: Vendor owners can safely preview and immediately return to editing flow; customer/public browsing behavior is unchanged.
+- Revisit trigger: If customer-mode preview evolves into a global role-switch state shared across multiple routes.
+
+## [2026-02-26] Normalize nullable vendor-profile fields on PATCH to prevent Vendor Shop save failures
+- Context: Vendor Shop edits could fail with `Validation failed` when saving `about`/business details because `/api/vendor/profile` PATCH merged partial payloads with existing profile rows that may contain nullable DB values (`serviceRadius`, `serviceAddress`, `onlineProfiles`), while schema parsing expected optional non-null values.
+- Decision: In `/api/vendor/profile` PATCH, normalize nullable merged fields (`serviceRadius`, `serviceAddress`, `onlineProfiles`) to optional/absent before schema parse and keep `serviceDescription` non-null default.
+- Why: Preserves existing profile validation model while removing false-negative validation errors for partial Vendor Shop edits.
+- Impact: Vendor Shop save now succeeds for existing vendors with nullable profile fields, and customer-mode/public shop views can reflect updated business/about content reliably.
+- Revisit trigger: If vendor profile validation is refactored to use dedicated PATCH schema with explicit partial/nullable semantics.
+
+## [2026-02-26] Add public Vendor Shop page with vendor-portal edit and customer preview mode
+- Context: Vendors need a shareable public storefront page they can link in social channels, customers need direct access from listing cards, and vendors need to edit shop-facing business/about content from inside the portal.
+- Decision: Add a public route (`/shop/:vendorId`) backed by a new public API (`/api/vendors/public/:vendorId/shop`) that returns non-private vendor shop data plus active listings; add `Vendor Shop` as the final vendor-sidebar tab (`/vendor/shop`) with business-name/about editing via existing `/api/vendor/me` and `/api/vendor/profile` endpoints, plus an `Enter Customer Mode` action to open the same public shop view.
+- Why: Delivers marketplace credibility and vendor self-promotion value quickly while reusing existing account/profile/listing sources to keep edits synchronized across the app.
+- Impact: Customers can open vendor shops from listing cards and direct links; vendors can manage public shop details in one place; private contact info remains excluded from the public shop payload.
+- Revisit trigger: If vendor public profiles move to slug-based URLs or require richer public sections (featured collections, testimonials, branded media) beyond the MVP storefront layout.
+
 ## [2026-02-26] Remove Messages item from vendor/customer portal avatar dropdowns
 - Context: The circular avatar dropdowns in vendor and customer portals should not include a `Messages` option.
 - Decision: Remove the `Messages` dropdown item from `VendorShell` and `CustomerDashboard` avatar menus only.
@@ -1317,3 +1373,94 @@ Template for new entries:
 - Why: Improves scanability and keeps naming consistent across vendor portal booking/payment views.
 - Impact: Payments history now hides booking number when listing title is available and shows listing title in its place.
 - Revisit trigger: If booking/listing label formatting is centralized into one shared serializer for all vendor endpoints.
+
+## [2026-02-27] Remove card-level zoom and shift aspect-ratio sizing to image for Safari listing visibility
+- Context: Vendor Shop listing cards in Safari could render as blank/hidden until hover, with hover controls appearing over empty areas.
+- Decision: Stop applying `zoom` through `.listing-card-scale-exempt` on listing cards and move ratio sizing from the image container to the image/fallback element itself in `ListingCard`.
+- Why: Safari has fragile paint/layout behavior with nested `zoom` + column/masonry-like flows; removing card-level zoom and using intrinsic image sizing avoids zero-height/blank card states.
+- Impact: Listing cards render consistently across Vendor Shop, Landing, and Browse without hover-only visibility artifacts.
+- Revisit trigger: If global scale is reimplemented without CSS `zoom` (e.g., tokenized sizing or transform-based scale strategy) and card-level compensation is no longer needed.
+
+## [2026-02-27] Use partial schema for vendor profile PATCH updates to prevent legacy-shape save failures
+- Context: Vendor Shop saves were failing with `Validation failed` because `PATCH /api/vendor/profile` revalidated merged profile data against onboarding/create constraints, which can reject legacy or previously-valid profile shapes unrelated to the edited shop fields.
+- Decision: Introduce a dedicated `updateVendorProfileSchema` for partial updates and update only provided fields, with object-merge behavior for `onlineProfiles`.
+- Why: Vendor Shop edits should not fail because of unrelated historical profile values; partial updates are safer for incremental UI edits.
+- Impact: Shop detail saves now persist optional fields in `onlineProfiles` without requiring full profile revalidation against onboarding rules.
+- Revisit trigger: If profile data is migrated to a strict versioned schema and a centralized migration path guarantees all profile rows conform before updates.
+
+## [2026-02-27] Remove under-card vendor identity pill from listing cards
+- Context: The vendor-name pill below each listing card added visual clutter and was explicitly requested to be removed.
+- Decision: Remove the under-card vendor avatar/name pill render block from `ListingCard`, keeping title/price and optional `Visit {business}` action behavior unchanged.
+- Why: Improves scanability of listing stacks and aligns card presentation with current storefront direction.
+- Impact: Listing cards no longer render the business-name badge directly beneath the image.
+- Revisit trigger: If a compact vendor identity treatment is reintroduced as part of a unified card metadata redesign.
+
+## [2026-02-27] Move vendor-shop CTA from listing cards to listing detail and restore smaller card density on Home/Browse
+- Context: Vendor shop links should not appear around listing cards, and listing cards on Landing/Browse were unintentionally too large after layout changes.
+- Decision: Disable `Visit {vendor}` card CTA by default in `ListingCard`, add vendor-shop CTA inside `ListingDetail` vendor section, and restore Home/Browse listing layouts to the smaller multi-column grid density (`1/2/3/4/5` responsive columns).
+- Why: Keeps cards visually clean in feed views while preserving vendor-shop discoverability at a deeper-intent touchpoint (listing detail).
+- Impact: No vendor-shop button around listing cards on Landing/Browse; vendor-shop entry now appears on listing detail; card size changes are limited to Landing and Browse pages only.
+- Revisit trigger: If product direction reintroduces in-card vendor CTAs or a unified card/linking strategy across all listing surfaces.
+
+## [2026-02-27] Prevent vendor listing cards from stretching to tallest card height in horizontal rows
+- Context: In Vendor Listings sections, shorter cards were stretching vertically to match the tallest card, causing excess empty bordered space.
+- Decision: Set the horizontal card row flex container to `items-start` so each card keeps its intrinsic content height.
+- Why: Flexbox default cross-axis stretch was forcing equal-height cards; top alignment preserves intended proportional card outlines.
+- Impact: Active/Inactive/Draft listing card borders now end at each card’s own content instead of stretching to row max height.
+- Revisit trigger: If Vendor Listings switches from horizontal flex rows to masonry/grid cards with a shared card wrapper component.
+
+## [2026-02-27] Match active status badge styling to draft badges in Vendor Listings cards
+- Context: Vendor requested the top-left `Active` status chip to match the visual style used by `Draft`.
+- Decision: Render `Active` with the same `Badge` variant (`secondary`) used for `Draft` in `VendorListings` card overlays.
+- Why: Keeps status chips visually consistent and reduces unnecessary style differences between editable listing states.
+- Impact: Active listing cards now display the same badge treatment as draft cards in the top-left overlay.
+- Revisit trigger: If listing status chips are redesigned into a centralized status-color system across vendor surfaces.
+
+## [2026-02-27] Use shortest-column masonry layout for Landing and Browse listing feeds
+- Context: Standard row-based grid on Landing/Browse created large vertical voids under shorter cards on wider screens, breaking the desired Pinterest-style rhythm.
+- Decision: Introduce `MasonryListingGrid` that distributes listings into responsive columns (`1/2/3/4/5`) by assigning each next listing to the current shortest column using a card-height estimate.
+- Why: Preserves top-aligned first-row cards, enforces consistent inter-card vertical gaps, and reduces ragged bottom depth compared to fixed grid rows.
+- Impact: Landing and Browse feeds now behave like true masonry stacks during normal browsing and filtered/searched result changes without affecting Vendor Shop or portal listing layouts.
+- Revisit trigger: If we adopt native CSS masonry support or a shared virtualization/grid library with measured-height column packing.
+
+## [2026-02-27] Enforce left-packed masonry columns on Landing/Browse while preserving height balancing
+- Context: Shortest-column placement could produce visually empty left-side slots on the second row, which looked like a gap/hole in the feed.
+- Decision: Update `MasonryListingGrid` placement to only allow assignments that preserve non-increasing per-column counts from left to right (`c0 >= c1 >= c2 ...`), then choose the lowest projected-height column among valid candidates.
+- Why: Guarantees no left-side holes while still using height-aware balancing for lower ragged bottoms.
+- Impact: Listings visually fill left-to-right without left gaps, and card stacks remain masonry-like with consistent vertical spacing.
+- Revisit trigger: If CSS native masonry or a measured-positioning library is adopted and can natively enforce left-packed placement rules.
+
+## [2026-02-27] Optimize masonry depth with capacity-aware placement while preserving vendor-set card shapes
+- Context: Left-packed placement removed left-side gaps but still could leave a deeper-than-necessary final bottom edge.
+- Decision: Keep listing card shapes untouched and switch to a capacity-aware packing heuristic: sort listings by estimated rendered height, then place each listing into columns with remaining capacity by prioritizing fewer remaining slots first and then shorter current height.
+- Why: This pushes larger cards into columns that will receive fewer total cards, reducing the deepest final column while preserving left-to-right fill behavior.
+- Impact: Landing/Browse masonry keeps vendor-defined cover ratios, avoids left gaps, and better minimizes the lowest bottom point after stacking.
+- Revisit trigger: If we introduce measured DOM-height packing (post-render) or a dedicated masonry engine that can optimize exact pixel heights.
+
+## [2026-02-27] Keep landing/browse listing-card max size stable when result count is small
+- Context: When filtered result count was lower than responsive column count, masonry reduced the number of columns to result count, causing cards to stretch excessively wide.
+- Decision: Keep responsive column count based on viewport width (not result count) and allow empty trailing columns when needed.
+- Why: Preserves existing shrink-on-smaller-screens behavior while capping max card size to normal feed dimensions.
+- Impact: Listing cards no longer become oversized when only a few results are visible; max card width stays consistent with the standard feed.
+- Revisit trigger: If we add a dedicated max-card-width token with centered packing that can achieve the same cap without empty trailing columns.
+
+## [2026-02-27] Increase share-feedback contrast for listing link copy confirmation
+- Context: In the listing share modal, `Link copied.` feedback text had low contrast and was hard to read.
+- Decision: Set share feedback text color to a stronger blue (`#2563eb`) in `ListingCard`.
+- Why: Improves visibility and confirmation clarity after copy/share actions.
+- Impact: Copy confirmation text is now clearly readable against the modal background.
+- Revisit trigger: If feedback text colors are centralized into semantic success/info tokens across dialogs.
+
+## [2026-02-27] Use theme primary token for listing share-copy feedback color
+- Context: Hardcoded blue feedback color did not match Event Hub theme colors.
+- Decision: Replace hardcoded `#2563eb` with `text-primary` for share-copy feedback in `ListingCard`.
+- Why: Keeps confirmation messaging on-brand and consistent with existing color tokens.
+- Impact: `Link copied.` now uses the darker theme blue instead of a custom off-theme color.
+- Revisit trigger: If share feedback adopts a dedicated semantic token (e.g., info/success) distinct from primary actions.
+
+## [2026-02-27] Use same-tab Auth0 redirect for customer login and unauthenticated booking attempts
+- Context: Popup-based Auth0 login created a small authorization window that felt visually off-brand and disruptive.
+- Decision: Replace popup-first login with `loginWithRedirect` in user-facing auth modal flows and in unauthenticated booking-trigger flows (`ListingDetail` and `Checkout`), while preserving existing `appState.returnTo` behavior.
+- Why: Full-page redirect creates a cleaner login experience and keeps return navigation unchanged after authentication.
+- Impact: Clicking login or attempting to book while logged out now opens Auth0 in the same tab and returns users to the same page after login; other non-user-facing/test flows remain unchanged.
+- Revisit trigger: If we later implement a custom-branded Auth0 Universal Login page or decide to reintroduce popup login in select contexts.

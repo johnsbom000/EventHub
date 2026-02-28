@@ -482,7 +482,8 @@
   }
 
   .listing-card-scale-exempt {
-    zoom: var(--global-ui-scale-inverse);
+    display: block;
+    width: 100%;
   }
 
   .no-global-scale {

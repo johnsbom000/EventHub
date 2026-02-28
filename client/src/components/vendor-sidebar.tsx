@@ -1,4 +1,4 @@
-import { Calendar, Home, LayoutGrid, MessageSquare, DollarSign, Star, Bell, Settings } from "lucide-react";
+import { Calendar, Home, LayoutGrid, MessageSquare, DollarSign, Star, Bell, Store } from "lucide-react";
 import { Link, useLocation } from "wouter";
 import { useQuery } from "@tanstack/react-query";
 import {
@@ -13,7 +13,6 @@ import {
   SidebarHeader,
   SidebarFooter,
 } from "@/components/ui/sidebar";
-import { Button } from "@/components/ui/button";
 import { Avatar, AvatarFallback } from "@/components/ui/avatar";
 import { Badge } from "@/components/ui/badge";
 import { useAuth0 } from "@auth0/auth0-react";
@@ -61,6 +60,11 @@ const menuItems = [
     title: "Notifications",
     url: "/vendor/notifications",
     icon: Bell,
+  },
+  {
+    title: "Vendor Shop",
+    url: "/vendor/shop",
+    icon: Store,
   },
 ];
 

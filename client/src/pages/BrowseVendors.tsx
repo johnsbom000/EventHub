@@ -1,4 +1,4 @@
-import ListingCard from "@/components/ListingCard";
+import MasonryListingGrid from "@/components/MasonryListingGrid";
 import type { ListingPublic } from "@/types/listing";
 import { useState, useEffect, useMemo, useRef } from "react";
 import { useSearch, useLocation } from "wouter";
@@ -725,13 +725,7 @@ export default function BrowseVendors() {
                   <p className="text-muted-foreground">No listings found matching your criteria.</p>
                 </div>
               ) : (
-                <div className="grid w-full grid-cols-1 gap-4 sm:grid-cols-2 md:grid-cols-3 lg:grid-cols-4 2xl:grid-cols-5">
-                  {filteredListings.map((listing) => (
-                    <div key={listing.id} className="w-full">
-                      <ListingCard listing={listing} priceScale="double" titleScale="oneAndHalf" titleFont="heading" />
-                    </div>
-                  ))}
-                </div>
+                <MasonryListingGrid listings={filteredListings} />
               )}
             </div>
           </div>
