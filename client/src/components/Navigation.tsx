@@ -180,7 +180,6 @@ export default function Navigation() {
               <Switch
                 checked={themeMode === "dark"}
                 onCheckedChange={(checked) => applyTheme(checked ? "dark" : "light")}
-                className="h-6 w-11 border-0 transition-colors duration-300 ease-in-out data-[state=checked]:bg-[#9dd4cc] data-[state=unchecked]:bg-[#4a6a7d] [&>span]:ml-[3px] [&>span]:h-[18px] [&>span]:w-[18px] [&>span]:bg-white dark:[&>span]:bg-[#F0EEE9] [&>span]:shadow-none [&>span]:transition-transform [&>span]:duration-300 [&>span]:ease-in-out [&>span]:data-[state=checked]:translate-x-5 [&>span]:data-[state=unchecked]:translate-x-0"
                 aria-label="Toggle light and dark mode"
                 data-testid="switch-theme-mode"
               />
@@ -222,7 +221,7 @@ export default function Navigation() {
                     <Button
                       variant="ghost"
                       size="default"
-                      className={navActionButtonClass}
+                      className={`${navActionButtonClass} no-global-scale`}
                       data-testid="link-vendor-back-to-marketplace"
                     >
                       <Store className="h-4 w-4 mr-2" />
@@ -331,7 +330,7 @@ export default function Navigation() {
                     <Button
                       variant="ghost"
                       size="default"
-                      className={navActionButtonClass}
+                      className={`${navActionButtonClass} no-global-scale`}
                       data-testid="link-back-to-marketplace"
                     >
                       <Store className="h-4 w-4 mr-2" />

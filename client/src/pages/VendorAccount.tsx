@@ -1,7 +1,7 @@
 import { useQuery } from "@tanstack/react-query";
 import { useAuth0 } from "@auth0/auth0-react";
 import { useLocation } from "wouter";
-import { useState } from "react";
+import { useEffect, useState } from "react";
 
 import { SidebarProvider, SidebarTrigger } from "@/components/ui/sidebar";
 import { VendorSidebar } from "@/components/vendor-sidebar";
@@ -31,8 +31,8 @@ type VendorStats = {
 };
 
 export default function VendorAccount() {
-  const { isAuthenticated } = useAuth0();
-  const [, setLocation] = useLocation();
+  const { isAuthenticated, isLoading: isAuthLoading } = useAuth0();
+  const [location, setLocation] = useLocation();
   const { toast } = useToast();
   const [isStripeSetupLoading, setIsStripeSetupLoading] = useState(false);
 
@@ -65,12 +65,26 @@ export default function VendorAccount() {
     "--sidebar-width-icon": "3rem",
   } as React.CSSProperties;
 
-  if (!isAuthenticated || isVendorLoading || isStatsLoading) {
+  useEffect(() => {
+    if (!isAuthLoading && !isAuthenticated) {
+      const returnTo =
+        typeof window !== "undefined"
+          ? `${window.location.pathname}${window.location.search}${window.location.hash}`
+          : location || "/vendor/account";
+      setLocation(`/vendor/login?returnTo=${encodeURIComponent(returnTo)}`);
+    }
+  }, [isAuthLoading, isAuthenticated, location, setLocation]);
+
+  if (isAuthLoading || isVendorLoading || isStatsLoading) {
     return (
       <div className="min-h-screen flex items-center justify-center">
         <Loader2 className="h-8 w-8 animate-spin text-primary" />
       </div>
     );
+  }
+
+  if (!isAuthenticated) {
+    return null;
   }
 
   return (

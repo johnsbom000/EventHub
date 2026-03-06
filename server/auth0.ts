@@ -54,11 +54,6 @@ export function verifyAuth0Token(token: string): Promise<Auth0Payload> {
         algorithms: ["RS256"],
       },
       (err, decoded) => {
-        console.log("AUTH0 verify", {
-          issuer: `https://${AUTH0_DOMAIN}/`,
-          audience: [AUTH0_AUDIENCE],
-        });
-
         if (err) {
           console.error("AUTH0 jwt.verify ERROR:", err.name, err.message);
           return reject(err);
@@ -189,6 +184,6 @@ export async function requireAuth0(req: Request, res: Response, next: NextFuncti
     return next();
   } catch (err: any) {
     console.error("Auth0 token verify failed:", err?.name, err?.message);
-    return res.status(401).json({ error: "Invalid Auth0 token", details: err?.message });
+    return res.status(401).json({ error: "Invalid Auth0 token" });
   }
 }

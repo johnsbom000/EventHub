@@ -135,7 +135,7 @@ function pickCoords(loc: any): { lat: number; lng: number } | null {
 
 export default function VendorDashboard() {
   const { isAuthenticated, isLoading: isAuthLoading, getAccessTokenSilently } = useAuth0();
-  const [, setLocation] = useLocation();
+  const [location, setLocation] = useLocation();
   const qc = useQueryClient();
   const { toast } = useToast();
 
@@ -350,9 +350,13 @@ export default function VendorDashboard() {
 
   useEffect(() => {
     if (!isAuthLoading && !isAuthenticated) {
-      setLocation("/vendor/login");
+      const returnTo =
+        typeof window !== "undefined"
+          ? `${window.location.pathname}${window.location.search}${window.location.hash}`
+          : location || "/vendor/dashboard";
+      setLocation(`/vendor/login?returnTo=${encodeURIComponent(returnTo)}`);
     }
-  }, [isAuthLoading, isAuthenticated, setLocation]);
+  }, [isAuthLoading, isAuthenticated, location, setLocation]);
 
   const showLoading = isAuthLoading || isVendorLoading || isStatsLoading || isProfileLoading;
   const formatMoneyFromCents = (cents: number) =>

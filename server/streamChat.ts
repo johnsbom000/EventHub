@@ -244,3 +244,106 @@ export async function getStreamUnreadCountsForBookings(params: {
 
   return { counts, totalUnread };
 }
+
+export async function getAverageVendorResponseMinutesForBookings(params: {
+  vendorAccountId: string;
+  bookingIds: string[];
+  channelLimit?: number;
+  messageLimitPerChannel?: number;
+}): Promise<number | null> {
+  if (!isStreamChatConfigured()) return null;
+
+  const vendorAccountId = String(params.vendorAccountId || "").trim();
+  if (!vendorAccountId) return null;
+
+  const bookingIds = Array.from(
+    new Set(
+      (params.bookingIds || [])
+        .map((id) => String(id || "").trim())
+        .filter((id) => id.length > 0)
+    )
+  );
+  if (bookingIds.length === 0) return null;
+
+  const vendorStreamUserId = toStreamUserId("vendor", vendorAccountId);
+  const channelIds = bookingIds.map((bookingId) => toStreamBookingChannelId(bookingId));
+  const client = getServerClient();
+  const channelLimit = Math.max(1, Math.min(params.channelLimit ?? 40, 80));
+  const messageLimitPerChannel = Math.max(10, Math.min(params.messageLimitPerChannel ?? 100, 200));
+
+  const channels = await client.queryChannels(
+    {
+      type: STREAM_CHANNEL_TYPE,
+      members: { $in: [vendorStreamUserId] },
+      id: { $in: channelIds },
+    } as any,
+    { last_message_at: -1 } as any,
+    {
+      state: false,
+      watch: false,
+      presence: false,
+      limit: channelLimit,
+    } as any
+  );
+
+  const responseMinutes: number[] = [];
+
+  for (const channel of channels.slice(0, channelLimit)) {
+    try {
+      const state = await channel.query({
+        messages: { limit: messageLimitPerChannel },
+        state: true,
+        watch: false,
+        presence: false,
+      } as any);
+
+      const rawMessages = Array.isArray((state as any)?.messages)
+        ? (state as any).messages
+        : Array.isArray((channel as any)?.state?.messages)
+          ? (channel as any).state.messages
+          : [];
+
+      const orderedMessages = rawMessages
+        .map((message: any) => {
+          const userId = String(message?.user?.id || "");
+          const createdAt = new Date(message?.created_at || message?.createdAt || 0);
+          return {
+            userId,
+            createdAt,
+          };
+        })
+        .filter((message: { userId: string; createdAt: Date }) => {
+          return message.userId.length > 0 && !Number.isNaN(message.createdAt.getTime());
+        })
+        .sort((a: { createdAt: Date }, b: { createdAt: Date }) => a.createdAt.getTime() - b.createdAt.getTime());
+
+      let pendingCustomerMessageAt: Date | null = null;
+
+      for (const message of orderedMessages) {
+        const isCustomer = message.userId.startsWith("customer_");
+        const isVendor = message.userId === vendorStreamUserId;
+
+        if (isCustomer) {
+          if (!pendingCustomerMessageAt) {
+            pendingCustomerMessageAt = message.createdAt;
+          }
+          continue;
+        }
+
+        if (!isVendor || !pendingCustomerMessageAt) continue;
+
+        const diffMinutes = (message.createdAt.getTime() - pendingCustomerMessageAt.getTime()) / (1000 * 60);
+        if (Number.isFinite(diffMinutes) && diffMinutes >= 0 && diffMinutes <= 60 * 24 * 14) {
+          responseMinutes.push(diffMinutes);
+        }
+        pendingCustomerMessageAt = null;
+      }
+    } catch {
+      // Keep aggregate resilient if one channel query fails.
+    }
+  }
+
+  if (responseMinutes.length === 0) return null;
+  const total = responseMinutes.reduce((sum, value) => sum + value, 0);
+  return Math.round(total / responseMinutes.length);
+}

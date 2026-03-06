@@ -29,8 +29,8 @@ import VendorPayments from "@/pages/VendorPayments";
 import VendorReviews from "@/pages/VendorReviews";
 import VendorNotifications from "@/pages/VendorNotifications";
 import VendorAccount from "@/pages/VendorAccount";
-import VendorShopPortal from "@/pages/VendorShopPortal";
-import VendorShopPublic from "@/pages/VendorShopPublic";
+import MyHub from "@/pages/myhub";
+import VendorHub from "@/pages/vendorhub";
 
 import AdminDashboard from "@/pages/AdminDashboard";
 import UIDemo from "@/pages/UIDemo";
@@ -54,7 +54,7 @@ function Router() {
         <Route path="/browse" component={BrowseVendors} />
         <Route path="/listing/:id" component={ListingDetail} />
         <Route path="/checkout/:listingId" component={Checkout} />
-        <Route path="/shop/:vendorId" component={VendorShopPublic} />
+        <Route path="/shop/:vendorId" component={VendorHub} />
         <Route path="/planner" component={EventPlanner} />
         <Route path="/recommendations/:eventId" component={CuratedRecommendations} />
 
@@ -72,7 +72,7 @@ function Router() {
         <Route path="/vendor/payments" component={VendorPayments} />
         <Route path="/vendor/reviews" component={VendorReviews} />
         <Route path="/vendor/notifications" component={VendorNotifications} />
-        <Route path="/vendor/shop" component={VendorShopPortal} />
+        <Route path="/vendor/shop" component={MyHub} />
         <Route path="/vendor/:id" component={VendorProfile} />
 
         {/* Admin */}

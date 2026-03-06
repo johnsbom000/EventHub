@@ -281,10 +281,10 @@ export default function ListingDetailPage() {
     };
   }, [galleryOpen]);
 
-  if (!listingId) return <div className="p-6">Missing listing id</div>;
-  if (isLoading) return <div className="p-6">Loading…</div>;
-  if (error) return <div className="p-6">Error loading listing</div>;
-  if (!data) return <div className="p-6">Listing not found</div>;
+  if (!listingId) return <div className="no-global-scale p-6">Missing listing id</div>;
+  if (isLoading) return <div className="no-global-scale p-6">Loading…</div>;
+  if (error) return <div className="no-global-scale p-6">Error loading listing</div>;
+  if (!data) return <div className="no-global-scale p-6">Listing not found</div>;
 
   const photos = Array.isArray(data.photos) ? data.photos : [];
   const hasPhotos = photos.length > 0;
@@ -309,7 +309,7 @@ export default function ListingDetailPage() {
   };
 
   return (
-    <div className="max-w-6xl mx-auto px-4 sm:px-6 lg:px-8 py-8">
+    <div className="no-global-scale max-w-6xl mx-auto px-4 sm:px-6 lg:px-8 py-8">
       {/* Back */}
       <button
         onClick={() => setLocation("/browse")}

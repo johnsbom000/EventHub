@@ -393,12 +393,14 @@ export default function VendorListings() {
     status,
     emptyMessage,
     isLoading,
+    showSectionDivider = false,
   }: {
     title: string;
     listings: AnyListing[];
     status: "active" | "inactive" | "draft";
     emptyMessage: string;
     isLoading?: boolean;
+    showSectionDivider?: boolean;
   }) => (
     <div className="mb-10" data-testid={`section-${status}`}>
       <div className="flex items-center justify-between mb-6">
@@ -424,6 +426,12 @@ export default function VendorListings() {
         <Card className="p-8 text-center">
           <p className="text-muted-foreground">{emptyMessage}</p>
         </Card>
+      )}
+
+      {showSectionDivider && listings.length > 0 && !isLoading && (
+        <div className="-mx-6 px-6 pt-1" aria-hidden>
+          <div className="h-px w-full bg-border/80" />
+        </div>
       )}
     </div>
   );
@@ -457,6 +465,7 @@ export default function VendorListings() {
             status="active"
             emptyMessage="No active listings. Publish a draft to make it active."
             isLoading={loadingActive}
+            showSectionDivider={true}
           />
 
           <ListingSection
@@ -465,6 +474,7 @@ export default function VendorListings() {
             status="inactive"
             emptyMessage="No inactive listings."
             isLoading={loadingInactive}
+            showSectionDivider={true}
           />
 
           <ListingSection

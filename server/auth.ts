@@ -6,7 +6,10 @@ import { db } from "./db";
 import { eq } from "drizzle-orm";
 import { users, vendorAccounts } from "@shared/schema";
 
-const JWT_SECRET = process.env.JWT_SECRET || "your-secret-key-change-in-production";
+const JWT_SECRET = (process.env.JWT_SECRET || "").trim();
+if (!JWT_SECRET) {
+  throw new Error("Missing JWT_SECRET environment variable");
+}
 const SALT_ROUNDS = 10;
 
 export interface JWTPayload {

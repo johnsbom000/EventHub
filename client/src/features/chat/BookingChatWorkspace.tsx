@@ -432,11 +432,11 @@ export function BookingChatWorkspace({ role }: { role: Role }) {
                     setSelectedEventKey(null);
                     setSelectedBookingId("");
                   }}
-                  className="mb-1 flex w-full items-center gap-2 rounded-lg border px-3 py-2 text-sm text-muted-foreground transition-colors hover:bg-muted/50"
+                  className="mb-1 flex w-full items-center gap-2 rounded-lg border border-[#4a6a7d] bg-[#4a6a7d] px-3 py-2 text-sm font-medium text-white transition-colors hover:bg-[#405b6c]"
                   data-testid="chat-events-back"
                 >
                   <ArrowLeft className="h-4 w-4" />
-                  Back to events
+                  Back
                 </button>
               ) : null}
               {role === "customer" && selectedEvent ? (

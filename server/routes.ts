@@ -16,7 +16,9 @@ import {
   bookings,
   events,
   paymentSchedules,
+  payments,
   rentalTypes,
+  stripeWebhookEvents,
 } from "@shared/schema";
 import {
   hashPassword,
@@ -31,7 +33,7 @@ import {
 import { requireAuth0 } from "./auth0"; // ✅ Auth0 middleware
 import { z } from "zod";
 import { db } from "./db";
-import { eq, and, sql as drizzleSql, count, sum, gte, lte, desc } from "drizzle-orm";
+import { eq, and, sql as drizzleSql, count, sum, gte, lte, desc, asc } from "drizzle-orm";
 import multer from "multer";
 import path from "path";
 import fs from "fs";
@@ -40,6 +42,7 @@ import {
   computeChatRetentionExpiry,
   deleteStreamBookingChannel,
   ensureStreamBookingChannel,
+  getAverageVendorResponseMinutesForBookings,
   getStreamUnreadCountsForBookings,
   getStreamApiKey,
   isChatExpiredForEventDate,
@@ -170,6 +173,68 @@ const CHAT_POLICY_WARNING =
   "For your safety, do not share personal contact info, payment card details, or sensitive personal data in chat.";
 let moderationTableReadyPromise: Promise<void> | null = null;
 let bookingsVendorRefColumnCache: "vendor_account_id" | "vendor_id" | "none" | null = null;
+let stripeWebhookTableReadyPromise: Promise<void> | null = null;
+const IP_RATE_WINDOW_MS = 60 * 1000;
+
+type IpRateState = {
+  count: number;
+  resetAt: number;
+};
+
+function getRequestIp(req: any): string {
+  const forwarded = req.headers["x-forwarded-for"];
+  if (typeof forwarded === "string" && forwarded.trim().length > 0) {
+    return forwarded.split(",")[0]!.trim();
+  }
+  return (req.ip || req.socket?.remoteAddress || "unknown").toString();
+}
+
+function createIpRateLimiter(options: { label: string; maxPerMinute: number }) {
+  const state = new Map<string, IpRateState>();
+  const maxPerMinute = Math.max(1, Math.min(options.maxPerMinute, 100));
+
+  return (req: any, res: any, next: any) => {
+    const now = Date.now();
+    const ip = getRequestIp(req);
+    const key = `${options.label}:${ip}`;
+    const current = state.get(key);
+
+    if (!current || current.resetAt <= now) {
+      state.set(key, { count: 1, resetAt: now + IP_RATE_WINDOW_MS });
+      return next();
+    }
+
+    if (current.count >= maxPerMinute) {
+      const retryAfterSeconds = Math.max(1, Math.ceil((current.resetAt - now) / 1000));
+      res.setHeader("Retry-After", String(retryAfterSeconds));
+      return res.status(429).json({ error: "Too many requests. Please try again shortly." });
+    }
+
+    current.count += 1;
+    state.set(key, current);
+    return next();
+  };
+}
+
+const authRateLimiter = createIpRateLimiter({
+  label: "auth",
+  maxPerMinute: 40,
+});
+
+const paymentRateLimiter = createIpRateLimiter({
+  label: "payments",
+  maxPerMinute: 20,
+});
+
+const uploadRateLimiter = createIpRateLimiter({
+  label: "uploads",
+  maxPerMinute: 30,
+});
+
+function logRouteError(route: string, error: unknown) {
+  const message = error instanceof Error ? error.message : String(error);
+  console.error(`${route} failed:`, message);
+}
 
 function extractRows<T = any>(result: any): T[] {
   if (Array.isArray(result)) return result as T[];
@@ -415,6 +480,32 @@ async function ensureModerationTable() {
   }
 
   await moderationTableReadyPromise;
+}
+
+async function ensureStripeWebhookTable() {
+  if (!stripeWebhookTableReadyPromise) {
+    stripeWebhookTableReadyPromise = (async () => {
+      await db.execute(drizzleSql`
+        create table if not exists stripe_webhook_events (
+          id varchar primary key default gen_random_uuid(),
+          event_id text not null unique,
+          event_type text not null,
+          livemode boolean not null default false,
+          payload jsonb not null default '{}'::jsonb,
+          processed_at timestamptz not null default now()
+        )
+      `);
+      await db.execute(drizzleSql`
+        create index if not exists idx_stripe_webhook_events_processed_at
+        on stripe_webhook_events (processed_at desc)
+      `);
+    })().catch((error) => {
+      stripeWebhookTableReadyPromise = null;
+      throw error;
+    });
+  }
+
+  await stripeWebhookTableReadyPromise;
 }
 
 async function getBookingChatContextById(bookingId: string): Promise<BookingChatContext | null> {
@@ -1201,6 +1292,57 @@ async function resolveCustomerAuthFromRequest(
   };
 }
 
+function detectUploadedImageFormat(buffer: Buffer): "jpg" | "png" | "webp" | null {
+  if (!buffer || buffer.length < 12) return null;
+
+  // JPEG: FF D8 FF
+  if (buffer[0] === 0xff && buffer[1] === 0xd8 && buffer[2] === 0xff) {
+    return "jpg";
+  }
+
+  // PNG: 89 50 4E 47 0D 0A 1A 0A
+  if (
+    buffer[0] === 0x89 &&
+    buffer[1] === 0x50 &&
+    buffer[2] === 0x4e &&
+    buffer[3] === 0x47 &&
+    buffer[4] === 0x0d &&
+    buffer[5] === 0x0a &&
+    buffer[6] === 0x1a &&
+    buffer[7] === 0x0a
+  ) {
+    return "png";
+  }
+
+  // WEBP: RIFF....WEBP
+  if (
+    buffer[0] === 0x52 &&
+    buffer[1] === 0x49 &&
+    buffer[2] === 0x46 &&
+    buffer[3] === 0x46 &&
+    buffer[8] === 0x57 &&
+    buffer[9] === 0x45 &&
+    buffer[10] === 0x42 &&
+    buffer[11] === 0x50
+  ) {
+    return "webp";
+  }
+
+  return null;
+}
+
+async function persistUploadedImage(buffer: Buffer, dir: string): Promise<{ filename: string; format: "jpg" | "png" | "webp" }> {
+  const format = detectUploadedImageFormat(buffer);
+  if (!format) {
+    throw new Error("Unsupported file content. Upload JPG, PNG, or WebP.");
+  }
+
+  const filename = `${Date.now()}-${crypto.randomUUID()}.${format}`;
+  const destination = path.join(dir, filename);
+  await fs.promises.writeFile(destination, buffer);
+  return { filename, format };
+}
+
 export async function registerRoutes(app: Express): Promise<Server> {
   // --- Listing photo uploads (local disk) ---
   const listingUploadsDir = path.join(process.cwd(), "server/uploads/listings");
@@ -1233,15 +1375,7 @@ export async function registerRoutes(app: Express): Promise<Server> {
   }
 
   const listingUpload = multer({
-    storage: multer.diskStorage({
-      destination: (_req, _file, cb) => cb(null, listingUploadsDir),
-      filename: (_req, file, cb) => {
-        const ext = path.extname(file.originalname || "").toLowerCase();
-        const safeExt = ext && ext.length <= 8 ? ext : ".jpg";
-        const base = `${Date.now()}-${Math.random().toString(16).slice(2)}`;
-        cb(null, `${base}${safeExt}`);
-      },
-    }),
+    storage: multer.memoryStorage(),
     limits: { fileSize: 10 * 1024 * 1024 }, // 10MB
     fileFilter: (_req, file, cb) => {
       const ok = ["image/jpeg", "image/png", "image/webp"].includes(file.mimetype);
@@ -1254,32 +1388,32 @@ export async function registerRoutes(app: Express): Promise<Server> {
   // Upload one listing photo. Returns a public URL under /uploads/...
 app.post(
   "/api/uploads/listing-photo",
-  requireDualAuthAuth0,
+  uploadRateLimiter,
+  ...requireVendorAuth0,
   listingUpload.single("photo"),
   async (req: any, res) => {
-    console.log(">>> HIT /api/uploads/listing-photo", req.method, req.path);
     // multer rejected the file OR no file was provided
-    if (!req.file) {
+    const fileBuffer = req?.file?.buffer as Buffer | undefined;
+    if (!fileBuffer) {
       return res.status(400).json({ error: "Only JPG, PNG, or WebP allowed (max 10MB)." });
     }
 
+    let persisted;
+    try {
+      persisted = await persistUploadedImage(fileBuffer, listingUploadsDir);
+    } catch (error: any) {
+      return res.status(400).json({ error: error?.message || "Invalid upload" });
+    }
+
     return res.json({
-      url: `/uploads/listings/${req.file.filename}`,
-      filename: req.file.filename,
+      url: `/uploads/listings/${persisted.filename}`,
+      filename: persisted.filename,
     });
   }
 );
 
   const vendorShopUpload = multer({
-    storage: multer.diskStorage({
-      destination: (_req, _file, cb) => cb(null, vendorShopUploadsDir),
-      filename: (_req, file, cb) => {
-        const ext = path.extname(file.originalname || "").toLowerCase();
-        const safeExt = ext && ext.length <= 8 ? ext : ".jpg";
-        const base = `${Date.now()}-${Math.random().toString(16).slice(2)}`;
-        cb(null, `${base}${safeExt}`);
-      },
-    }),
+    storage: multer.memoryStorage(),
     limits: { fileSize: 10 * 1024 * 1024 },
     fileFilter: (_req, file, cb) => {
       const ok = ["image/jpeg", "image/png", "image/webp"].includes(file.mimetype);
@@ -1290,16 +1424,25 @@ app.post(
 
   app.post(
     "/api/uploads/vendor-shop-photo",
+    uploadRateLimiter,
     ...requireVendorAuth0,
     vendorShopUpload.single("photo"),
     async (req: any, res) => {
-      if (!req.file) {
+      const fileBuffer = req?.file?.buffer as Buffer | undefined;
+      if (!fileBuffer) {
         return res.status(400).json({ error: "Only JPG, PNG, or WebP allowed (max 10MB)." });
       }
 
+      let persisted;
+      try {
+        persisted = await persistUploadedImage(fileBuffer, vendorShopUploadsDir);
+      } catch (error: any) {
+        return res.status(400).json({ error: error?.message || "Invalid upload" });
+      }
+
       return res.json({
-        url: `/uploads/vendor-shops/${req.file.filename}`,
-        filename: req.file.filename,
+        url: `/uploads/vendor-shops/${persisted.filename}`,
+        filename: persisted.filename,
       });
     }
   );
@@ -1311,10 +1454,9 @@ app.post(
       if (!q || q.length < 2) return res.json([]);
 
       const token = process.env.MAPBOX_ACCESS_TOKEN;
-      console.log("MAPBOX_ACCESS_TOKEN exists:", Boolean(token));
-
       if (!token) {
-        return res.status(500).json({ error: "Mapbox token not configured" });
+        logRouteError("/api/locations/search", new Error("MAPBOX_ACCESS_TOKEN missing"));
+        return res.status(500).json({ error: "Location search is unavailable" });
       }
 
       const url =
@@ -1323,14 +1465,10 @@ app.post(
         `?autocomplete=true&limit=5&access_token=${token}`;
 
       const response = await fetch(url);
-      const text = await response.text();
-
       if (!response.ok) {
-        // Mapbox returns a helpful JSON message here; include it
-        throw new Error(`Mapbox error: ${response.status} - ${text}`);
+        throw new Error(`Mapbox responded with status ${response.status}`);
       }
-
-      const data = JSON.parse(text);
+      const data = await response.json();
 
       const results = (data.features || []).map((f: any) => ({
         id: f.id,
@@ -1341,9 +1479,8 @@ app.post(
 
       return res.json(results);
     } catch (err: any) {
-      return res.status(500).json({
-        error: err?.message || "Location search failed",
-      });
+      logRouteError("/api/locations/search", err);
+      return res.status(500).json({ error: "Location search failed" });
     }
   });
 
@@ -1358,6 +1495,7 @@ app.post(
     email: z.string().email(),
     password: z.string(),
   });
+  const AUTH_FAILURE_MESSAGE = "Invalid email or password";
 
   // Update current vendor account (protected route)
   const updateVendorMeSchema = z.object({
@@ -1441,14 +1579,14 @@ app.post(
   });
 
   // Legacy vendor signup/login (kept; not used for Auth0-only vendors)
-  app.post("/api/vendor/signup", async (req, res) => {
+  app.post("/api/vendor/signup", authRateLimiter, async (req, res) => {
     try {
       const { email, password, businessName } = vendorSignupSchema.parse(req.body);
 
       // Check if vendor account already exists (check database)
       const existing = await db.select().from(vendorAccounts).where(eq(vendorAccounts.email, email));
       if (existing.length > 0) {
-        return res.status(400).json({ error: "Email already registered" });
+        return res.status(400).json({ error: "Unable to create account" });
       }
 
       // Hash password
@@ -1484,25 +1622,25 @@ app.post(
         },
       });
     } catch (error: any) {
-      res.status(400).json({ error: error.message });
+      res.status(400).json({ error: "Unable to create account" });
     }
   });
 
-  app.post("/api/vendor/login", async (req, res) => {
+  app.post("/api/vendor/login", authRateLimiter, async (req, res) => {
     try {
       const { email, password } = vendorLoginSchema.parse(req.body);
 
       // Find vendor account (from database)
       const accounts = await db.select().from(vendorAccounts).where(eq(vendorAccounts.email, email));
       if (accounts.length === 0) {
-        return res.status(401).json({ error: "Invalid credentials" });
+        return res.status(401).json({ error: AUTH_FAILURE_MESSAGE });
       }
       const account = accounts[0];
 
       // Verify password
       const valid = await comparePassword(password, account.password);
       if (!valid) {
-        return res.status(401).json({ error: "Invalid credentials" });
+        return res.status(401).json({ error: AUTH_FAILURE_MESSAGE });
       }
 
       // Generate JWT token
@@ -1522,7 +1660,7 @@ app.post(
         },
       });
     } catch (error: any) {
-      res.status(400).json({ error: error.message });
+      res.status(401).json({ error: AUTH_FAILURE_MESSAGE });
     }
   });
 
@@ -1530,7 +1668,6 @@ app.post(
    * GET /api/vendor/me ✅ Auth0-only
    */
   app.get("/api/vendor/me", ...requireVendorAuth0, async (req, res) => {
-    console.log("HIT /api/vendor/me");
     res.setHeader("Cache-Control", "no-store");
     res.setHeader("Pragma", "no-cache");
     res.setHeader("Expires", "0");
@@ -1570,7 +1707,8 @@ app.post(
         __marker: "vendor_me_route_hit",
       });
     } catch (error: any) {
-      res.status(500).json({ error: error.message });
+      logRouteError("/api/vendor/me", error);
+      res.status(500).json({ error: "Unable to load vendor account" });
     }
   });
 
@@ -1586,27 +1724,20 @@ app.post(
     password: z.string(),
   });
 
-  app.post("/api/customer/signup", async (req, res) => {
+  app.post("/api/customer/signup", authRateLimiter, async (req, res) => {
     try {
       const { name, email, password } = customerSignupSchema.parse(req.body);
 
       // Check if customer already exists
       const existing = await db.select().from(users).where(eq(users.email, email));
       if (existing.length > 0) {
-        // Smart error handling: instead of hard error, tell frontend to switch to login
         return res.status(400).json({
-          emailExists: true,
-          email,
-          message: "You already have an account with this email. Please log in instead.",
+          error: "Unable to create account",
         });
       }
 
       // Hash password
       const hashedPassword = await hashPassword(password);
-
-      // Auto-assign admin role if email matches ADMIN_EMAIL
-      const adminEmail = process.env.ADMIN_EMAIL;
-      const role = adminEmail && email.toLowerCase() === adminEmail.toLowerCase() ? "admin" : "customer";
 
       // Create customer account with role and lastLoginAt
       const [user] = await db
@@ -1615,7 +1746,7 @@ app.post(
           name,
           email,
           password: hashedPassword,
-          role,
+          role: "customer",
           displayName: name,
           lastLoginAt: new Date(),
         })
@@ -1639,30 +1770,25 @@ app.post(
         },
       });
     } catch (error: any) {
-      res.status(400).json({ error: error.message });
+      res.status(400).json({ error: "Unable to create account" });
     }
   });
 
-  app.post("/api/customer/login", async (req, res) => {
+  app.post("/api/customer/login", authRateLimiter, async (req, res) => {
     try {
       const { email, password } = customerLoginSchema.parse(req.body);
 
       // Find customer account
       const userAccounts = await db.select().from(users).where(eq(users.email, email));
       if (userAccounts.length === 0) {
-        // Smart error handling: tell frontend to offer creating account
-        return res.status(404).json({
-          userNotFound: true,
-          email,
-          message: "We couldn't find an account with this email. Would you like to create one?",
-        });
+        return res.status(401).json({ error: AUTH_FAILURE_MESSAGE });
       }
       const user = userAccounts[0];
 
       // Verify password
       const valid = await comparePassword(password, user.password);
       if (!valid) {
-        return res.status(401).json({ error: "Invalid password" });
+        return res.status(401).json({ error: AUTH_FAILURE_MESSAGE });
       }
 
       // Update last login timestamp
@@ -1686,7 +1812,7 @@ app.post(
         },
       });
     } catch (error: any) {
-      res.status(400).json({ error: error.message });
+      res.status(401).json({ error: AUTH_FAILURE_MESSAGE });
     }
   });
 
@@ -1759,7 +1885,8 @@ app.post(
         createdAt: user.createdAt,
       });
     } catch (error: any) {
-      res.status(500).json({ error: error.message });
+      logRouteError("/api/customer/me", error);
+      res.status(500).json({ error: "Unable to load account" });
     }
   });
 
@@ -1852,59 +1979,33 @@ app.post(
     password: z.string(),
   });
 
-  app.post("/api/auth/login", async (req, res) => {
+  app.post("/api/auth/login", authRateLimiter, async (req, res) => {
     try {
       const { email, password } = unifiedLoginSchema.parse(req.body);
-
-      // SPECIAL CASE: Check if this is the admin email first
-      const adminEmail = process.env.ADMIN_EMAIL;
-      const isAdminEmail = adminEmail && email.toLowerCase() === adminEmail.toLowerCase();
-
-      if (isAdminEmail) {
-        // For admin email, ONLY check customer accounts (users table)
-        const customerAccounts = await db.select().from(users).where(eq(users.email, email));
-        if (customerAccounts.length > 0) {
-          const user = customerAccounts[0];
-
-          // Verify password
-          const valid = await comparePassword(password, user.password);
-          if (!valid) {
-            return res.status(401).json({ error: "Invalid password" });
-          }
-
-          // Ensure admin role is set
-          await db
-            .update(users)
-            .set({
-              lastLoginAt: new Date(),
-              role: "admin",
-            })
-            .where(eq(users.id, user.id));
-
-          // Generate admin JWT token
-          const token = generateToken({
-            id: user.id,
-            email: user.email,
-            type: "admin",
-          });
-
-          return res.json({
-            token,
-            user: {
-              id: user.id,
-              name: user.name,
-              email: user.email,
-              role: "admin",
-            },
-          });
-        } else {
-          // Admin email but no customer account exists
-          return res.status(404).json({
-            userNotFound: true,
-            email,
-            message: "Admin account not found. Please sign up first.",
-          });
+      const customerAccounts = await db.select().from(users).where(eq(users.email, email));
+      const adminUser = customerAccounts.find((row) => row.role === "admin");
+      if (adminUser) {
+        const valid = await comparePassword(password, adminUser.password);
+        if (!valid) {
+          return res.status(401).json({ error: AUTH_FAILURE_MESSAGE });
         }
+
+        await db.update(users).set({ lastLoginAt: new Date() }).where(eq(users.id, adminUser.id));
+        const token = generateToken({
+          id: adminUser.id,
+          email: adminUser.email,
+          type: "admin",
+        });
+
+        return res.json({
+          token,
+          user: {
+            id: adminUser.id,
+            name: adminUser.name,
+            email: adminUser.email,
+            role: adminUser.role,
+          },
+        });
       }
 
       // For non-admin emails, check vendor accounts FIRST (legacy)
@@ -1915,7 +2016,7 @@ app.post(
         // Verify password
         const valid = await comparePassword(password, account.password);
         if (!valid) {
-          return res.status(401).json({ error: "Invalid password" });
+          return res.status(401).json({ error: AUTH_FAILURE_MESSAGE });
         }
 
         // Generate vendor JWT token
@@ -1939,14 +2040,13 @@ app.post(
       }
 
       // Second, check customer accounts (users table)
-      const customerAccounts = await db.select().from(users).where(eq(users.email, email));
       if (customerAccounts.length > 0) {
         const user = customerAccounts[0];
 
         // Verify password
         const valid = await comparePassword(password, user.password);
         if (!valid) {
-          return res.status(401).json({ error: "Invalid password" });
+          return res.status(401).json({ error: AUTH_FAILURE_MESSAGE });
         }
 
         // Update last login timestamp
@@ -1971,13 +2071,9 @@ app.post(
       }
 
       // No account found in either table
-      return res.status(404).json({
-        userNotFound: true,
-        email,
-        message: "We couldn't find an account with this email. Would you like to create one?",
-      });
+      return res.status(401).json({ error: AUTH_FAILURE_MESSAGE });
     } catch (error: any) {
-      res.status(400).json({ error: error.message });
+      res.status(401).json({ error: AUTH_FAILURE_MESSAGE });
     }
   });
 
@@ -2421,9 +2517,6 @@ app.post(
 
       const listingData = req.body?.listingData;
 
-      console.log("POST /api/vendor/listings body keys:", Object.keys(req.body ?? {}));
-      console.log("POST /api/vendor/listings req.body.status:", (req.body as any)?.status);
-
       if (!listingData || typeof listingData !== "object") {
         return res.status(400).json({ error: "listingData must be a JSON object." });
       }
@@ -2473,18 +2566,15 @@ app.post(
           })
           .returning();
 
-        console.log("CREATED listing id=", listing.id, "status=", listing.status);
-
       return res.status(201).json(listing);
     } catch (error: any) {
-      console.error("POST /api/vendor/listings failed:", error);
-      return res.status(500).json({ error: error?.message ?? "Unknown error" });
+      logRouteError("/api/vendor/listings", error);
+      return res.status(500).json({ error: "Unable to create listing" });
     }
   });
 
   app.patch("/api/vendor/listings/:id", requireDualAuthAuth0, async (req, res) => {
     try {
-      console.log("PATCH ROUTE MARKER v2", new Date().toISOString());
       const vendorAuth = (req as any).vendorAuth;
 
       if (!vendorAuth) {
@@ -2492,7 +2582,6 @@ app.post(
       }
       const { id } = req.params;
       const { listingData, status, title } = req.body;
-      console.log("PATCH /api/vendor/listings/:id req.body.status:", status);
 
       const existingListings = await db
         .select()
@@ -2502,7 +2591,6 @@ app.post(
       if (existingListings.length === 0) {
         return res.status(404).json({ error: "Listing not found" });
       }
-      console.log("PATCH listing status BEFORE:", existingListings[0]?.status, "id=", id);
 
       const profiles = await db.select().from(vendorProfiles).where(eq(vendorProfiles.accountId, vendorAuth.id));
 
@@ -2532,24 +2620,16 @@ app.post(
         .set(updatePayload)
         .where(and(eq(vendorListings.id, id), eq(vendorListings.accountId, vendorAuth.id)))
         .returning();
-      
-      console.log("PATCH listing status AFTER:", updated?.status, "id=", id);
 
       return res.json(updated);
     } catch (error: any) {
-      console.error("PATCH /api/vendor/listings/:id failed:", error);
-      return res.status(500).json({
-        error: error?.message ?? "Unknown error",
-        stack: error?.stack,
-      });
+      logRouteError("/api/vendor/listings/:id", error);
+      return res.status(500).json({ error: "Unable to update listing" });
     }
   });
 
   app.patch("/api/vendor/listings/:id/publish", requireDualAuthAuth0, async (req, res) => {
     try {
-
-      console.log("PUBLISH called id=", req.params.id);
-
       const vendorAuth = (req as any).vendorAuth;
 
       if (!vendorAuth) {
@@ -2662,8 +2742,8 @@ app.post(
 
       return res.json(updated);
     } catch (error: any) {
-      console.error("PATCH /api/vendor/listings/:id/publish failed:", error);
-      return res.status(500).json({ error: error?.message ?? "Unknown error" });
+      logRouteError("/api/vendor/listings/:id/publish", error);
+      return res.status(500).json({ error: "Unable to publish listing" });
     }
   });
 
@@ -2697,8 +2777,8 @@ app.post(
 
       return res.json(updated);
     } catch (error: any) {
-      console.error("PATCH /api/vendor/listings/:id/unpublish failed:", error);
-      return res.status(500).json({ error: error?.message ?? "Unknown error" });
+      logRouteError("/api/vendor/listings/:id/unpublish", error);
+      return res.status(500).json({ error: "Unable to unpublish listing" });
     }
   });
 
@@ -2710,6 +2790,87 @@ app.post(
 
     return res.json(rows);
   });
+
+  function toNonNegativeInt(value: unknown, fallback = 0) {
+    const parsed = Number(value);
+    if (!Number.isFinite(parsed)) return fallback;
+    return Math.max(0, Math.floor(parsed));
+  }
+
+  function normalizeSpecialties(value: unknown): string[] {
+    if (Array.isArray(value)) {
+      return Array.from(
+        new Set(
+          value
+            .map((item) => (typeof item === "string" ? item.trim() : ""))
+            .filter((item) => item.length > 0)
+            .slice(0, 24)
+        )
+      );
+    }
+
+    if (typeof value === "string") {
+      return Array.from(
+        new Set(
+          value
+            .split(",")
+            .map((item) => item.trim())
+            .filter((item) => item.length > 0)
+            .slice(0, 24)
+        )
+      );
+    }
+
+    return [];
+  }
+
+  function normalizePhotoPosition(value: unknown): { x: number; y: number } | null {
+    if (!value || typeof value !== "object" || Array.isArray(value)) return null;
+    const rawX = Number((value as { x?: unknown }).x);
+    const rawY = Number((value as { y?: unknown }).y);
+    if (!Number.isFinite(rawX) || !Number.isFinite(rawY)) return null;
+    return {
+      x: Math.max(-1, Math.min(1, rawX)),
+      y: Math.max(-1, Math.min(1, rawY)),
+    };
+  }
+
+  async function getCompletedBookingsCountForVendor(vendorId: string): Promise<number> {
+    const vendorRefCol = await getBookingsVendorRefColumn();
+
+    if (vendorRefCol === "vendor_account_id") {
+      const result: any = await db.execute(drizzleSql`
+        select count(*)::int as "count"
+        from bookings b
+        where b.vendor_account_id = ${vendorId}
+          and lower(coalesce(b.status::text, '')) = 'completed'
+      `);
+      const row = extractRows<{ count?: number | string | null }>(result)[0];
+      return toNonNegativeInt(row?.count, 0);
+    }
+
+    if (vendorRefCol === "vendor_id") {
+      const result: any = await db.execute(drizzleSql`
+        select count(*)::int as "count"
+        from bookings b
+        where b.vendor_id = ${vendorId}
+          and lower(coalesce(b.status::text, '')) = 'completed'
+      `);
+      const row = extractRows<{ count?: number | string | null }>(result)[0];
+      return toNonNegativeInt(row?.count, 0);
+    }
+
+    const result: any = await db.execute(drizzleSql`
+      select count(distinct b.id)::int as "count"
+      from bookings b
+      inner join booking_items bi on bi.booking_id = b.id
+      inner join vendor_listings vl on vl.id = bi.listing_id
+      where vl.account_id = ${vendorId}
+        and lower(coalesce(b.status::text, '')) = 'completed'
+    `);
+    const row = extractRows<{ count?: number | string | null }>(result)[0];
+    return toNonNegativeInt(row?.count, 0);
+  }
 
   // Public vendor shop (guest browsing)
   // Returns one vendor's public shop details + active listings. No auth.
@@ -2749,11 +2910,18 @@ app.post(
         asTrimmedString((onlineProfiles as any).aboutBusiness) || asTrimmedString(vendor.serviceDescription);
       const aboutOwner = asTrimmedString((onlineProfiles as any).aboutOwner);
       const profileImageUrl = asTrimmedString((onlineProfiles as any).shopProfileImageUrl);
+      const coverImageUrl = asTrimmedString((onlineProfiles as any).shopCoverImageUrl);
+      const coverImagePosition = normalizePhotoPosition((onlineProfiles as any).shopCoverImagePosition);
+      const tagline = asTrimmedString((onlineProfiles as any).shopTagline);
+      const serviceArea = asTrimmedString((onlineProfiles as any).serviceAreaLabel);
+      const inBusinessSinceYear = asTrimmedString((onlineProfiles as any).inBusinessSinceYear);
       const yearsInBusiness = asTrimmedString((onlineProfiles as any).yearsInBusiness);
       const hobbies = asTrimmedString((onlineProfiles as any).hobbies);
       const likesDislikes = asTrimmedString((onlineProfiles as any).likesDislikes);
       const homeState = asTrimmedString((onlineProfiles as any).homeState);
       const funFacts = asTrimmedString((onlineProfiles as any).funFacts);
+      const specialties = normalizeSpecialties((onlineProfiles as any).specialties);
+      const eventsServedBaseline = toNonNegativeInt((onlineProfiles as any).eventsServedBaseline, 0);
 
       const listings = await db
         .select({
@@ -2768,7 +2936,8 @@ app.post(
         .from(vendorListings)
         .innerJoin(vendorAccounts, eq(vendorListings.accountId, vendorAccounts.id))
         .leftJoin(vendorProfiles, eq(vendorListings.profileId, vendorProfiles.id))
-        .where(and(eq(vendorListings.accountId, vendorId), eq(vendorListings.status, "active")));
+        .where(and(eq(vendorListings.accountId, vendorId), eq(vendorListings.status, "active")))
+        .orderBy(asc(vendorListings.createdAt), asc(vendorListings.id));
 
       const pricedListings = listings.filter((listing) => hasValidListingPrice((listing as any)?.listingData));
 
@@ -2777,6 +2946,90 @@ app.post(
         vendorProfileImageUrl: profileImageUrl || null,
       }));
 
+      const reviewRowsResult: any = await db.execute(drizzleSql`
+        select
+          lr.id,
+          lr.rating,
+          lr.title,
+          lr.body,
+          lr.created_at as "createdAt",
+          coalesce(nullif(u.display_name, ''), nullif(u.name, ''), 'Customer') as "authorName",
+          coalesce(nullif(vl.title, ''), 'Event') as "eventLabel"
+        from listing_reviews lr
+        inner join vendor_listings vl on vl.id = lr.listing_id
+        left join users u on u.id = lr.user_id
+        where vl.account_id = ${vendorId}
+          and coalesce(lr.is_published, true) = true
+        order by lr.created_at desc
+        limit 200
+      `);
+
+      const reviewRows = extractRows<{
+        id?: string | null;
+        rating?: number | string | null;
+        title?: string | null;
+        body?: string | null;
+        createdAt?: string | Date | null;
+        authorName?: string | null;
+        eventLabel?: string | null;
+      }>(reviewRowsResult);
+
+      const reviews = reviewRows
+        .map((row) => ({
+          id: String(row.id || "").trim(),
+          rating: Number(row.rating || 0),
+          title: typeof row.title === "string" ? row.title : null,
+          body: typeof row.body === "string" ? row.body : "",
+          createdAt: row.createdAt ?? null,
+          authorName:
+            typeof row.authorName === "string" && row.authorName.trim().length > 0
+              ? row.authorName.trim()
+              : "Customer",
+          eventLabel:
+            typeof row.eventLabel === "string" && row.eventLabel.trim().length > 0
+              ? row.eventLabel.trim()
+              : "Event",
+        }))
+        .filter((row) => row.id.length > 0 && Number.isFinite(row.rating) && row.rating > 0);
+
+      const reviewCount = reviews.length;
+      const rating = reviewCount > 0
+        ? reviews.reduce((sum, review) => sum + review.rating, 0) / reviewCount
+        : 0;
+
+      const reviewBreakdown = {
+        5: 0,
+        4: 0,
+        3: 0,
+        2: 0,
+        1: 0,
+      } as Record<1 | 2 | 3 | 4 | 5, number>;
+
+      for (const review of reviews) {
+        const star = Math.max(1, Math.min(5, Math.round(review.rating))) as 1 | 2 | 3 | 4 | 5;
+        reviewBreakdown[star] += 1;
+      }
+
+      const completedBookingsCount = await getCompletedBookingsCountForVendor(vendorId);
+      const eventsServedTotal = eventsServedBaseline + completedBookingsCount;
+
+      const chatContexts = await listVendorBookingChatContexts(vendorId);
+      const chatBookingIds = chatContexts
+        .map((row) => row.bookingId)
+        .filter((id) => id.length > 0);
+      let avgResponseMinutes: number | null = null;
+      try {
+        avgResponseMinutes = await getAverageVendorResponseMinutesForBookings({
+          vendorAccountId: vendorId,
+          bookingIds: chatBookingIds,
+          channelLimit: 40,
+          messageLimitPerChannel: 120,
+        });
+      } catch (error) {
+        console.warn("avg response time compute failed:", error);
+        avgResponseMinutes = null;
+      }
+
       return res.json({
         vendor: {
           id: vendor.id,
@@ -2784,21 +3037,34 @@ app.post(
           aboutBusiness: aboutBusiness || null,
           aboutOwner: aboutOwner || null,
           profileImageUrl: profileImageUrl || null,
+          coverImageUrl: coverImageUrl || null,
+          coverImagePosition,
+          tagline: tagline || null,
+          serviceArea: serviceArea || null,
+          inBusinessSinceYear: inBusinessSinceYear || null,
           yearsInBusiness: yearsInBusiness || null,
           hobbies: hobbies || null,
           likesDislikes: likesDislikes || null,
           homeState: homeState || null,
           funFacts: funFacts || null,
+          specialties,
+          eventsServedBaseline,
+          completedBookingsCount,
+          eventsServedTotal,
+          avgResponseMinutes: Number.isFinite(avgResponseMinutes as number) ? avgResponseMinutes : null,
+          activeListingsCount: listingsWithVendorMeta.length,
+          rating,
+          reviewCount,
+          reviewBreakdown,
+          reviews: reviews.slice(0, 60),
           city: vendor.city,
           serviceType: vendor.serviceType,
         },
         listings: listingsWithVendorMeta,
       });
     } catch (error: any) {
-      console.error("GET /api/vendors/public/:vendorId/shop failed:", error);
-      return res.status(500).json({
-        error: error?.message ?? "Unknown error",
-      });
+      logRouteError("/api/vendors/public/:vendorId/shop", error);
+      return res.status(500).json({ error: "Unable to load vendor storefront" });
     }
   });
 
@@ -2841,11 +3107,8 @@ app.post(
       });
       return res.json(listingsWithVendorMeta);
     } catch (error: any) {
-      console.error("GET /api/listings/public failed:", error);
-      return res.status(500).json({
-        error: error?.message ?? "Unknown error",
-        stack: error?.stack,
-      });
+      logRouteError("/api/listings/public", error);
+      return res.status(500).json({ error: "Unable to load listings" });
     }
 
   });
@@ -2968,11 +3231,8 @@ app.post(
         reviews: publishedReviews,
       });
     } catch (error: any) {
-      console.error("GET /api/listings/public/:id failed:", error);
-      return res.status(500).json({
-        error: error?.message ?? "Unknown error",
-        stack: error?.stack,
-      });
+      logRouteError("/api/listings/public/:id", error);
+      return res.status(500).json({ error: "Unable to load listing" });
     }
   });
 
@@ -2998,20 +3258,16 @@ app.post(
         ? and(eq(vendorListings.accountId, vendorAuth.id), eq(vendorListings.status, normalizedStatus))
         : eq(vendorListings.accountId, vendorAuth.id);
 
-      const listings = await db.select().from(vendorListings).where(whereClause);
-
-      console.log(
-        "[GET /api/vendor/listings] accountId=",
-        vendorAuth.id,
-        "status=",
-        status,
-        "count=",
-        listings.length
-      );
+      const listings = await db
+        .select()
+        .from(vendorListings)
+        .where(whereClause)
+        .orderBy(asc(vendorListings.createdAt), asc(vendorListings.id));
 
       res.json(listings);
     } catch (error: any) {
-      res.status(500).json({ error: error.message });
+      logRouteError("/api/vendor/listings", error);
+      res.status(500).json({ error: "Unable to load listings" });
     }
   });
 
@@ -3035,7 +3291,8 @@ app.post(
 
       res.json(listings[0]);
     } catch (error: any) {
-      res.status(500).json({ error: error.message });
+      logRouteError("/api/vendor/listings/:id", error);
+      res.status(500).json({ error: "Unable to load listing" });
     }
   });
 
@@ -3063,7 +3320,8 @@ app.post(
 
       return res.status(204).send();
     } catch (error: any) {
-      return res.status(500).json({ error: error.message });
+      logRouteError("/api/vendor/listings/:id DELETE", error);
+      return res.status(500).json({ error: "Unable to delete listing" });
     }
   });
 
@@ -3415,6 +3673,10 @@ app.post(
       itemTitle?: string | null;
       customerNotes?: string | null;
       customerQuestions?: string | null;
+      listingDescription?: string | null;
+      includedItems?: string[];
+      deliveryIncluded?: boolean | null;
+      setupIncluded?: boolean | null;
     }>;
 
     return Promise.all(
@@ -3440,11 +3702,15 @@ app.post(
         }>(itemRes);
         const itemData = item?.itemData && typeof item.itemData === "object" ? item.itemData : {};
         const listingData = item?.listingData && typeof item.listingData === "object" ? item.listingData : {};
+        const listingSnapshot =
+          itemData?.listingSnapshot && typeof itemData.listingSnapshot === "object"
+            ? itemData.listingSnapshot
+            : {};
 
         const itemTitleFromItem = normalizeListingTitleCandidate(item?.title);
         const itemTitleFromItemData =
           normalizeListingTitleCandidate(itemData?.listingTitle) ??
-          normalizeListingTitleCandidate(itemData?.listingSnapshot?.title);
+          normalizeListingTitleCandidate(listingSnapshot?.title);
         const itemTitleFromListing =
           normalizeListingTitleCandidate(item?.listingTitle) ??
           normalizeListingTitleCandidate(listingData?.listingTitle);
@@ -3466,6 +3732,48 @@ app.post(
           typeof row.specialRequests === "string" && row.specialRequests.trim().length > 0
             ? row.specialRequests.trim()
             : null;
+        const descriptionFromSnapshot =
+          typeof listingSnapshot?.listingDescription === "string" && listingSnapshot.listingDescription.trim().length > 0
+            ? listingSnapshot.listingDescription.trim()
+            : null;
+        const descriptionFromListing =
+          typeof listingData?.listingDescription === "string" && listingData.listingDescription.trim().length > 0
+            ? listingData.listingDescription.trim()
+            : null;
+        const normalizedIncluded = Array.from(
+          new Set(
+            [
+              ...(Array.isArray(listingSnapshot?.included) ? listingSnapshot.included : []),
+              ...(Array.isArray(listingSnapshot?.includedItems) ? listingSnapshot.includedItems : []),
+              ...(Array.isArray(listingData?.included) ? listingData.included : []),
+              ...(Array.isArray(listingData?.includedItems) ? listingData.includedItems : []),
+            ]
+              .map((entry) => (typeof entry === "string" ? entry.trim() : ""))
+              .filter((entry) => entry.length > 0)
+          )
+        );
+        const logistics =
+          listingSnapshot?.deliverySetup && typeof listingSnapshot.deliverySetup === "object"
+            ? listingSnapshot.deliverySetup
+            : listingData?.deliverySetup && typeof listingData.deliverySetup === "object"
+              ? listingData.deliverySetup
+              : {};
+        const deliveryIncluded =
+          typeof logistics?.deliveryIncluded === "boolean"
+            ? logistics.deliveryIncluded
+            : typeof listingSnapshot?.deliveryIncluded === "boolean"
+              ? listingSnapshot.deliveryIncluded
+              : typeof listingData?.deliveryIncluded === "boolean"
+                ? listingData.deliveryIncluded
+                : null;
+        const setupIncluded =
+          typeof logistics?.setupIncluded === "boolean"
+            ? logistics.setupIncluded
+            : typeof listingSnapshot?.setupIncluded === "boolean"
+              ? listingSnapshot.setupIncluded
+              : typeof listingData?.setupIncluded === "boolean"
+                ? listingData.setupIncluded
+                : null;
 
         return {
           ...row,
@@ -3473,6 +3781,10 @@ app.post(
           customerEventTitle: customerEventTitleFromItem ?? row.eventTitle ?? null,
           customerNotes: notesFromItem ?? notesFallback,
           customerQuestions: questionsFromItem,
+          listingDescription: descriptionFromSnapshot ?? descriptionFromListing,
+          includedItems: normalizedIncluded,
+          deliveryIncluded,
+          setupIncluded,
         };
       })
     );
@@ -4283,7 +4595,8 @@ app.post(
 
       res.json(notifications);
     } catch (error: any) {
-      res.status(500).json({ error: error.message });
+      logRouteError("/api/vendor/notifications", error);
+      res.status(500).json({ error: "Unable to load notifications" });
     }
   });
 
@@ -4293,12 +4606,20 @@ app.post(
     async (req, res) => {
       try {
         const { id } = req.params;
+        const account = await getVendorAccountFromRequest(req);
+        if (!account?.id) {
+          return res.status(403).json({ error: "Vendor account required" });
+        }
 
-        await storage.markNotificationAsRead(id);
+        const updated = await storage.markNotificationAsRead(id, account.id, "vendor");
+        if (!updated) {
+          return res.status(404).json({ error: "Notification not found" });
+        }
 
         res.json({ success: true });
       } catch (error: any) {
-        res.status(500).json({ error: error.message });
+        logRouteError("/api/vendor/notifications/:id/read", error);
+        res.status(500).json({ error: "Unable to update notification" });
       }
     }
   );
@@ -4313,7 +4634,8 @@ app.post(
 
       res.json([]);
     } catch (error: any) {
-      res.status(500).json({ error: error.message });
+      logRouteError("/api/vendor/reviews", error);
+      res.status(500).json({ error: "Unable to load reviews" });
     }
   });
 
@@ -4321,7 +4643,8 @@ app.post(
     try {
       res.json({ success: true });
     } catch (error: any) {
-      res.status(500).json({ error: error.message });
+      logRouteError("/api/vendor/reviews/:id/reply", error);
+      res.status(500).json({ error: "Unable to submit review reply" });
     }
   });
 
@@ -4332,7 +4655,8 @@ app.post(
       const event = await storage.createEvent(validatedData);
       res.json(event);
     } catch (error: any) {
-      res.status(400).json({ error: error.message });
+      logRouteError("/api/events POST", error);
+      res.status(400).json({ error: "Invalid event payload" });
     }
   });
 
@@ -4341,7 +4665,8 @@ app.post(
       const events = await storage.getAllEvents();
       res.json(events);
     } catch (error: any) {
-      res.status(500).json({ error: error.message });
+      logRouteError("/api/events", error);
+      res.status(500).json({ error: "Unable to load events" });
     }
   });
 
@@ -4353,7 +4678,8 @@ app.post(
       }
       res.json(event);
     } catch (error: any) {
-      res.status(500).json({ error: error.message });
+      logRouteError("/api/events/:id", error);
+      res.status(500).json({ error: "Unable to load event" });
     }
   });
 
@@ -4379,7 +4705,8 @@ app.post(
 
       res.json(listings);
     } catch (error: any) {
-      res.status(500).json({ error: error.message });
+      logRouteError("/api/events/:eventId/recommendations", error);
+      res.status(500).json({ error: "Unable to load recommendations" });
     }
   });
 
@@ -4940,8 +5267,6 @@ app.post(
     specialRequests: z.string().optional(),
     customerNotes: z.string().max(2000).optional(),
     customerQuestions: z.string().max(2000).optional(),
-    totalAmount: z.number().int().positive(),
-    depositAmount: z.number().int().positive(),
     finalPaymentStrategy: z.enum(["immediately", "2_weeks_prior", "day_of_event"]),
   });
 
@@ -5237,9 +5562,9 @@ app.post(
           recipientId: vendorAccount.id,
           recipientType: "vendor",
           type: "new_booking",
-          title: "New booking request",
+          title: `New booking for ${itemTitle}`,
           message: `You received a new booking request for ${data.eventDate}.`,
-          link: "/vendor/bookings",
+          link: `/vendor/bookings?bookingId=${encodeURIComponent(booking.id)}`,
           read: false,
         }),
         storage.createNotification({
@@ -5327,131 +5652,414 @@ app.post(
 
       res.json(booking);
     } catch (error: any) {
-      res.status(400).json({ error: `[${stage}] ${error.message}` });
+      if (stage === "validate-payload") {
+        return res.status(400).json({ error: error?.message || "Invalid booking payload" });
+      }
+      return res.status(500).json({ error: "Failed to create booking" });
     }
   });
 
-  app.post("/api/bookings/:bookingId/payments/:scheduleId", async (req, res) => {
-    try {
-      const { bookingId, scheduleId } = req.params;
+  app.post(
+    "/api/bookings/:bookingId/payments/:scheduleId",
+    paymentRateLimiter,
+    requireCustomerAnyAuth,
+    async (req, res) => {
+      try {
+        const { bookingId, scheduleId } = req.params;
+        const customerAuth = await resolveCustomerAuthFromRequest(req, { createIfMissing: false });
+        if (!customerAuth?.id) {
+          return res.status(401).json({ error: "Customer authentication required" });
+        }
 
-      const booking = await storage.getBooking(bookingId);
-      if (!booking) {
-        return res.status(404).json({ error: "Booking not found" });
+        const [booking] = await db
+          .select({
+            id: bookings.id,
+            customerId: bookings.customerId,
+            vendorAccountId: bookings.vendorAccountId,
+          })
+          .from(bookings)
+          .where(eq(bookings.id, bookingId))
+          .limit(1);
+
+        if (!booking) {
+          return res.status(404).json({ error: "Booking not found" });
+        }
+        if (!booking.customerId || booking.customerId !== customerAuth.id) {
+          return res.status(403).json({ error: "You do not have access to this booking" });
+        }
+        if (!booking.vendorAccountId) {
+          return res.status(400).json({ error: "Booking is missing vendor account" });
+        }
+
+        const [schedule] = await db
+          .select({
+            id: paymentSchedules.id,
+            bookingId: paymentSchedules.bookingId,
+            amount: paymentSchedules.amount,
+            paymentType: paymentSchedules.paymentType,
+            status: paymentSchedules.status,
+            stripePaymentIntentId: paymentSchedules.stripePaymentIntentId,
+          })
+          .from(paymentSchedules)
+          .where(
+            and(
+              eq(paymentSchedules.id, scheduleId),
+              eq(paymentSchedules.bookingId, bookingId)
+            )
+          )
+          .limit(1);
+
+        if (!schedule) {
+          return res.status(404).json({ error: "Payment schedule not found" });
+        }
+        if (schedule.status === "paid") {
+          return res.status(409).json({ error: "This payment has already been completed" });
+        }
+        if (schedule.status === "refunded") {
+          return res.status(409).json({ error: "This payment has already been refunded" });
+        }
+
+        const [vendorAccount] = await db
+          .select({
+            id: vendorAccounts.id,
+            stripeConnectId: vendorAccounts.stripeConnectId,
+            stripeOnboardingComplete: vendorAccounts.stripeOnboardingComplete,
+          })
+          .from(vendorAccounts)
+          .where(eq(vendorAccounts.id, booking.vendorAccountId))
+          .limit(1);
+
+        if (!vendorAccount?.stripeConnectId || !vendorAccount.stripeOnboardingComplete) {
+          return res.status(400).json({ error: "Vendor payment processing not set up" });
+        }
+
+        const { stripe, createBookingPaymentIntent } = await import("./stripe");
+        if (schedule.stripePaymentIntentId) {
+          const existingIntent = await stripe.paymentIntents.retrieve(schedule.stripePaymentIntentId);
+          if (existingIntent.status === "succeeded") {
+            return res.status(409).json({ error: "This payment has already been completed" });
+          }
+          if (existingIntent.client_secret) {
+            return res.json({
+              clientSecret: existingIntent.client_secret,
+              paymentIntentId: existingIntent.id,
+            });
+          }
+        }
+
+        const paymentIntent = await createBookingPaymentIntent({
+          amount: schedule.amount,
+          platformFeePercent: VENDOR_FEE_RATE * 100,
+          vendorStripeAccountId: vendorAccount.stripeConnectId,
+          description: `Booking ${booking.id} - ${schedule.paymentType}`,
+          idempotencyKey: `booking-payment:${booking.id}:${schedule.id}`,
+        });
+
+        const platformFee = Math.round(schedule.amount * VENDOR_FEE_RATE);
+        await db.transaction(async (tx) => {
+          const lockedRows: any = await tx.execute(drizzleSql`
+            select id, status, stripe_payment_intent_id as "stripePaymentIntentId"
+            from payment_schedules
+            where id = ${schedule.id}
+              and booking_id = ${booking.id}
+            for update
+          `);
+          const lockedSchedule = extractRows<{ id?: string; status?: string; stripePaymentIntentId?: string | null }>(lockedRows)[0];
+          if (!lockedSchedule?.id) {
+            throw new Error("Payment schedule not found");
+          }
+          if (lockedSchedule.status === "paid") {
+            throw new Error("This payment has already been completed");
+          }
+          if (lockedSchedule.status === "refunded") {
+            throw new Error("This payment has already been refunded");
+          }
+
+          await tx
+            .update(paymentSchedules)
+            .set({
+              stripePaymentIntentId: paymentIntent.id,
+            })
+            .where(eq(paymentSchedules.id, schedule.id));
+
+          const existingPayments = await tx
+            .select({
+              id: payments.id,
+            })
+            .from(payments)
+            .where(eq(payments.scheduleId, schedule.id))
+            .limit(1);
+
+          if (existingPayments.length > 0) {
+            await tx
+              .update(payments)
+              .set({
+                stripePaymentIntentId: paymentIntent.id,
+              })
+              .where(eq(payments.id, existingPayments[0]!.id));
+          } else {
+            await tx.insert(payments).values({
+              bookingId: booking.id,
+              scheduleId: schedule.id,
+              customerId: booking.customerId,
+              vendorAccountId: booking.vendorAccountId,
+              stripePaymentIntentId: paymentIntent.id,
+              amount: schedule.amount,
+              platformFee,
+              vendorPayout: schedule.amount - platformFee,
+              paymentType: schedule.paymentType,
+              status: "pending",
+            });
+          }
+        });
+
+        return res.json({
+          clientSecret: paymentIntent.client_secret,
+          paymentIntentId: paymentIntent.id,
+        });
+      } catch (error: any) {
+        const message = String(error?.message || "");
+        if (message.includes("already been completed") || message.includes("already been refunded")) {
+          return res.status(409).json({ error: message });
+        }
+        if (message.includes("Payment schedule not found")) {
+          return res.status(404).json({ error: "Payment schedule not found" });
+        }
+        return res.status(500).json({ error: "Unable to initialize payment" });
       }
-
-      const schedule = (await storage.getPaymentSchedulesByBooking(bookingId)).find((s) => s.id === scheduleId);
-      if (!schedule) {
-        return res.status(404).json({ error: "Payment schedule not found" });
-      }
-
-      if (!booking.vendorAccountId) {
-        return res.status(400).json({ message: "Booking is missing vendorAccountId" });
-      }
-
-      const vendorAccount = await storage.getVendorAccountById(booking.vendorAccountId);
-      if (!vendorAccount || !vendorAccount.stripeConnectId || !vendorAccount.stripeOnboardingComplete) {
-        return res.status(400).json({ error: "Vendor payment processing not set up" });
-      }
-
-      const { createBookingPaymentIntent } = await import("./stripe");
-      const paymentIntent = await createBookingPaymentIntent({
-        amount: schedule.amount,
-        platformFeePercent: VENDOR_FEE_RATE * 100,
-        vendorStripeAccountId: vendorAccount.stripeConnectId,
-        description: `Booking ${booking.id} - ${schedule.paymentType}`,
-      });
-
-      await storage.updatePaymentSchedule(scheduleId, {
-        stripePaymentIntentId: paymentIntent.id,
-      });
-
-      const platformFee = Math.round(schedule.amount * VENDOR_FEE_RATE);
-      await storage.createPayment({
-        bookingId: booking.id,
-        scheduleId: schedule.id,
-        customerId: booking.customerId,
-        vendorAccountId: booking.vendorAccountId,
-        stripePaymentIntentId: paymentIntent.id,
-        amount: schedule.amount,
-        platformFee,
-        vendorPayout: schedule.amount - platformFee,
-        paymentType: schedule.paymentType,
-        status: "pending",
-      });
-
-      res.json({
-        clientSecret: paymentIntent.client_secret,
-        paymentIntentId: paymentIntent.id,
-      });
-    } catch (error: any) {
-      res.status(500).json({ error: error.message });
     }
-  });
+  );
 
   app.post("/api/webhooks/stripe", async (req, res) => {
     try {
-      const event = req.body;
+      await ensureStripeWebhookTable();
+
+      const signatureHeader = req.headers["stripe-signature"];
+      const signature = Array.isArray(signatureHeader) ? signatureHeader[0] : signatureHeader;
+      if (!signature) {
+        return res.status(400).json({ error: "Missing Stripe signature" });
+      }
+
+      const webhookSecret = (process.env.STRIPE_WEBHOOK_SECRET || "").trim();
+      if (!webhookSecret) {
+        return res.status(503).json({ error: "Stripe webhook is not configured" });
+      }
+
+      const rawBody =
+        req.rawBody instanceof Buffer
+          ? req.rawBody
+          : Buffer.from(JSON.stringify(req.body || {}));
+      const { stripe } = await import("./stripe");
+
+      let event: any;
+      try {
+        event = stripe.webhooks.constructEvent(rawBody, signature, webhookSecret);
+      } catch {
+        return res.status(400).json({ error: "Invalid Stripe signature" });
+      }
+
+      const insertedRows = await db
+        .insert(stripeWebhookEvents)
+        .values({
+          eventId: event.id,
+          eventType: event.type,
+          livemode: Boolean(event.livemode),
+          payload: event,
+        })
+        .onConflictDoNothing({ target: stripeWebhookEvents.eventId })
+        .returning({ id: stripeWebhookEvents.id });
+
+      if (insertedRows.length === 0) {
+        return res.json({ received: true, duplicate: true });
+      }
 
       if (event.type === "payment_intent.succeeded") {
-        res.json({ received: true });
-      } else {
-        res.json({ received: true });
-      }
-    } catch (error: any) {
-      res.status(500).json({ error: error.message });
-    }
-  });
+        const paymentIntentId = String(event?.data?.object?.id || "").trim();
+        if (paymentIntentId) {
+          await db.transaction(async (tx) => {
+            const paymentRows = await tx
+              .select({
+                id: payments.id,
+                bookingId: payments.bookingId,
+                scheduleId: payments.scheduleId,
+                paymentType: payments.paymentType,
+                status: payments.status,
+              })
+              .from(payments)
+              .where(eq(payments.stripePaymentIntentId, paymentIntentId))
+              .limit(1);
 
-  app.post("/api/bookings/:bookingId/refund", async (req, res) => {
-    try {
-      const { bookingId } = req.params;
-      const { reason } = req.body;
+            const payment = paymentRows[0];
+            if (!payment || payment.status === "paid") return;
 
-      const booking = await storage.getBooking(bookingId);
-      if (!booking) {
-        return res.status(404).json({ error: "Booking not found" });
-      }
+            const now = new Date();
+            await tx
+              .update(payments)
+              .set({
+                status: "paid",
+                paidAt: now,
+              })
+              .where(eq(payments.id, payment.id));
 
-      if (booking.depositPaidAt) {
-        const hoursSinceDeposit = (Date.now() - booking.depositPaidAt.getTime()) / (1000 * 60 * 60);
-        if (hoursSinceDeposit > 48) {
-          return res.status(400).json({ error: "Refund period has expired (48 hours)" });
+            if (payment.scheduleId) {
+              await tx
+                .update(paymentSchedules)
+                .set({
+                  status: "paid",
+                  paidAt: now,
+                })
+                .where(eq(paymentSchedules.id, payment.scheduleId));
+            }
+
+            const scheduleRows = await tx
+              .select({
+                status: paymentSchedules.status,
+              })
+              .from(paymentSchedules)
+              .where(eq(paymentSchedules.bookingId, payment.bookingId));
+
+            const statuses = scheduleRows.map((row) => row.status);
+            const allPaid = statuses.length > 0 && statuses.every((status) => status === "paid");
+            const anyPaid = statuses.some((status) => status === "paid");
+            const paymentStatus = allPaid ? "paid" : anyPaid ? "partial" : "pending";
+
+            await tx
+              .update(bookings)
+              .set({
+                paymentStatus,
+                depositPaidAt:
+                  payment.paymentType === "deposit"
+                    ? now
+                    : bookings.depositPaidAt,
+                updatedAt: now,
+              })
+              .where(eq(bookings.id, payment.bookingId));
+          });
         }
       }
 
-      const payments = await storage.getPaymentsByBooking(bookingId);
-      const depositPayment = payments.find((p) => p.paymentType === "deposit" && p.status === "paid");
-
-      if (!depositPayment) {
-        return res.status(400).json({ error: "No deposit payment found" });
-      }
-
-      const { refundBookingPayment } = await import("./stripe");
-      const refund = await refundBookingPayment({
-        paymentIntentId: depositPayment.stripePaymentIntentId,
-        reason: reason || "requested_by_customer",
-      });
-
-      await storage.updatePayment(depositPayment.id, {
-        status: "refunded",
-        refundAmount: depositPayment.amount,
-        refundReason: reason,
-        refundedAt: new Date(),
-      });
-
-      await storage.updateBooking(bookingId, {
-        status: "cancelled",
-        paymentStatus: "refunded",
-        cancellationReason: reason,
-        cancelledAt: new Date(),
-      });
-
-      res.json({ refund, message: "Booking cancelled and refund processed" });
-    } catch (error: any) {
-      res.status(500).json({ error: error.message });
+      return res.json({ received: true });
+    } catch {
+      return res.status(500).json({ error: "Webhook processing failed" });
     }
   });
+
+  app.post(
+    "/api/bookings/:bookingId/refund",
+    paymentRateLimiter,
+    requireCustomerAnyAuth,
+    async (req, res) => {
+      try {
+        const { bookingId } = req.params;
+        const requestedReason =
+          typeof req.body?.reason === "string" ? req.body.reason.trim().slice(0, 300) : "";
+        const customerAuth = await resolveCustomerAuthFromRequest(req, { createIfMissing: false });
+        if (!customerAuth?.id) {
+          return res.status(401).json({ error: "Customer authentication required" });
+        }
+
+        const [booking] = await db
+          .select({
+            id: bookings.id,
+            customerId: bookings.customerId,
+            depositPaidAt: bookings.depositPaidAt,
+          })
+          .from(bookings)
+          .where(eq(bookings.id, bookingId))
+          .limit(1);
+
+        if (!booking) {
+          return res.status(404).json({ error: "Booking not found" });
+        }
+        if (!booking.customerId || booking.customerId !== customerAuth.id) {
+          return res.status(403).json({ error: "You do not have access to this booking" });
+        }
+
+        if (booking.depositPaidAt) {
+          const hoursSinceDeposit = (Date.now() - booking.depositPaidAt.getTime()) / (1000 * 60 * 60);
+          if (hoursSinceDeposit > 48) {
+            return res.status(400).json({ error: "Refund period has expired (48 hours)" });
+          }
+        }
+
+        const depositPaymentRows = await db
+          .select({
+            id: payments.id,
+            bookingId: payments.bookingId,
+            scheduleId: payments.scheduleId,
+            stripePaymentIntentId: payments.stripePaymentIntentId,
+            amount: payments.amount,
+            status: payments.status,
+          })
+          .from(payments)
+          .where(and(eq(payments.bookingId, bookingId), eq(payments.paymentType, "deposit")))
+          .orderBy(desc(payments.createdAt))
+          .limit(1);
+        const depositPayment = depositPaymentRows[0];
+
+        if (!depositPayment) {
+          return res.status(400).json({ error: "No deposit payment found" });
+        }
+        if (depositPayment.status === "refunded") {
+          return res.json({ message: "Booking refund already processed" });
+        }
+        if (depositPayment.status !== "paid") {
+          return res.status(400).json({ error: "Deposit payment is not in a refundable state" });
+        }
+
+        const stripeReason =
+          requestedReason === "duplicate" ||
+          requestedReason === "fraudulent" ||
+          requestedReason === "requested_by_customer"
+            ? requestedReason
+            : "requested_by_customer";
+
+        const { refundBookingPayment } = await import("./stripe");
+        const refund = await refundBookingPayment({
+          paymentIntentId: depositPayment.stripePaymentIntentId,
+          reason: stripeReason,
+          idempotencyKey: `booking-refund:${bookingId}:${depositPayment.id}`,
+        });
+
+        const now = new Date();
+        await db.transaction(async (tx) => {
+          await tx
+            .update(payments)
+            .set({
+              status: "refunded",
+              refundAmount: depositPayment.amount,
+              refundReason: requestedReason || stripeReason,
+              refundedAt: now,
+            })
+            .where(eq(payments.id, depositPayment.id));
+
+          if (depositPayment.scheduleId) {
+            await tx
+              .update(paymentSchedules)
+              .set({
+                status: "refunded",
+              })
+              .where(eq(paymentSchedules.id, depositPayment.scheduleId));
+          }
+
+          await tx
+            .update(bookings)
+            .set({
+              status: "cancelled",
+              paymentStatus: "refunded",
+              cancellationReason: requestedReason || stripeReason,
+              cancelledAt: now,
+              updatedAt: now,
+            })
+            .where(eq(bookings.id, bookingId));
+        });
+
+        return res.json({ refund, message: "Booking cancelled and refund processed" });
+      } catch {
+        return res.status(500).json({ error: "Unable to process refund" });
+      }
+    }
+  );
 
   // ============================================
   // ADMIN ANALYTICS ENDPOINTS (unchanged)

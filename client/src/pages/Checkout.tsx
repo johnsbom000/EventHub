@@ -492,8 +492,6 @@ function CheckoutContent({
         throw new Error(pmResult.error?.message || "Unable to collect payment information");
       }
 
-      const totalAmount = data.priceCents;
-      const depositAmount = Math.max(1, Math.round(totalAmount * 0.25));
       const eventLocation =
         data.deliveryIncluded && deliveryAddress
           ? `${deliveryAddress}, ${deliveryCity}, ${deliveryState} ${deliveryZip}`.trim()
@@ -540,8 +538,6 @@ function CheckoutContent({
           eventLocation,
           customerEventId: eventMode === "existing" ? selectedCustomerEventId : undefined,
           customerEventTitle: eventMode === "new" ? newEventTitle.trim() : undefined,
-          totalAmount,
-          depositAmount,
           specialRequests: customerNotes?.trim() || undefined,
           customerNotes: customerNotes?.trim() || undefined,
           customerQuestions: customerQuestions?.trim() || undefined,

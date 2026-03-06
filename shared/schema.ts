@@ -451,6 +451,24 @@ export type WebTraffic = typeof webTraffic.$inferSelect;
 export type InsertListingTraffic = z.infer<typeof insertListingTrafficSchema>;
 export type ListingTraffic = typeof listingTraffic.$inferSelect;
 
+// Stripe webhook replay protection / audit
+export const stripeWebhookEvents = pgTable("stripe_webhook_events", {
+  id: varchar("id").primaryKey().default(sql`gen_random_uuid()`),
+  eventId: text("event_id").notNull().unique(),
+  eventType: text("event_type").notNull(),
+  livemode: boolean("livemode").notNull().default(false),
+  payload: jsonb("payload").notNull().default(sql`'{}'::jsonb`),
+  processedAt: timestamp("processed_at").defaultNow().notNull(),
+});
+
+export const insertStripeWebhookEventSchema = createInsertSchema(stripeWebhookEvents).omit({
+  id: true,
+  processedAt: true,
+});
+
+export type InsertStripeWebhookEvent = z.infer<typeof insertStripeWebhookEventSchema>;
+export type StripeWebhookEvent = typeof stripeWebhookEvents.$inferSelect;
+
 export type RentalType = typeof rentalTypes.$inferSelect;
 
 // Rental Types (DB-backed canonical prop/rental types)

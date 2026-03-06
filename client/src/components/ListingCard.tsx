@@ -38,6 +38,10 @@ interface ListingCardProps {
   titleScale?: "default" | "oneAndHalf";
   titleFont?: "sans" | "heading";
   showVendorShopButton?: boolean;
+  disableCardNavigation?: boolean;
+  cardNavigationPath?: string | null;
+  primaryActionLabel?: string;
+  primaryActionPath?: string | null;
 }
 
 export default function ListingCard({
@@ -46,6 +50,10 @@ export default function ListingCard({
   titleScale = "default",
   titleFont = "sans",
   showVendorShopButton = false,
+  disableCardNavigation = false,
+  cardNavigationPath,
+  primaryActionLabel = "View Listing",
+  primaryActionPath,
 }: ListingCardProps) {
   const [, setLocation] = useLocation();
   const [shareOpen, setShareOpen] = useState(false);
@@ -69,7 +77,10 @@ export default function ListingCard({
   }, [cover]);
 
   const listingId = listingAny.id ?? listingAny.listingId ?? listingAny.listing?.id ?? listingAny.vendorListingId;
-  const listingPath = `/listing/${listingId}`;
+  const listingPath = listingId ? `/listing/${listingId}` : null;
+  const resolvedCardNavigationPath = cardNavigationPath ?? listingPath;
+  const resolvedPrimaryActionPath = primaryActionPath ?? listingPath;
+  const canOpenListingFromCard = !disableCardNavigation && Boolean(resolvedCardNavigationPath);
   const vendorId = String(
     listingAny.vendorId ??
       listingAny.accountId ??
@@ -79,13 +90,19 @@ export default function ListingCard({
   const vendorShopPath = vendorId ? `/shop/${vendorId}` : null;
   const vendorShopLabel = String(listingAny.vendorName ?? listingAny.vendor?.businessName ?? "Vendor").trim() || "Vendor";
   const shareUrl = useMemo(() => {
-    if (typeof window === "undefined") return listingPath;
-    return `${window.location.origin}${listingPath}`;
+    const fallbackPath = listingPath ?? "/";
+    if (typeof window === "undefined") return fallbackPath;
+    return `${window.location.origin}${fallbackPath}`;
   }, [listingPath]);
 
   const handleOpenListing = () => {
-    if (!listingId) return;
-    setLocation(listingPath);
+    if (!resolvedCardNavigationPath) return;
+    setLocation(resolvedCardNavigationPath);
+  };
+
+  const handleOpenPrimaryAction = () => {
+    if (!resolvedPrimaryActionPath) return;
+    setLocation(resolvedPrimaryActionPath);
   };
 
   const handleCopyLink = async () => {
@@ -116,15 +133,15 @@ export default function ListingCard({
       <div
         className="listing-card-scale-exempt group relative w-full"
         data-testid={`card-listing-${listingId ?? "unknown"}`}
-        role="link"
-        tabIndex={0}
-        onClick={handleOpenListing}
-        onKeyDown={(e) => {
+        role={canOpenListingFromCard ? "link" : undefined}
+        tabIndex={canOpenListingFromCard ? 0 : undefined}
+        onClick={canOpenListingFromCard ? handleOpenListing : undefined}
+        onKeyDown={canOpenListingFromCard ? (e) => {
           if (e.key === "Enter" || e.key === " ") {
             e.preventDefault();
             handleOpenListing();
           }
-        }}
+        } : undefined}
       >
         <Card className="cursor-pointer overflow-hidden rounded-[12px] border-0 bg-white shadow-[0_4px_24px_rgba(74,106,125,0.10)] dark:bg-[#22303c]">
           <div className="relative overflow-hidden bg-muted">
@@ -152,13 +169,13 @@ export default function ListingCard({
                 type="button"
                 onClick={(e) => {
                   e.stopPropagation();
-                  handleOpenListing();
+                  handleOpenPrimaryAction();
                 }}
                 className="inline-flex items-center gap-2 rounded-full border border-[rgba(74,106,125,0.2)] bg-white/95 px-4 py-2 text-[1.01rem] font-sans font-medium text-[#2a3a42] shadow-sm backdrop-blur-sm"
                 data-testid={`button-view-listing-${listingId ?? "unknown"}`}
               >
                 <ArrowUpRight className="h-4 w-4" />
-                View Listing
+                {primaryActionLabel}
               </button>
               <button
                 type="button"

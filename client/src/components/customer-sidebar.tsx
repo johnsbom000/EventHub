@@ -91,10 +91,10 @@ export function CustomerSidebar({ className }: { className?: string } = {}) {
   return (
     <Sidebar className={cn(className)}>
       <SidebarHeader className="p-4">
-        <div className="flex flex-col">
+        <Link href="/" className="flex w-fit flex-col" data-testid="link-customer-home">
           <BrandWordmark className="text-[1.9rem]" />
           <span className="text-xs text-muted-foreground">Customer Portal</span>
-        </div>
+        </Link>
       </SidebarHeader>
       <SidebarContent>
         <SidebarGroup>

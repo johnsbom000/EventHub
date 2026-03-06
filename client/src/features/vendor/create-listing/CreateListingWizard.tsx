@@ -528,6 +528,7 @@ const [draft, setDraft] = useState<ListingDraft>(DEFAULT_DRAFT);
     if (currentStep !== "deliverySetup") return;
     if (!mapContainerRef.current) return;
     if (mapRef.current) return;
+    setErrorMsg(null);
 
     if (!MAPBOX_TOKEN) {
       console.error("Missing VITE_MAPBOX_TOKEN");
@@ -549,6 +550,14 @@ const [draft, setDraft] = useState<ListingDraft>(DEFAULT_DRAFT);
     });
 
     mapRef.current = map;
+
+    map.on("error", (event) => {
+      const detail =
+        (event as any)?.error?.message ||
+        (event as any)?.error?.statusText ||
+        "";
+      setErrorMsg(detail ? `Map failed to load: ${detail}` : "Map failed to load.");
+    });
 
     map.on("load", () => {
       setIsMapReady(true);
@@ -1510,10 +1519,10 @@ const [draft, setDraft] = useState<ListingDraft>(DEFAULT_DRAFT);
   const isLastStep = stepIndex === STEPS.length - 1;
 
   return (
-    <div className="fixed inset-0 z-50 bg-background/80 backdrop-blur-sm">
+    <div className="fixed inset-0 z-50 bg-[#f0eee9]">
       <div className="fixed inset-0 flex">
         {/* Sidebar */}
-        <div className="w-72 bg-card border-r border-border p-6 overflow-y-auto">
+        <div className="w-72 bg-[#f0eee9] border-r border-border p-6 overflow-y-auto">
           <div className="flex items-center justify-between mb-8">
             <h2 className="text-lg font-semibold">Create Listing</h2>
             <div className="flex gap-2">
@@ -1557,7 +1566,7 @@ const [draft, setDraft] = useState<ListingDraft>(DEFAULT_DRAFT);
         </div>
 
         {/* Main panel */}
-        <div className="flex-1 bg-background p-10 overflow-y-auto">
+        <div className="flex-1 bg-[#f0eee9] p-10 overflow-y-auto">
 
           {/* Step 1: Title & Description */}
           {currentStep === "tags" && (
@@ -2136,7 +2145,13 @@ const [draft, setDraft] = useState<ListingDraft>(DEFAULT_DRAFT);
                         </div>
                       )}
 
-                      {!isMapReady && (
+                      {!!errorMsg && (
+                        <div className="absolute inset-0 flex items-center justify-center bg-background/70 px-6 text-center text-sm text-destructive">
+                          {errorMsg}
+                        </div>
+                      )}
+
+                      {!isMapReady && !errorMsg && (
                         <div className="absolute inset-0 flex items-center justify-center text-sm text-muted-foreground bg-background/50">
                           Loading map…
                         </div>

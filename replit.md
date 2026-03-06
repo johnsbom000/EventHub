@@ -35,20 +35,17 @@ Preferred communication style: Simple, everyday language.
 - **Unified Authentication System**: 
   - **Single Login Entry Point**: "Login / Sign up" modal serves all users
   - **Unified Login Endpoint** (`/api/auth/login`): Checks both `users` table (customers) and `vendor_accounts` table (vendors)
-  - **Admin Priority Logic**: If email matches ADMIN_EMAIL environment variable, ONLY checks users table (skips vendor_accounts to ensure admin login)
+  - **Admin Authority Source**: Admin access is determined by persisted database role (`users.role = "admin"`), not by email environment variables
   - **Role-Based Redirects**: Automatically routes users to appropriate dashboard based on role
     - Customers → `/dashboard`
     - Vendors → `/vendor/dashboard`
     - Admins → `/admin`
-  - **Smart Error Handling**: 
-    - Login with non-existent email → offers to create account
-    - Signup with existing email → offers to switch to login
-    - Email pre-filling when switching modes
+  - **Auth Failure Hardening**:
+    - Login/signup failures use normalized generic errors to reduce account-enumeration signals
   - **Token Management**: 
-    - On login/signup, both `customerToken` and `vendorToken` are cleared first
-    - Appropriate token set based on role (prevents token mix-ups)
+    - Auth0 access tokens are primary for active authenticated routes
+    - Legacy JWT tokens remain supported for compatibility/migration paths
     - JWT tokens contain `type` field ("customer", "vendor", or "admin") for backend authorization
-    - Admin tokens stored as "customerToken" with type="admin"
   - **User Data Persistence**: `users` table includes `role`, `displayName`, and `lastLoginAt` fields
 - **Customer-to-Vendor Upgrade**: Full account linking system implemented. When a customer becomes a vendor:
   - Vendor account is created with `userId` foreign key linking to customer account
@@ -57,7 +54,8 @@ Preferred communication style: Simple, everyday language.
   - All onboarding data (business name, profile, social links) properly persisted
 - **Admin Authentication**:
   - **Completely Hidden System**: No visible UI elements for admin access
-  - **Auto-Role Assignment**: Admin role automatically assigned when email matches ADMIN_EMAIL environment variable (eventhubglobal@gmail.com)
+  - **Role-Based Access**: Admin access requires persisted `users.role = "admin"` in the database
+  - **No Email Auto-Promotion**: `ADMIN_EMAIL` runtime elevation is removed from active authorization flow
   - **Middleware Protection**: `requireAdminAuth` middleware protects all `/api/admin/*` endpoints
   - **Frontend Verification**: AdminDashboard queries `/api/customer/me` to verify admin role before rendering
   - **requireCustomerAuth** accepts both customer and admin tokens for shared customer/admin endpoints
@@ -105,7 +103,7 @@ Preferred communication style: Simple, everyday language.
   - **Dashboard UI**: Complete dashboard with sidebar navigation, stats cards, onboarding status, and quick actions.
   - **Feature Pages (UI Complete)**: Bookings, Listings (create/edit/delete, publish draft functionality), Messages, Calendar, Payments, Reviews, Notifications.
 - **Admin Dashboard** (Hidden system at `/admin`):
-  - **Access**: Admin role auto-assigned when email matches ADMIN_EMAIL environment variable
+  - **Access**: Admin role is enforced from database role state (`users.role = "admin"`)
   - **Authentication**: Requires admin token (type="admin") for all /api/admin/* endpoints
   - **Analytics Dashboard**: Comprehensive platform metrics and visualizations
     - **Summary Stats**: Total users, total vendors, total bookings, total revenue
@@ -164,6 +162,7 @@ Preferred communication style: Simple, everyday language.
   - **Account Types**: Supports Express and Standard.
   - **Onboarding Flow**: Automated Stripe Connect account creation and onboarding.
   - **Payment Intent Creation**: Creates payment intents with platform fee and vendor destination.
+  - **Webhook Security**: Stripe webhooks are signature-verified and deduplicated for replay protection.
   - **Payment Schedules**: Supports down payment + final payment with custom strategies.
   - **Refund Policy**: 48-hour refund window enforced for deposits.
   - **Vendor Dashboard Access**: Login links to Stripe Dashboard for vendors.

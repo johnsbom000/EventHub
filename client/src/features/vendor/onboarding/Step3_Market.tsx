@@ -243,6 +243,7 @@ export default function Step3_Market({
   useEffect(() => {
     if (!mapContainerRef.current) return;
     if (mapRef.current) return;
+    setErrorMsg(null);
 
     if (!MAPBOX_TOKEN) {
       console.error("Missing VITE_MAPBOX_TOKEN");
@@ -264,6 +265,14 @@ export default function Step3_Market({
     });
 
     mapRef.current = map;
+
+    map.on("error", (event) => {
+      const detail =
+        (event as any)?.error?.message ||
+        (event as any)?.error?.statusText ||
+        "";
+      setErrorMsg(detail ? `Map failed to load: ${detail}` : "Map failed to load.");
+    });
 
     map.on("load", () => {
       setIsMapReady(true);

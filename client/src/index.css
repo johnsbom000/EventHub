@@ -5,8 +5,9 @@
 
 /* LIGHT MODE */
 :root {
-  --global-ui-scale: 1.15;
-  --global-ui-scale-inverse: 0.8695652174;
+  --global-font-scale: 1.15;
+  --global-ui-scale: 1;
+  --global-ui-scale-inverse: 1;
   --button-outline: rgba(74, 106, 125, 0.3);
   --badge-outline: rgba(74, 106, 125, 0.3);
 
@@ -244,7 +245,8 @@
 
 @layer base {
   html {
-    zoom: var(--global-ui-scale);
+    zoom: 1;
+    font-size: calc(100% * var(--global-font-scale));
   }
 
   * {
@@ -406,6 +408,55 @@
     background: #22303c;
   }
 
+  .hero-rotating-lockup {
+    display: inline-flex;
+    align-items: flex-end;
+    gap: 0.18em;
+    white-space: nowrap;
+  }
+
+  .hero-rotating-label {
+    display: inline-block;
+    line-height: 1;
+  }
+
+  .hero-rotating-word {
+    display: inline-grid;
+    grid-template-areas: "slot";
+    align-items: flex-end;
+    height: 1em;
+    margin-right: -0.12em;
+    padding-right: 0.12em;
+    vertical-align: bottom;
+  }
+
+  .hero-rotating-word-sizer {
+    grid-area: slot;
+    visibility: hidden;
+    white-space: nowrap;
+  }
+
+  .hero-rotating-word-overlay {
+    grid-area: slot;
+    position: relative;
+    height: 1em;
+    overflow: hidden;
+  }
+
+  .hero-rotating-word-item {
+    position: absolute;
+    left: 0;
+    bottom: 0;
+    display: inline-flex;
+    align-items: flex-end;
+    height: 1em;
+    line-height: 1;
+    white-space: nowrap;
+    opacity: 0;
+    animation: hero-rotate-single 12s cubic-bezier(0.68, 0, 0.32, 1) infinite;
+    will-change: transform, opacity;
+  }
+
   input[type="date"] {
     color-scheme: light;
     font-family: var(--font-sans);
@@ -484,10 +535,63 @@
   .listing-card-scale-exempt {
     display: block;
     width: 100%;
+    zoom: var(--global-ui-scale-inverse);
+  }
+
+  .card-description-size {
+    font-size: 0.875rem;
+    line-height: 1.25rem;
+  }
+
+  .card-text-scale {
+    zoom: 1;
   }
 
   .no-global-scale {
     zoom: var(--global-ui-scale-inverse);
+  }
+
+  .vendor-hub-avatar {
+    width: 200px;
+    height: 200px;
+  }
+
+  @media (min-width: 640px) {
+    .vendor-hub-avatar {
+      width: 240px;
+      height: 240px;
+    }
+  }
+}
+
+@keyframes hero-rotate-single {
+  0%,
+  6% {
+    opacity: 0;
+    transform: translateY(-0.32em);
+  }
+
+  8%,
+  23% {
+    opacity: 1;
+    transform: translateY(0);
+  }
+
+  27%,
+  100% {
+    opacity: 0;
+    transform: translateY(0.32em);
+  }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .hero-rotating-word-item {
+    animation: none;
+  }
+
+  .hero-rotating-word-item:first-child {
+    opacity: 1;
+    transform: translateY(0);
   }
 }
 
@@ -512,6 +616,15 @@
  * need to be distinguished from eachother visually.
  */
 @layer utilities {
+  .text-xs {
+    font-size: 0.8625rem;
+    line-height: 1.15rem;
+  }
+
+  .text-sm {
+    font-size: 1.00625rem;
+    line-height: 1.4375rem;
+  }
 
   /* Hide ugly search cancel button in Chrome until we can style it properly */
   input[type="search"]::-webkit-search-cancel-button {

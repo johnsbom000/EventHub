@@ -62,7 +62,7 @@ const menuItems = [
     icon: Bell,
   },
   {
-    title: "Vendor Shop",
+    title: "My Hub",
     url: "/vendor/shop",
     icon: Store,
   },
@@ -103,10 +103,10 @@ export function VendorSidebar({ className }: { className?: string } = {}) {
   return (
     <Sidebar className={cn(className)}>
       <SidebarHeader className="p-4">
-        <div className="flex flex-col">
+        <Link href="/" className="flex w-fit flex-col" data-testid="link-vendor-home">
           <BrandWordmark className="text-[1.9rem]" />
           <span className="text-xs text-muted-foreground">Vendor Portal</span>
-        </div>
+        </Link>
       </SidebarHeader>
       <SidebarContent>
         <SidebarGroup>

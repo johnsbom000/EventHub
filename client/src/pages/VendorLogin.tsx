@@ -1,140 +1,199 @@
-import { useState } from "react";
-import { useForm } from "react-hook-form";
-import { zodResolver } from "@hookform/resolvers/zod";
-import { z } from "zod";
+import { useEffect, useMemo, useState } from "react";
+import { useAuth0 } from "@auth0/auth0-react";
+import { Loader2 } from "lucide-react";
 import { useLocation } from "wouter";
 import { Button } from "@/components/ui/button";
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card";
-import { Form, FormControl, FormField, FormItem, FormLabel, FormMessage } from "@/components/ui/form";
-import { Input } from "@/components/ui/input";
 import { useToast } from "@/hooks/use-toast";
-import { apiRequest } from "@/lib/queryClient";
+import { loginWithPopupFirst } from "@/lib/auth0Login";
 
-const loginSchema = z.object({
-  email: z.string().email("Invalid email address"),
-  password: z.string().min(1, "Password is required"),
-});
+const POPUP_GUARD_KEY = "vendor-auth0-popup-attempt";
+const POPUP_GUARD_WINDOW_MS = 5000;
 
-type LoginFormData = z.infer<typeof loginSchema>;
+function getSafeReturnTo() {
+  if (typeof window === "undefined") {
+    return "/vendor/dashboard";
+  }
+
+  const requested = new URLSearchParams(window.location.search).get("returnTo")?.trim() || "";
+  if (!requested.startsWith("/") || requested.startsWith("//") || requested.startsWith("/vendor/login")) {
+    return "/vendor/dashboard";
+  }
+
+  return requested;
+}
+
+function isRecentPopupAttempt(returnTo: string) {
+  if (typeof window === "undefined") {
+    return false;
+  }
+
+  const raw = window.sessionStorage.getItem(POPUP_GUARD_KEY);
+  if (!raw) {
+    return false;
+  }
+
+  try {
+    const parsed = JSON.parse(raw) as { returnTo?: string; startedAt?: number };
+    return (
+      parsed.returnTo === returnTo &&
+      typeof parsed.startedAt === "number" &&
+      Date.now() - parsed.startedAt < POPUP_GUARD_WINDOW_MS
+    );
+  } catch {
+    return false;
+  }
+}
+
+function markPopupAttempt(returnTo: string) {
+  if (typeof window === "undefined") {
+    return;
+  }
+
+  window.sessionStorage.setItem(
+    POPUP_GUARD_KEY,
+    JSON.stringify({
+      returnTo,
+      startedAt: Date.now(),
+    }),
+  );
+}
+
+function clearPopupAttempt() {
+  if (typeof window === "undefined") {
+    return;
+  }
+
+  window.sessionStorage.removeItem(POPUP_GUARD_KEY);
+}
 
 export default function VendorLogin() {
   const [, setLocation] = useLocation();
   const { toast } = useToast();
-  const [isLoading, setIsLoading] = useState(false);
+  const {
+    isAuthenticated,
+    isLoading: isAuthLoading,
+    loginWithPopup,
+    loginWithRedirect,
+  } = useAuth0();
+  const [isStartingLogin, setIsStartingLogin] = useState(true);
 
-  const form = useForm<LoginFormData>({
-    resolver: zodResolver(loginSchema),
-    defaultValues: {
-      email: "",
-      password: "",
-    },
-  });
+  const returnTo = useMemo(() => getSafeReturnTo(), []);
 
-  async function onSubmit(data: LoginFormData) {
-    setIsLoading(true);
+  useEffect(() => {
+    if (isAuthLoading) {
+      return;
+    }
+
+    if (isAuthenticated) {
+      clearPopupAttempt();
+      setLocation(returnTo);
+      return;
+    }
+
+    if (isRecentPopupAttempt(returnTo)) {
+      setIsStartingLogin(false);
+      return;
+    }
+
+    markPopupAttempt(returnTo);
+    setIsStartingLogin(true);
+
+    void (async () => {
+      try {
+        const loginResult = await loginWithPopupFirst({
+          loginWithPopup,
+          loginWithRedirect,
+          redirectOptions: {
+            appState: { returnTo },
+          },
+        });
+
+        if (loginResult === "cancelled") {
+          clearPopupAttempt();
+          setIsStartingLogin(false);
+        }
+      } catch (error: any) {
+        clearPopupAttempt();
+        setIsStartingLogin(false);
+        toast({
+          variant: "destructive",
+          title: "Unable to start sign in",
+          description: error?.message || "Please try again.",
+        });
+      }
+    })();
+  }, [
+    isAuthLoading,
+    isAuthenticated,
+    loginWithPopup,
+    loginWithRedirect,
+    returnTo,
+    setLocation,
+    toast,
+  ]);
+
+  const retryLogin = async () => {
+    clearPopupAttempt();
+    setIsStartingLogin(true);
+
     try {
-      const response = await apiRequest("POST", "/api/vendor/login", data);
-
-      const { token, vendorAccount} = await response.json();
-      
-      // Store token in localStorage
-      // localStorage.setItem("vendorToken", token);
-      localStorage.setItem("vendorAccountId", vendorAccount.id);
-
-      toast({
-        title: "Login successful",
-        description: "Welcome back to your vendor portal",
+      markPopupAttempt(returnTo);
+      const loginResult = await loginWithPopupFirst({
+        loginWithPopup,
+        loginWithRedirect,
+        redirectOptions: {
+          appState: { returnTo },
+        },
       });
 
-      // Redirect to onboarding if profile not yet completed, otherwise to dashboard
-      if (vendorAccount.profileComplete) {
-        setLocation("/vendor/dashboard");
-      } else {
-        setLocation("/vendor/onboarding");
+      if (loginResult === "cancelled") {
+        clearPopupAttempt();
+        setIsStartingLogin(false);
       }
     } catch (error: any) {
+      clearPopupAttempt();
+      setIsStartingLogin(false);
       toast({
         variant: "destructive",
-        title: "Login failed",
-        description: error.message || "Invalid credentials",
+        title: "Unable to start sign in",
+        description: error?.message || "Please try again.",
       });
-    } finally {
-      setIsLoading(false);
     }
+  };
+
+  if (isAuthLoading || isStartingLogin) {
+    return (
+      <div className="min-h-screen flex items-center justify-center bg-background p-4">
+        <Card className="w-full max-w-md">
+          <CardHeader>
+            <CardTitle className="text-2xl">Redirecting to Auth0</CardTitle>
+            <CardDescription>
+              Reopening secure vendor sign in and returning you to your portal.
+            </CardDescription>
+          </CardHeader>
+          <CardContent className="flex items-center gap-3 text-sm text-muted-foreground">
+            <Loader2 className="h-5 w-5 animate-spin text-primary" />
+            <span>Starting sign in...</span>
+          </CardContent>
+        </Card>
+      </div>
+    );
   }
 
   return (
     <div className="min-h-screen flex items-center justify-center bg-background p-4">
       <Card className="w-full max-w-md">
         <CardHeader>
-          <CardTitle className="text-2xl">Vendor Login</CardTitle>
+          <CardTitle className="text-2xl">Continue vendor sign in</CardTitle>
           <CardDescription>
-            Sign in to access your Event Hub vendor portal
+            Your session ended before we could finish opening Auth0.
           </CardDescription>
         </CardHeader>
         <CardContent>
-          <Form {...form}>
-            <form onSubmit={form.handleSubmit(onSubmit)} className="space-y-4">
-              <FormField
-                control={form.control}
-                name="email"
-                render={({ field }) => (
-                  <FormItem>
-                    <FormLabel>Email</FormLabel>
-                    <FormControl>
-                      <Input
-                        {...field}
-                        type="email"
-                        placeholder="vendor@example.com"
-                        data-testid="input-email"
-                      />
-                    </FormControl>
-                    <FormMessage />
-                  </FormItem>
-                )}
-              />
-
-              <FormField
-                control={form.control}
-                name="password"
-                render={({ field }) => (
-                  <FormItem>
-                    <FormLabel>Password</FormLabel>
-                    <FormControl>
-                      <Input
-                        {...field}
-                        type="password"
-                        placeholder="••••••••"
-                        data-testid="input-password"
-                      />
-                    </FormControl>
-                    <FormMessage />
-                  </FormItem>
-                )}
-              />
-
-              <div className="flex flex-col gap-2">
-                <Button
-                  type="submit"
-                  className="w-full"
-                  disabled={isLoading}
-                  data-testid="button-login"
-                >
-                  {isLoading ? "Signing in..." : "Sign In"}
-                </Button>
-
-                <Button
-                  type="button"
-                  variant="ghost"
-                  className="w-full"
-                  onClick={() => setLocation("/vendor/signup")}
-                  data-testid="link-signup"
-                >
-                  Don't have an account? Sign up
-                </Button>
-              </div>
-            </form>
-          </Form>
+          <Button className="w-full" onClick={retryLogin} data-testid="button-retry-vendor-login">
+            Try sign in again
+          </Button>
         </CardContent>
       </Card>
     </div>

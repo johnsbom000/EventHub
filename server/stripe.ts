@@ -104,25 +104,29 @@ export async function createBookingPaymentIntent(params: {
   vendorStripeAccountId: string;
   customerId?: string;
   description: string;
+  idempotencyKey?: string;
 }): Promise<Stripe.PaymentIntent> {
-  const { amount, platformFeePercent, vendorStripeAccountId, customerId, description } = params;
+  const { amount, platformFeePercent, vendorStripeAccountId, customerId, description, idempotencyKey } = params;
 
   const platformFee = Math.round(amount * (platformFeePercent / 100));
 
-  const paymentIntent = await stripe.paymentIntents.create({
-    amount,
-    currency: "usd",
-    application_fee_amount: platformFee,
-    transfer_data: {
-      destination: vendorStripeAccountId,
+  const paymentIntent = await stripe.paymentIntents.create(
+    {
+      amount,
+      currency: "usd",
+      application_fee_amount: platformFee,
+      transfer_data: {
+        destination: vendorStripeAccountId,
+      },
+      customer: customerId,
+      description,
+      metadata: {
+        platformFee: platformFee.toString(),
+        vendorPayout: (amount - platformFee).toString(),
+      },
     },
-    customer: customerId,
-    description,
-    metadata: {
-      platformFee: platformFee.toString(),
-      vendorPayout: (amount - platformFee).toString(),
-    },
-  });
+    idempotencyKey ? { idempotencyKey } : undefined
+  );
 
   return paymentIntent;
 }
@@ -132,14 +136,18 @@ export async function refundBookingPayment(params: {
   paymentIntentId: string;
   amount?: number; // optional, full refund if not provided
   reason?: string;
+  idempotencyKey?: string;
 }): Promise<Stripe.Refund> {
-  const { paymentIntentId, amount, reason } = params;
+  const { paymentIntentId, amount, reason, idempotencyKey } = params;
 
-  const refund = await stripe.refunds.create({
-    payment_intent: paymentIntentId,
-    amount,
-    reason: reason as any,
-  });
+  const refund = await stripe.refunds.create(
+    {
+      payment_intent: paymentIntentId,
+      amount,
+      reason: reason as any,
+    },
+    idempotencyKey ? { idempotencyKey } : undefined
+  );
 
   return refund;
 }

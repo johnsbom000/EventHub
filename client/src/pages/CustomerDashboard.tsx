@@ -148,7 +148,7 @@ export default function CustomerDashboard() {
             <div className="flex items-center gap-3">
               <Button
                 variant="default"
-                className="editorial-login-btn h-[54px] min-w-[232px] px-7 text-[1.15rem] leading-none"
+                className="no-global-scale editorial-login-btn h-[54px] min-w-[232px] px-7 text-[1.15rem] leading-none"
                 onClick={() => setLocation("/")}
                 data-testid="button-back-marketplace"
               >

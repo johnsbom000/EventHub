@@ -1,5 +1,6 @@
 import { createContext, useContext, useEffect, useState, ReactNode, useCallback } from "react";
 import type { LocationResult } from "@/types/location";
+import { getFreshAccessToken } from "@/lib/authToken";
 
 interface LocationContextValue {
   selectedLocation: LocationResult | null;
@@ -15,12 +16,17 @@ const LOCAL_STORAGE_KEY = "eventhub.selectedLocation";
 
 async function fetchUserLocation(): Promise<LocationResult | null> {
   try {
+    const token = await getFreshAccessToken();
+    const headers: HeadersInit = {
+      "Content-Type": "application/json",
+    };
+    if (token) {
+      headers["Authorization"] = `Bearer ${token}`;
+    }
+
     const res = await fetch("/api/users/me/location", {
       credentials: "include",
-      headers: {
-        "Content-Type": "application/json",
-        Authorization: typeof window !== "undefined" ? `Bearer ${localStorage.getItem("auth_token") || ""}` : "",
-      },
+      headers,
     });
 
     if (res.status === 401) return null;
@@ -35,7 +41,7 @@ async function fetchUserLocation(): Promise<LocationResult | null> {
 
 async function saveUserLocation(location: LocationResult | null): Promise<void> {
   try {
-    const token = typeof window !== "undefined" ? localStorage.getItem("auth_token") : null;
+    const token = await getFreshAccessToken();
     if (!token) return;
 
     await fetch("/api/users/me/location", {

@@ -1,4 +1,4 @@
-import { useEffect, useMemo, useState } from "react";
+import { useEffect, useMemo, useState, type ReactNode } from "react";
 import ListingCard from "@/components/ListingCard";
 import type { ListingPublic } from "@/types/listing";
 import { getCoverPhotoRatio } from "@/lib/listingPhotos";
@@ -32,6 +32,17 @@ function estimateListingCardHeight(listing: ListingPublic): number {
   const titleWeight = title.length > 24 ? 24 : 0;
   // Fixed content block under image (title + price row + spacing).
   return imageWeight + titleWeight + 72;
+}
+
+function buildSequentialColumns(listings: ListingPublic[], requestedColumns: number): ListingPublic[][] {
+  const columnCount = Math.max(1, requestedColumns);
+  const columns = Array.from({ length: columnCount }, () => [] as ListingPublic[]);
+
+  listings.forEach((listing, index) => {
+    columns[index % columnCount].push(listing);
+  });
+
+  return columns;
 }
 
 function buildMasonryColumns(listings: ListingPublic[], requestedColumns: number): ListingPublic[][] {
@@ -92,23 +103,52 @@ function buildMasonryColumns(listings: ListingPublic[], requestedColumns: number
   return columns.map((column) => column.items);
 }
 
-export default function MasonryListingGrid({ listings }: { listings: ListingPublic[] }) {
+type MasonryListingGridProps = {
+  listings: ListingPublic[];
+  maxColumns?: number;
+  desktopColumns?: number;
+  preserveInputOrder?: boolean;
+  renderCard?: (listing: ListingPublic) => ReactNode;
+};
+
+export default function MasonryListingGrid({
+  listings,
+  maxColumns,
+  desktopColumns,
+  preserveInputOrder,
+  renderCard,
+}: MasonryListingGridProps) {
+  const resolveColumnCount = (width: number) => {
+    const byWidth =
+      typeof desktopColumns === "number" &&
+      Number.isFinite(desktopColumns) &&
+      desktopColumns >= 1 &&
+      width >= 1024
+        ? Math.floor(desktopColumns)
+        : getColumnCountForWidth(width);
+
+    if (typeof maxColumns !== "number" || !Number.isFinite(maxColumns) || maxColumns < 1) {
+      return byWidth;
+    }
+    return Math.min(byWidth, Math.floor(maxColumns));
+  };
+
   const [columnCount, setColumnCount] = useState(() => {
     if (typeof window === "undefined") return 1;
-    return getColumnCountForWidth(window.innerWidth);
+    return resolveColumnCount(window.innerWidth);
   });
 
   useEffect(() => {
     if (typeof window === "undefined") return;
-    const update = () => setColumnCount(getColumnCountForWidth(window.innerWidth));
+    const update = () => setColumnCount(resolveColumnCount(window.innerWidth));
     update();
     window.addEventListener("resize", update);
     return () => window.removeEventListener("resize", update);
-  }, []);
+  }, [desktopColumns, maxColumns]);
 
   const columns = useMemo(
-    () => buildMasonryColumns(listings, columnCount),
-    [listings, columnCount]
+    () => (preserveInputOrder ? buildSequentialColumns(listings, columnCount) : buildMasonryColumns(listings, columnCount)),
+    [listings, columnCount, preserveInputOrder]
   );
 
   return (
@@ -120,7 +160,11 @@ export default function MasonryListingGrid({ listings }: { listings: ListingPubl
         <div key={`masonry-column-${columnIndex}`} className="flex flex-col gap-4">
           {columnListings.map((listing) => (
             <div key={listing.id} className="w-full">
-              <ListingCard listing={listing} priceScale="double" titleScale="oneAndHalf" titleFont="heading" />
+              {renderCard ? (
+                renderCard(listing)
+              ) : (
+                <ListingCard listing={listing} priceScale="double" titleScale="oneAndHalf" titleFont="heading" />
+              )}
             </div>
           ))}
         </div>

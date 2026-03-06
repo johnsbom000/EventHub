@@ -54,6 +54,45 @@ type PricingMode = "single_service" | "package" | "a_la_carte";
 type ServiceAreaMode = "radius" | "nationwide" | "global";
 
 // ---- Helpers ----
+function toFiniteNumber(value: unknown): number | null {
+  if (typeof value === "number") return Number.isFinite(value) ? value : null;
+  if (typeof value === "string") {
+    const trimmed = value.trim();
+    if (!trimmed) return null;
+    const parsed = Number(trimmed);
+    return Number.isFinite(parsed) ? parsed : null;
+  }
+  return null;
+}
+
+function normalizeLngLat(value: unknown): { lat: number; lng: number } | null {
+  if (!value) return null;
+  if (Array.isArray(value) && value.length >= 2) {
+    const lng = toFiniteNumber(value[0]);
+    const lat = toFiniteNumber(value[1]);
+    if (lng === null || lat === null) return null;
+    return { lat, lng };
+  }
+  if (typeof value !== "object") return null;
+
+  const candidate = value as Record<string, unknown>;
+  const lat =
+    toFiniteNumber(candidate.lat) ??
+    toFiniteNumber(candidate.latitude) ??
+    toFiniteNumber((candidate.center as unknown[] | undefined)?.[1]) ??
+    toFiniteNumber((candidate.coordinates as unknown[] | undefined)?.[1]);
+  const lng =
+    toFiniteNumber(candidate.lng) ??
+    toFiniteNumber(candidate.lon) ??
+    toFiniteNumber(candidate.longitude) ??
+    toFiniteNumber((candidate.center as unknown[] | undefined)?.[0]) ??
+    toFiniteNumber((candidate.coordinates as unknown[] | undefined)?.[0]);
+  if (lat === null || lng === null) return null;
+  if (Math.abs(lat) > 90 || Math.abs(lng) > 180) return null;
+
+  return { lat, lng };
+}
+
 const toNumOrEmpty = (v: any) => {
   if (v === null || v === undefined) return "";
   const s = String(v).trim();
@@ -137,9 +176,11 @@ function boundsFromCircleFeature(feature: any) {
 }
 
 // VERY simple circle for preview (map is optional; LocationPicker is the real UX driver)
-function makeCircleGeoJSON(center: { lat: number; lng: number }, radiusMiles: number) {
-  const steps = 80;
-
+function makeCircleGeoJSON(
+  center: { lat: number; lng: number },
+  radiusMiles: number,
+  steps = 80
+) {
   // Convert miles to kilometers
   const radiusKm = radiusMiles * 1.60934;
 
@@ -301,8 +342,18 @@ export default function VendorListingEdit() {
       deliverySetup: ld?.deliverySetup || {},
       serviceAreaMode: (ld?.serviceAreaMode || "radius") as ServiceAreaMode,
       serviceRadiusMiles: Number(ld?.serviceRadiusMiles ?? 30),
-      serviceCenter: ld?.serviceCenter ?? undefined,
-      serviceLocation: ld?.serviceLocation ?? null,
+      serviceCenter: normalizeLngLat(ld?.serviceCenter) ?? undefined,
+      serviceLocation: (() => {
+        const raw = ld?.serviceLocation;
+        if (!raw || typeof raw !== "object") return null;
+        const normalized = normalizeLngLat(raw);
+        if (!normalized) return null;
+        return {
+          ...(raw as Record<string, unknown>),
+          lat: normalized.lat,
+          lng: normalized.lng,
+        };
+      })(),
     };
 
     setDraft(initial);
@@ -383,6 +434,7 @@ export default function VendorListingEdit() {
   const photoInputRef = useRef<HTMLInputElement | null>(null);
   const [isMapReady, setIsMapReady] = useState(false);
   const [errorMsg, setErrorMsg] = useState<string | null>(null);
+  const [mapPreviewSize, setMapPreviewSize] = useState({ width: 1200, height: 700 });
 
   const mapContainerRef = useRef<HTMLDivElement | null>(null);
   const mapRef = useRef<mapboxgl.Map | null>(null);
@@ -830,14 +882,78 @@ export default function VendorListingEdit() {
   const status = String(listing?.status || "—");
   const normalizedStatus = status.trim().toLowerCase();
   const showPublishAction = normalizedStatus === "draft" || normalizedStatus === "inactive";
+  const shouldShowRadiusMap = draft?.serviceAreaMode === "radius";
 
   // ---- Location derived center + circle (for future map preview) ----
-  const center =
-    draft?.serviceLocation
-      ? { lat: draft.serviceLocation.lat, lng: draft.serviceLocation.lng }
-      : draft?.serviceCenter
-      ? draft.serviceCenter
-      : null;
+  const center = useMemo(() => {
+    const fromLocation = normalizeLngLat(draft?.serviceLocation);
+    if (fromLocation) return fromLocation;
+    return normalizeLngLat(draft?.serviceCenter);
+  }, [draft?.serviceLocation, draft?.serviceCenter]);
+
+  useEffect(() => {
+    const el = mapContainerRef.current;
+    if (!el) return;
+
+    const updateSize = () => {
+      const rect = el.getBoundingClientRect();
+      const width = Math.max(0, Math.round(rect.width));
+      const height = Math.max(0, Math.round(rect.height));
+      if (!width || !height) return;
+      setMapPreviewSize((prev) => {
+        if (prev.width === width && prev.height === height) return prev;
+        return { width, height };
+      });
+    };
+
+    updateSize();
+    const ro = new ResizeObserver(updateSize);
+    ro.observe(el);
+    return () => ro.disconnect();
+  }, [listingId, draft?.serviceAreaMode]);
+
+  const staticMapPreviewUrl = useMemo(() => {
+    if (!center) return null;
+    if (!MAPBOX_TOKEN) return null;
+    const width = Math.min(1280, Math.max(320, mapPreviewSize.width || 1200));
+    const height = Math.min(1280, Math.max(240, mapPreviewSize.height || 700));
+    const radiusMiles = Number(draft?.serviceRadiusMiles ?? 0);
+    const features: any[] = [];
+
+    if (Number.isFinite(radiusMiles) && radiusMiles > 0) {
+      features.push({
+        type: "Feature",
+        properties: {
+          fill: "#c9a06a",
+          "fill-opacity": 0.25,
+          stroke: "#c9a06a",
+          "stroke-width": 2,
+        },
+        geometry: makeCircleGeoJSON(center, radiusMiles, 36).geometry,
+      });
+    }
+
+    features.push({
+      type: "Feature",
+      properties: {
+        "marker-size": "small",
+        "marker-color": "#111827",
+      },
+      geometry: {
+        type: "Point",
+        coordinates: [center.lng, center.lat],
+      },
+    });
+
+    const staticOverlay = encodeURIComponent(
+      JSON.stringify({
+        type: "FeatureCollection",
+        features,
+      })
+    );
+
+    return `https://api.mapbox.com/styles/v1/mapbox/streets-v12/static/geojson(${staticOverlay})/auto/${width}x${height}?padding=56,56,56,56&access_token=${MAPBOX_TOKEN}`;
+  }, [center, draft?.serviceRadiusMiles, mapPreviewSize.width, mapPreviewSize.height]);
 
   const circleFeature = useMemo(() => {
     if (!center) return null;
@@ -845,11 +961,11 @@ export default function VendorListingEdit() {
   }, [center, draft?.serviceRadiusMiles]);
 
   useEffect(() => {
-    // Only render map when Delivery / Setup exists in DOM
-    // (This page always renders it, so we can init when draft is ready.)
     if (!draft) return;
+    if (!shouldShowRadiusMap) return;
     if (!mapContainerRef.current) return;
     if (mapRef.current) return;
+    setErrorMsg(null);
 
     if (!MAPBOX_TOKEN) {
       console.error("Missing VITE_MAPBOX_TOKEN");
@@ -866,8 +982,17 @@ export default function VendorListingEdit() {
       center: startCenter as [number, number],
       zoom: center ? 9 : 5,
     });
+    let deferredResizeId: number | null = null;
 
     mapRef.current = map;
+
+    map.on("error", (event) => {
+      const detail =
+        (event as any)?.error?.message ||
+        (event as any)?.error?.statusText ||
+        "";
+      setErrorMsg(detail ? `Map failed to load: ${detail}` : "Map failed to load.");
+    });
 
     map.on("load", () => {
       setIsMapReady(true);
@@ -937,9 +1062,28 @@ export default function VendorListingEdit() {
         const b = boundsFromCircleFeature(circleFeature);
         map.fitBounds(b, { padding: 30, duration: 0 });
       }
+
+      requestAnimationFrame(() => {
+        try {
+          map.resize();
+        } catch {
+          // ignore
+        }
+      });
+
+      deferredResizeId = window.setTimeout(() => {
+        try {
+          map.resize();
+        } catch {
+          // ignore
+        }
+      }, 140);
     });
 
     return () => {
+      if (deferredResizeId !== null) {
+        window.clearTimeout(deferredResizeId);
+      }
       try {
         map.remove();
       } catch {
@@ -948,13 +1092,39 @@ export default function VendorListingEdit() {
       mapRef.current = null;
       setIsMapReady(false);
     };
-    // IMPORTANT: we only want this to run once for mount/init.
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [draft]);
+  }, [listingId, shouldShowRadiusMap]);
+
+  // Keep the map canvas sized correctly if this section mounts after layout.
+  useEffect(() => {
+    const map = mapRef.current;
+    const el = mapContainerRef.current;
+    if (!map || !el) return;
+
+    const ro = new ResizeObserver(() => {
+      try {
+        map.resize();
+      } catch {
+        // ignore
+      }
+    });
+
+    ro.observe(el);
+
+    requestAnimationFrame(() => {
+      try {
+        map.resize();
+      } catch {
+        // ignore
+      }
+    });
+
+    return () => ro.disconnect();
+  }, [listingId, shouldShowRadiusMap]);
 
   useEffect(() => {
     const map = mapRef.current;
     if (!map) return;
+    if (!isMapReady) return;
 
     // If map isn't loaded yet, do nothing.
     if (!map.isStyleLoaded()) return;
@@ -992,7 +1162,7 @@ export default function VendorListingEdit() {
       const b = boundsFromCircleFeature(circleFeature);
       map.fitBounds(b, { padding: 30, duration: 0 });
     }
-  }, [circleFeature, center]);
+  }, [circleFeature, center, isMapReady]);
 
   const selectedPopularFor = Array.isArray(draft?.popularFor) ? draft.popularFor : [];
   const allPopularForSelected = POPULAR_FOR_OPTIONS.every((option) => selectedPopularFor.includes(option));
@@ -1437,7 +1607,16 @@ export default function VendorListingEdit() {
                               If you want the full Mapbox preview on this screen too, we’ll copy the map init block next. */}
                           {/* Map preview */}
                           <div className="relative rounded-xl border overflow-hidden h-64">
-                            <div ref={mapContainerRef} className="w-full h-full" />
+                            {staticMapPreviewUrl && (
+                              <img
+                                src={staticMapPreviewUrl}
+                                alt=""
+                                aria-hidden
+                                className="absolute inset-0 z-0 h-full w-full object-fill pointer-events-none select-none"
+                                loading="lazy"
+                              />
+                            )}
+                            <div ref={mapContainerRef} className="relative z-10 w-full h-full" />
 
                             {!center && (
                               <div className="absolute inset-0 flex items-center justify-center text-sm text-muted-foreground pointer-events-none bg-background/40">

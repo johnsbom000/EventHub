@@ -331,6 +331,70 @@ export default function CustomerProfile({ customer }: CustomerProfileProps) {
     },
   });
 
+  const saveProfilePhotoMutation = useMutation({
+    mutationFn: async ({ nextProfilePhotoDataUrl }: { nextProfilePhotoDataUrl: string | null }) => {
+      const res = await apiRequest("PATCH", "/api/customer/me", {
+        profilePhotoDataUrl: nextProfilePhotoDataUrl,
+      });
+      return res.json();
+    },
+    onSuccess: async () => {
+      await queryClient.invalidateQueries({ queryKey: ["/api/customer/me"] });
+    },
+    onError: (error: unknown) => {
+      const description = error instanceof Error ? error.message : "Unable to update profile photo.";
+      toast({
+        title: "Photo update failed",
+        description,
+        variant: "destructive",
+      });
+    },
+  });
+
+  const persistProfilePhoto = async (
+    nextSource: ProfilePhotoSource | null,
+    nextPosition: ProfilePhotoPosition,
+    nextScale: number,
+  ) => {
+    if (isPreparingPhoto || saveProfilePhotoMutation.isPending) return;
+
+    const previousSource = profilePhotoSource;
+    const previousPosition = profilePhotoPosition;
+    const previousScale = profilePhotoScale;
+
+    setProfilePhotoSource(nextSource);
+    setProfilePhotoPosition(nextPosition);
+    setProfilePhotoScale(nextScale);
+    setIsPhotoEditorOpen(false);
+
+    setIsPreparingPhoto(true);
+    try {
+      let nextProfilePhotoDataUrl: string | null = null;
+      if (nextSource) {
+        const croppedDataUrl = await buildCroppedProfilePhotoDataUrl(nextSource, nextPosition, nextScale);
+        if (estimateDataUrlBytes(croppedDataUrl) > MAX_PROFILE_PHOTO_BYTES) {
+          toast({
+            title: "Image too large",
+            description: "Optimized profile photo must be 2MB or less.",
+            variant: "destructive",
+          });
+          throw new Error("Optimized profile photo must be 2MB or less.");
+        }
+        nextProfilePhotoDataUrl = croppedDataUrl;
+      }
+
+      await saveProfilePhotoMutation.mutateAsync({
+        nextProfilePhotoDataUrl,
+      });
+    } catch {
+      setProfilePhotoSource(previousSource);
+      setProfilePhotoPosition(previousPosition);
+      setProfilePhotoScale(previousScale);
+    } finally {
+      setIsPreparingPhoto(false);
+    }
+  };
+
   const handleProfilePhotoFile = async (file: File) => {
     if (!ACCEPTED_PROFILE_PHOTO_TYPES.has(file.type)) {
       toast({
@@ -361,9 +425,7 @@ export default function CustomerProfile({ customer }: CustomerProfileProps) {
         return;
       }
 
-      setProfilePhotoSource(optimized);
-      setProfilePhotoPosition({ x: 0, y: 0 });
-      setProfilePhotoScale(1);
+      await persistProfilePhoto(optimized, { x: 0, y: 0 }, 1);
     } catch (error) {
       toast({
         title: "Upload failed",
@@ -473,7 +535,7 @@ export default function CustomerProfile({ customer }: CustomerProfileProps) {
 
   const activeNameForInitials = displayName.trim() || resolvedDisplayName;
   const activeInitials = getInitials(activeNameForInitials);
-  const isSaving = saveProfileMutation.isPending || isPreparingPhoto;
+  const isSaving = saveProfileMutation.isPending || saveProfilePhotoMutation.isPending || isPreparingPhoto;
 
   const openPhotoEditor = () => {
     if (!profilePhotoSource) return;
@@ -483,9 +545,8 @@ export default function CustomerProfile({ customer }: CustomerProfileProps) {
   };
 
   const applyPhotoEditorChanges = () => {
-    setProfilePhotoPosition(editorPhotoPosition);
-    setProfilePhotoScale(editorPhotoScale);
-    setIsPhotoEditorOpen(false);
+    if (!profilePhotoSource) return;
+    void persistProfilePhoto(profilePhotoSource, editorPhotoPosition, editorPhotoScale);
   };
 
   const renderProfilePhotoCircle = ({
@@ -646,7 +707,7 @@ export default function CustomerProfile({ customer }: CustomerProfileProps) {
                   scaleMultiplier: profilePhotoScale,
                   dataTestId: "avatar-profile-editor",
                 })}
-                <div className="flex flex-wrap items-center gap-2">
+                <div className="flex flex-wrap items-center gap-3">
                   <input
                     ref={profilePhotoInputRef}
                     id="profilePhoto"
@@ -663,31 +724,43 @@ export default function CustomerProfile({ customer }: CustomerProfileProps) {
                     }}
                     data-testid="input-profile-photo"
                   />
-                  <Button
-                    type="button"
-                    variant="outline"
-                    disabled={!isEditing}
-                    onClick={() => {
-                      if (profilePhotoSource) {
-                        openPhotoEditor();
-                      } else {
-                        profilePhotoInputRef.current?.click();
-                      }
-                    }}
-                    data-testid="button-upload-profile-photo"
-                  >
-                    {profilePhotoSource ? "Edit photo" : "Upload photo"}
-                  </Button>
+                  <div className="flex flex-col items-start gap-1.5">
+                    <Button
+                      type="button"
+                      variant="outline"
+                      disabled={!isEditing}
+                      className="h-9 px-4 py-2 text-sm"
+                      onClick={() => {
+                        if (profilePhotoSource) {
+                          openPhotoEditor();
+                        } else {
+                          profilePhotoInputRef.current?.click();
+                        }
+                      }}
+                      data-testid="button-upload-profile-photo"
+                    >
+                      {profilePhotoSource ? "Edit photo" : "Upload photo"}
+                    </Button>
+                    {profilePhotoSource && (
+                      <Button
+                        type="button"
+                        variant="ghost"
+                        disabled={!isEditing}
+                        className="h-auto px-0 py-0 text-sm font-medium"
+                        onClick={() => profilePhotoInputRef.current?.click()}
+                        data-testid="button-change-profile-photo"
+                      >
+                        Change Photo
+                      </Button>
+                    )}
+                  </div>
                   {profilePhotoSource && (
                     <Button
                       type="button"
                       variant="ghost"
                       disabled={!isEditing}
                       onClick={() => {
-                        setProfilePhotoSource(null);
-                        setProfilePhotoPosition({ x: 0, y: 0 });
-                        setProfilePhotoScale(1);
-                        setIsPhotoEditorOpen(false);
+                        void persistProfilePhoto(null, { x: 0, y: 0 }, 1);
                       }}
                       data-testid="button-revert-profile-photo"
                     >

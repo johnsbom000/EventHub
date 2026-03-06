@@ -1,4 +1,4 @@
-import React from "react";
+import React, { useEffect } from "react";
 import { SidebarProvider, SidebarTrigger } from "@/components/ui/sidebar";
 import { Button } from "@/components/ui/button";
 import {
@@ -7,6 +7,7 @@ import {
   Globe,
   HelpCircle,
   Home,
+  Loader2,
   LogOut,
   Settings,
   User,
@@ -48,8 +49,8 @@ function getInitialsFromName(nameOrEmail: string) {
 }
 
 export default function VendorShell({ children }: VendorShellProps) {
-  const [, setLocation] = useLocation();
-  const { isAuthenticated, getAccessTokenSilently, logout } = useAuth0();
+  const [location, setLocation] = useLocation();
+  const { isAuthenticated, isLoading: isAuthLoading, getAccessTokenSilently, logout } = useAuth0();
 
   const { data: vendorAccount } = useQuery<VendorHeaderAccount>({
     queryKey: ["/api/vendor/me", "shell-header"],
@@ -74,6 +75,28 @@ export default function VendorShell({ children }: VendorShellProps) {
     "--sidebar-width": "16rem",
     "--sidebar-width-icon": "3rem",
   } as React.CSSProperties;
+
+  useEffect(() => {
+    if (!isAuthLoading && !isAuthenticated) {
+      const returnTo =
+        typeof window !== "undefined"
+          ? `${window.location.pathname}${window.location.search}${window.location.hash}`
+          : location || "/vendor/dashboard";
+      setLocation(`/vendor/login?returnTo=${encodeURIComponent(returnTo)}`);
+    }
+  }, [isAuthLoading, isAuthenticated, location, setLocation]);
+
+  if (isAuthLoading) {
+    return (
+      <div className="min-h-screen flex items-center justify-center bg-background">
+        <Loader2 className="h-8 w-8 animate-spin text-primary" />
+      </div>
+    );
+  }
+
+  if (!isAuthenticated) {
+    return null;
+  }
 
   return (
     <SidebarProvider style={sidebarStyle}>

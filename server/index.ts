@@ -8,21 +8,30 @@ const __dirname = path.dirname(__filename);
 // Force-load the repo-root .env (one level above /server)
 dotenv.config({ path: path.resolve(__dirname, "../.env") });
 
-console.log(">>> DATABASE_URL loaded?", Boolean(process.env.DATABASE_URL));
-console.log(">>> DB HOST:", process.env.DATABASE_URL?.split("@")[1]?.split("/")[0] || "(missing)");
-console.log(">>> DB NAME:", process.env.DATABASE_URL?.split("/").pop()?.split("?")[0] || "(missing)");
+if (process.env.NODE_ENV !== "production") {
+  console.log(">>> DATABASE_URL loaded?", Boolean(process.env.DATABASE_URL));
+}
 
 import express, { type Request, Response, NextFunction } from "express";
 import { registerRoutes } from "./routes";
 import { setupVite, serveStatic, log } from "./vite";
 
-console.log(">>> RUNNING server/index.ts from:", import.meta.url);
-console.log(">>> PORT in code is:", process.env.PORT);
+if (process.env.NODE_ENV !== "production") {
+  console.log(">>> RUNNING server/index.ts from:", import.meta.url);
+  console.log(">>> PORT in code is:", process.env.PORT);
+}
 
 const app = express();
 
 // Serve uploaded files
-app.use("/uploads", express.static(path.join(process.cwd(), "server/uploads")));
+app.use(
+  "/uploads",
+  express.static(path.join(process.cwd(), "server/uploads"), {
+    setHeaders: (res) => {
+      res.setHeader("X-Content-Type-Options", "nosniff");
+    },
+  })
+);
 
 
 declare module 'http' {
@@ -43,22 +52,11 @@ app.use(express.urlencoded({ extended: false, limit: "6mb" }));
 app.use((req, res, next) => {
   const start = Date.now();
   const reqPath = req.path;
-  let capturedJsonResponse: Record<string, any> | undefined = undefined;
-
-  const originalResJson = res.json;
-  res.json = function (bodyJson, ...args) {
-    capturedJsonResponse = bodyJson;
-    return originalResJson.apply(res, [bodyJson, ...args]);
-  };
 
   res.on("finish", () => {
     const duration = Date.now() - start;
     if (reqPath.startsWith("/api")) {
       let logLine = `${req.method} ${reqPath} ${res.statusCode} in ${duration}ms`;
-
-      if (capturedJsonResponse) {
-        logLine += ` :: ${JSON.stringify(capturedJsonResponse)}`;
-      }
 
       if (logLine.length > 80) {
         logLine = logLine.slice(0, 79) + "…";
@@ -76,7 +74,8 @@ app.use((req, res, next) => {
 
   app.use((err: any, _req: Request, res: Response, _next: NextFunction) => {
     const status = err?.status || err?.statusCode || 500;
-    const message = err?.message || "Internal Server Error";
+    const isDev = app.get("env") === "development";
+    const message = isDev ? err?.message || "Internal Server Error" : "Internal Server Error";
 
     console.error("UNHANDLED ERROR:", err?.stack || err);
     if (!res.headersSent) {

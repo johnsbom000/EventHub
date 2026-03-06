@@ -2,6 +2,7 @@ import React, { Component, ReactNode, ErrorInfo } from "react";
 import { createRoot } from "react-dom/client";
 import App from "./App";
 import "./index.css";
+import "mapbox-gl/dist/mapbox-gl.css";
 import "stream-chat-react/dist/css/v2/index.css";
 import { LocationProvider } from "./context/LocationContext";
 import { Auth0Provider } from "@auth0/auth0-react";
@@ -44,32 +45,27 @@ class ErrorBoundary extends Component<{ children: ReactNode }, { hasError: boole
   }
 }
 function AuthTokenBridge() {
-  const { getAccessTokenSilently, isAuthenticated } = useAuth0();
+  const { getAccessTokenSilently } = useAuth0();
 
-  React.useEffect(() => {
-    setTokenGetter(async () => {
-      try {
-        // Always attempt; Auth0 will handle refresh if needed.
-        // Include audience/scope to ensure we get the API access token.
-        const token = await Promise.race([
-          getAccessTokenSilently({
-            authorizationParams: {
-              audience: "https://eventhub-api",
-              scope: "openid profile email",
-            },
-          }),
-          new Promise<string>((_, reject) =>
-            setTimeout(() => reject(new Error("getAccessTokenSilently timeout")), 2000)
-          ),
-        ]);
+  const tokenGetter = React.useCallback(async () => {
+    try {
+      // Always attempt; Auth0 handles cached token reads/refresh internally.
+      const token = await getAccessTokenSilently({
+        authorizationParams: {
+          audience: "https://eventhub-api",
+          scope: "openid profile email",
+        },
+      });
 
-        return token || null;
-      } catch (e) {
-        // If not logged in yet (or any transient Auth0 issue), return null
-        return null;
-      }
-    });
-  }, [getAccessTokenSilently, isAuthenticated]);
+      return token || null;
+    } catch {
+      // Not logged in yet or transient Auth0 failure.
+      return null;
+    }
+  }, [getAccessTokenSilently]);
+
+  // Register during render so first protected queries don't race a post-render effect.
+  setTokenGetter(tokenGetter);
 
   return null;
 }

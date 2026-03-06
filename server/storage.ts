@@ -94,7 +94,11 @@ export interface IStorage {
 
   createNotification(notification: InsertNotification): Promise<Notification>;
   getNotificationsByRecipient(recipientId: string, recipientType: string): Promise<Notification[]>;
-  markNotificationAsRead(id: string): Promise<void>;
+  markNotificationAsRead(
+    id: string,
+    recipientId: string,
+    recipientType: string
+  ): Promise<boolean>;
 
 }
 
@@ -580,8 +584,24 @@ export class MemStorage implements IStorage {
     return rows as Notification[];
   }
 
-  async markNotificationAsRead(id: string): Promise<void> {
-    await db.update(notifications).set({ read: true }).where(eq(notifications.id, id));
+  async markNotificationAsRead(
+    id: string,
+    recipientId: string,
+    recipientType: string
+  ): Promise<boolean> {
+    const rows = await db
+      .update(notifications)
+      .set({ read: true })
+      .where(
+        and(
+          eq(notifications.id, id),
+          eq(notifications.recipientId, recipientId),
+          eq(notifications.recipientType, recipientType)
+        )
+      )
+      .returning({ id: notifications.id });
+
+    return rows.length > 0;
   }
 
   /* ---------------- Review Replies ---------------- */

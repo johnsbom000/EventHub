@@ -85,11 +85,7 @@ export default function Signup() {
         password: basicInfo.password,
       });
 
-      const { token, user } = await response.json();
-      
-      // Store token in localStorage
-      localStorage.setItem("customerToken", token);
-      localStorage.setItem("customerId", user.id);
+      await response.json();
 
       toast({
         title: "Account created",
@@ -121,11 +117,7 @@ export default function Signup() {
         businessName: data.businessName,
       });
 
-      const { token, vendorAccount } = await response.json();
-      
-      // Store token in localStorage
-      //localStorage.setItem("vendorToken", token);
-      localStorage.setItem("vendorAccountId", vendorAccount.id);
+      await response.json();
 
       toast({
         title: "Account created",

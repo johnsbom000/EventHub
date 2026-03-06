@@ -1,6 +1,6 @@
 # Event Hub Decisions Log
 
-Last updated: February 26, 2026
+Last updated: March 6, 2026
 
 ## Purpose
 This file tracks decisions that affect product scope, architecture, and launch tradeoffs.
@@ -15,6 +15,104 @@ Template for new entries:
 - Revisit trigger:
 
 ---
+
+## [2026-03-06] Add viewport-width section dividers under vendor listings horizontal rails
+- Context: On `/vendor/listings`, Active/Inactive/Draft sections visually ran together; product requested horizontal separators directly beneath the horizontal card-scroll area, but only across the listing viewport width (not full-screen).
+- Decision: Extend local `ListingSection` in `VendorListings.tsx` with an optional `showSectionDivider` flag and render a `1px` divider using the same horizontal rail wrapper width classes (`-mx-6 px-6`) after Active and Inactive sections.
+- Why: Reusing the rail wrapper sizing keeps divider width aligned to the visible listings area while avoiding global layout changes.
+- Impact: Clear visual separation now appears between `Active -> Inactive` and `Inactive -> Draft` sections without spanning across the entire shell width.
+- Revisit trigger: If listings sections move to a shared reusable rail component, migrate this divider behavior into that shared primitive.
+
+## [2026-03-06] Match edit-map static fallback image size to live container to prevent radius clipping
+- Context: Radius overlays could still appear clipped on listing edit because the static fallback map image used a fixed `1200x700` source and was rendered with `object-cover` inside a much wider/shorter container, which crops top/bottom geometry.
+- Decision: Track live map container dimensions with `ResizeObserver`, request Mapbox Static API images using those dimensions, increase fit padding, and render fallback image with `object-fill` (no cover-crop).
+- Why: Using the actual container aspect ratio avoids post-render cropping that cuts off the circle even when overlay geometry is valid.
+- Impact: The full service-radius circle remains inside the visible map container across radius changes on edit-page fallback rendering.
+- Revisit trigger: If static fallback is removed after GL rendering is fully reliable, delete container-size tracking and static sizing logic.
+
+## [2026-03-06] Render service-radius overlay inside static edit-map fallback
+- Context: After enabling a static underlay fallback for blank GL map canvases on listing edit, the map became visible but the service-radius circle was still missing whenever the fallback image was the visible map surface.
+- Decision: Generate the static fallback image using Mapbox Static API `geojson(...)` overlay with both the radius polygon and center marker, fitting the viewport via `auto` and re-computing on radius changes.
+- Why: Preserves map visibility and keeps radius context accurate even when Mapbox GL tiles/layers do not paint in the edit container.
+- Impact: On listing edit, radius visualization now remains visible and updates with slider changes in both normal GL render and static-fallback scenarios.
+- Revisit trigger: If map rendering is fully stabilized/centralized and static fallback is removed, drop this static-overlay duplication and rely on one map renderer path.
+
+## [2026-03-06] Normalize edit-page service coordinates and add same-box static Mapbox underlay fallback
+- Context: The listing edit Delivery/Setup map still showed a blank tile area for some listings even after resize lifecycle fixes, indicating certain edit payloads/container states could leave the GL canvas transparent while controls/attribution rendered.
+- Decision: In `VendorListingEdit`, normalize `serviceLocation`/`serviceCenter` coordinates from multiple possible shapes into finite `lat/lng`, derive map center from normalized values only, and render a static Mapbox image underlay in the same map container (same dimensions) so a visible map remains present when GL tiles do not paint.
+- Why: Existing listings may contain legacy/mixed coordinate shapes, and a transparent GL canvas should not leave vendors without visual map context on edit.
+- Impact: Map preview on edit now has a visible map surface in the same box even in blank-canvas edge cases, while preserving interactive Mapbox behavior when GL rendering succeeds.
+- Revisit trigger: If map previews are centralized into a shared component with unified coordinate schema guarantees and robust GL health checks, move/remove this page-local underlay fallback.
+
+## [2026-03-06] Stabilize listing-edit Mapbox lifecycle to radius-section visibility
+- Context: On `/vendor/listings/:id` edit flow, the Delivery/Setup map could show a blank tile area with attribution after layout/scale adjustments; map initialization was tied to full `draft` object changes, causing repeated map teardown/re-init during normal form edits.
+- Decision: Scope `VendorListingEdit` map initialization/cleanup to `serviceAreaMode === "radius"` visibility (plus listing identity), keep one stable map instance while editing fields, and add a deferred post-load `map.resize()` to catch late container-size settling.
+- Why: Mapbox GL tile rendering is sensitive to container dimensions and repeated lifecycle churn; avoiding unnecessary remounts and resizing after final layout settle improves render reliability without broad UI changes.
+- Impact: The edit-page radius map should now render tiles consistently in the existing map box and stay stable while users edit nearby fields, with no size/behavior changes to unrelated components.
+- Revisit trigger: If map preview logic is extracted into a shared component, consolidate lifecycle + resize handling there and remove page-specific duplication.
+
+## [2026-03-06] Add drag-position cover photo editor for My Hub with persisted public framing
+- Context: My Hub cover photos could be uploaded/changed but vendors could not drag-position the image inside the wide cover frame before saving, unlike the existing profile-photo edit flow.
+- Decision: Add a dedicated rectangular cover-photo editor modal in `/vendor/shop` that opens on cover upload/change, supports drag positioning inside the frame, stores normalized position as `shopCoverImagePosition` in `vendor_profiles.onlineProfiles`, and applies that position to both My Hub preview and public `/shop/:vendorId` hero rendering.
+- Why: Reuses the proven photo-position interaction pattern while keeping implementation thin (no schema migration) and improving cover framing reliability for launch.
+- Impact: Vendors can place cover photos intentionally before save, saved framing persists with the cover image, and public Vendor Hub shows the same hero composition selected in My Hub.
+- Revisit trigger: If cover editing expands to include zoom/rotate presets or if photo metadata is moved from JSON profile data to typed media records.
+
+## [2026-03-06] Preserve listing input order in My Hub and Vendor Hub masonry with oldest-first data ordering
+- Context: Listing cards on `/vendor/shop` and `/shop/:vendorId` appeared visually ordered by card size because masonry distribution prioritized estimated card heights, which created a large-to-small pattern.
+- Decision: Add an opt-in `preserveInputOrder` mode to `MasonryListingGrid` that assigns cards by sequential column placement (instead of height-based balancing), enable it for My Hub and public Vendor Hub, and order both backing listing queries oldest-first by `vendor_listings.created_at` (with `id` tie-break).
+- Why: Keeps card sizes and top-row alignment unchanged while removing size-ranked presentation and ensuring both surfaces render the same deterministic listing order.
+- Impact: My Hub and Vendor Hub now show listings in the same oldest-first sequence without the prior large-to-small ordering effect; other masonry surfaces keep existing balancing behavior.
+- Revisit trigger: If we introduce a vendor-controlled listing sort preference (manual pinning, newest-first toggle, or drag ordering) that should override oldest-first.
+
+## [2026-03-06] Align My Hub cover editor frame ratio to Vendor Hub hero max ratio
+- Context: Cover positioning in the My Hub editor could feel mismatched against how covers render on public Vendor Hub because the editor frame ratio was wider than the Vendor Hub hero's max layout ratio.
+- Decision: Set My Hub cover preview and cover-editor frame ratio to `100:42`, matching the public Vendor Hub hero's max sizing ratio from `clamp(280px, 42vw, 520px)`.
+- Why: Keeps vendor framing intent consistent between edit and public view without changing cover rendering behavior.
+- Impact: Cover placement in the editor better reflects the final public hero composition, reducing surprise after save.
+- Revisit trigger: If Vendor Hub hero sizing is redesigned or moves to a fixed aspect-ratio strategy.
+
+## [2026-03-06] Make My Hub cover edit/add frames follow live Vendor Hub hero proportions
+- Context: Matching a fixed ratio still looked off on wider screens because public Vendor Hub cover dimensions are viewport-dependent (`clamp(280px, 42vw, 520px)`), not a single static aspect ratio.
+- Decision: Derive My Hub cover frame ratio from the same live viewport formula used by Vendor Hub hero height and apply it to both the add/edit cover preview block and the cover editor modal frame.
+- Why: Ensures cover framing in edit mode stays proportionally consistent with how the public hero actually renders at the current screen width.
+- Impact: On large and small screens, My Hub cover frames now track Vendor Hub cover proportions more accurately, reducing composition mismatch after save.
+- Revisit trigger: If Vendor Hub hero sizing formula changes or moves away from viewport-clamped height.
+
+## [2026-03-06] Load Mapbox CSS globally and surface map runtime errors on vendor map previews
+- Context: Listing edit/create map previews could appear blank with only attribution visible in some browser/session paths, while still rendering in Chrome, indicating route/session-dependent Mapbox UI styling/runtime differences rather than missing map state.
+- Decision: Import `mapbox-gl/dist/mapbox-gl.css` once in `client/src/main.tsx` so every route has Mapbox base styles, and add `map.on("error")` handlers in vendor onboarding/listing create/listing edit map initializers to show explicit load failures in-place.
+- Why: Mapbox map surfaces depend on shared global CSS; per-route imports can lead to inconsistent styling/rendering when route CSS chunks are not yet loaded, and explicit runtime errors make browser-specific issues diagnosable instead of silently blank.
+- Impact: Map previews now consistently receive required Mapbox styling across routes, and any token/style/network/browser failure presents actionable text instead of a blank map.
+- Revisit trigger: If map previews are centralized into a shared map component with built-in fallback/static preview mode.
+
+## [2026-03-06] Remove overly aggressive 2s Auth0 token timeout from shared API token bridge
+- Context: Vendor edit pages could fail with `401 Missing Authorization Bearer token` in slower browsers even while user appeared logged in, because shared `getFreshAccessToken` used a 2-second timeout race and returned `null` too quickly.
+- Decision: In `AuthTokenBridge`, stop racing `getAccessTokenSilently` against a 2-second timeout and return token directly when authenticated.
+- Why: A 2-second hard cutoff is too strict for some browsers/network conditions and causes false-negative auth headers on protected API calls.
+- Impact: Protected vendor API requests are less likely to drop bearer headers due to transient token retrieval latency, reducing spurious 401s on listing edit/create routes.
+- Revisit trigger: If token requests start hanging in production, add a longer, configurable timeout with retry/backoff instead of a fixed 2-second cutoff.
+
+## [2026-03-06] Register shared Auth0 token getter before first protected queries fire
+- Context: `Edit listing` could still show `401 Missing Authorization Bearer token` on initial load because first protected queries sometimes fired before `AuthTokenBridge`'s `useEffect` had registered the shared token getter.
+- Decision: Register `setTokenGetter(...)` during `AuthTokenBridge` render (instead of waiting for a post-render effect) and always attempt `getAccessTokenSilently` inside the getter.
+- Why: Eliminates first-render race conditions where API calls are made before the shared token bridge is available or before `isAuthenticated` has settled.
+- Impact: Initial vendor protected requests are much less likely to be sent without bearer headers, reducing hard-fail 401 states on first page load.
+- Revisit trigger: If render-time registration causes unexpected side effects, move registration to a higher-level bootstrap path while preserving pre-query availability guarantees.
+
+## [2026-03-06] Add resize handling to Vendor Listing Edit map preview to prevent blank-attribution map state
+- Context: On `/vendor/listings/:id`, the Delivery/Setup map could render as a blank box with Mapbox attribution visible (no tiles), while create/onboarding map previews remained stable.
+- Decision: Mirror the create/onboarding map behavior in `VendorListingEdit` by triggering `map.resize()` on map load and attaching a `ResizeObserver` to the map container to resize when layout dimensions settle/change.
+- Why: Mapbox GL canvases can initialize with stale zero/small dimensions when mounted during async/layout transitions; without explicit resize handling, tiles may never paint even though controls/attribution render.
+- Impact: Listing edit map previews now reflow to actual container size and are less likely to appear blank across browser/layout timing differences.
+- Revisit trigger: If map rendering is centralized into a shared component, move this resize logic into that component and remove per-page duplication.
+
+## [2026-03-06] Persist Auth0 session tokens across hard refresh in vendor/customer app shell
+- Context: Vendors were being prompted to sign in again after browser hard refresh because the Auth0 React provider was configured with in-memory token cache.
+- Decision: Switch `Auth0Provider` cache location in `client/src/main.tsx` from `memory` to `localstorage`.
+- Why: In-memory cache is cleared on full page reload; local storage preserves token cache across refreshes and avoids unnecessary re-auth prompts.
+- Impact: Signed-in users should remain authenticated after hard refresh in normal token-valid windows, reducing portal friction on listing/edit flows.
+- Revisit trigger: If security requirements tighten around browser storage of tokens, move to refresh-token rotation/session strategies that preserve UX without local-storage token persistence.
 
 ## [2026-02-26] Add editable circular shop profile image workflow and expand optional Vendor Shop public fields
 - Context: Vendor Shop needed customer-avatar-style photo adjustment (drag + scale + save), additional optional storytelling fields, and customer-facing conditional rendering that hides any empty vendor-shop-managed fields.
@@ -1464,3 +1562,542 @@ Template for new entries:
 - Why: Full-page redirect creates a cleaner login experience and keeps return navigation unchanged after authentication.
 - Impact: Clicking login or attempting to book while logged out now opens Auth0 in the same tab and returns users to the same page after login; other non-user-facing/test flows remain unchanged.
 - Revisit trigger: If we later implement a custom-branded Auth0 Universal Login page or decide to reintroduce popup login in select contexts.
+
+## [2026-03-02] Make shared sidebar brand links return home and unify switch styling to the mint/blue control palette
+- Context: Portal sidebars showed a non-clickable top-left EventHub brand block, and shared toggle styling had drifted across pages from the requested mint search-button palette.
+- Decision: Wrap the shared vendor/customer sidebar brand blocks in home links and centralize the shared `Switch` styling to use a mint checked track, white unchecked track, and blue thumb, while removing local switch color overrides so they inherit the shared appearance.
+- Why: This preserves existing layout while making the primary brand affordance consistently return users to the landing page and keeps toggles visually consistent across portal and marketplace surfaces.
+- Impact: Clicking the top-left EventHub brand in either sidebar now routes to `/`, and switch controls across the app use the same requested mint/white track states with a blue thumb without changing toggle behavior.
+- Revisit trigger: If branding or route-specific control theming is redesigned into a layout-level theme system with intentionally different sidebar or toggle treatments.
+
+## [2026-03-02] Use booking-detail modals in vendor notifications instead of booking route jumps
+- Context: The vendor notifications center treated each row as a route jump, which caused read-before-navigate errors and did not expose enough booking context inside the notification flow.
+- Decision: Keep non-booking notifications as static read-only cards, but resolve booking-related notifications against vendor booking data and open a read-only modal with booking details; also store the booking id in new booking notification links and title new booking alerts as `New booking for [listing title]`.
+- Why: This preserves the booking-request workflow inside the vendor portal, fixes the broken click path, and surfaces the booking details vendors need without forcing a context switch to the bookings page.
+- Impact: New booking notifications now open in-place detail modals with pricing, timing, notes/questions, and listing context; new notifications carry booking-specific metadata; non-booking notifications no longer imply that they can be opened.
+- Revisit trigger: If notifications gain first-class typed metadata (for example a dedicated `bookingId` column or JSON payload) or if the notifications center becomes a broader inbox with per-type detail layouts.
+
+## [2026-03-02] Raise global UI scale by 25% while exempting protected marketplace surfaces
+- Context: Product direction called for a broad 25% size increase across the app, while explicitly keeping the landing hero, listing-card surfaces, listing-detail page content, and all `Back to Marketplace` buttons at their prior size.
+- Decision: Increase the existing global zoom token by 25% and use the existing inverse-scale helper to exempt the shared hero, shared listing-card wrapper, listing-detail root, and every `Back to Marketplace` button instance.
+- Why: A token-level scale change is the thinnest way to make a broad UI-size adjustment without touching dozens of page-specific classes, and explicit opt-outs keep the protected surfaces visually unchanged.
+- Impact: Most app chrome, text, spacing, and controls render noticeably larger, while the excluded surfaces retain their previous sizing.
+- Revisit trigger: If the app moves away from the current global zoom approach toward component-level size tokens or if additional surfaces need to be excluded from broad scale changes.
+
+## [2026-03-02] Increase shared card typography and smallest text utilities by 15%
+- Context: Product direction called for a secondary typography pass that makes all shared card titles, all shared card descriptions, and the smallest text styles used across the app feel more readable without requiring page-by-page edits.
+- Decision: Add a shared 15% scale hook to `CardTitle` and `CardDescription`, keep `CardDescription` on a dedicated base size class so it does not double-scale, and override the global `text-xs` and `text-sm` utility sizes to 15% larger values.
+- Why: Centralized typography changes preserve launch velocity and ensure consistent sizing in dashboards, dropdowns, forms, and modals instead of relying on scattered one-off class edits.
+- Impact: Every `CardTitle` renders 15% larger than its assigned font size, every `CardDescription` renders 15% larger even when locally overridden, and all `text-xs` / `text-sm` text across the app now appears 15% larger.
+- Revisit trigger: If typography is later moved to semantic design tokens or if certain surfaces need separate small-text scales rather than global utility overrides.
+
+## [2026-03-02] Animate the landing hero keyword as a vertical rotating word stack
+- Context: The landing hero headline needed a more dynamic focal point without changing its overall typography, color treatment, or layout structure.
+- Decision: Replace the static `Pros` word in the hero headline with a CSS-driven overflow-hidden vertical word stack that rotates through `Vendors`, `Rentals`, `Venues`, and `Pros`, includes a duplicated first frame for a seamless loop, and stops animating for users who prefer reduced motion.
+- Why: A CSS-only animation keeps the implementation light, avoids timer state in the hero, and preserves the existing headline composition while adding motion to only the emphasized keyword.
+- Impact: The landing hero now cycles the highlighted word smoothly with readable pauses on desktop and mobile, while the rest of the hero remains unchanged.
+- Revisit trigger: If hero motion expands into a broader animation system, or if product wants per-word timing/content to be CMS-driven instead of hardcoded in the component.
+
+## [2026-03-02] Lock the rotating hero keyword to a fixed baseline and gap
+- Context: The first rotating hero implementation let the highlighted word drift upward between frames and caused the perceived gap after `Event` to feel inconsistent.
+- Decision: Refactor the first-line hero lockup into an inline flex row with a fixed gap, and place each rotating word in a fixed-height bottom-aligned slot so every frame shares the same baseline and left edge.
+- Why: Structural alignment is more reliable than relying on inline text metrics during transform-based animation.
+- Impact: The rotating hero keyword now stays flush with `Event` throughout the loop, and the spacing between `Event` and the animated word remains constant on desktop and mobile.
+- Revisit trigger: If the hero headline is redesigned away from the current two-line lockup or if the animated word list becomes variable-length content.
+
+## [2026-03-02] Use per-word overlay animation for the hero keyword cycle
+- Context: The moving word-stack variant still produced a visibility bug in the browser, where only the first word rendered reliably.
+- Decision: Replace the translated shared stack with a fixed-size keyword viewport that overlays one absolutely positioned word per frame, using staggered negative animation delays so each word animates independently through the same 12-second loop.
+- Why: Independent per-word animation removes the rendering dependency on a translated multi-line stack and makes the visible slot deterministic.
+- Impact: Each hero keyword now stays visible for its full pause interval while preserving the fixed baseline and fixed gap next to `Event`.
+- Revisit trigger: If the hero copy becomes dynamic enough that the visible keyword width must be measured from content instead of using a fixed sizing reference.
+
+## [2026-03-02] Add internal right overhang room for the rotating hero comma
+- Context: Italic punctuation on the rotating hero keyword was clipping against the right edge of the fixed keyword viewport.
+- Decision: Add a small internal right padding to the rotating keyword container and cancel it with an equal negative right margin so the comma has render room without changing the visible layout width.
+- Why: This fixes punctuation clipping while preserving timing, baseline alignment, spacing after `Event`, and the overall headline layout.
+- Impact: The comma after each rotating hero keyword now renders fully throughout the loop on desktop and mobile.
+- Revisit trigger: If the hero keyword font treatment changes away from the current italic style or if the keyword viewport is redesigned to size dynamically from live content.
+
+## [2026-03-02] Restore the rotating hero keyword markup after static regression
+- Context: The hero headline stopped animating because the component was rendering a static `Pros,` span even though the rotation CSS remained in place.
+- Decision: Restore the rotating hero lockup markup in `Hero.tsx` and set the four keyword phases with staggered inline animation delays, while keeping the existing shared animation CSS and comma-overhang fix unchanged.
+- Why: Reinstating the minimal missing markup is the fastest way to recover the intended motion without changing timing, spacing, baseline alignment, or layout behavior.
+- Impact: The hero headline again rotates through `Vendors,`, `Rentals,`, `Venues,`, and `Pros,` with readable pauses and a fully visible comma.
+- Revisit trigger: If hero copy or timing needs to become configurable outside the component instead of staying hardcoded in the current four-word cycle.
+
+## [2026-03-02] Keep booking pricing server-locked at booking creation
+- Context: The booking flow already stored total, deposit, payment schedules, and booking item prices at booking creation, but checkout was still sending client-computed price fields that the server ignored.
+- Decision: Keep the existing server-side price snapshot as the source of truth and remove client-supplied `totalAmount` and `depositAmount` from the booking API contract and checkout request payload.
+- Why: This makes the locked-price behavior explicit and prevents any later confusion about whether the booking API trusts live client pricing.
+- Impact: A customer’s booked amount remains fixed from the listing price at the moment the booking is created, while vendors can still change listing prices for future customers only.
+- Revisit trigger: If bookings later support multi-item carts, negotiated quotes, or package/add-on pricing that requires a richer server-side pricing snapshot model.
+
+## [2026-03-02] Auto-save profile photo changes separately from broader profile forms
+- Context: The customer and vendor profile photo areas needed a smaller `Edit photo` button, a dedicated `Change Photo` action, and immediate persistence of photo changes without requiring the main form save buttons.
+- Decision: Add photo-only save paths on both profile surfaces, keep `Edit photo` for crop/reposition, add a stacked `Change Photo` button that reuses the existing upload picker flow, and auto-save select/change/remove actions independently of the rest of each form.
+- Why: Photo changes should feel immediate and should not accidentally save unrelated draft text fields just because the user changed an image.
+- Impact: Customer profile photos and vendor shop profile images now persist as soon as the image is selected, changed, edited, or removed, while the larger profile form save actions remain focused on non-photo fields.
+- Revisit trigger: If profile editing is later consolidated into a shared form state system or if photo uploads move into a reusable shared component.
+
+## [2026-03-02] Restyle the customer chat back button to match portal theme
+- Context: The `Back to events` control in the customer messages sidebar looked visually disconnected from the rest of the portal theme.
+- Decision: Change the button label to `Back` and restyle it as a filled blue portal-theme button instead of a muted outline control.
+- Why: This keeps the navigation action visually consistent with the rest of the customer portal while simplifying the label.
+- Impact: The customer messages sidebar now shows a clearer, theme-aligned `Back` button when drilling into a specific event thread list.
+- Revisit trigger: If the chat sidebar controls are later moved to shared button variants or if product wants breadcrumb-style navigation instead of a back button.
+
+## [2026-03-02] Make the create-listing wizard shell a solid page surface
+- Context: The create-listing flow looked like frosted glass because its fullscreen shell used a semi-transparent background with backdrop blur.
+- Decision: Remove the wizard shell blur/transparency and render the outer shell, sidebar, and main panel on the same solid beige page background used across the site.
+- Why: The create-listing flow should read like a stable working surface, not a modal glass layer, and this keeps the fix limited to shell styling only.
+- Impact: The create-listing view no longer shows blurred background bleed-through and now matches the rest of the site’s solid light theme.
+- Revisit trigger: If the listing creation flow is later redesigned into a true modal/sheet pattern with a separate dedicated overlay system.
+
+## [2026-03-02] Match slider thumbs to the filled track color
+- Context: The service-radius sliders showed a primary-colored filled range on the left, but the draggable thumb stayed on the neutral page background.
+- Decision: Update the shared slider thumb fill from `bg-background` to `bg-primary` while keeping the existing primary border and focus styling.
+- Why: The thumb should read as part of the active range and visually match the left side of the slider.
+- Impact: Radius sliders now show a solid primary-colored thumb that matches the filled track segment.
+- Revisit trigger: If the app later needs different slider themes per context instead of one shared slider appearance.
+
+## [2026-03-02] Replace global page zoom with real font sizing
+- Context: The app was using `html { zoom: ... }` plus inverse zoom exceptions, which made Chrome and Safari render the overall layout differently and broke Safari Mapbox rendering.
+- Decision: Neutralize the global UI zoom variables, remove the `html` zoom scaling, add a modest global font-size bump on `html`, and neutralize the card text zoom helper so the app uses normal browser layout metrics again.
+- Why: Browser-level zoom is not a stable cross-browser layout system; real font sizing is a safer base for consistent rendering.
+- Impact: Chrome and Safari should now render the same structural layout much more closely, with text still slightly enlarged for readability but without the previous oversized Chrome scaling and Safari zoom side effects.
+- Revisit trigger: After reviewing the app visually in both browsers, if more typography tuning is needed, move remaining sizing adjustments into shared semantic type and spacing tokens instead of zoom-based helpers.
+
+## [2026-03-03] Keep `/vendor/login` as an Auth0 compatibility handoff route
+- Context: Unauthenticated vendor sessions were still being sent to a legacy custom email/password form at `/vendor/login`, even though the active vendor portal already relies on Auth0 session state.
+- Decision: Remove the custom vendor login form UI, keep `/vendor/login` as a compatibility route that immediately starts Auth0 sign-in with popup-first behavior and redirect fallback, and preserve the intended vendor return path through `returnTo`.
+- Why: This keeps stale links and timeout redirects working without exposing a second login system that no longer matches the active Auth0-based vendor portal.
+- Impact: Timed-out vendor sessions now reopen Auth0 instead of landing on the legacy form, and successful re-authentication returns vendors to the vendor page they were trying to access.
+- Revisit trigger: If vendor auth is later fully unified with the customer Auth0 entry points or product wants a dedicated branded vendor auth surface again.
+
+## [2026-03-05] Normalize vendor shop profile photos to remove square/padding artifacts
+- Context: Some vendor shop profile photos displayed as a smaller square-like image inside the circular avatar frame, causing mismatch between edit expectations and the customer-facing view.
+- Decision: Normalize shop profile images through canvas processing (including transparent-edge trimming) when loading/uploading, and render the circular preview with a full-cover base image plus positioned crop overlay.
+- Why: This preserves the current edit UX while ensuring the saved photo visually fills the circular frame without square outlines in vendor and customer views.
+- Impact: Edited/uploaded shop photos now render as full-circle avatars in the vendor editor and the public vendor hub header.
+- Revisit trigger: If profile media processing moves server-side or if a shared avatar processing utility is introduced across all profile surfaces.
+
+## [2026-03-05] Rename vendor shop surface labels and page files to hub naming
+- Context: Product direction renamed the vendor-facing shop surface from `Vendor Shop` to `My Hub` and asked for customer-facing naming/file alignment.
+- Decision: Rename page files to `myhub.tsx` (vendor-facing) and `vendorhub.tsx` (customer-facing), update route imports, and update the vendor sidebar and page labels to `My Hub` / `Vendor Hub`.
+- Why: This keeps naming consistent across code and UI while preserving existing route paths and behavior for launch stability.
+- Impact: Vendors now see `My Hub` in navigation and page headings; customer-facing shop page uses `Vendor Hub` labeling; app routing continues to work with the existing URLs.
+- Revisit trigger: If route paths themselves are renamed from `/vendor/shop` and `/shop/:vendorId` in a future URL-cleanup pass.
+
+## [2026-03-05] Expand My Hub inputs to power the full public Vendor Hub layout
+- Context: The new customer-facing Vendor Hub layout requires more structured vendor-provided content than the original minimal storefront form.
+- Decision: Add required My Hub inputs for cover photo, tagline, service area label, in-business-since year, specialties, and events-served baseline, and persist them in `vendor_profiles.online_profiles` alongside existing profile fields.
+- Why: The public page cannot reliably render the requested hero, quick-info, and specialty sections unless those fields are explicitly captured from vendors.
+- Impact: Vendors must now complete these fields before saving My Hub updates; public Vendor Hub pages receive richer structured profile content.
+- Revisit trigger: If profile fields move from `online_profiles` JSON into first-class schema columns.
+
+## [2026-03-05] Compute Vendor Hub quick-info metrics from live platform data
+- Context: Product required `Events Served` to combine a vendor-entered starting count with platform activity, and `Avg. Response Time` to be computed from real chat timestamps.
+- Decision: Compute completed-booking counts server-side per vendor, add them to a non-negative baseline from profile settings, and compute average vendor response minutes from Stream channel message timelines for the vendor’s booking chats.
+- Why: This keeps quick-info metrics credible by grounding them in actual booking/chat behavior while still allowing migration-friendly vendor baseline values.
+- Impact: Vendor Hub now shows derived events-served totals, response-time badges, review aggregates, and richer review feeds without manual metric entry by vendors.
+- Revisit trigger: If chat metrics should be pre-aggregated/cached for performance or moved to analytics pipelines instead of request-time computation.
+
+## [2026-03-05] Rebuild customer Vendor Hub page to match guided structure with Event Hub theming
+- Context: The previous Vendor Hub page was a lightweight listings-plus-about surface and did not match the requested storefront composition.
+- Decision: Recompose the public page into the requested structure: hero cover + profile block, ratings line, quick info card, specialties card, available rentals grid, and full review summary/list, while intentionally omitting `message first` and `Find me online`.
+- Why: Matching the requested layout improves perceived storefront quality without introducing an off-theme visual system.
+- Impact: Customers now see a richer, guide-aligned Vendor Hub page that uses existing Event Hub color tokens/typography and surfaces more vendor trust signals.
+- Revisit trigger: If design direction changes from fixed handcrafted layout sections to modular, configurable storefront blocks.
+
+## [2026-03-05] Reuse shared masonry ListingCard on public Vendor Hub listings
+- Context: The public Vendor Hub listing section was rendering custom bordered cards that visually diverged from the site-wide vendor-facing masonry listing cards.
+- Decision: Replace the public Vendor Hub custom listing card rendering with the same shared `ListingCard` component and masonry column wrapper used in My Hub.
+- Why: Reusing the shared listing card implementation keeps typography, spacing, hover behavior, and border treatment consistent across vendor and customer storefront contexts.
+- Impact: Customer-facing Vendor Hub listings now match the existing masonry card layout style and no longer show the previous bordered custom card shells.
+- Revisit trigger: If product later requires a distinct customer-only listing card variant that intentionally diverges from vendor-facing card styling.
+
+## [2026-03-05] Make Vendor Hub hero full-bleed with below-cover identity row
+- Context: The top of the public Vendor Hub page still layered multiple controls and labels directly over the cover image, and kept a separate `Browse Listings` button that was not needed for a single-page listings view.
+- Decision: Convert the hero to a full-width taller cover area with no decorative overlays, keep only a subtle top-right `Exit Customer Mode` control (when viewing in vendor preview mode), place a smaller profile avatar at the lower-left with 50% overlap, and move business identity/review summary below the cover.
+- Why: This aligns the storefront header with the requested visual hierarchy: emphasize media first, keep controls minimal, and present vendor identity directly below the hero.
+- Impact: The cover now spans edge-to-edge without border framing, the profile image overlaps the cover edge, business name/reviews sit below the hero, and the prior `Browse Listings` CTA is removed while listings remain in the shared masonry feed.
+- Revisit trigger: If responsive behavior on very small screens needs further refinement for avatar overlap offsets or if product introduces additional hero actions.
+
+## [2026-03-05] Keep Vendor Hub hero height stable when cover image is missing or fails
+- Context: Vendors without a saved cover image could end up with a visually collapsed hero strip on the public Vendor Hub.
+- Decision: Make the hero container own a fixed responsive height (`clamp(...)`) with a built-in gradient base, then layer the cover image absolutely only when it is available and has not failed to load.
+- Why: The section should preserve visual hierarchy even before a cover is uploaded, and should degrade gracefully when a stored image URL is invalid.
+- Impact: Public Vendor Hub always shows a full-height hero area; cover photos render when available; missing/broken covers fall back to a visible gradient instead of collapsing.
+- Revisit trigger: If cover images move to a validated media pipeline that guarantees URL availability and dimensions.
+
+## [2026-03-05] Align Vendor Hub avatar-left to storefront name block
+- Context: The profile avatar sat left of the business-name text column in the public Vendor Hub header.
+- Decision: Position the avatar in the same centered content container and apply the same left offset values as the business-name block (`ml-[5.75rem]` / `sm:ml-[7rem]`) while keeping the existing avatar size and `translate-y-1/2` overlap.
+- Why: Matching left edges creates a cleaner header alignment without changing vertical overlap behavior or avatar sizing.
+- Impact: Avatar now sits directly above the business-name text column with unchanged size and 50% overlap.
+- Revisit trigger: If header spacing tokens or breakpoint padding values are redesigned, re-check offset parity between avatar and identity text.
+
+## [2026-03-05] Increase Vendor Hub avatar size by 25% without scaling transforms
+- Context: Product requested a larger storefront profile avatar while preserving existing alignment and overlap behavior.
+- Decision: Increase avatar dimensions from `h-20/w-20` to `h-[6.25rem]/w-[6.25rem]` and from `sm:h-24/w-24` to `sm:h-[7.5rem]/w-[7.5rem]`, keeping the same left offsets and `translate-y-1/2`; adjust identity row top padding to maintain clear separation.
+- Why: Explicit dimension changes satisfy the “no zoom” requirement and keep layout math deterministic across breakpoints.
+- Impact: The avatar renders 25% larger while remaining aligned with the business-title left edge and preserving 50% cover overlap.
+- Revisit trigger: If avatar tokenization is introduced for shared header components, move these hardcoded dimensions into shared design tokens.
+
+## [2026-03-05] Lock Vendor Hub content columns to left-info and right-listings/reviews
+- Context: Product requested explicit storefront composition with vendor info cards on the left and listing/review content on the right, matching provided layout references.
+- Decision: Enforce a two-column layout from medium breakpoints upward with fixed left info width and flexible right content width, keep masonry listing cards in the right column, and keep the reviews section directly beneath listings in that same right column.
+- Why: Explicit grid constraints remove ambiguity and preserve the expected information hierarchy across common desktop/tablet widths.
+- Impact: `About the Vendor`, `Quick Info`, and `Specialties` remain stacked on the left; `Available Rentals` masonry and `What Clients Say` render on the right with reviews below listings.
+- Revisit trigger: If storefront layout becomes component-configurable or if responsive breakpoints are globally retuned.
+
+## [2026-03-05] Harden Vendor Hub header/avatar sizing and column grid classes
+- Context: A follow-up storefront iteration produced an oversized avatar rendering and a collapsed single-column content layout where the left/right sections stacked unexpectedly.
+- Decision: Replace fragile arbitrary avatar size values with explicit pixel-based width/height classes (`100px` / `120px`) and switch grid template classes to Tailwind-safe underscore syntax (`md:grid-cols-[340px_1fr]`, `lg:grid-cols-[360px_1fr]`).
+- Why: These class forms are more reliable for Tailwind extraction and prevent runtime regressions in critical storefront layout areas.
+- Impact: Avatar no longer overwhelms the hero area, and desktop/tablet reliably show left info cards with right masonry listings/reviews.
+- Revisit trigger: If shared layout tokens are introduced for hub pages, migrate these hardcoded values into shared utilities/components.
+
+## [2026-03-05] Use explicit Vendor Hub avatar CSS and standard grid split for preview stability
+- Context: The vendor preview path (`My Hub` -> `Enter Customer Mode`) still showed an oversized hero avatar and stacked content despite prior class-level fixes.
+- Decision: Move avatar size control to explicit CSS (`.vendor-hub-avatar` at 100px/120px) and use standard Tailwind layout classes (`lg:grid-cols-3` with `lg:col-span-1/2`) instead of arbitrary grid templates for the main content area.
+- Why: Explicit CSS and standard Tailwind grid classes are less fragile across build/cache paths and make preview rendering deterministic.
+- Impact: Avatar size is constrained, title alignment remains intact, and desktop preview consistently renders info cards on the left with listings/reviews on the right.
+- Revisit trigger: If hub layout is extracted to shared layout primitives, consolidate these page-specific sizing/grid rules there.
+
+## [2026-03-05] Harden Exit Customer Mode placement and return behavior in Vendor Hub preview
+- Context: In customer preview mode, the `Exit Customer Mode` control appeared misplaced and did not reliably return vendors to `My Hub`.
+- Decision: Anchor the button in the cover hero using explicit `top/right` positioning and route to `/vendor/shop` with a direct browser navigation fallback.
+- Why: This avoids fragile positioning outcomes and ensures vendors can always exit preview mode back to the editing surface.
+- Impact: The exit control now renders at the top-right of the cover and consistently returns to `My Hub`.
+- Revisit trigger: If preview mode gets a dedicated route/state manager, replace the direct navigation fallback with centralized preview-exit handling.
+
+## [2026-03-05] Allow Vendor Hub avatar overlap to render outside hero bounds
+- Context: The overlapping storefront avatar appeared cut in half at the hero bottom edge.
+- Decision: Change the hero wrapper from `overflow-hidden` to `overflow-visible` so the lower half of the 50% overlap is not clipped.
+- Why: The intended design requires the avatar to extend beyond the cover boundary into the identity section.
+- Impact: The circular avatar now renders fully at the overlap seam instead of being visually truncated.
+- Revisit trigger: If the hero is redesigned with rounded clipping masks, re-evaluate where overlap clipping should occur.
+
+## [2026-03-05] Move About/Quick Info cards to the right of listing content on Vendor Hub
+- Context: Product updated the storefront composition to keep listing content as the primary left-side column while showing only `About the Vendor` and `Quick Info` in a right-side support column.
+- Decision: Keep the main content grid at `lg:grid-cols-3`, place listings + reviews in `lg:col-span-2` on the left, and move only `About the Vendor` and `Quick Info` into `lg:col-span-1` on the right; leave hero/title block unchanged.
+- Why: This prioritizes browsable inventory and social proof while still exposing vendor context in a predictable side panel.
+- Impact: Desktop Vendor Hub now renders masonry listings with reviews beneath on the left, while the two requested info cards render on the right.
+- Revisit trigger: If specialties should also move to the right or if product introduces a configurable column layout.
+
+## [2026-03-05] Reuse shared MasonryListingGrid on Vendor Hub for flush top-row alignment
+- Context: Vendor Hub listing cards needed to match the same top-row alignment behavior already used on Home/Hero and Browse Vendors.
+- Decision: Replace Vendor Hub’s page-local CSS column masonry markup with the shared `MasonryListingGrid` component.
+- Why: Using the same component guarantees consistent column balancing and top alignment behavior across marketplace surfaces.
+- Impact: Vendor Hub listing cards now inherit the same flush top-row behavior and masonry stacking pattern as Home and Browse Vendors.
+- Revisit trigger: If Vendor Hub later needs container-aware column limits that differ from global masonry behavior, extend `MasonryListingGrid` with scoped configuration.
+
+## [2026-03-05] Match Vendor Hub listing card scale to Browse Vendors within split layout
+- Context: After moving Vendor Hub into a split content layout, listing cards became too small because global masonry column count logic used viewport width while the listings lived in a narrower left pane.
+- Decision: Add optional `maxColumns` support to `MasonryListingGrid`, set Vendor Hub listings to `maxColumns={3}`, and widen Vendor Hub content container (`w-full` with `lg:px-12` and `max-w-[1500px]`) to reduce side margins.
+- Why: Capping columns per-surface preserves Browse-like card scale in constrained panes without changing the global masonry behavior used elsewhere.
+- Impact: Vendor Hub cards are visually larger and closer to Browse Vendors card sizing while keeping the masonry layout and right-side info column.
+- Revisit trigger: If masonry switches to container-width-based auto columns globally, remove the per-page `maxColumns` override.
+
+## [2026-03-05] Force 5 desktop masonry columns on Vendor Hub listings
+- Context: Product requested a denser Vendor Hub listing presentation with less perceived empty horizontal space on large screens.
+- Decision: Extend `MasonryListingGrid` with optional `desktopColumns`, then set Vendor Hub listings to `desktopColumns={5}` and `maxColumns={5}`; also widen Vendor Hub content width (`max-w-[1700px]`) and reduce side padding (`lg:px-8`).
+- Why: This provides deterministic 5-column desktop behavior on Vendor Hub without changing global masonry behavior on other pages.
+- Impact: On desktop (`>=1024px`), Vendor Hub listings render in 5 columns, using more horizontal space and reducing side-gutter emptiness.
+- Revisit trigger: If container-width-driven column logic is adopted globally, replace per-page forced desktop column counts with container-aware auto layout.
+
+## [2026-03-05] Prioritize Vendor Hub card readability over forced 5-column density
+- Context: The forced 5-column Vendor Hub listing grid reduced card size too aggressively in the split layout and hurt readability.
+- Decision: Revert Vendor Hub listings to `maxColumns={3}` (previous card scale) and reduce only outer row gutters (`px-2` / `lg:px-4`) while restoring content max width to `1500px`.
+- Why: This keeps listing cards at the preferred pre-change scale while still trimming left/right empty space around the full content row.
+- Impact: Vendor Hub cards return to larger, readable sizing; side margins are tighter without shrinking cards via extra columns.
+- Revisit trigger: If product later wants denser desktop grids again, use container-aware breakpoints instead of a fixed 5-column override.
+
+## [2026-03-05] Reduce Vendor Hub side gutters to 1/4 and force 5-card desktop row
+- Context: Product requested significantly smaller side gutters and a 5-card first row on desktop without zoom-based scaling.
+- Decision: Reduce Vendor Hub outer section padding from `px-2`/`lg:px-4` to `px-0.5`/`lg:px-1`, widen container to `max-w-[1900px]`, shift desktop layout to `lg:grid-cols-5` with listings `lg:col-span-4`, and set listing masonry to `desktopColumns={5}` + `maxColumns={5}`.
+- Why: Combining narrower outer gutters with a wider listings pane enables 5 desktop cards per row while preserving card component styling.
+- Impact: Vendor Hub desktop layout now renders 5 listing columns in the listings pane and uses much smaller side gutters.
+- Revisit trigger: If card readability drops on common laptop widths, add desktop breakpoint-specific column caps instead of a fixed 5 at all `>=1024px` widths.
+
+## [2026-03-05] Keep only review summary card in Vendor Hub right column, move full reviews behind dialog
+- Context: Product requested removing the standalone latest-review card block and keeping only a compact review summary box in the side column, while still allowing customers to see full review details on demand.
+- Decision: Remove the inline review-card list from the main content area, place the `What Clients Say` summary card beneath `About the Vendor` and `Quick Info` on the right, and wire `All reviews` to open a dialog containing the full review list.
+- Why: This keeps the main storefront layout cleaner and box-count controlled without losing access to complete review content.
+- Impact: The right side now contains summary-only review stats in-page, and customers can open a modal to read all reviews.
+- Revisit trigger: If product wants a dedicated `/reviews` surface instead of modal-based review browsing.
+
+## [2026-03-05] Reduce Vendor Hub outer gutters and widen right-side info column
+- Context: Product requested slightly smaller side gutters and wider right-side cards while preserving existing listing card spacing.
+- Decision: Reduce outer section padding to `px-0` / `lg:px-0.5`, increase container width to `max-w-[2000px]`, and switch desktop grid to explicit proportional columns (`3.7fr` listings area, `1.3fr` right-side boxes).
+- Why: This shifts available horizontal space toward the right-side box stack without modifying masonry card gap settings.
+- Impact: Side gutters are smaller, right-side cards are wider, and listing card spacing remains unchanged.
+- Revisit trigger: If right-side content grows significantly, revisit the column ratio to avoid line-length/readability issues.
+
+## [2026-03-05] Halve Vendor Hub desktop side padding again
+- Context: Product requested another reduction to full-screen side padding after the previous gutter-tightening pass.
+- Decision: Reduce Vendor Hub desktop horizontal padding from `lg:px-0.5` to `lg:px-[1px]` on the main content section.
+- Why: This keeps the same overall layout while halving the remaining desktop gutter padding.
+- Impact: On desktop/full-screen, the content row sits 1px from section edges instead of 2px, increasing usable horizontal space.
+- Revisit trigger: If content appears visually cramped against viewport edges on common laptop widths, reintroduce a slightly larger desktop gutter.
+
+## [2026-03-05] Remove Vendor Hub main content max-width cap
+- Context: Product requested removing the remaining hard width cap after gutter reductions because it still constrained horizontal use on full-screen.
+- Decision: Remove `max-w-[2000px]` from the Vendor Hub content grid wrapper and keep `w-full` layout.
+- Why: A hard max width was still creating unused horizontal space at very wide viewport sizes.
+- Impact: Vendor Hub listings + right-side cards can now expand to full available width (subject to existing grid ratios and paddings).
+- Revisit trigger: If ultrawide readability degrades, reintroduce a larger cap with breakpoint-specific behavior rather than a single fixed max width.
+
+## [2026-03-05] Match Vendor Hub content gutters to Hero spacing tokens
+- Context: Product requested aligning Vendor Hub side gutter feel with Hero page spacing.
+- Decision: Update Vendor Hub main content wrapper horizontal padding to `px-4 sm:px-6 lg:px-4` (matching Hero’s breakpoint gutters).
+- Why: Shared gutter tokens keep horizontal rhythm consistent across key marketing/storefront surfaces.
+- Impact: Vendor Hub now has the same responsive side padding scale as Hero while preserving its existing grid and card sizing behavior.
+- Revisit trigger: If a global layout shell token is introduced, replace page-level hardcoded gutter classes with shared spacing utilities.
+
+## [2026-03-05] Double Vendor Hub side gutters across all breakpoints
+- Context: Product requested increasing the far-left and far-right gutter size globally after the Hero-matching pass.
+- Decision: Double Vendor Hub content wrapper horizontal padding from `px-4 sm:px-6 lg:px-4` to `px-8 sm:px-12 lg:px-8`.
+- Why: This applies a consistent 2x side-gutter increase at every responsive breakpoint without changing internal grid/card behavior.
+- Impact: Vendor Hub content sits further inward from both viewport edges on mobile, tablet, and desktop.
+- Revisit trigger: If content density drops too much on smaller screens, consider breakpoint-specific reductions instead of a uniform 2x increase.
+
+## [2026-03-05] Force Exit Customer Mode control to stay right-anchored and use direct My Hub link
+- Context: In preview mode, the `Exit Customer Mode` control appeared left-clipped and did not consistently return to `My Hub`.
+- Decision: Render the control as a direct anchor link (`href="/vendor/shop"`) inside `Button asChild`, and explicitly enforce right anchoring with `left-auto right-4 top-4` plus truncation safeguards.
+- Why: A direct link avoids router-state edge cases and explicit positioning prevents left-side spill regressions.
+- Impact: The exit control remains visible in the hero top-right and always navigates back to `My Hub`.
+- Revisit trigger: If preview mode navigation is centralized in a shared state machine/router helper, replace page-local link logic with that shared mechanism.
+
+## [2026-03-06] Require customer ownership for booking payment and refund actions
+- Context: Booking payment-intent creation and refund routes were reachable without authenticated customer ownership checks, creating a high-risk unauthorized payment/refund surface.
+- Decision: Protect `POST /api/bookings/:bookingId/payments/:scheduleId` and `POST /api/bookings/:bookingId/refund` with customer auth middleware and explicit booking ownership checks.
+- Why: Payment and refund operations are security-critical and must be bound to the authenticated customer that owns the booking.
+- Impact: Unauthorized callers can no longer trigger booking payment/refund actions for other users; these routes now require valid authenticated customer ownership.
+- Revisit trigger: When Batch 2 payment hardening starts, move these paths to DB-transaction-backed authorization + idempotency validation and webhook-driven state transitions.
+
+## [2026-03-06] Scope notification read updates to authenticated vendor recipient
+- Context: Vendor notification read updates were keyed only by notification ID, which allowed cross-account notification state changes if an ID was guessed.
+- Decision: Update notification read writes to require matching `id + recipient_id + recipient_type` and return not-found when ownership does not match.
+- Why: Notification state is user-specific data and should be writable only by the owning recipient.
+- Impact: Vendor notification read operations are now ownership-scoped, closing the IDOR path on read-state updates.
+- Revisit trigger: In Batch 2, add customer notification read endpoints using the same ownership-scoped pattern and add audit records for notification state changes.
+
+## [2026-03-06] Remove insecure JWT fallback and reduce API/log leakage
+- Context: The backend accepted a hardcoded fallback JWT secret and exposed internal diagnostics through API responses/logging in sensitive paths.
+- Decision: Require `JWT_SECRET` at startup (no default), remove stack/details exposure from selected API responses, and stop logging API JSON response bodies.
+- Why: Default secrets and verbose internals increase exploitability and post-exploitation impact.
+- Impact: Token signing now fails fast if not explicitly configured; API responses are less likely to leak internal traces; logs are less likely to capture sensitive response payloads.
+- Revisit trigger: During Batch 2, enforce a unified safe-error serializer across all routes and move to structured, scrubbed security logging with request correlation IDs.
+
+## [2026-03-06] Add per-IP security rate limits and normalize auth failure responses
+- Context: Auth and payment/refund endpoints needed abuse controls and reduced account enumeration risk before launch.
+- Decision: Add in-process per-IP rate limiters (capped at <=100 requests/minute) for auth, payment/refund, and upload endpoints, and normalize auth route failures to generic credential/account creation errors.
+- Why: Limiting brute-force volume and removing identity-specific error signals lowers attack success probability with minimal launch-risk code changes.
+- Impact: Repeated high-frequency requests now receive `429`; auth endpoints no longer expose existence-specific responses such as `userNotFound` or `emailExists`.
+- Revisit trigger: In production scale-up, replace in-process limiter state with shared store (Redis/edge) and tune endpoint-specific limits from observed traffic.
+
+## [2026-03-06] Source admin authority from database role and migrate canonical admin email
+- Context: Admin elevation logic was previously coupled to hardcoded/env email checks at auth time.
+- Decision: Remove runtime email-based auto-promotion, treat `users.role='admin'` as the source of truth, and add migration `0004_security_batch2_baseline` to set `eventhubglobal@gmail.com` to admin in database state.
+- Why: Role-based authorization should be durable and data-driven, not inferred dynamically from request email values.
+- Impact: Admin auth now depends on persisted user role; environment email flags are no longer required for admin elevation behavior.
+- Revisit trigger: If admin management is moved to Auth0 RBAC claims or a dedicated admin management UI.
+
+## [2026-03-06] Verify Stripe webhook signatures and enforce replay protection
+- Context: Stripe webhooks were previously accepted without signature verification or replay deduplication.
+- Decision: Validate webhook signatures via `STRIPE_WEBHOOK_SECRET`, persist processed event IDs in `stripe_webhook_events` with unique `event_id`, and ignore duplicate deliveries.
+- Why: Signature validation and replay protection are required controls for trusted payment state transitions.
+- Impact: Unsigned/invalid webhook calls are rejected; duplicate Stripe events are idempotently ignored; payment success webhooks now safely update payment/schedule/booking payment status.
+- Revisit trigger: If webhook processing is moved to a background job system with dead-letter and retry observability.
+
+## [2026-03-06] Harden payment/refund routes with DB-backed transactional checks and idempotency
+- Context: Payment/refund routes relied on in-memory storage access paths and lacked robust idempotent transaction controls.
+- Decision: Rework booking payment intent and refund flows to use DB-backed authorization/state checks, transactional schedule/payment updates, and Stripe idempotency keys.
+- Why: Security-critical money operations require durable state checks and replay-safe external calls.
+- Impact: Payment/refund operations now validate booking ownership against database records, reduce race conditions, and avoid duplicate external charge/refund actions.
+- Revisit trigger: If payment orchestration is extracted into a dedicated service layer or async job pipeline.
+
+## [2026-03-06] Enforce stricter upload acceptance and vendor-only listing photo uploads
+- Context: Upload endpoints previously trusted MIME headers and allowed broader auth scope for listing photos.
+- Decision: Switch upload processing to memory buffers with server-side magic-byte validation (JPG/PNG/WebP only), persist with generated filenames/extensions, apply upload rate limiting, and require vendor auth for listing photo uploads.
+- Why: Content-based validation and tighter authorization reduce malicious upload and storage abuse risk.
+- Impact: Non-image payloads disguised by MIME are rejected; listing image uploads now require vendor authorization; upload throughput is constrained per IP.
+- Revisit trigger: When moving to object storage, add antivirus scanning and server-side image re-encoding pipeline.
+
+## [2026-03-06] Sanitize remaining public/sensitive route error output for Phase 1
+- Context: Several public/sensitive routes still returned raw provider/internal error messages and included debug logging, which can leak implementation details.
+- Decision: Add a shared route-level error logger helper and switch `/api/locations/search`, `/api/vendor/me`, `/api/customer/me`, `/api/vendor/listings`, `/api/vendor/listings/:id`, and vendor notifications/reviews error responses to generic safe messages while preserving response shape.
+- Why: Generic client-facing errors reduce reconnaissance value to attackers while keeping launch-risk low and preserving existing API contracts.
+- Impact: Internal/provider errors remain in server logs only; clients now receive stable non-diagnostic failure messages on those endpoints.
+- Revisit trigger: In Batch 2 Phase 2, replace route-local handling with a centralized safe-error serializer and structured request-correlated security logging.
+
+## [2026-03-06] Align system documentation with current security authority model and hardened controls
+- Context: `replit.md` still documented removed behavior (`ADMIN_EMAIL` runtime admin auto-promotion and legacy token-storage assumptions), creating security guidance drift from live code.
+- Decision: Update `replit.md` authentication/admin sections to reflect database-role admin authority, generic auth-failure behavior, Auth0-primary token handling, and Stripe webhook signature/replay protections.
+- Why: Security documentation must accurately match runtime behavior to prevent unsafe operational assumptions during deployment and incident response.
+- Impact: Team-facing architecture docs now match the active hardened security model and reduce risk of reintroducing deprecated patterns.
+- Revisit trigger: During Batch 2 Phase 2, revisit docs again after centralized safe-error serialization and structured security logging are implemented.
+
+## [2026-03-06] Remove vendor listing route diagnostics and raw internal 500 error leakage
+- Context: Vendor listing CRUD/publish routes still emitted verbose debug logs and returned raw internal error messages in 500 responses.
+- Decision: Remove route-level debug logging from vendor listing endpoints and replace raw/internal 500 responses with stable safe messages while preserving existing success payload shapes.
+- Why: Listing management routes are authenticated but still internet-facing; reducing diagnostic output and message leakage lowers reconnaissance value without launch-risk API contract changes.
+- Impact: Vendor listing create/update/publish/unpublish/delete/list routes now log server-side failures via `logRouteError` and return generic 500 error text to clients.
+- Revisit trigger: In Batch 2 Phase 2, move these endpoints to centralized safe-error serialization and structured request-correlated logging.
+
+## [2026-03-06] Sanitize remaining public route error leakage before launch
+- Context: Public browse/event endpoints still returned raw internal error messages (`error.message`) to unauthenticated clients.
+- Decision: Replace raw error output with generic safe messages and route failure logging via `logRouteError` for `/api/vendors/public/:vendorId/shop`, `/api/listings/public`, `/api/listings/public/:id`, and `/api/events*` public endpoints.
+- Why: Public endpoints should not leak provider/runtime internals in production responses.
+- Impact: Unauthenticated clients now receive stable non-diagnostic error messages on these routes while server-side logging retains failure visibility.
+- Revisit trigger: When centralized safe-error serialization is implemented, migrate these route-level handlers to the shared serializer.
+
+## [2026-03-06] Lock Vendor Hub Exit Customer Mode control to hero top-right and prevent edge bleed
+- Context: In Vendor Hub customer preview, the `Exit Customer Mode` control was rendering at the top-left and could clip against viewport edges.
+- Decision: Keep the existing control styling/text but harden placement by disabling button hover-elevation positional overrides for this control and tightening responsive right/top offsets plus max-width/overflow constraints.
+- Why: The control must remain predictably anchored to the hero top-right while preserving current visual design.
+- Impact: `Exit Customer Mode` now stays top-right of the cover image on mobile/desktop and truncates safely without spilling off-screen.
+- Revisit trigger: If shared button interaction utilities are refactored, re-verify that absolute-positioned buttons are not forced to `position: relative`.
+
+## [2026-03-06] Replace Vendor Hub right-column boxed cards with horizontal section dividers
+- Context: The Vendor Hub right column (`About the Vendor`, `Quick Info`, `What Clients Say`) used bordered card boxes, but product direction called for Airbnb-style horizontal separators between sections while keeping current content layout.
+- Decision: Remove right-column `Card` wrappers and render the same content in plain section containers, adding `border-t` divider lines only between sections at the same column width as the prior boxes.
+- Why: This keeps structure and readability intact while matching the requested visual treatment without broad layout changes.
+- Impact: Right-side boxes no longer appear; each section is separated by a single horizontal line; column width and section order remain unchanged.
+- Revisit trigger: If storefront styling becomes tokenized/shared, move these divider rules into shared section primitives for consistency across profile surfaces.
+
+## [2026-03-06] Use SPA navigation for Vendor Hub Exit Customer Mode to preserve session
+- Context: Clicking `Exit Customer Mode` was using a direct anchor navigation, which triggered a full page reload and intermittently forced vendor re-authentication.
+- Decision: Keep the existing button visuals/placement but switch exit behavior to in-app routing via `setLocation("/vendor/shop")` in `vendorhub.tsx`.
+- Why: SPA navigation preserves the active Auth0 client state and avoids unnecessary full reload auth checks.
+- Impact: Exiting customer mode returns to `My Hub` without forcing sign-in in normal active-session cases.
+- Revisit trigger: If preview mode gets a centralized navigation/state service, migrate this local route action into that shared flow.
+
+## [2026-03-06] Scope My Hub listing card CTA to vendor edit flow and align header actions with Shop Details column
+- Context: On `My Hub`, clicking listing cards opened customer-facing listing detail, but the requested behavior is editing the vendor listing. The two header action buttons also needed to align flush with the `Shop Details` panel width.
+- Decision: Add opt-in `ListingCard` props for navigation behavior (`disableCardNavigation`, `primaryActionLabel`, `primaryActionPath`) and apply them only in `myhub.tsx` so cards are non-clickable, CTA reads `Edit Listing`, and CTA routes to `/vendor/listings/:id`. Also switch My Hub header/actions layout to a `lg:grid-cols-3` structure so the button row occupies the same right column as `Shop Details`, with left/right button edges flush to that column.
+- Why: This preserves shared card visuals across the app while enabling My Hub-specific vendor workflow behavior and precise alignment without broad layout rewrites.
+- Impact: My Hub cards keep current look/size/share icon, card background clicks no longer navigate, CTA now opens the vendor edit page for the clicked listing, and top action buttons align with the right-side Shop Details box edges.
+- Revisit trigger: If listing cards are split into dedicated customer/vendor variants later, remove behavior props from shared `ListingCard` and move this logic into role-specific card components.
+
+## [2026-03-06] Align Vendor Hub avatar/name/review block with listings left gutter
+- Context: The Vendor Hub profile identity block (avatar, business name, review row) sat farther right than the `Available Rentals` heading and listing card column, causing left-gutter inconsistency.
+- Decision: Keep avatar size and vertical spacing unchanged, but switch the profile-overlay and profile-text wrappers to the same horizontal padding tokens used by the listings content (`px-8 sm:px-12 lg:px-8`) and remove extra left offsets (`ml-24/sm:ml-28`, `pl-24/sm:pl-28`).
+- Why: Matching shared gutter tokens is the thinnest safe change to align horizontal rhythm without affecting card sizing, typography scale, or vertical layout.
+- Impact: Avatar, vendor title, and review summary now align with the left edge/cushion of `Available Rentals` and listing cards while preserving existing sizes and heights.
+- Revisit trigger: If storefront gutters are later centralized into shared layout primitives, replace these page-level padding classes with shared container utilities.
+
+## [2026-03-06] Swap Vendor Hub desktop column sides while preserving sizing and gutters
+- Context: Product requested moving the divider-based info sections (`About the Vendor`, `Quick Info`, `What Clients Say`) to the left side and placing the listing cards on the right, without changing widths, typography, or gutter spacing.
+- Decision: Keep existing section markup and sizing tokens, but switch the desktop grid column template to `lg:grid-cols-[minmax(420px,1.3fr)_minmax(0,3.7fr)]` and apply `lg`-only order classes so info renders in column 1 and listings in column 2.
+- Why: This performs a pure side swap with minimal code change and avoids unintended style/layout drift.
+- Impact: On desktop, info sections now render on the left and listing cards on the right; mobile stacked order and existing spacing/typography remain unchanged.
+- Revisit trigger: If desktop column ratios are redesigned later, revisit the template values while keeping explicit order behavior.
+
+## [2026-03-06] Remove My Hub container max-width cap to match Vendor Hub full-width formatting
+- Context: My Hub had significant empty space on both sides of the main grid because content was wrapped in a centered `max-w-7xl` container, unlike the broader Vendor Hub presentation.
+- Decision: In `myhub.tsx`, replace `mx-auto max-w-7xl` on the top content wrapper with `w-full`, keeping all existing internal grid, typography, and component spacing unchanged.
+- Why: Removing the width cap is the minimal, targeted way to eliminate side dead space while preserving current My Hub layout behavior.
+- Impact: My Hub now uses the full available shell content width, reducing left/right empty space around listings and the Shop Details column.
+- Revisit trigger: If a shared vendor-portal page container standard is introduced, migrate My Hub to that shared layout utility instead of page-local width classes.
+
+## [2026-03-06] Narrow My Hub required fields, remove redundant years input, and move save action to top
+- Context: Product updated My Hub requirements so only core storefront fields should block save (`Business Name`, `Profile Photo`, `Service Area`, `In Business Since`, `Events Served`, `About the Business`), and requested removal of redundant `Years in Business` input plus a top-positioned save action.
+- Decision: Update My Hub validation rules to require only the specified fields, drop `Years in Business` state/UI wiring from `myhub.tsx`, change the events-served helper copy to `Enter how many events you have served so far and we will calculate from here.`, remove `Required` wording from cover-photo helper text, and move `Save Shop Details` (and validation alert) to the top of the Shop Details card.
+- Why: This aligns form friction with current MVP data priorities and removes redundant inputs while making the primary save action immediately accessible.
+- Impact: Vendors can save without filling tagline/about-owner/specialties/cover photo, the redundant years field is no longer shown, events-served guidance reflects the new wording, and save controls appear at the top of Shop Details.
+- Revisit trigger: If storefront profile schema is simplified further (e.g., removing optional legacy bio fields), revisit My Hub form sections and persistence payload shape together.
+
+## [2026-03-06] Double Vendor Hub avatar and business title size while preserving anchor alignment
+- Context: Product requested the Vendor Hub hero identity cluster to be more prominent by doubling both the circular avatar and business title size while keeping the avatar half-overlapping the cover edge and preserving left-side alignment.
+- Decision: Increase `.vendor-hub-avatar` dimensions from `100/120px` to `200/240px`, raise the vendor title from `text-[2rem]` to `text-[4rem]`, and increase post-cover top padding (`pt-16/sm:pt-20` to `pt-28/sm:pt-32`) so the larger avatar still clears content while remaining centered on the cover boundary via existing `translate-y-1/2`.
+- Why: This delivers the requested 2x visual prominence without changing the existing horizontal gutter tokens or avatar anchor logic.
+- Impact: Vendor Hub avatar and business name now render at 2x size; avatar remains half over the cover and half below; left-side positioning remains unchanged.
+- Revisit trigger: If responsive typography is later tokenized for storefront headers, move this fixed 2x size scaling into shared breakpoint-aware tokens.
+
+## [2026-03-06] Increase Vendor Hub detail-column typography proportionally without changing column width
+- Context: Product requested larger text in the left detail column (`About the Vendor`, `Quick Info`, `What Clients Say`) while explicitly keeping the detail section width unchanged and aligning all section titles to the `What Clients Say` title size.
+- Decision: Keep the existing layout/grid widths untouched and update only text classes in `vendorhub.tsx`: promote `About the Vendor`/`Quick Info` headings from `text-xl` to `text-2xl`, increase supporting body/label/value text from `text-sm` to `text-base`, raise in-section subheadings to `text-lg`, and increase review-link/review-breakdown text from `text-sm` to `text-base`.
+- Why: Class-level typography scaling preserves existing spacing/structure while making the detail column more readable and visually consistent with the requested heading baseline.
+- Impact: All detail-column section titles now match `What Clients Say` heading size, and the rest of the shown detail text is proportionally larger; column width remains unchanged.
+- Revisit trigger: If a shared storefront type scale token set is introduced, migrate these page-local font-size utilities to semantic typography tokens.
+
+## [2026-03-06] Halve Vendor Hub hero height when no cover image is available
+- Context: With no uploaded cover image, the Vendor Hub hero reserved the full cover-photo height, creating excessive empty vertical space.
+- Decision: Keep the existing hero height when a cover image is visible (`clamp(280px, 42vw, 520px)`), but switch to a half-height clamp (`clamp(140px, 21vw, 260px)`) when no cover image is present or the cover fails to load.
+- Why: This preserves current cover-photo presentation while reducing empty state space without changing layout width or image behavior when a real cover exists.
+- Impact: Vendors without cover photos now see a hero area that is 50% as tall; vendors with cover photos keep the same hero height behavior as before.
+- Revisit trigger: If hero sizing becomes tokenized globally, move these conditional clamps into shared storefront hero size tokens.
+
+## [2026-03-06] Flatten Vendor Hub about-section hierarchy to two peer headings
+- Context: The about area showed a parent heading (`About the Vendor`) plus nested subheadings (`About the Business`, `About the Owner`), but product requested only the two specific headings with the same visual style as the parent heading.
+- Decision: Remove the `About the Vendor` heading and restyle `About the Business` / `About the Owner` as peer section headers using the same `text-2xl font-semibold` title class, with body copy kept directly beneath each heading.
+- Why: This simplifies content hierarchy and matches the requested presentation without changing section width or neighboring layout.
+- Impact: The about area now renders only `About the Business` and `About the Owner`, both with matching section-title styling.
+- Revisit trigger: If content model expands to additional about subsections, consider introducing a reusable subsection title/body component for consistency.
+
+## [2026-03-06] Unify Vendor Hub detail text color to the darker storefront tone
+- Context: The detail area used mixed text colors (dark + muted + orange link accent), and product requested a single darker text color across the shown content.
+- Decision: In the Vendor Hub header/detail sections, replace muted/accent text classes in the shown block with the darker storefront color (`#2a3a42`, dark-mode fallback `#f5f0e8`) for review count text, about-body copy, quick-info labels/values, review-link text, and rating-breakdown labels/percentages.
+- Why: A single text tone improves visual consistency and matches the requested “darker of the two colors” treatment.
+- Impact: All text in the requested screenshot area now renders in one consistent dark text color instead of mixed muted/accent variants.
+- Revisit trigger: If a semantic color-token pass is done later, map this section to shared typography color roles rather than hardcoded hex classes.
+
+## [2026-03-06] Match My Hub full-screen listing card size to Vendor Hub by increasing desktop masonry columns
+- Context: On full-screen desktop, My Hub listing cards appeared significantly larger than Vendor Hub listing cards.
+- Decision: Keep My Hub card component behavior/styles unchanged, but increase My Hub masonry columns at desktop breakpoints from `sm:2 / xl:3` to `sm:2 / lg:4 / xl:5` so card widths at full-screen match Vendor Hub sizing more closely.
+- Why: Adjusting column count is the minimal, layout-only way to reduce card size without touching CTA logic, card internals, or page gutters.
+- Impact: My Hub cards render smaller at large/full-screen widths and visually align with Vendor Hub card sizing; mobile/tablet behavior remains unchanged.
+- Revisit trigger: If card density expectations change by breakpoint, move these column counts into shared storefront layout tokens.
+
+## [2026-03-06] Hide Vendor Hub average response time row when value is unavailable
+- Context: Quick Info displayed an `Avg. Response Time` row even when the computed value was `Unavailable`.
+- Decision: Add an availability guard in `vendorhub.tsx` and render the `Avg. Response Time` row only when `avgResponseMinutes` is a finite number greater than zero.
+- Why: Showing an unavailable metric adds noise; hiding it until data exists keeps Quick Info focused on meaningful values.
+- Impact: Vendors with no response-time data no longer show the `Avg. Response Time` label/value row; once response-time data is present, the row appears automatically.
+- Revisit trigger: If product later wants explicit empty-state messaging for missing metrics, replace this hide behavior with a standardized placeholder treatment.
+
+## [2026-03-06] Increase Vendor Hub detail-section typography using explicit Tailwind size classes (no zoom)
+- Context: Product requested increasing all font sizes in the shown Vendor Hub detail block without using any zoom-based scaling.
+- Decision: Increase the relevant Tailwind text size classes directly in `vendorhub.tsx`: section titles `text-2xl -> text-3xl`, body copy `text-base -> text-lg`, quick-info container text `text-base -> text-lg`, and review-link text `text-base -> text-lg`.
+- Why: Direct font-size class updates provide deterministic sizing changes while avoiding global/browser zoom behavior.
+- Impact: The targeted detail block renders larger text across headings, body copy, labels/values, and the `All reviews` link without altering width/gutter behavior.
+- Revisit trigger: If typography scales are centralized later, move these class-level sizes into shared semantic type tokens.
+
+## [2026-03-06] Enforce shared flush-top first-row listing rule on My Hub via shared masonry grid
+- Context: My Hub was using a page-local CSS multi-column listing layout that produced non-flush first-row card tops, while other storefront surfaces used the shared masonry grid behavior.
+- Decision: Extend `MasonryListingGrid` with an optional `renderCard` hook and switch My Hub listing rendering from local `columns-*` markup to `MasonryListingGrid` with the existing My Hub card behavior (`Edit Listing`, disabled card click, vendor edit route CTA) preserved.
+- Why: Reusing the shared grid path applies the existing sitewide first-row alignment rule and avoids one-off CSS behavior drift.
+- Impact: My Hub first-row card tops now align flush like other listing surfaces, while My Hub-specific card actions/appearance remain unchanged.
+- Revisit trigger: If all listing surfaces later adopt a single shared card-action config system, replace per-page `renderCard` overrides with centralized role-based card action mapping.
+
+## [2026-03-06] Show filled optional owner details on Vendor Hub under About the Owner
+- Context: My Hub captured optional owner fields (`Hobbies`, `Likes & Dislikes`, `Home State`, `Fun Facts`), but Vendor Hub did not render them, so filled values were invisible to customers.
+- Decision: In `vendorhub.tsx`, read trimmed optional owner fields from the vendor payload and render each field directly under `About the Owner` when populated; also render the `About the Owner` section when either main owner bio or any optional owner detail exists.
+- Why: This exposes vendor-provided profile depth on the storefront without showing empty placeholders.
+- Impact: When these fields are filled, Vendor Hub now displays them immediately beneath the owner section in consistent typography; empty fields remain hidden.
+- Revisit trigger: If profile content sections become configurable, migrate these fixed fields into a reusable metadata section renderer.
+
+## [2026-03-06] Route My Hub card click to vendor listing edit page (matching Edit Listing CTA)
+- Context: My Hub listing cards already had an `Edit Listing` CTA that correctly routed to `/vendor/listings/:id`, but clicking the card itself did not follow the same edit flow.
+- Decision: Extend `ListingCard` with an optional `cardNavigationPath` override and use it in `myhub.tsx` so full-card click/keyboard navigation routes to `/vendor/listings/:id` for that listing, while keeping the change scoped to My Hub.
+- Why: This aligns card-click behavior with the existing CTA and reduces friction in the vendor editing workflow.
+- Impact: On My Hub only, both the card click and `Edit Listing` button open the same vendor listing edit page; behavior on other pages remains unchanged.
+- Revisit trigger: If listing card interactions are centralized by role/context later, replace per-page route props with a shared interaction policy.
+
+## [2026-03-06] Remove Likes & Dislikes field from My Hub details form
+- Context: Product requested removing `Likes & Dislikes` from the My Hub details box.
+- Decision: Delete only the `Likes & Dislikes` form section from `myhub.tsx` UI while leaving other profile fields unchanged.
+- Why: This reduces unnecessary form surface area and matches current profile-input priorities.
+- Impact: Vendors no longer see or edit `Likes & Dislikes` from My Hub; all other details fields remain in place.
+- Revisit trigger: If profile customization fields are revisited later, decide whether to restore this as an optional advanced field.
+
+## [2026-03-06] Match optional owner subsection title font styling to About the Owner title at one-step smaller size
+- Context: Product requested that optional subsection titles under `About the Owner` (e.g., `Hobbies`, `Home State`, `Fun Facts`) use the same title font treatment as `About the Owner`, but slightly smaller.
+- Decision: Change optional owner subsection labels in `vendorhub.tsx` from medium body-style `<p>` labels to semantic `<h4>` headings with `text-2xl font-semibold` (one step down from `About the Owner`’s `text-3xl font-semibold`) while keeping color and body text unchanged.
+- Why: This creates a clear, consistent heading hierarchy and visual style match with the section title while preserving readability.
+- Impact: Optional owner detail titles now visually match the `About the Owner` heading family and weight, at a slightly smaller size.
+- Revisit trigger: If storefront heading scales are centralized, replace page-level heading classes with shared semantic heading tokens.

@@ -16,6 +16,7 @@ import {
 } from "@/components/ui/select";
 
 const LANDING_CATEGORY_KEY = "rentals";
+const HERO_ROTATING_WORDS = ["Vendors,", "Rentals,", "Venues,", "Pros,"];
 
 export default function Hero() {
   const [, setLocation] = useLocation();
@@ -54,21 +55,36 @@ export default function Hero() {
   };
 
   return (
-    <div className="bg-[#f0eee9] dark:bg-[#1a2530]">
+    <div className="no-global-scale bg-[#f0eee9] dark:bg-[#1a2530]">
       <div className="mx-auto w-full max-w-[1320px] px-4 pt-16 pb-24 sm:px-6 lg:px-4 lg:pt-[5.29rem] lg:pb-[7.935rem]">
         <div className="mx-auto max-w-5xl text-center">
           <h1
             className="text-[clamp(3.24rem,6.93vw,5.78rem)] font-heading font-light leading-[1.05] text-[#2a3a42] dark:text-[#f5f0e8] lg:text-[clamp(4.2895rem,9.1655vw,7.6475rem)]"
+            aria-label="Event Pros, All in One Place."
             data-testid="text-hero-title"
           >
-            Event <span className="italic text-[#e07a6a]">Pros,</span>
+            <span className="hero-rotating-lockup" aria-hidden="true">
+              <span className="hero-rotating-label">Event</span>
+              <span className="hero-rotating-word italic text-[#e07a6a]">
+                <span className="hero-rotating-word-sizer">Vendors,</span>
+                <span className="hero-rotating-word-overlay">
+                  {HERO_ROTATING_WORDS.map((word, index) => (
+                    <span
+                      key={word}
+                      className="hero-rotating-word-item"
+                      style={{ animationDelay: `-${index * 3}s` }}
+                    >
+                      {word}
+                    </span>
+                  ))}
+                </span>
+              </span>
+            </span>
             <br />
-            All in One Place
+            All in One Place.
           </h1>
 
-          <p className="mx-auto mt-6 max-w-4xl text-[clamp(1.16rem,2.08vw,1.39rem)] font-sans font-normal leading-relaxed text-[#2a3a42] dark:text-[#f5f0e8] lg:mt-[1.9838rem] lg:text-[clamp(1.5295rem,2.7485vw,1.84rem)]">
-            Discover curated vendors, rentals, and venues for every occasion—from intimate gatherings to grand celebrations.
-          </p>
+    
         </div>
 
         <div className="mx-auto mt-12 w-full max-w-[1320px] rounded-[12px] border-[1.5px] border-[rgba(74,106,125,0.2)] bg-[#f5f0e8] p-3 dark:bg-[#22303c] lg:mt-[3.9675rem] lg:rounded-[15.87px] lg:p-[0.8rem]">

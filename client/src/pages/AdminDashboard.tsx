@@ -3,6 +3,7 @@ import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/com
 import { BarChart, Bar, LineChart, Line, XAxis, YAxis, CartesianGrid, Tooltip, ResponsiveContainer } from "recharts";
 import { Users, Building2, Calendar, DollarSign, TrendingUp, Eye, AlertTriangle } from "lucide-react";
 import { useLocation } from "wouter";
+import { useAuth0 } from "@auth0/auth0-react";
 
 interface UserGrowthData {
   date: string;
@@ -95,17 +96,17 @@ function StatsCard({ title, value, description, icon }: StatsCardProps) {
 
 export default function AdminDashboard() {
   const [, setLocation] = useLocation();
+  const { isAuthenticated } = useAuth0();
 
   // Verify user is admin by checking their role from /api/customer/me
   const { data: currentUser, isLoading: loadingUser } = useQuery<User>({
     queryKey: ["/api/customer/me"],
-    enabled: !!localStorage.getItem("customerToken"),
+    enabled: isAuthenticated,
   });
 
   // Redirect if not admin
   useEffect(() => {
-    const token = localStorage.getItem("customerToken");
-    if (!token) {
+    if (!isAuthenticated) {
       setLocation("/");
       return;
     }
@@ -116,31 +117,31 @@ export default function AdminDashboard() {
         setLocation("/dashboard");
       }
     }
-  }, [setLocation, currentUser, loadingUser]);
+  }, [setLocation, currentUser, loadingUser, isAuthenticated]);
 
   const { data: userStats } = useQuery<UserStats>({
     queryKey: ["/api/admin/stats/users"],
-    enabled: !!localStorage.getItem("customerToken") && currentUser?.role === "admin",
+    enabled: isAuthenticated && currentUser?.role === "admin",
   });
 
   const { data: listingStats } = useQuery<ListingStats>({
     queryKey: ["/api/admin/stats/listings"],
-    enabled: !!localStorage.getItem("customerToken") && currentUser?.role === "admin",
+    enabled: isAuthenticated && currentUser?.role === "admin",
   });
 
   const { data: bookingStats } = useQuery<BookingStats>({
     queryKey: ["/api/admin/stats/bookings"],
-    enabled: !!localStorage.getItem("customerToken") && currentUser?.role === "admin",
+    enabled: isAuthenticated && currentUser?.role === "admin",
   });
 
   const { data: trafficStats } = useQuery<TrafficStats>({
     queryKey: ["/api/admin/stats/traffic"],
-    enabled: !!localStorage.getItem("customerToken") && currentUser?.role === "admin",
+    enabled: isAuthenticated && currentUser?.role === "admin",
   });
 
   const { data: chatFlags = [] } = useQuery<ChatFlagRow[]>({
     queryKey: ["/api/admin/stats/chat-flags"],
-    enabled: !!localStorage.getItem("customerToken") && currentUser?.role === "admin",
+    enabled: isAuthenticated && currentUser?.role === "admin",
   });
 
   // Show loading while verifying admin status
