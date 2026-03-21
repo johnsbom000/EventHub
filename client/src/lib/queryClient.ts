@@ -11,10 +11,7 @@ async function buildHeaders(url: string, data?: unknown): Promise<HeadersInit> {
   // Only attach auth header for API calls (your server routes)
   // (This keeps it from accidentally attaching to external URLs)
   if (url.startsWith("/api/") || url.includes("/api/")) {
-    console.log("[api auth] getting token for", url);
     const token = await getFreshAccessToken();
-    console.log("[api auth] got token?", Boolean(token));
-    console.log("[api auth] url:", url, "tokenLen:", token?.length ?? 0);
     if (token) headers["Authorization"] = `Bearer ${token}`;
   }
 

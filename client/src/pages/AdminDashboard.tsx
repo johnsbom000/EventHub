@@ -40,7 +40,7 @@ interface TrafficStats {
   }>;
   topPaths: Array<{
     path: string;
-    visits: number;
+    count: number;
   }>;
 }
 

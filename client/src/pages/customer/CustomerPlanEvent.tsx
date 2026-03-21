@@ -17,9 +17,14 @@ export default function CustomerPlanEvent() {
         </p>
       </div>
 
+      <div className="h-px w-full bg-[var(--dashboard-divider-blue)]" aria-hidden />
+
       <div className="max-w-2xl">
         {/* Browse Vendors Option */}
-        <Card className="rounded-xl shadow-sm hover-elevate cursor-pointer group" onClick={() => setLocation("/browse")}>
+        <Card
+          className="rounded-xl border-0 bg-transparent shadow-none hover-elevate cursor-pointer group"
+          onClick={() => setLocation("/browse")}
+        >
           <CardHeader className="pb-4">
             <div className="h-12 w-12 rounded-full bg-primary/10 flex items-center justify-center mb-4">
               <Search className="h-6 w-6 text-primary" />

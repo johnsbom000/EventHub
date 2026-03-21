@@ -1,5 +1,5 @@
 import { useEffect, useMemo } from "react";
-import { useLocation } from "wouter";
+import { Link, useLocation } from "wouter";
 import { useQuery } from "@tanstack/react-query";
 import { useAuth0 } from "@auth0/auth0-react";
 import {
@@ -13,9 +13,10 @@ import {
   Settings,
   User,
 } from "lucide-react";
-import { SidebarProvider, SidebarTrigger } from "@/components/ui/sidebar";
+import { SidebarProvider } from "@/components/ui/sidebar";
 import { Button } from "@/components/ui/button";
 import { CustomerSidebar } from "@/components/customer-sidebar";
+import BrandWordmark from "@/components/BrandWordmark";
 import CustomerProfile from "./customer/CustomerProfile";
 import CustomerEvents from "./customer/CustomerEvents";
 import CustomerMessages from "./customer/CustomerMessages";
@@ -86,8 +87,8 @@ export default function CustomerDashboard() {
   const sidebarStyle = useMemo(
     () =>
       ({
-        "--sidebar-width": "16rem",
-        "--sidebar-width-icon": "3rem",
+        "--sidebar-width": "6rem",
+        "--sidebar-width-icon": "6rem",
       }) as React.CSSProperties,
     []
   );
@@ -139,106 +140,116 @@ export default function CustomerDashboard() {
 
   return (
     <SidebarProvider style={sidebarStyle}>
-      <div className="swap-dashboard-whites flex h-screen w-full">
-        <CustomerSidebar />
+      <div className="swap-dashboard-whites flex h-screen w-full flex-col">
+        <header className="flex items-center justify-between border-b border-[rgba(74,106,125,0.22)] bg-[#ffffff] p-4">
+          <Link
+            href="/"
+            className="flex items-center rounded-md px-1 py-1"
+            data-testid="link-customer-shell-home"
+          >
+            <BrandWordmark
+              className="text-[2.32rem]"
+              eventClassName="text-[#e07a6a] font-normal"
+              hubClassName="text-[#4a6a7d] font-normal"
+            />
+          </Link>
 
-        <div className="flex flex-col flex-1">
-          <header className="flex items-center justify-between p-4 border-b">
-            <SidebarTrigger data-testid="button-sidebar-toggle" />
-            <div className="flex items-center gap-3">
-              <Button
-                variant="default"
-                className="no-global-scale editorial-login-btn h-[54px] min-w-[232px] px-7 text-[1.15rem] leading-none"
-                onClick={() => setLocation("/")}
-                data-testid="button-back-marketplace"
-              >
-                <ArrowLeft className="w-4 h-4 mr-2" />
-                Back to Marketplace
-              </Button>
-              <DropdownMenu>
-                <DropdownMenuTrigger asChild>
-                  <Button
-                    variant="ghost"
-                    size="icon"
-                    className="h-10 w-10 rounded-full p-0"
-                    data-testid="button-customer-dashboard-profile"
-                  >
-                    <Avatar
-                      key={hasVendorAccount ? "vendor-avatar" : "customer-avatar"}
-                      className="h-10 w-10"
-                    >
-                      {shouldShowCustomerPhoto && customer.profilePhotoDataUrl ? (
-                        <AvatarImage
-                          src={customer.profilePhotoDataUrl}
-                          alt="Customer profile photo"
-                          className="object-cover"
-                        />
-                      ) : null}
-                      <AvatarFallback className="bg-primary text-primary-foreground">
-                        {initials}
-                      </AvatarFallback>
-                    </Avatar>
-                  </Button>
-                </DropdownMenuTrigger>
-                <DropdownMenuContent
-                  align="end"
-                  className="w-64"
-                  data-testid="dropdown-customer-dashboard-menu"
+          <div className="flex items-center gap-3">
+            <Button
+              variant="default"
+              className="no-global-scale editorial-login-btn min-h-0 h-[27px] min-w-[136px] rounded-[7px] px-3.5 py-0 text-[12.5px] leading-none gap-1 [&_svg]:!size-2"
+              onClick={() => setLocation("/")}
+              data-testid="button-back-marketplace"
+            >
+              <ArrowLeft />
+              Back to Marketplace
+            </Button>
+            <DropdownMenu>
+              <DropdownMenuTrigger asChild>
+                <Button
+                  variant="ghost"
+                  size="icon"
+                  className="h-10 w-10 rounded-full p-0"
+                  data-testid="button-customer-dashboard-profile"
                 >
-                  <DropdownMenuLabel>{hasVendorAccount ? "Vendor Account" : "My Account"}</DropdownMenuLabel>
-                  <DropdownMenuSeparator />
-                  <DropdownMenuItem
-                    onClick={() => setLocation(hasVendorAccount ? "/vendor/dashboard" : "/dashboard/profile")}
-                    data-testid="menu-item-customer-dashboard-profile"
+                  <Avatar
+                    key={hasVendorAccount ? "vendor-avatar" : "customer-avatar"}
+                    className="h-10 w-10"
                   >
-                    <User className="mr-2 h-4 w-4" />
-                    <span>Profile</span>
-                  </DropdownMenuItem>
+                    {shouldShowCustomerPhoto && customer.profilePhotoDataUrl ? (
+                      <AvatarImage
+                        src={customer.profilePhotoDataUrl}
+                        alt="Customer profile photo"
+                        className="object-cover"
+                      />
+                    ) : null}
+                    <AvatarFallback className="bg-primary text-primary-foreground">
+                      {initials}
+                    </AvatarFallback>
+                  </Avatar>
+                </Button>
+              </DropdownMenuTrigger>
+              <DropdownMenuContent
+                align="end"
+                className="w-64"
+                data-testid="dropdown-customer-dashboard-menu"
+              >
+                <DropdownMenuLabel>{hasVendorAccount ? "Vendor Account" : "My Account"}</DropdownMenuLabel>
+                <DropdownMenuSeparator />
+                <DropdownMenuItem
+                  onClick={() => setLocation(hasVendorAccount ? "/vendor/dashboard" : "/dashboard/profile")}
+                  data-testid="menu-item-customer-dashboard-profile"
+                >
+                  <User className="mr-2 h-4 w-4" />
+                  <span>Profile</span>
+                </DropdownMenuItem>
+                <DropdownMenuItem
+                  onClick={() => setLocation("/dashboard/events")}
+                  data-testid="menu-item-customer-dashboard-events"
+                >
+                  <Calendar className="mr-2 h-4 w-4" />
+                  <span>My Events</span>
+                </DropdownMenuItem>
+                {hasVendorAccount ? (
                   <DropdownMenuItem
-                    onClick={() => setLocation("/dashboard/events")}
-                    data-testid="menu-item-customer-dashboard-events"
+                    onClick={() => setLocation("/vendor/dashboard")}
+                    data-testid="menu-item-customer-dashboard-vendor-dashboard"
                   >
-                    <Calendar className="mr-2 h-4 w-4" />
-                    <span>My Events</span>
+                    <Home className="mr-2 h-4 w-4" />
+                    <span>Vendor Dashboard</span>
                   </DropdownMenuItem>
-                  {hasVendorAccount ? (
-                    <DropdownMenuItem
-                      onClick={() => setLocation("/vendor/dashboard")}
-                      data-testid="menu-item-customer-dashboard-vendor-dashboard"
-                    >
-                      <Home className="mr-2 h-4 w-4" />
-                      <span>Vendor Dashboard</span>
-                    </DropdownMenuItem>
-                  ) : null}
-                  <DropdownMenuSeparator />
-                  <DropdownMenuItem
-                    onClick={() => setLocation(hasVendorAccount ? "/vendor/dashboard" : "/dashboard/profile")}
-                    data-testid="menu-item-customer-dashboard-account-settings"
-                  >
-                    <Settings className="mr-2 h-4 w-4" />
-                    <span>Account settings</span>
-                  </DropdownMenuItem>
-                  <DropdownMenuItem data-testid="menu-item-customer-dashboard-languages">
-                    <Globe className="mr-2 h-4 w-4" />
-                    <span>Languages & currency</span>
-                  </DropdownMenuItem>
-                  <DropdownMenuSeparator />
-                  <DropdownMenuItem data-testid="menu-item-customer-dashboard-help">
-                    <HelpCircle className="mr-2 h-4 w-4" />
-                    <span>Help Center</span>
-                  </DropdownMenuItem>
-                  <DropdownMenuItem
-                    onClick={() => logout({ logoutParams: { returnTo: window.location.origin } })}
-                    data-testid="menu-item-customer-dashboard-sign-out"
-                  >
-                    <LogOut className="mr-2 h-4 w-4" />
-                    <span>Sign out</span>
-                  </DropdownMenuItem>
-                </DropdownMenuContent>
-              </DropdownMenu>
-            </div>
-          </header>
+                ) : null}
+                <DropdownMenuSeparator />
+                <DropdownMenuItem
+                  onClick={() => setLocation(hasVendorAccount ? "/vendor/dashboard" : "/dashboard/profile")}
+                  data-testid="menu-item-customer-dashboard-account-settings"
+                >
+                  <Settings className="mr-2 h-4 w-4" />
+                  <span>Account settings</span>
+                </DropdownMenuItem>
+                <DropdownMenuItem data-testid="menu-item-customer-dashboard-languages">
+                  <Globe className="mr-2 h-4 w-4" />
+                  <span>Languages & currency</span>
+                </DropdownMenuItem>
+                <DropdownMenuSeparator />
+                <DropdownMenuItem data-testid="menu-item-customer-dashboard-help">
+                  <HelpCircle className="mr-2 h-4 w-4" />
+                  <span>Help Center</span>
+                </DropdownMenuItem>
+                <DropdownMenuItem
+                  onClick={() => logout({ logoutParams: { returnTo: window.location.origin } })}
+                  data-testid="menu-item-customer-dashboard-sign-out"
+                >
+                  <LogOut className="mr-2 h-4 w-4" />
+                  <span>Sign out</span>
+                </DropdownMenuItem>
+              </DropdownMenuContent>
+            </DropdownMenu>
+          </div>
+        </header>
 
+        <div className="flex min-h-0 flex-1">
+          <CustomerSidebar className="shrink-0" />
           <main className="flex-1 overflow-auto p-6">
             <div className="max-w-7xl mx-auto">
               {activeSection === "profile" && <CustomerProfile customer={customer} />}

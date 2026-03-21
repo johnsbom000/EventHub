@@ -52,6 +52,13 @@ export async function createConnectAccount(
         card_payments: { requested: true },
         transfers: { requested: true },
       },
+      settings: {
+        payouts: {
+          schedule: {
+            interval: "manual",
+          },
+        },
+      },
       business_profile: {
         name: businessName,
       },
@@ -81,14 +88,28 @@ export async function createConnectAccount(
 // Check if Connect account onboarding is complete
 export async function checkAccountOnboardingStatus(
   accountId: string
-): Promise<{ complete: boolean; detailsSubmitted: boolean; chargesEnabled: boolean }> {
+): Promise<{ complete: boolean; detailsSubmitted: boolean; chargesEnabled: boolean; manualPayoutSchedule: boolean }> {
   const account = await stripe.accounts.retrieve(accountId);
 
+  const payoutInterval = account.settings?.payouts?.schedule?.interval || "";
   return {
     complete: account.details_submitted && account.charges_enabled,
     detailsSubmitted: account.details_submitted,
     chargesEnabled: account.charges_enabled,
+    manualPayoutSchedule: payoutInterval === "manual",
   };
+}
+
+export async function ensureManualPayoutSchedule(accountId: string): Promise<void> {
+  await stripe.accounts.update(accountId, {
+    settings: {
+      payouts: {
+        schedule: {
+          interval: "manual",
+        },
+      },
+    },
+  });
 }
 
 // Create a login link for vendors to access their Stripe Dashboard
@@ -100,30 +121,70 @@ export async function createDashboardLoginLink(accountId: string): Promise<strin
 // Create a payment intent with platform fee
 export async function createBookingPaymentIntent(params: {
   amount: number; // in cents
-  platformFeePercent: number; // e.g., 8 for 8%
+  platformFeeAmount: number; // in cents
+  vendorNetPayoutAmount: number; // in cents
+  vendorGrossAmount?: number; // in cents
+  stripeProcessingFeeEstimate?: number; // in cents
   vendorStripeAccountId: string;
+  vendorAccountId?: string;
+  listingId?: string;
+  eventStartAt?: Date | string | null;
+  eventEndAt?: Date | string | null;
+  totalAmount?: number; // in cents
   customerId?: string;
   description: string;
+  bookingId?: string;
+  scheduleId?: string;
+  paymentType?: string;
   idempotencyKey?: string;
 }): Promise<Stripe.PaymentIntent> {
-  const { amount, platformFeePercent, vendorStripeAccountId, customerId, description, idempotencyKey } = params;
+  const {
+    amount,
+    platformFeeAmount,
+    vendorNetPayoutAmount,
+    vendorGrossAmount,
+    stripeProcessingFeeEstimate,
+    vendorStripeAccountId,
+    vendorAccountId,
+    listingId,
+    eventStartAt,
+    eventEndAt,
+    totalAmount,
+    customerId,
+    description,
+    bookingId,
+    scheduleId,
+    paymentType,
+    idempotencyKey,
+  } = params;
 
-  const platformFee = Math.round(amount * (platformFeePercent / 100));
+  // Launch policy: funds are held by the platform until payout eligibility is checked.
+  // We intentionally do not use destination charges here.
+  const metadata: Record<string, string> = {
+    platformFee: Math.max(0, Math.round(platformFeeAmount)).toString(),
+    vendorNetPayout: Math.max(0, Math.round(vendorNetPayoutAmount)).toString(),
+    vendorGross: Math.max(0, Math.round(vendorGrossAmount ?? amount)).toString(),
+    totalAmount: Math.max(0, Math.round(totalAmount ?? amount)).toString(),
+    stripeProcessingFeeEstimate: Math.max(0, Math.round(stripeProcessingFeeEstimate ?? 0)).toString(),
+    payoutHold: "true",
+    stripeConnectedAccountId: vendorStripeAccountId,
+  };
+  if (bookingId) metadata.bookingId = bookingId;
+  if (scheduleId) metadata.scheduleId = scheduleId;
+  if (paymentType) metadata.paymentType = paymentType;
+  if (listingId) metadata.listingId = listingId;
+  if (vendorAccountId) metadata.vendorAccountId = vendorAccountId;
+  if (eventStartAt) metadata.eventStartAt = eventStartAt instanceof Date ? eventStartAt.toISOString() : String(eventStartAt);
+  if (eventEndAt) metadata.eventEndAt = eventEndAt instanceof Date ? eventEndAt.toISOString() : String(eventEndAt);
 
   const paymentIntent = await stripe.paymentIntents.create(
     {
       amount,
       currency: "usd",
-      application_fee_amount: platformFee,
-      transfer_data: {
-        destination: vendorStripeAccountId,
-      },
-      customer: customerId,
+      ...(customerId ? { customer: customerId } : {}),
+      automatic_payment_methods: { enabled: true },
       description,
-      metadata: {
-        platformFee: platformFee.toString(),
-        vendorPayout: (amount - platformFee).toString(),
-      },
+      metadata,
     },
     idempotencyKey ? { idempotencyKey } : undefined
   );
@@ -157,15 +218,33 @@ export async function transferToVendor(params: {
   amount: number;
   vendorStripeAccountId: string;
   description: string;
+  sourceTransaction?: string;
+  transferGroup?: string;
+  metadata?: Record<string, string>;
+  idempotencyKey?: string;
 }): Promise<Stripe.Transfer> {
-  const { amount, vendorStripeAccountId, description } = params;
-
-  const transfer = await stripe.transfers.create({
+  const {
     amount,
-    currency: "usd",
-    destination: vendorStripeAccountId,
+    vendorStripeAccountId,
     description,
-  });
+    sourceTransaction,
+    transferGroup,
+    metadata,
+    idempotencyKey,
+  } = params;
+
+  const transfer = await stripe.transfers.create(
+    {
+      amount,
+      currency: "usd",
+      destination: vendorStripeAccountId,
+      description,
+      ...(sourceTransaction ? { source_transaction: sourceTransaction } : {}),
+      ...(transferGroup ? { transfer_group: transferGroup } : {}),
+      ...(metadata ? { metadata } : {}),
+    },
+    idempotencyKey ? { idempotencyKey } : undefined
+  );
 
   return transfer;
 }

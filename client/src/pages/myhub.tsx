@@ -11,6 +11,7 @@ import { getFreshAccessToken } from "@/lib/authToken";
 import { useToast } from "@/hooks/use-toast";
 import { Button } from "@/components/ui/button";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
+import HobbyPillInput from "@/components/HobbyPillInput";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
 import { Textarea } from "@/components/ui/textarea";
@@ -23,6 +24,7 @@ import {
   DialogTitle,
 } from "@/components/ui/dialog";
 import type { ListingPublic } from "@/types/listing";
+import { serializeHobbyList } from "@shared/hobby-tags";
 
 const ACCEPTED_SHOP_PHOTO_TYPES = new Set(["image/png", "image/jpeg", "image/jpg", "image/webp", "image/gif"]);
 const MAX_SHOP_PHOTO_BYTES = 2 * 1024 * 1024;
@@ -62,7 +64,10 @@ type VendorMe = {
 };
 
 type VendorProfile = {
+  profileName?: string | null;
   serviceDescription?: string | null;
+  city?: string | null;
+  serviceRadius?: number | null;
   onlineProfiles?: Record<string, unknown> | null;
 };
 
@@ -77,6 +82,21 @@ type VendorListing = {
 
 function asTrimmedString(value: unknown): string {
   return typeof value === "string" ? value.trim() : "";
+}
+
+function normalizeProfileNameInput(value: string) {
+  const cleaned = (value || "")
+    .replace(/[’]/g, "'")
+    .replace(/[^a-zA-Z0-9\s']/g, " ")
+    .replace(/\s+/g, " ")
+    .trim()
+    .slice(0, 120);
+  if (!cleaned) return "";
+  return cleaned
+    .split(" ")
+    .filter(Boolean)
+    .map((word) => word.charAt(0).toUpperCase() + word.slice(1).toLowerCase())
+    .join(" ");
 }
 
 function clamp(value: number, min: number, max: number) {
@@ -113,6 +133,12 @@ function toNonNegativeIntString(value: string): string {
   const parsed = Number(value);
   if (!Number.isFinite(parsed)) return "0";
   return String(Math.max(0, Math.floor(parsed)));
+}
+
+function normalizeOptionalNonNegativeIntString(value: string): string {
+  const trimmed = value.trim();
+  if (!trimmed) return "";
+  return toNonNegativeIntString(trimmed);
 }
 
 function getVendorHubCoverHeightForViewport(viewportWidth: number): number {
@@ -430,6 +456,7 @@ export default function MyHub() {
   const [aboutOwnerDraft, setAboutOwnerDraft] = useState("");
   const [taglineDraft, setTaglineDraft] = useState("");
   const [serviceAreaDraft, setServiceAreaDraft] = useState("");
+  const [serviceRadiusMilesDraft, setServiceRadiusMilesDraft] = useState("");
   const [inBusinessSinceYearDraft, setInBusinessSinceYearDraft] = useState("");
   const [specialtiesDraft, setSpecialtiesDraft] = useState("");
   const [eventsServedBaselineDraft, setEventsServedBaselineDraft] = useState("0");
@@ -494,10 +521,33 @@ export default function MyHub() {
     if (fromOnline) return fromOnline;
     return asTrimmedString(vendorProfile?.serviceDescription);
   }, [onlineProfiles, vendorProfile?.serviceDescription]);
+  const persistedProfileBusinessName = useMemo(() => {
+    const fromOnline = asTrimmedString(onlineProfiles.profileBusinessName);
+    if (fromOnline) return fromOnline;
+    const fromProfile = asTrimmedString(vendorProfile?.profileName);
+    if (fromProfile) return fromProfile;
+    return asTrimmedString(vendorMe?.businessName);
+  }, [onlineProfiles, vendorProfile?.profileName, vendorMe?.businessName]);
 
   const persistedAboutOwner = asTrimmedString(onlineProfiles.aboutOwner);
   const persistedTagline = asTrimmedString(onlineProfiles.shopTagline);
   const persistedServiceArea = asTrimmedString(onlineProfiles.serviceAreaLabel);
+  const serviceAreaCityFallback =
+    asTrimmedString(onlineProfiles.city) || asTrimmedString(vendorProfile?.city);
+  const serviceAreaStateFallback =
+    asTrimmedString(onlineProfiles.state) || asTrimmedString(onlineProfiles.homeState);
+  const defaultServiceAreaFromOnboarding = useMemo(() => {
+    if (serviceAreaCityFallback && serviceAreaStateFallback) {
+      return `${serviceAreaCityFallback}, ${serviceAreaStateFallback}`;
+    }
+    return serviceAreaCityFallback || serviceAreaStateFallback;
+  }, [serviceAreaCityFallback, serviceAreaStateFallback]);
+  const effectivePersistedServiceArea = persistedServiceArea || defaultServiceAreaFromOnboarding;
+  const persistedServiceRadiusMiles = useMemo(() => {
+    const raw = Number(vendorProfile?.serviceRadius);
+    if (!Number.isFinite(raw) || raw <= 0) return "";
+    return String(Math.floor(raw));
+  }, [vendorProfile?.serviceRadius]);
   const persistedInBusinessSinceYear = asTrimmedString(onlineProfiles.inBusinessSinceYear);
   const persistedSpecialties = Array.isArray(onlineProfiles.specialties)
     ? (onlineProfiles.specialties as unknown[])
@@ -509,7 +559,7 @@ export default function MyHub() {
     if (!Number.isFinite(parsed)) return "0";
     return String(Math.max(0, Math.floor(parsed)));
   })();
-  const persistedHobbies = asTrimmedString(onlineProfiles.hobbies);
+  const persistedHobbies = serializeHobbyList(onlineProfiles.hobbies);
   const persistedLikesDislikes = asTrimmedString(onlineProfiles.likesDislikes);
   const persistedHomeState = asTrimmedString(onlineProfiles.homeState);
   const persistedFunFacts = asTrimmedString(onlineProfiles.funFacts);
@@ -518,8 +568,8 @@ export default function MyHub() {
   const persistedCoverPhotoPosition = parsePhotoPosition(onlineProfiles.shopCoverImagePosition);
 
   useEffect(() => {
-    setBusinessNameDraft(asTrimmedString(vendorMe?.businessName));
-  }, [vendorMe?.businessName]);
+    setBusinessNameDraft(persistedProfileBusinessName);
+  }, [persistedProfileBusinessName]);
 
   useEffect(() => {
     setAboutBusinessDraft(persistedAboutBusiness);
@@ -534,8 +584,12 @@ export default function MyHub() {
   }, [persistedTagline]);
 
   useEffect(() => {
-    setServiceAreaDraft(persistedServiceArea);
-  }, [persistedServiceArea]);
+    setServiceAreaDraft(effectivePersistedServiceArea);
+  }, [effectivePersistedServiceArea]);
+
+  useEffect(() => {
+    setServiceRadiusMilesDraft(persistedServiceRadiusMiles);
+  }, [persistedServiceRadiusMiles]);
 
   useEffect(() => {
     setInBusinessSinceYearDraft(persistedInBusinessSinceYear);
@@ -643,7 +697,7 @@ export default function MyHub() {
   const livePreviewShopImageUrl = shopPhotoSource?.src || "";
 
   const listingsForShop: ListingPublic[] = useMemo(() => {
-    const fallbackVendorName = asTrimmedString(businessNameDraft) || asTrimmedString(vendorMe?.businessName) || "Vendor";
+    const fallbackVendorName = asTrimmedString(businessNameDraft) || persistedProfileBusinessName || "Vendor";
 
     return (Array.isArray(activeListings) ? activeListings : []).map((listing) => ({
       ...(listing as any),
@@ -661,18 +715,19 @@ export default function MyHub() {
       businessHours: [] as any,
       discounts: [] as any,
     }));
-  }, [activeListings, businessNameDraft, vendorId, vendorMe?.businessName, livePreviewShopImageUrl]);
+  }, [activeListings, businessNameDraft, vendorId, persistedProfileBusinessName, livePreviewShopImageUrl]);
 
   const hasChanges =
-    asTrimmedString(businessNameDraft) !== asTrimmedString(vendorMe?.businessName) ||
+    asTrimmedString(businessNameDraft) !== persistedProfileBusinessName ||
     asTrimmedString(aboutBusinessDraft) !== persistedAboutBusiness ||
     asTrimmedString(aboutOwnerDraft) !== persistedAboutOwner ||
     asTrimmedString(taglineDraft) !== persistedTagline ||
-    asTrimmedString(serviceAreaDraft) !== persistedServiceArea ||
+    asTrimmedString(serviceAreaDraft) !== effectivePersistedServiceArea ||
+    normalizeOptionalNonNegativeIntString(serviceRadiusMilesDraft) !== persistedServiceRadiusMiles ||
     asTrimmedString(inBusinessSinceYearDraft) !== persistedInBusinessSinceYear ||
     normalizeSpecialtiesInput(specialtiesDraft).join("|") !== persistedSpecialties.join("|") ||
     toNonNegativeIntString(eventsServedBaselineDraft) !== persistedEventsServedBaseline ||
-    asTrimmedString(hobbiesDraft) !== persistedHobbies ||
+    serializeHobbyList(hobbiesDraft) !== persistedHobbies ||
     asTrimmedString(likesDislikesDraft) !== persistedLikesDislikes ||
     asTrimmedString(homeStateDraft) !== persistedHomeState ||
     asTrimmedString(funFactsDraft) !== persistedFunFacts ||
@@ -754,6 +809,7 @@ export default function MyHub() {
       await Promise.all([
         queryClient.invalidateQueries({ queryKey: ["/api/vendor/me"] }),
         queryClient.invalidateQueries({ queryKey: ["/api/vendor/profile"] }),
+        queryClient.invalidateQueries({ queryKey: ["/api/vendor/profiles"] }),
         queryClient.invalidateQueries({ queryKey: ["/api/vendor/listings", "active", "vendor-shop"] }),
         queryClient.invalidateQueries({ queryKey: ["/api/vendors/public/shop", vendorId] }),
         queryClient.invalidateQueries({ queryKey: ["/api/listings/public"] }),
@@ -775,10 +831,6 @@ export default function MyHub() {
       if (validationMessage) {
         throw new Error(validationMessage);
       }
-
-      await apiRequest("PATCH", "/api/vendor/me", {
-        businessName: nextBusinessName,
-      });
 
       if (!vendorProfile) {
         throw new Error("Vendor profile not found. Please complete onboarding first.");
@@ -828,6 +880,7 @@ export default function MyHub() {
           : {};
       const normalizedSpecialties = normalizeSpecialtiesInput(specialtiesDraft);
       const eventsServedBaseline = toNonNegativeIntString(eventsServedBaselineDraft);
+      const normalizedServiceRadius = normalizeOptionalNonNegativeIntString(serviceRadiusMilesDraft);
 
       const token = await getFreshAccessToken();
       const profileResponse = await fetch("/api/vendor/profile", {
@@ -838,9 +891,12 @@ export default function MyHub() {
           ...(token ? { Authorization: `Bearer ${token}` } : {}),
         },
         body: JSON.stringify({
+          profileName: nextBusinessName,
           serviceDescription: asTrimmedString(aboutBusinessDraft),
+          serviceRadius: normalizedServiceRadius ? Number(normalizedServiceRadius) : null,
           onlineProfiles: {
             ...existingOnlineProfiles,
+            profileBusinessName: nextBusinessName,
             aboutBusiness: asTrimmedString(aboutBusinessDraft),
             aboutOwner: asTrimmedString(aboutOwnerDraft),
             shopTagline: asTrimmedString(taglineDraft),
@@ -848,7 +904,7 @@ export default function MyHub() {
             inBusinessSinceYear: asTrimmedString(inBusinessSinceYearDraft),
             specialties: normalizedSpecialties,
             eventsServedBaseline: Number(eventsServedBaseline),
-            hobbies: asTrimmedString(hobbiesDraft),
+            hobbies: serializeHobbyList(hobbiesDraft),
             likesDislikes: asTrimmedString(likesDislikesDraft),
             homeState: asTrimmedString(homeStateDraft),
             funFacts: asTrimmedString(funFactsDraft),
@@ -891,6 +947,7 @@ export default function MyHub() {
       await Promise.all([
         queryClient.invalidateQueries({ queryKey: ["/api/vendor/me"] }),
         queryClient.invalidateQueries({ queryKey: ["/api/vendor/profile"] }),
+        queryClient.invalidateQueries({ queryKey: ["/api/vendor/profiles"] }),
         queryClient.invalidateQueries({ queryKey: ["/api/vendor/listings", "active", "vendor-shop"] }),
         queryClient.invalidateQueries({ queryKey: ["/api/vendors/public/shop", vendorId] }),
         queryClient.invalidateQueries({ queryKey: ["/api/listings/public"] }),
@@ -899,6 +956,7 @@ export default function MyHub() {
       toast({
         title: "My Hub updated",
         description: "Your shared shop details now match across Event Hub.",
+        duration: 4000,
       });
     },
     onError: (error: any) => {
@@ -1414,6 +1472,8 @@ export default function MyHub() {
                 maxColumns={5}
                 desktopColumns={5}
                 preserveInputOrder
+                minCardWidthPx={240}
+                cardMaxWidthPx={290}
                 renderCard={(listing) => (
                   <ListingCard
                     listing={listing}
@@ -1472,7 +1532,9 @@ export default function MyHub() {
                     id="vendor-shop-name"
                     value={businessNameDraft}
                     onChange={(event) => setBusinessNameDraft(event.target.value)}
+                    onBlur={(event) => setBusinessNameDraft(normalizeProfileNameInput(event.target.value))}
                     placeholder="Business name"
+                    maxLength={120}
                     disabled={isVendorLoading || saveMutation.isPending}
                     data-testid="input-vendor-shop-business-name"
                   />
@@ -1481,24 +1543,20 @@ export default function MyHub() {
                 <div>
                   <Label htmlFor="vendor-shop-cover-photo">Cover Photo</Label>
                   <div className="mt-1.5 rounded-lg border border-dashed border-border p-4">
-                    <div
-                      className="w-full overflow-hidden rounded-xl border border-border bg-muted"
-                      style={{ aspectRatio: `${vendorHubCoverAspectRatio}` }}
-                    >
-                      {coverPhotoSource ? (
+                    {coverPhotoSource ? (
+                      <div
+                        className="w-full overflow-hidden rounded-xl border border-border bg-muted"
+                        style={{ aspectRatio: `${vendorHubCoverAspectRatio}` }}
+                      >
                         <img
                           src={coverPhotoSource.src}
                           alt="My Hub cover preview"
                           className="h-full w-full object-cover"
                           style={{ objectPosition: toObjectPositionValue(coverPhotoPosition) }}
                         />
-                      ) : (
-                        <div className="flex h-full items-center justify-center text-sm text-muted-foreground">
-                          Upload a cover photo
-                        </div>
-                      )}
-                    </div>
-                    <div className="mt-3 flex flex-wrap items-center gap-2">
+                      </div>
+                    ) : null}
+                    <div className={`${coverPhotoSource ? "mt-3" : ""} flex flex-wrap items-center gap-2`}>
                       <input
                         ref={coverPhotoInputRef}
                         id="vendor-shop-cover-photo"
@@ -1528,6 +1586,7 @@ export default function MyHub() {
                         <Button
                           type="button"
                           variant="ghost"
+                          className="text-[#4A6A7D] hover:text-[#4A6A7D]"
                           onClick={openCoverPhotoEditor}
                           disabled={saveMutation.isPending || isPreparingCoverPhoto || isUploadingPhoto}
                           data-testid="button-edit-shop-cover-photo-position"
@@ -1539,6 +1598,7 @@ export default function MyHub() {
                         <Button
                           type="button"
                           variant="ghost"
+                          className="text-[#4A6A7D] hover:text-[#4A6A7D]"
                           onClick={() => {
                             setCoverPhotoSource(null);
                             setCoverPhotoPosition({ x: 0, y: 0 });
@@ -1565,15 +1625,17 @@ export default function MyHub() {
                 <div>
                   <Label htmlFor="vendor-shop-photo">Shop Profile Image</Label>
                   <div className="mt-1.5 rounded-lg border border-dashed border-border p-4">
-                    <div className="flex flex-wrap items-center gap-4">
-                      {renderShopPhotoCircle({
-                        frameSize: SHOP_PHOTO_EDITOR_PREVIEW_SIZE,
-                        className: "h-16 w-16 text-base ring-1 ring-border",
-                        source: shopPhotoSource,
-                        position: shopPhotoPosition,
-                        scaleMultiplier: shopPhotoScale,
-                        dataTestId: "avatar-shop-editor-preview",
-                      })}
+                    <div className="flex flex-wrap items-center gap-3">
+                      {shopPhotoSource
+                        ? renderShopPhotoCircle({
+                            frameSize: SHOP_PHOTO_EDITOR_PREVIEW_SIZE,
+                            className: "h-16 w-16 text-base ring-1 ring-border",
+                            source: shopPhotoSource,
+                            position: shopPhotoPosition,
+                            scaleMultiplier: shopPhotoScale,
+                            dataTestId: "avatar-shop-editor-preview",
+                          })
+                        : null}
                       <div className="flex flex-wrap items-center gap-3">
                         <input
                           ref={shopPhotoInputRef}
@@ -1612,7 +1674,7 @@ export default function MyHub() {
                             <Button
                               type="button"
                               variant="ghost"
-                              className="h-auto px-0 py-0 text-sm font-medium"
+                              className="h-auto px-0 py-0 text-sm font-medium text-[#4A6A7D] hover:text-[#4A6A7D]"
                               onClick={() => shopPhotoInputRef.current?.click()}
                               disabled={saveMutation.isPending || isPreparingPhoto || isUploadingPhoto}
                               data-testid="button-change-shop-photo"
@@ -1625,6 +1687,7 @@ export default function MyHub() {
                           <Button
                             type="button"
                             variant="ghost"
+                            className="text-[#4A6A7D] hover:text-[#4A6A7D]"
                             onClick={() => {
                               void persistShopPhoto(null, { x: 0, y: 0 }, 1);
                             }}
@@ -1660,7 +1723,21 @@ export default function MyHub() {
                     id="vendor-shop-service-area"
                     value={serviceAreaDraft}
                     onChange={(event) => setServiceAreaDraft(event.target.value)}
-                    placeholder="Example: Salt Lake City, UT + 60mi"
+                    placeholder="Example: Salt Lake City, UT"
+                    disabled={isProfileLoading || saveMutation.isPending}
+                  />
+                </div>
+
+                <div className="space-y-2">
+                  <Label htmlFor="vendor-shop-service-radius">Service Radius (miles)</Label>
+                  <Input
+                    id="vendor-shop-service-radius"
+                    type="number"
+                    min={0}
+                    step={1}
+                    value={serviceRadiusMilesDraft}
+                    onChange={(event) => setServiceRadiusMilesDraft(event.target.value.replace(/[^\d]/g, ""))}
+                    placeholder="Example: 100"
                     disabled={isProfileLoading || saveMutation.isPending}
                   />
                 </div>
@@ -1729,14 +1806,15 @@ export default function MyHub() {
 
                 <div className="space-y-2">
                   <Label htmlFor="vendor-shop-hobbies">Hobbies</Label>
-                  <Textarea
+                  <HobbyPillInput
                     id="vendor-shop-hobbies"
                     value={hobbiesDraft}
-                    onChange={(event) => setHobbiesDraft(event.target.value)}
-                    placeholder="What the owner enjoys outside of work."
-                    rows={3}
+                    onChange={setHobbiesDraft}
+                    placeholder="Type a hobby and press Enter"
                     disabled={isProfileLoading || saveMutation.isPending}
-                    data-testid="textarea-vendor-shop-hobbies"
+                    inputTestId="textarea-vendor-shop-hobbies"
+                    pillClassName="border-[#E07A6A] bg-[#E07A6A] text-[#ffffff]"
+                    pillRemoveButtonClassName="text-[#ffffff]/80 hover:text-[#ffffff]"
                   />
                 </div>
 

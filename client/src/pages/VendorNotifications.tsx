@@ -5,7 +5,6 @@ import { Bell } from "lucide-react";
 
 import VendorShell from "@/components/VendorShell";
 import { Button } from "@/components/ui/button";
-import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card";
 import {
   Dialog,
   DialogContent,
@@ -275,12 +274,10 @@ export default function VendorNotifications() {
             </p>
           </div>
 
-          <Card>
-            <CardHeader>
-              <CardTitle>Recent Notifications</CardTitle>
-              <CardDescription>Your latest alerts and updates</CardDescription>
-            </CardHeader>
-            <CardContent>
+          <section className="px-4 py-2">
+            <h2 className="font-heading text-[32px] leading-none tracking-tight">Recent Notifications</h2>
+            <p className="mt-3 text-sm text-muted-foreground">Your latest alerts and updates</p>
+            <div className="mt-5">
               {isLoading ? (
                 <div className="text-center py-12 text-muted-foreground">Loading...</div>
               ) : resolvedNotifications.length === 0 ? (
@@ -382,15 +379,15 @@ export default function VendorNotifications() {
                   })}
                 </div>
               )}
-            </CardContent>
-          </Card>
+            </div>
+          </section>
 
-          <Card>
-            <CardHeader>
-              <CardTitle>Notification Preferences</CardTitle>
-              <CardDescription>Choose what alerts you want to receive</CardDescription>
-            </CardHeader>
-            <CardContent className="space-y-4">
+          <div className="h-px w-full bg-[var(--dashboard-divider-blue)]" aria-hidden />
+
+          <section className="px-4 py-2">
+            <h2 className="font-heading text-[32px] leading-none tracking-tight">Notification Preferences</h2>
+            <p className="mt-3 text-sm text-muted-foreground">Choose what alerts you want to receive</p>
+            <div className="mt-5 space-y-4">
               <div className="flex items-center justify-between">
                 <div>
                   <Label htmlFor="new-bookings">New Bookings</Label>
@@ -446,8 +443,8 @@ export default function VendorNotifications() {
                   data-testid="switch-payments"
                 />
               </div>
-            </CardContent>
-          </Card>
+            </div>
+          </section>
         </div>
 
         {activeBooking ? (

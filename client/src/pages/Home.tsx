@@ -1,4 +1,5 @@
 import MasonryListingGrid from "@/components/MasonryListingGrid";
+import ListingCard from "@/components/ListingCard";
 import type { ListingPublic } from "@/types/listing";
 import { useMemo } from "react";
 import { useQuery } from "@tanstack/react-query";
@@ -26,28 +27,25 @@ export default function Home() {
   }, [publicListings]);
 
   return (
-    <div className="min-h-screen flex flex-col bg-[#f0eee9] dark:bg-background">
-      <Navigation />
+    <div className="min-h-screen flex flex-col bg-[#ffffff] dark:bg-background">
+      <Navigation showBottomBorder={false} />
 
-      <main className="flex-1 bg-[#f0eee9] dark:bg-background">
+      <main className="flex-1 bg-[#ffffff] dark:bg-background">
         <Hero />
 
         {/* Featured Listings under the hero */}
         <section className="w-full px-8 lg:px-12 py-12">
           <div className="mb-5 flex items-end justify-between gap-4">
             <div>
-              <h2 className="font-heading text-[2.31rem] font-normal text-[#2a3a42] dark:text-[#f5f0e8]">
-                Featured Rentals
+              <h2 className="font-heading !text-[32px] font-normal text-[#2a3a42] dark:text-[#f5f0e8]">
+                Featured Listings
               </h2>
-              <p className="mt-1 font-sans text-[0.95rem] text-[#9aacb4]">
-                Browse curated rentals. Click a card to view details.
-              </p>
             </div>
 
             {/* Optional: link to /browse */}
             <a
               href="/browse"
-              className="font-sans text-[0.92rem] font-medium uppercase tracking-[0.1em] text-[#e07a6a]"
+              className="font-sans text-[1.25rem] font-medium uppercase tracking-[0.1em] text-[#e07a6a]"
               data-testid="link-view-all"
             >
               View all
@@ -66,7 +64,20 @@ export default function Home() {
               <p className="text-muted-foreground">No listings available yet.</p>
             </div>
           ) : (
-            <MasonryListingGrid listings={featuredListings} />
+            <MasonryListingGrid
+              listings={featuredListings}
+              maxColumns={5}
+              minCardWidthPx={240}
+              cardMaxWidthPx={290}
+              renderCard={(listing) => (
+                <ListingCard
+                  listing={listing}
+                  priceScale="double"
+                  titleScale="oneAndHalf"
+                  titleFont="heading"
+                />
+              )}
+            />
           )}
         </section>
       </main>

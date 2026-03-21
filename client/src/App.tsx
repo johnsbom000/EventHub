@@ -28,7 +28,6 @@ import VendorMessages from "@/pages/VendorMessages";
 import VendorPayments from "@/pages/VendorPayments";
 import VendorReviews from "@/pages/VendorReviews";
 import VendorNotifications from "@/pages/VendorNotifications";
-import VendorAccount from "@/pages/VendorAccount";
 import MyHub from "@/pages/myhub";
 import VendorHub from "@/pages/vendorhub";
 
@@ -63,7 +62,6 @@ function Router() {
         <Route path="/vendor/signup" component={Signup} />
         <Route path="/vendor/onboarding" component={VendorOnboarding} />
         <Route path="/vendor/dashboard" component={VendorDashboard} />
-        <Route path="/vendor/account" component={VendorAccount} />
         <Route path="/vendor/bookings" component={VendorBookings} />
         <Route path="/vendor/listings" component={VendorListings} />
         <Route path="/vendor/listings/new" component={VendorCreateListing} />

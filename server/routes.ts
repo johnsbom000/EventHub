@@ -9,6 +9,7 @@ import {
   vendorProfiles,
   vendorAccounts,
   vendorListings,
+  googleCalendarEventMappings,
   listingTraffic,
   users,
   insertUserSchema,
@@ -17,6 +18,7 @@ import {
   events,
   paymentSchedules,
   payments,
+  bookingDisputes,
   rentalTypes,
   stripeWebhookEvents,
 } from "@shared/schema";
@@ -30,10 +32,10 @@ import {
   requireDualAuthAuth0,
   requireAdminAuth,
 } from "./auth";
-import { requireAuth0 } from "./auth0"; // ✅ Auth0 middleware
+import { requireAuth0, verifyAuth0Token } from "./auth0"; // ✅ Auth0 middleware
 import { z } from "zod";
 import { db } from "./db";
-import { eq, and, sql as drizzleSql, count, sum, gte, lte, desc, asc } from "drizzle-orm";
+import { eq, and, or, ne, isNull, inArray, sql as drizzleSql, count, sum, gte, lte, desc, asc } from "drizzle-orm";
 import multer from "multer";
 import path from "path";
 import fs from "fs";
@@ -49,6 +51,28 @@ import {
   isStreamChatConfigured,
   toStreamUserId,
 } from "./streamChat";
+import {
+  GoogleCalendarConnectionError,
+  createGoogleCalendarForVendorAccount,
+  listGoogleCalendarsForVendorAccount,
+  listSelectedGoogleCalendarEventsForVendorAccount,
+  syncEventHubBookingToGoogleCalendar,
+} from "./google";
+import {
+  addDaysToIsoDate,
+  normalizeIanaTimeZone,
+  parseIsoDateValue,
+  parseTimeValueToMinutes,
+  zonedDateStartToUtc,
+  zonedDateTimeToUtc,
+} from "./timezone";
+import { serializeHobbyList } from "@shared/hobby-tags";
+import {
+  computePayoutEligibility,
+  deriveDisputeWindowCloseAt,
+  isDisputeWindowOpen,
+  DISPUTE_WINDOW_HOURS,
+} from "./payoutEligibility";
 
 /**proxy: {
   "/api": {
@@ -64,64 +88,17 @@ import {
 async function requireVendorAccountAuth0(req: any, res: any, next: any) {
   try {
     const auth0 = req.auth0 as { sub?: string; email?: string } | undefined;
-    const auth0Sub = auth0?.sub;
-    const rawEmail = auth0?.email;
-    const emailNormalized = rawEmail ? rawEmail.toLowerCase().trim() : undefined;
-
-    if (!auth0Sub && !emailNormalized) {
-      return res.status(401).json({ error: "Missing Auth0 identity (sub/email)" });
-    }
-
-    let account: any | undefined;
-
-    // 1) Prefer lookup by normalized email to avoid duplicate accounts per email
-    if (emailNormalized) {
-      const byEmail = await db
-        .select()
-        .from(vendorAccounts)
-        .where(drizzleSql`lower(${vendorAccounts.email}) = ${emailNormalized}`);
-
-      if (byEmail.length > 0) {
-        account = byEmail[0];
-      }
-
-      // Backfill auth0Sub onto the vendor account so future logins work even if email is missing
-      if (account && auth0Sub && !account.auth0Sub) {
-        const [updated] = await db
-          .update(vendorAccounts)
-          .set({ auth0Sub })
-          .where(eq(vendorAccounts.id, account.id))
-          .returning();
-
-        account = updated;
-      }
-    }
-
-    // 2) Fallback: lookup by auth0Sub if still not found
-    if (!account && auth0Sub) {
-      const bySub = await db
-        .select()
-        .from(vendorAccounts)
-        .where(eq(vendorAccounts.auth0Sub, auth0Sub));
-
-      if (bySub.length > 0) {
-        account = bySub[0];
-      }
-    }
+    const account = await resolveVendorAccountForAuth0Identity(auth0?.sub, auth0?.email);
 
     if (!account) {
       // Auth0 is valid, but user doesn't have a vendor account row yet
       return res.status(404).json({ error: "Vendor account not found for this Auth0 user" });
     }
-
-    // Ensure auth0Sub is stored/kept in sync on the vendor account
-    if (auth0Sub && account.auth0Sub !== auth0Sub) {
-      const [updated] = await db
-        .update(vendorAccounts)
-        .set({ auth0Sub })
-        .where(eq(vendorAccounts.id, account.id))
-        .returning();
-      account = updated;
+    if (account.deletedAt) {
+      return res.status(403).json({ error: "Vendor account is deleted" });
+    }
+    if (account.active === false) {
+      return res.status(403).json({ error: "Vendor account is not active" });
     }
 
     // Normalize to the shape legacy code expects
@@ -161,20 +138,397 @@ async function getVendorAccountFromRequest(req: any) {
   return account;
 }
 
+async function resolveVendorAccountForAuth0Identity(auth0Sub?: string, rawEmail?: string) {
+  const emailNormalized = rawEmail ? rawEmail.toLowerCase().trim() : undefined;
+
+  if (!auth0Sub && !emailNormalized) {
+    return undefined;
+  }
+
+  let account: any | undefined;
+
+  if (emailNormalized) {
+    const byEmail = await db
+      .select()
+      .from(vendorAccounts)
+      .where(
+        and(
+          drizzleSql`lower(${vendorAccounts.email}) = ${emailNormalized}`,
+          isNull(vendorAccounts.deletedAt)
+        )
+      );
+
+    if (byEmail.length > 0) {
+      account = byEmail[0];
+    }
+
+    if (account && auth0Sub && !account.auth0Sub) {
+      const [updated] = await db
+        .update(vendorAccounts)
+        .set({ auth0Sub })
+        .where(eq(vendorAccounts.id, account.id))
+        .returning();
+
+      account = updated;
+    }
+  }
+
+  if (!account && auth0Sub) {
+    const bySub = await db
+      .select()
+      .from(vendorAccounts)
+      .where(and(eq(vendorAccounts.auth0Sub, auth0Sub), isNull(vendorAccounts.deletedAt)));
+
+    if (bySub.length > 0) {
+      account = bySub[0];
+    }
+  }
+
+  if (account && auth0Sub && account.auth0Sub !== auth0Sub) {
+    const [updated] = await db
+      .update(vendorAccounts)
+      .set({ auth0Sub })
+      .where(eq(vendorAccounts.id, account.id))
+      .returning();
+    account = updated;
+  }
+
+  return account;
+}
+
 /**
  * Convenience combo for vendor routes:
  * - verify Auth0 token
  * - resolve vendor account by auth0_sub
  */
 const requireVendorAuth0 = [requireAuth0, requireVendorAccountAuth0] as const;
+const GOOGLE_OAUTH_STATE_TTL_MS = 10 * 60 * 1000;
 const VENDOR_FEE_RATE = 0.08;
 const CUSTOMER_FEE_RATE = 0.05;
+const BOOKING_PENDING_EXPIRY_MINUTES = 30;
+const BOOKING_PENDING_EXPIRY_REASON = "payment_session_expired";
+const PAYOUT_RELEASE_MODE = "auto_24h_hold";
+const STRIPE_FEE_ESTIMATE_PERCENT = 0.029;
+const STRIPE_FEE_ESTIMATE_FIXED_CENTS = 30;
+const VENDOR_ABSORBS_STRIPE_FEES = false;
+const AUTO_PAYOUT_INTERVAL_MS = 30 * 1000;
+const MIN_LISTING_PHOTO_COUNT = 3;
+const LISTING_DESCRIPTION_MAX_CHARS = 1000;
+const LISTING_SUBCATEGORY_MAX_CHARS = 120;
+const LISTING_CATEGORY_VALUES = ["Rentals", "Services", "Venues", "Catering"] as const;
+type ListingCategoryValue = (typeof LISTING_CATEGORY_VALUES)[number];
 const CHAT_POLICY_WARNING =
   "For your safety, do not share personal contact info, payment card details, or sensitive personal data in chat.";
 let moderationTableReadyPromise: Promise<void> | null = null;
-let bookingsVendorRefColumnCache: "vendor_account_id" | "vendor_id" | "none" | null = null;
 let stripeWebhookTableReadyPromise: Promise<void> | null = null;
+let bookingDisputesTableReadyPromise: Promise<void> | null = null;
+let autoPayoutWorkerStarted = false;
+let autoPayoutTickInFlight = false;
 const IP_RATE_WINDOW_MS = 60 * 1000;
+
+type VendorProfileContext = {
+  account: any;
+  profiles: any[];
+  activeProfile: any | null;
+  activeProfileId: string | null;
+};
+
+type VendorListingMatchContext = {
+  listingsById: Map<string, { id: string; title: string | null; normalizedTitle: string | null }>;
+  listingIds: Set<string>;
+  listingIdsByNormalizedTitle: Map<string, string[]>;
+};
+
+type GoogleEventMappingContext = {
+  calendarId: string;
+  mappingsByEventId: Map<
+    string,
+    {
+      googleEventId: string;
+      listingId: string;
+      mappingSource: string;
+      mappingStatus: string;
+    }
+  >;
+};
+
+function createGoogleOauthState(vendorAccountId: string) {
+  const secret = (process.env.JWT_SECRET || "").trim();
+  if (!secret) {
+    throw new Error("Missing JWT_SECRET environment variable");
+  }
+
+  const encodedPayload = Buffer.from(
+    JSON.stringify({
+      vendorAccountId,
+      issuedAt: Date.now(),
+      nonce: crypto.randomUUID(),
+    }),
+    "utf8"
+  ).toString("base64url");
+
+  const signature = crypto.createHmac("sha256", secret).update(encodedPayload).digest("hex");
+  return `${encodedPayload}.${signature}`;
+}
+
+function parseGoogleOauthState(rawState: string) {
+  const secret = (process.env.JWT_SECRET || "").trim();
+  if (!secret) {
+    throw new Error("Missing JWT_SECRET environment variable");
+  }
+
+  const [encodedPayload, signature] = rawState.split(".");
+  if (!encodedPayload || !signature) {
+    return null;
+  }
+
+  const expectedSignature = crypto
+    .createHmac("sha256", secret)
+    .update(encodedPayload)
+    .digest("hex");
+
+  if (signature.length !== expectedSignature.length) {
+    return null;
+  }
+
+  const providedSignatureBuffer = Buffer.from(signature, "hex");
+  const expectedSignatureBuffer = Buffer.from(expectedSignature, "hex");
+
+  if (
+    providedSignatureBuffer.length !== expectedSignatureBuffer.length ||
+    !crypto.timingSafeEqual(providedSignatureBuffer, expectedSignatureBuffer)
+  ) {
+    return null;
+  }
+
+  try {
+    const parsed = JSON.parse(Buffer.from(encodedPayload, "base64url").toString("utf8")) as {
+      vendorAccountId?: string;
+      issuedAt?: number;
+    };
+
+    if (
+      typeof parsed.vendorAccountId !== "string" ||
+      !parsed.vendorAccountId.trim() ||
+      typeof parsed.issuedAt !== "number" ||
+      !Number.isFinite(parsed.issuedAt)
+    ) {
+      return null;
+    }
+
+    if (Date.now() - parsed.issuedAt > GOOGLE_OAUTH_STATE_TTL_MS) {
+      return null;
+    }
+
+    return { vendorAccountId: parsed.vendorAccountId.trim() };
+  } catch {
+    return null;
+  }
+}
+
+async function assertCanonicalBookingSchemaReady() {
+  const requiredColumns = [
+    "vendor_account_id",
+    "vendor_profile_id",
+    "listing_id",
+    "booking_start_at",
+    "booking_end_at",
+    "booked_quantity",
+    "base_subtotal_cents",
+    "subtotal_amount_cents",
+    "customer_fee_amount_cents",
+    "delivery_fee_amount_cents",
+    "setup_fee_amount_cents",
+    "travel_fee_amount_cents",
+    "logistics_total_cents",
+    "vendor_timezone_snapshot",
+    "google_sync_status",
+    "google_event_id",
+    "google_calendar_id",
+  ] as const;
+
+  const result: any = await db.execute(drizzleSql`
+    select column_name
+    from information_schema.columns
+    where table_schema = 'public'
+      and table_name = 'bookings'
+      and column_name in (
+        'vendor_account_id',
+        'vendor_profile_id',
+        'listing_id',
+        'booking_start_at',
+        'booking_end_at',
+        'booked_quantity',
+        'base_subtotal_cents',
+        'subtotal_amount_cents',
+        'customer_fee_amount_cents',
+        'delivery_fee_amount_cents',
+        'setup_fee_amount_cents',
+        'travel_fee_amount_cents',
+        'logistics_total_cents',
+        'vendor_timezone_snapshot',
+        'google_sync_status',
+        'google_event_id',
+        'google_calendar_id'
+      )
+  `);
+  const present = new Set(
+    extractRows<{ column_name?: string }>(result)
+      .map((row) => (typeof row?.column_name === "string" ? row.column_name.trim() : ""))
+      .filter(Boolean)
+  );
+  const missing = requiredColumns.filter((columnName) => !present.has(columnName));
+  if (missing.length > 0) {
+    throw new Error(
+      `Canonical bookings schema is missing required columns: ${missing.join(", ")}. Run migrations before starting the server.`
+    );
+  }
+}
+
+function isGenericProfileName(value: unknown): boolean {
+  const normalized = asTrimmedString(value).toLowerCase();
+  return normalized === "vendor profile";
+}
+
+function getProfileDisplayName(profile: any, fallback = "Vendor Profile"): string {
+  const profileName = asTrimmedString(profile?.profileName);
+  const online =
+    profile?.onlineProfiles && typeof profile.onlineProfiles === "object" && !Array.isArray(profile.onlineProfiles)
+      ? (profile.onlineProfiles as Record<string, unknown>)
+      : null;
+  const onlineProfileName = asTrimmedString((online as any)?.profileBusinessName);
+  const fallbackName = asTrimmedString(fallback) || "Vendor Profile";
+
+  if (profileName && !isGenericProfileName(profileName)) return profileName;
+  if (onlineProfileName && !isGenericProfileName(onlineProfileName)) return onlineProfileName;
+  if (!isGenericProfileName(fallbackName)) return fallbackName;
+
+  if (profileName) return profileName;
+  if (onlineProfileName) return onlineProfileName;
+  return fallbackName;
+}
+
+function bookingRowMatchesActiveProfile(
+  row: any,
+  activeProfileId: string,
+  profileCount: number
+): boolean {
+  const bookingProfileId = asTrimmedString(row?.vendorProfileId);
+  const listingProfileId = asTrimmedString(row?.listingProfileId);
+  if (bookingProfileId) return bookingProfileId === activeProfileId;
+  if (listingProfileId) return listingProfileId === activeProfileId;
+  // Legacy rows with no profile ownership are safe only when the account still has a single profile.
+  return profileCount <= 1;
+}
+
+async function listVendorProfilesForAccount(accountId: string) {
+  const rows = await db
+    .select()
+    .from(vendorProfiles)
+    .where(eq(vendorProfiles.accountId, accountId))
+    .orderBy(asc(vendorProfiles.createdAt), asc(vendorProfiles.id));
+  return rows;
+}
+
+async function normalizeProfileNamesForAccount(account: any) {
+  const accountId = asTrimmedString(account?.id);
+  if (!accountId) return;
+
+  const accountBusinessName = asTrimmedString(account?.businessName);
+
+  await db.execute(drizzleSql`
+    update vendor_profiles vp
+    set profile_name = coalesce(
+      nullif(vp.online_profiles ->> 'profileBusinessName', ''),
+      ${accountBusinessName || null},
+      'Vendor Profile'
+    )
+    where vp.account_id = ${accountId}
+      and (
+        vp.profile_name is null
+        or btrim(vp.profile_name) = ''
+        or lower(btrim(vp.profile_name)) = 'vendor profile'
+      )
+  `);
+  await db.execute(drizzleSql`
+    update vendor_profiles vp
+    set online_profiles = jsonb_set(
+      coalesce(vp.online_profiles, '{}'::jsonb),
+      '{profileBusinessName}',
+      to_jsonb(
+        coalesce(
+          nullif(vp.profile_name, ''),
+          ${accountBusinessName || null},
+          'Vendor Profile'
+        )
+      ),
+      true
+    )
+    where vp.account_id = ${accountId}
+      and (
+        vp.online_profiles is null
+        or nullif(btrim(coalesce(vp.online_profiles ->> 'profileBusinessName', '')), '') is null
+        or lower(btrim(coalesce(vp.online_profiles ->> 'profileBusinessName', ''))) = 'vendor profile'
+      )
+  `);
+}
+
+async function resolveActiveVendorProfile(req: any): Promise<VendorProfileContext | null> {
+  const account = await getVendorAccountFromRequest(req);
+  if (!account?.id) return null;
+
+  await normalizeProfileNamesForAccount(account);
+
+  const profiles = await listVendorProfilesForAccount(account.id);
+  if (profiles.length === 0) {
+    req.vendorProfileContext = {
+      account,
+      profiles: [],
+      activeProfile: null,
+      activeProfileId: null,
+    } satisfies VendorProfileContext;
+    return req.vendorProfileContext;
+  }
+
+  const headerProfileIdRaw = req.headers?.["x-vendor-profile-id"];
+  const headerProfileId =
+    typeof headerProfileIdRaw === "string"
+      ? asTrimmedString(headerProfileIdRaw)
+      : Array.isArray(headerProfileIdRaw)
+        ? asTrimmedString(headerProfileIdRaw[0])
+        : "";
+  const queryProfileId = asTrimmedString(req.query?.profileId);
+  const requestedProfileId = headerProfileId || queryProfileId;
+
+  let activeProfile =
+    (requestedProfileId ? profiles.find((profile) => profile.id === requestedProfileId) : undefined) ||
+    (account.activeProfileId
+      ? profiles.find((profile) => profile.id === account.activeProfileId)
+      : undefined) ||
+    profiles[0];
+
+  if (!activeProfile) {
+    activeProfile = profiles[0];
+  }
+
+  if (activeProfile?.id && account.activeProfileId !== activeProfile.id) {
+    const [updatedAccount] = await db
+      .update(vendorAccounts)
+      .set({ activeProfileId: activeProfile.id })
+      .where(eq(vendorAccounts.id, account.id))
+      .returning();
+    req.vendorAccount = updatedAccount ?? account;
+  }
+
+  const context: VendorProfileContext = {
+    account: req.vendorAccount ?? account,
+    profiles,
+    activeProfile,
+    activeProfileId: activeProfile?.id ?? null,
+  };
+  req.vendorProfileContext = context;
+  return context;
+}
 
 type IpRateState = {
   count: number;
@@ -236,10 +590,127 @@ function logRouteError(route: string, error: unknown) {
   console.error(`${route} failed:`, message);
 }
 
+async function syncBookingToGoogleCalendarSafely(bookingId: string, route: string) {
+  const result = await syncEventHubBookingToGoogleCalendar({ bookingId });
+  if (result.status === "failed") {
+    logRouteError(route, new Error(result.error));
+  }
+  return result;
+}
+
+async function syncExistingBookingsToSelectedGoogleCalendar(
+  vendorAccountId: string,
+  selectedGoogleCalendarId: string
+) {
+  const bookingIds = await listSyncableExistingBookingIdsForVendorAccount(vendorAccountId);
+  let syncedCount = 0;
+  let skippedCount = 0;
+  let failedCount = 0;
+  const failedBookings: Array<{ bookingId: string; error: string }> = [];
+
+  for (const bookingId of bookingIds) {
+    const result = await syncEventHubBookingToGoogleCalendar({
+      bookingId,
+      targetCalendarId: selectedGoogleCalendarId,
+    });
+
+    if (result.status === "synced") {
+      syncedCount += 1;
+      continue;
+    }
+
+    if (result.status === "skipped") {
+      skippedCount += 1;
+      continue;
+    }
+
+    if (result.status === "failed") {
+      failedCount += 1;
+      failedBookings.push({
+        bookingId,
+        error: result.error,
+      });
+      continue;
+    }
+
+    skippedCount += 1;
+  }
+
+  return {
+    googleCalendarId: selectedGoogleCalendarId,
+    bookingCount: bookingIds.length,
+    syncedCount,
+    skippedCount,
+    failedCount,
+    failedBookings,
+  };
+}
+
 function extractRows<T = any>(result: any): T[] {
   if (Array.isArray(result)) return result as T[];
   if (Array.isArray(result?.rows)) return result.rows as T[];
   return [];
+}
+
+function normalizePaymentStateValue(value: unknown): string {
+  return typeof value === "string" ? value.trim().toLowerCase() : "";
+}
+
+function toCanonicalPaymentStatus(value: unknown) {
+  const status = normalizePaymentStateValue(value);
+  if (status === "paid") return "succeeded";
+  if (status === "partial") return "partially_refunded";
+  return status;
+}
+
+function isPaymentSucceededStatus(value: unknown) {
+  const status = toCanonicalPaymentStatus(value);
+  return status === "succeeded";
+}
+
+function isPaymentRefundedOrPartiallyRefundedStatus(value: unknown) {
+  const status = toCanonicalPaymentStatus(value);
+  return status === "refunded" || status === "partially_refunded";
+}
+
+function estimateStripeProcessingFeeCents(amountCents: number) {
+  const amount = Math.max(0, Math.round(amountCents));
+  if (amount <= 0) return 0;
+  return Math.max(0, Math.round(amount * STRIPE_FEE_ESTIMATE_PERCENT) + STRIPE_FEE_ESTIMATE_FIXED_CENTS);
+}
+
+function deriveBookingPaymentStatusFromScheduleStatuses(rawStatuses: unknown[]) {
+  const statuses = rawStatuses.map(toCanonicalPaymentStatus).filter(Boolean);
+  if (statuses.length === 0) return "pending";
+
+  if (statuses.includes("disputed")) return "disputed";
+  if (statuses.includes("requires_action")) return "requires_action";
+  if (statuses.every((status) => status === "refunded")) return "refunded";
+  if (statuses.every((status) => status === "succeeded")) return "succeeded";
+  if (statuses.every((status) => status === "partially_refunded")) return "partially_refunded";
+
+  const anyPaid = statuses.includes("succeeded");
+  const anyRefunded = statuses.includes("refunded");
+  const anyPartialRefund = statuses.includes("partially_refunded");
+  if (anyPartialRefund || (anyPaid && anyRefunded)) return "partially_refunded";
+
+  if (statuses.some((status) => status === "failed")) return "failed";
+  return "pending";
+}
+
+function isPaymentCollectedStatus(paymentStatus: unknown) {
+  const status = toCanonicalPaymentStatus(paymentStatus);
+  return (
+    status === "partially_refunded" ||
+    status === "succeeded" ||
+    status === "refunded" ||
+    status === "disputed"
+  );
+}
+
+function shouldCountBookingAsInventoryReserved(status: unknown) {
+  const normalized = typeof status === "string" ? status.trim().toLowerCase() : "";
+  return normalized === "pending" || normalized === "confirmed" || normalized === "completed";
 }
 
 function toOptionalNumber(value: unknown): number | null {
@@ -249,17 +720,6 @@ function toOptionalNumber(value: unknown): number | null {
     if (Number.isFinite(n)) return n;
   }
   return null;
-}
-
-function collectRateValues(source: unknown): number[] {
-  if (!source || typeof source !== "object") return [];
-  const next: number[] = [];
-  for (const value of Object.values(source as Record<string, unknown>)) {
-    if (!value || typeof value !== "object") continue;
-    const rate = toOptionalNumber((value as any).rate);
-    if (rate != null) next.push(rate);
-  }
-  return next;
 }
 
 function asTrimmedString(value: unknown): string {
@@ -328,43 +788,628 @@ function parseAddressLabel(label: string): {
   };
 }
 
-function hasValidListingPrice(listingDataRaw: unknown): boolean {
+function hasValidListingPrice(listingDataRaw: unknown, canonicalPriceCents?: unknown): boolean {
+  const cents = extractListingBasePriceCents(listingDataRaw as any, canonicalPriceCents);
+  return cents != null && cents > 0;
+}
+
+function normalizeListingCategory(value: unknown): ListingCategoryValue | null {
+  if (typeof value !== "string") return null;
+  const normalized = value.trim().toLowerCase().replace(/[_\s]+/g, "-");
+  if (!normalized) return null;
+
+  if (normalized === "rentals" || normalized === "rental") return "Rentals";
+  if (normalized === "services" || normalized === "service") return "Services";
+  if (normalized === "venues" || normalized === "venue") return "Venues";
+  if (normalized === "catering") return "Catering";
+  return null;
+}
+
+function mapServiceTypeToListingCategory(serviceType: unknown): ListingCategoryValue {
+  const normalized = asTrimmedString(serviceType).toLowerCase().replace(/[_\s]+/g, "-");
+  if (!normalized) return "Services";
+
+  if (normalized === "prop-decor" || normalized === "prop-rental" || normalized === "rental" || normalized === "rentals") {
+    return "Rentals";
+  }
+  if (normalized === "venue" || normalized === "venues") return "Venues";
+  if (normalized === "catering") return "Catering";
+  return "Services";
+}
+
+function isInstantBookingCategory(category: ListingCategoryValue | null) {
+  return category === "Rentals";
+}
+
+function resolveBookingLifecycleMode(input: {
+  listingCategory?: unknown;
+  listingInstantBookEnabled?: unknown;
+  fallbackServiceType?: unknown;
+}) {
+  const category =
+    normalizeListingCategory(input.listingCategory) ??
+    (input.fallbackServiceType ? mapServiceTypeToListingCategory(input.fallbackServiceType) : null);
+  const explicitInstantBook = parseBooleanInput(input.listingInstantBookEnabled);
+  const isInstantBooking = explicitInstantBook ?? isInstantBookingCategory(category);
+
+  return {
+    category,
+    isInstantBooking,
+    initialStatus: (isInstantBooking ? "confirmed" : "pending") as "confirmed" | "pending",
+  };
+}
+
+function normalizeListingSubcategory(value: unknown): string | null {
+  if (typeof value !== "string") return null;
+  const trimmed = value.replace(/\s+/g, " ").trim().slice(0, LISTING_SUBCATEGORY_MAX_CHARS);
+  return trimmed.length > 0 ? trimmed : null;
+}
+
+function normalizeListingClassification(
+  listingDataRaw: unknown,
+  options?: {
+    fallbackServiceType?: unknown;
+    requireCategory?: boolean;
+    allowLegacyFallback?: boolean;
+  }
+): {
+  listingData: Record<string, any>;
+  category: ListingCategoryValue | null;
+  subcategory: string | null;
+  missingCategory: boolean;
+} {
   const listingData =
-    listingDataRaw && typeof listingDataRaw === "object" ? (listingDataRaw as Record<string, any>) : {};
-  const candidates: number[] = [];
+    listingDataRaw && typeof listingDataRaw === "object" && !Array.isArray(listingDataRaw)
+      ? ({ ...(listingDataRaw as Record<string, any>) } as Record<string, any>)
+      : ({} as Record<string, any>);
 
-  const baseRate = toOptionalNumber(listingData?.pricing?.rate);
-  if (baseRate != null) candidates.push(baseRate);
+  let category =
+    normalizeListingCategory(listingData.category) ?? null;
 
-  const legacyRate = toOptionalNumber(listingData?.rate);
-  if (legacyRate != null) candidates.push(legacyRate);
+  const allowLegacyFallback = options?.allowLegacyFallback ?? true;
 
-  candidates.push(...collectRateValues(listingData?.pricing?.pricingByPropType));
-  candidates.push(...collectRateValues(listingData?.pricingByPropType));
-
-  if (Array.isArray(listingData?.offerings)) {
-    for (const offering of listingData.offerings) {
-      const offeringPrice = toOptionalNumber((offering as any)?.price);
-      if (offeringPrice != null) candidates.push(offeringPrice);
+  if (!category && allowLegacyFallback) {
+    const legacyListingType = asTrimmedString(listingData.vendorType) || asTrimmedString(listingData.serviceType);
+    if (legacyListingType) {
+      category = mapServiceTypeToListingCategory(legacyListingType);
     }
   }
 
-  return candidates.some((value) => value > 0);
+  if (!category && allowLegacyFallback && options?.fallbackServiceType) {
+    category = mapServiceTypeToListingCategory(options.fallbackServiceType);
+  }
+
+  const subcategory = normalizeListingSubcategory(listingData.subcategory);
+
+  if (category) listingData.category = category;
+  else delete listingData.category;
+
+  if (subcategory) listingData.subcategory = subcategory;
+  else delete listingData.subcategory;
+
+  return {
+    listingData,
+    category,
+    subcategory,
+    missingCategory: Boolean(options?.requireCategory && !category),
+  };
 }
 
-async function deactivateActiveListingsWithoutValidPrice(accountId?: string): Promise<number> {
+async function backfillListingCategoriesFromProfileType(accountId?: string): Promise<number> {
+  const accountFilterSql = accountId ? drizzleSql`and vl.account_id = ${accountId}` : drizzleSql``;
+
+  const result: any = await db.execute(drizzleSql`
+    with updated as (
+      update vendor_listings vl
+      set
+        listing_data = jsonb_set(
+          coalesce(vl.listing_data, '{}'::jsonb),
+          '{category}',
+          to_jsonb(
+            case
+              when lower(coalesce(vp.service_type, '')) in ('prop-decor', 'prop-rental', 'rental', 'rentals') then 'Rentals'
+              when lower(coalesce(vp.service_type, '')) in ('venue', 'venues') then 'Venues'
+              when lower(coalesce(vp.service_type, '')) = 'catering' then 'Catering'
+              else 'Services'
+            end
+          ),
+          true
+        ),
+        updated_at = now()
+      from vendor_profiles vp
+      where vp.id = vl.profile_id
+        and (
+          vl.listing_data is null
+          or nullif(btrim(coalesce(vl.listing_data ->> 'category', '')), '') is null
+        )
+        ${accountFilterSql}
+      returning vl.id
+    )
+    select count(*)::int as "count" from updated
+  `);
+
+  const rows = extractRows<{ count?: number | string }>(result);
+  return Number(rows[0]?.count || 0);
+}
+
+function toUniqueTrimmedStringList(value: unknown): string[] {
+  if (!Array.isArray(value)) return [];
+  return Array.from(
+    new Set(
+      value
+        .map((entry) => (typeof entry === "string" ? entry.trim() : ""))
+        .filter((entry) => entry.length > 0)
+    )
+  );
+}
+
+function clampDescriptionText(value: unknown): string | unknown {
+  if (typeof value !== "string") return value;
+  return value.slice(0, LISTING_DESCRIPTION_MAX_CHARS);
+}
+
+function normalizeTitleCaseText(value: unknown, maxLen: number): string | unknown {
+  if (typeof value !== "string") return value;
+
+  const cleaned = value
+    .replace(/[^a-zA-Z0-9\s-]/g, "")
+    .replace(/\s+/g, " ")
+    .trim()
+    .slice(0, maxLen);
+
+  if (!cleaned) return "";
+
+  return cleaned
+    .split(" ")
+    .filter(Boolean)
+    .map((word) => word.charAt(0).toUpperCase() + word.slice(1).toLowerCase())
+    .join(" ");
+}
+
+function normalizeProfileNameText(value: unknown, maxLen = 120): string {
+  if (typeof value !== "string") return "";
+
+  const cleaned = value
+    .replace(/[’]/g, "'")
+    .replace(/[^a-zA-Z0-9\s']/g, " ")
+    .replace(/\s+/g, " ")
+    .trim()
+    .slice(0, maxLen);
+
+  if (!cleaned) return "";
+
+  return cleaned
+    .split(" ")
+    .filter(Boolean)
+    .map((word) => word.charAt(0).toUpperCase() + word.slice(1).toLowerCase())
+    .join(" ");
+}
+
+function normalizeTagEntry(rawTag: unknown): { label: string; slug: string } | null {
+  const source =
+    typeof rawTag === "string"
+      ? rawTag
+      : rawTag && typeof rawTag === "object"
+        ? typeof (rawTag as Record<string, unknown>).label === "string"
+          ? ((rawTag as Record<string, unknown>).label as string)
+          : typeof (rawTag as Record<string, unknown>).slug === "string"
+            ? ((rawTag as Record<string, unknown>).slug as string).replace(/-/g, " ")
+            : ""
+        : "";
+
+  const normalizedLabel = normalizeTitleCaseText(source, 30);
+  const label = typeof normalizedLabel === "string" ? normalizedLabel : "";
+  if (!label) return null;
+
+  const slug = label
+    .toLowerCase()
+    .replace(/\s+/g, "-")
+    .replace(/-+/g, "-")
+    .trim();
+
+  if (!slug) return null;
+  return { label, slug };
+}
+
+function normalizeTagsByPropType(rawTagsByPropType: unknown): unknown {
+  if (!rawTagsByPropType || typeof rawTagsByPropType !== "object" || Array.isArray(rawTagsByPropType)) {
+    return rawTagsByPropType;
+  }
+
+  const normalizedByPropType: Record<string, { label: string; slug: string }[]> = {};
+
+  for (const [key, rawTags] of Object.entries(rawTagsByPropType as Record<string, unknown>)) {
+    if (!Array.isArray(rawTags)) {
+      normalizedByPropType[key] = [];
+      continue;
+    }
+
+    const seenSlugs = new Set<string>();
+    const normalizedTags: { label: string; slug: string }[] = [];
+
+    for (const rawTag of rawTags) {
+      const normalizedTag = normalizeTagEntry(rawTag);
+      if (!normalizedTag) continue;
+      if (seenSlugs.has(normalizedTag.slug)) continue;
+      seenSlugs.add(normalizedTag.slug);
+      normalizedTags.push(normalizedTag);
+      if (normalizedTags.length >= 15) break;
+    }
+
+    normalizedByPropType[key] = normalizedTags;
+  }
+
+  return normalizedByPropType;
+}
+
+function clampListingDescriptions(listingDataRaw: unknown): unknown {
+  if (!listingDataRaw || typeof listingDataRaw !== "object" || Array.isArray(listingDataRaw)) {
+    return listingDataRaw;
+  }
+
+  const listingData = listingDataRaw as Record<string, any>;
+  const nextListingData: Record<string, any> = { ...listingData };
+
+  nextListingData.listingTitle = normalizeTitleCaseText(nextListingData.listingTitle, 60);
+  nextListingData.listingDescription = clampDescriptionText(nextListingData.listingDescription);
+  nextListingData.tagsByPropType = normalizeTagsByPropType(nextListingData.tagsByPropType);
+
+  const rawPerPropDetails = nextListingData.perPropDetails;
+  if (rawPerPropDetails && typeof rawPerPropDetails === "object" && !Array.isArray(rawPerPropDetails)) {
+    const nextPerPropDetails: Record<string, any> = {};
+    for (const [key, value] of Object.entries(rawPerPropDetails)) {
+      if (!value || typeof value !== "object" || Array.isArray(value)) {
+        nextPerPropDetails[key] = value;
+        continue;
+      }
+      nextPerPropDetails[key] = {
+        ...(value as Record<string, any>),
+        title: normalizeTitleCaseText((value as Record<string, any>).title, 60),
+        description: clampDescriptionText((value as Record<string, any>).description),
+      };
+    }
+    nextListingData.perPropDetails = nextPerPropDetails;
+  }
+
+  return nextListingData;
+}
+
+function getListingPhotoCount(listingDataRaw: unknown, canonicalPhotos?: unknown): number {
+  const typedPhotos = toUniqueTrimmedStringList(canonicalPhotos);
+  if (typedPhotos.length > 0) return typedPhotos.length;
+
+  const listingData =
+    listingDataRaw && typeof listingDataRaw === "object" ? (listingDataRaw as Record<string, any>) : {};
+  const photoBlock = listingData?.photos;
+
+  const names = toUniqueTrimmedStringList(photoBlock?.names);
+  const urls = toUniqueTrimmedStringList(photoBlock?.urls);
+  const directList = toUniqueTrimmedStringList(Array.isArray(photoBlock) ? photoBlock : []);
+
+  const dedupedPhotos = new Set<string>([
+    ...names.map((name) => `name:${name}`),
+    ...urls.map((url) => `url:${url}`),
+    ...directList.map((item) => `direct:${item}`),
+  ]);
+
+  if (dedupedPhotos.size > 0) return dedupedPhotos.size;
+
+  const fallbackCount = Number(photoBlock?.count);
+  if (Number.isFinite(fallbackCount) && fallbackCount > 0) {
+    return Math.floor(fallbackCount);
+  }
+
+  return 0;
+}
+
+function hasMinimumListingPhotos(listingDataRaw: unknown, canonicalPhotos?: unknown): boolean {
+  return getListingPhotoCount(listingDataRaw, canonicalPhotos) >= MIN_LISTING_PHOTO_COUNT;
+}
+
+function parseBooleanInput(value: unknown): boolean | null {
+  if (typeof value === "boolean") return value;
+  if (typeof value === "number") return value === 1 ? true : value === 0 ? false : null;
+  if (typeof value === "string") {
+    const normalized = value.trim().toLowerCase();
+    if (["true", "yes", "1"].includes(normalized)) return true;
+    if (["false", "no", "0"].includes(normalized)) return false;
+  }
+  return null;
+}
+
+function parseMoneyToCents(value: unknown): number | null {
+  const numeric = toOptionalNumber(value);
+  if (numeric == null || !Number.isFinite(numeric) || numeric < 0) return null;
+  return Math.round(numeric * 100);
+}
+
+function parseLatLngValue(value: unknown): number | null {
+  const n = toOptionalNumber(value);
+  return n != null && Number.isFinite(n) ? n : null;
+}
+
+function parseIntegerValue(value: unknown): number | null {
+  const n = toOptionalNumber(value);
+  if (n == null || !Number.isFinite(n)) return null;
+  return Math.trunc(n);
+}
+
+function toCanonicalTagList(listingData: Record<string, any>): string[] {
+  const directTags = toUniqueTrimmedStringList(listingData?.tags);
+  if (directTags.length > 0) return directTags;
+
+  const listingTags: unknown[] = Array.isArray(listingData?.tagsByPropType?.__listing__)
+    ? listingData.tagsByPropType.__listing__
+    : [];
+  const normalizedTags = listingTags
+    .map((tag: unknown) => normalizeTagEntry(tag))
+    .filter((tag): tag is { label: string; slug: string } => Boolean(tag))
+    .map((tag: { label: string; slug: string }) => tag.label);
+  return toUniqueTrimmedStringList(normalizedTags);
+}
+
+function buildCanonicalListingColumns(input: {
+  listingDataRaw: unknown;
+  existingCanonical?: {
+    category?: unknown;
+    subcategory?: unknown;
+    title?: unknown;
+    description?: unknown;
+    whatsIncluded?: unknown;
+    tags?: unknown;
+    popularFor?: unknown;
+    instantBookEnabled?: unknown;
+    pricingUnit?: unknown;
+    priceCents?: unknown;
+    quantity?: unknown;
+    minimumHours?: unknown;
+    listingServiceCenterLabel?: unknown;
+    listingServiceCenterLat?: unknown;
+    listingServiceCenterLng?: unknown;
+    serviceRadiusMiles?: unknown;
+    serviceAreaMode?: unknown;
+    travelOffered?: unknown;
+    travelFeeEnabled?: unknown;
+    travelFeeType?: unknown;
+    travelFeeAmountCents?: unknown;
+    pickupOffered?: unknown;
+    deliveryOffered?: unknown;
+    deliveryFeeEnabled?: unknown;
+    deliveryFeeAmountCents?: unknown;
+    setupOffered?: unknown;
+    setupFeeEnabled?: unknown;
+    setupFeeAmountCents?: unknown;
+    photos?: unknown;
+  };
+  classification: {
+    category: ListingCategoryValue | null;
+    subcategory: string | null;
+  };
+}) {
+  const listingData =
+    input.listingDataRaw && typeof input.listingDataRaw === "object" && !Array.isArray(input.listingDataRaw)
+      ? (input.listingDataRaw as Record<string, any>)
+      : {};
+
+  const existing = input.existingCanonical ?? {};
+  const pricingUnitRaw = asTrimmedString(listingData?.pricingUnit || existing?.pricingUnit).toLowerCase();
+  const pricingUnit =
+    pricingUnitRaw === "per_hour" || pricingUnitRaw === "per_day"
+      ? pricingUnitRaw
+      : asTrimmedString(existing?.pricingUnit).toLowerCase() === "per_hour"
+        ? "per_hour"
+        : "per_day";
+
+  const explicitInstantBook = parseBooleanInput(listingData?.instantBookEnabled);
+  const instantBookEnabled =
+    explicitInstantBook ??
+    parseBooleanInput(existing?.instantBookEnabled) ??
+    (input.classification.category === "Rentals" ? true : false);
+
+  const explicitPriceCents = parseIntegerValue(listingData?.priceCents);
+  const fallbackPriceCents =
+    parseMoneyToCents(listingData?.price) ??
+    parseMoneyToCents(listingData?.rate) ??
+    parseIntegerValue(existing?.priceCents);
+  const priceCents =
+    explicitPriceCents != null && explicitPriceCents >= 0 ? explicitPriceCents : fallbackPriceCents;
+
+  const minimumHoursRaw = parseIntegerValue(listingData?.minimumHours ?? existing?.minimumHours);
+  const minimumHours =
+    pricingUnit === "per_hour" && minimumHoursRaw != null && minimumHoursRaw > 0 ? minimumHoursRaw : null;
+
+  const quantityCandidates = [listingData?.quantity, existing?.quantity];
+  const quantity =
+    quantityCandidates
+      .map((value) => parseIntegerValue(value))
+      .find((value) => typeof value === "number" && Number.isFinite(value) && value > 0) ?? 1;
+
+  const serviceAreaModeRaw = asTrimmedString(listingData?.serviceAreaMode ?? existing?.serviceAreaMode).toLowerCase();
+  const serviceAreaMode =
+    serviceAreaModeRaw === "radius" || serviceAreaModeRaw === "nationwide" || serviceAreaModeRaw === "global"
+      ? serviceAreaModeRaw
+      : "radius";
+
+  const listingServiceCenterLat =
+    parseLatLngValue(listingData?.listingServiceCenterLat) ??
+    parseLatLngValue(listingData?.serviceCenter?.lat) ??
+    parseLatLngValue(listingData?.serviceLocation?.lat) ??
+    parseLatLngValue(existing?.listingServiceCenterLat);
+  const listingServiceCenterLng =
+    parseLatLngValue(listingData?.listingServiceCenterLng) ??
+    parseLatLngValue(listingData?.serviceCenter?.lng) ??
+    parseLatLngValue(listingData?.serviceLocation?.lng) ??
+    parseLatLngValue(existing?.listingServiceCenterLng);
+
+  const deliveryOffered =
+    parseBooleanInput(listingData?.deliveryOffered) ??
+    parseBooleanInput(listingData?.deliveryIncluded) ??
+    parseBooleanInput(existing?.deliveryOffered) ??
+    false;
+  const deliveryFeeEnabledRaw =
+    parseBooleanInput(listingData?.deliveryFeeEnabled) ??
+    parseBooleanInput(existing?.deliveryFeeEnabled) ??
+    false;
+  const deliveryFeeEnabled = deliveryOffered ? deliveryFeeEnabledRaw : false;
+  const deliveryFeeAmountCentsRaw =
+    parseIntegerValue(listingData?.deliveryFeeAmountCents) ??
+    parseMoneyToCents(listingData?.deliveryFeeAmount) ??
+    parseIntegerValue(existing?.deliveryFeeAmountCents);
+
+  const setupOffered =
+    parseBooleanInput(listingData?.setupOffered) ??
+    parseBooleanInput(listingData?.setupIncluded) ??
+    parseBooleanInput(existing?.setupOffered) ??
+    false;
+  const setupFeeEnabledRaw =
+    parseBooleanInput(listingData?.setupFeeEnabled) ??
+    parseBooleanInput(existing?.setupFeeEnabled) ??
+    false;
+  const setupFeeEnabled = setupOffered ? setupFeeEnabledRaw : false;
+  const setupFeeAmountCentsRaw =
+    parseIntegerValue(listingData?.setupFeeAmountCents) ??
+    parseMoneyToCents(listingData?.setupFeeAmount) ??
+    parseIntegerValue(existing?.setupFeeAmountCents);
+
+  const travelOffered =
+    parseBooleanInput(listingData?.travelOffered) ??
+    parseBooleanInput(existing?.travelOffered) ??
+    false;
+  const travelFeeEnabledRaw =
+    parseBooleanInput(listingData?.travelFeeEnabled) ??
+    parseBooleanInput(existing?.travelFeeEnabled) ??
+    false;
+  const travelFeeEnabled = travelOffered ? travelFeeEnabledRaw : false;
+  const travelFeeTypeRaw = asTrimmedString(listingData?.travelFeeType ?? existing?.travelFeeType).toLowerCase();
+  const travelFeeTypeNormalized =
+    travelFeeTypeRaw === "flat" || travelFeeTypeRaw === "per_mile" || travelFeeTypeRaw === "per_hour"
+      ? travelFeeTypeRaw
+      : null;
+  const travelFeeType = travelFeeEnabled ? travelFeeTypeNormalized ?? "flat" : null;
+  const travelFeeAmountCentsRaw =
+    parseIntegerValue(listingData?.travelFeeAmountCents) ??
+    parseMoneyToCents(listingData?.travelFeeAmount) ??
+    parseIntegerValue(existing?.travelFeeAmountCents);
+
+  const pickupCategoryDefault =
+    input.classification.category === "Rentals" || input.classification.category === "Catering";
+  const pickupOffered =
+    parseBooleanInput(listingData?.pickupOffered) ??
+    parseBooleanInput(existing?.pickupOffered) ??
+    pickupCategoryDefault;
+
+  const photoNames = toUniqueTrimmedStringList(listingData?.photos?.names);
+  const photoUrls = toUniqueTrimmedStringList(listingData?.photos?.urls);
+  const photoFallback = toUniqueTrimmedStringList(Array.isArray(listingData?.photos) ? listingData?.photos : []);
+  const existingPhotos = toUniqueTrimmedStringList(existing?.photos);
+  const photos =
+    photoNames.length > 0 ? photoNames : photoUrls.length > 0 ? photoUrls : photoFallback.length > 0 ? photoFallback : existingPhotos;
+
+  return {
+    category: input.classification.category ?? normalizeListingCategory(existing?.category),
+    subcategory: input.classification.subcategory ?? normalizeListingSubcategory(existing?.subcategory),
+    title:
+      normalizeListingTitleCandidate(listingData?.title) ??
+      normalizeListingTitleCandidate(listingData?.listingTitle) ??
+      normalizeListingTitleCandidate(existing?.title) ??
+      null,
+    description:
+      asTrimmedString(listingData?.description || listingData?.listingDescription) ||
+      asTrimmedString(existing?.description) ||
+      null,
+    whatsIncluded:
+      toUniqueTrimmedStringList(listingData?.whatsIncluded ?? listingData?.includedItems ?? listingData?.included).length > 0
+        ? toUniqueTrimmedStringList(listingData?.whatsIncluded ?? listingData?.includedItems ?? listingData?.included)
+        : toUniqueTrimmedStringList(existing?.whatsIncluded),
+    tags: toCanonicalTagList(listingData).length > 0 ? toCanonicalTagList(listingData) : toUniqueTrimmedStringList(existing?.tags),
+    popularFor:
+      toUniqueTrimmedStringList(listingData?.popularFor).length > 0
+        ? toUniqueTrimmedStringList(listingData?.popularFor)
+        : toUniqueTrimmedStringList(existing?.popularFor),
+    instantBookEnabled,
+    pricingUnit,
+    priceCents,
+    quantity: Math.max(1, Math.floor(quantity)),
+    minimumHours,
+    listingServiceCenterLabel:
+      asTrimmedString(listingData?.listingServiceCenterLabel) ||
+      asTrimmedString(listingData?.serviceLocation?.label) ||
+      asTrimmedString(existing?.listingServiceCenterLabel) ||
+      null,
+    listingServiceCenterLat,
+    listingServiceCenterLng,
+    serviceRadiusMiles:
+      parseIntegerValue(listingData?.serviceRadiusMiles) ??
+      parseIntegerValue(existing?.serviceRadiusMiles),
+    serviceAreaMode,
+    travelOffered,
+    travelFeeEnabled,
+    travelFeeType,
+    travelFeeAmountCents: travelFeeEnabled ? travelFeeAmountCentsRaw ?? null : null,
+    pickupOffered,
+    deliveryOffered,
+    deliveryFeeEnabled,
+    deliveryFeeAmountCents: deliveryFeeEnabled ? deliveryFeeAmountCentsRaw ?? null : null,
+    setupOffered,
+    setupFeeEnabled,
+    setupFeeAmountCents: setupFeeEnabled ? setupFeeAmountCentsRaw ?? null : null,
+    photos,
+  };
+}
+
+function resolveCanonicalListingCategory(listingDataRaw: unknown, canonicalCategory?: unknown): ListingCategoryValue | null {
+  return (
+    normalizeListingCategory(canonicalCategory) ??
+    normalizeListingClassification(listingDataRaw, {
+      allowLegacyFallback: false,
+    }).category
+  );
+}
+
+function isListingPubliclyCompliant(input: {
+  listingDataRaw: unknown;
+  canonicalCategory?: unknown;
+  canonicalPriceCents?: unknown;
+  canonicalPhotos?: unknown;
+}) {
+  const category = resolveCanonicalListingCategory(input.listingDataRaw, input.canonicalCategory);
+  const priceOk = hasValidListingPrice(input.listingDataRaw, input.canonicalPriceCents);
+  const photosOk = hasMinimumListingPhotos(input.listingDataRaw, input.canonicalPhotos);
+  return Boolean(category && priceOk && photosOk);
+}
+
+async function deactivateActiveListingsViolatingPublishGate(accountId?: string): Promise<number> {
   const whereClause = accountId
     ? and(eq(vendorListings.status, "active"), eq(vendorListings.accountId, accountId))
     : eq(vendorListings.status, "active");
 
   const activeListings = await db
-    .select({ id: vendorListings.id, listingData: vendorListings.listingData })
+    .select({
+      id: vendorListings.id,
+      category: vendorListings.category,
+      priceCents: vendorListings.priceCents,
+      photos: vendorListings.photos,
+      listingData: vendorListings.listingData,
+    })
     .from(vendorListings)
     .where(whereClause);
 
-  const invalidIds = activeListings
-    .filter((listing) => !hasValidListingPrice(listing.listingData))
+  const invalidPriceIds = activeListings
+    .filter((listing) => !hasValidListingPrice(listing.listingData, listing.priceCents))
     .map((listing) => listing.id);
+
+  const invalidPhotoIds = activeListings
+    .filter((listing) => !hasMinimumListingPhotos(listing.listingData, listing.photos))
+    .map((listing) => listing.id);
+
+  const invalidCategoryIds = activeListings
+    .filter(
+      (listing) =>
+        !resolveCanonicalListingCategory(listing.listingData, listing.category)
+    )
+    .map((listing) => listing.id);
+
+  const invalidIds = Array.from(new Set([...invalidPriceIds, ...invalidPhotoIds, ...invalidCategoryIds]));
 
   for (const listingId of invalidIds) {
     await db
@@ -375,8 +1420,9 @@ async function deactivateActiveListingsWithoutValidPrice(accountId?: string): Pr
 
   if (invalidIds.length > 0) {
     console.log(
-      "[listing price gate] moved active listings to inactive due to missing/invalid price:",
-      invalidIds.length
+      "[listing publish gate] moved active listings to inactive:",
+      invalidIds.length,
+      `| invalid price: ${invalidPriceIds.length} | insufficient photos: ${invalidPhotoIds.length} | missing category: ${invalidCategoryIds.length}`
     );
   }
 
@@ -400,9 +1446,8 @@ type BookingChatContext = {
   createdAt: string | Date | null;
 };
 
-function hasPaymentMethodForChat(value: string | null | undefined) {
-  const trimmed = (value || "").trim();
-  return trimmed.startsWith("pm_");
+function hasPaymentAccessForChat(paymentStatus: string | null | undefined) {
+  return isPaymentCollectedStatus(paymentStatus);
 }
 
 function normalizeBookingChatContext(row: any): BookingChatContext {
@@ -442,7 +1487,7 @@ function toConversationPayload(
     eventTitle: row.eventTitle || null,
     status: row.status,
     paymentStatus: row.paymentStatus,
-    paymentInfoCollected: hasPaymentMethodForChat(row.paymentMethodId),
+    paymentInfoCollected: hasPaymentAccessForChat(row.paymentStatus),
     retentionExpiresAt: retention ? retention.toISOString() : null,
     expired: row.eventDate ? isChatExpiredForEventDate(row.eventDate) : false,
     unreadCount: normalizedUnread,
@@ -508,75 +1553,1042 @@ async function ensureStripeWebhookTable() {
   await stripeWebhookTableReadyPromise;
 }
 
+async function ensureBookingDisputesTable() {
+  if (!bookingDisputesTableReadyPromise) {
+    bookingDisputesTableReadyPromise = (async () => {
+      await db.execute(drizzleSql`
+        do $$
+        begin
+          create type booking_dispute_status as enum (
+            'filed',
+            'vendor_responded',
+            'resolved_refund',
+            'resolved_payout'
+          );
+        exception
+          when duplicate_object then null;
+        end $$;
+      `);
+      await db.execute(drizzleSql`
+        create table if not exists booking_disputes (
+          id varchar primary key default gen_random_uuid(),
+          booking_id varchar not null references bookings(id) on delete cascade,
+          customer_id varchar not null references users(id) on delete cascade,
+          vendor_account_id varchar references vendor_accounts(id) on delete set null,
+          reason text not null,
+          details text,
+          status booking_dispute_status not null default 'filed',
+          vendor_response text,
+          admin_decision text,
+          admin_notes text,
+          filed_at timestamptz not null default now(),
+          vendor_responded_at timestamptz,
+          resolved_at timestamptz,
+          created_at timestamptz not null default now(),
+          updated_at timestamptz not null default now()
+        )
+      `);
+      await db.execute(drizzleSql`
+        create unique index if not exists booking_disputes_booking_id_idx
+        on booking_disputes (booking_id)
+      `);
+      await db.execute(drizzleSql`
+        create index if not exists booking_disputes_status_idx
+        on booking_disputes (status)
+      `);
+      await db.execute(drizzleSql`
+        create index if not exists booking_disputes_filed_at_idx
+        on booking_disputes (filed_at desc)
+      `);
+    })().catch((error) => {
+      bookingDisputesTableReadyPromise = null;
+      throw error;
+    });
+  }
+
+  await bookingDisputesTableReadyPromise;
+}
+
+async function recomputeBookingPaymentStatusInTx(tx: any, bookingId: string) {
+  const scheduleRows = await tx
+    .select({
+      status: paymentSchedules.status,
+      paymentType: paymentSchedules.paymentType,
+      paidAt: paymentSchedules.paidAt,
+    })
+    .from(paymentSchedules)
+    .where(eq(paymentSchedules.bookingId, bookingId));
+
+  const nextPaymentStatus = deriveBookingPaymentStatusFromScheduleStatuses(
+    scheduleRows.map((row: { status?: string | null }) => row.status)
+  );
+  const depositPaidAt =
+    scheduleRows.find(
+      (row: { paymentType?: string | null; status?: string | null; paidAt?: Date | null }) =>
+        normalizePaymentStateValue(row.paymentType) === "deposit" &&
+        isPaymentSucceededStatus(row.status) &&
+        row.paidAt instanceof Date
+    )?.paidAt ?? null;
+
+  const bookingPatch: Record<string, any> = {
+    paymentStatus: nextPaymentStatus,
+    updatedAt: new Date(),
+  };
+  if (depositPaidAt) {
+    bookingPatch.depositPaidAt = depositPaidAt;
+  }
+
+  await tx
+    .update(bookings)
+    .set(bookingPatch as any)
+    .where(eq(bookings.id, bookingId));
+
+  return nextPaymentStatus;
+}
+
+async function markBookingAsPaymentFailedInTx(tx: any, bookingId: string, reason: string) {
+  const now = new Date();
+  await tx.execute(drizzleSql`
+    update bookings
+    set
+      status = 'failed',
+      payment_status = 'failed',
+      cancellation_reason = coalesce(nullif(trim(cancellation_reason), ''), ${reason}),
+      cancelled_at = coalesce(cancelled_at, ${now}),
+      updated_at = ${now}
+    where id = ${bookingId}
+      and status in ('pending', 'confirmed')
+  `);
+}
+
+type LockedPaymentPayoutContext = {
+  paymentId: string;
+  bookingId: string;
+  bookingStatus: string | null;
+  bookingEndAt: Date | null;
+  paymentStatus: string | null;
+  payoutStatus: string | null;
+  payoutBlockedReason: string | null;
+  disputeStatus: string | null;
+  bookingDisputeStatus: string | null;
+  paidOutAt: Date | null;
+  payoutEligibleAt: Date | null;
+  totalAmount: number | null;
+  amount: number | null;
+  refundedAmount: number | null;
+  refundAmount: number | null;
+  vendorNetPayoutAmount: number | null;
+  vendorPayout: number | null;
+  actualStripeFeeAmount: number | null;
+  stripeConnectedAccountId: string | null;
+  stripeChargeId: string | null;
+  stripeTransferId: string | null;
+  payoutAdjustedAmount: number | null;
+};
+
+async function loadPaymentPayoutContextForUpdateInTx(
+  tx: any,
+  paymentId: string
+): Promise<LockedPaymentPayoutContext | null> {
+  await ensureBookingDisputesTable();
+  const rows: any = await tx.execute(drizzleSql`
+    select
+      p.id as "paymentId",
+      p.booking_id as "bookingId",
+      b.status as "bookingStatus",
+      b.booking_end_at as "bookingEndAt",
+      p.status as "paymentStatus",
+      p.payout_status as "payoutStatus",
+      p.payout_blocked_reason as "payoutBlockedReason",
+      p.dispute_status as "disputeStatus",
+      bd.status as "bookingDisputeStatus",
+      p.paid_out_at as "paidOutAt",
+      p.payout_eligible_at as "payoutEligibleAt",
+      p.total_amount as "totalAmount",
+      p.amount as "amount",
+      p.refunded_amount as "refundedAmount",
+      p.refund_amount as "refundAmount",
+      p.vendor_net_payout_amount as "vendorNetPayoutAmount",
+      p.vendor_payout as "vendorPayout",
+      p.actual_stripe_fee_amount as "actualStripeFeeAmount",
+      p.stripe_connected_account_id as "stripeConnectedAccountId",
+      p.stripe_charge_id as "stripeChargeId",
+      p.stripe_transfer_id as "stripeTransferId",
+      p.payout_adjusted_amount as "payoutAdjustedAmount"
+    from payments p
+    inner join bookings b on b.id = p.booking_id
+    left join booking_disputes bd on bd.booking_id = b.id
+    where p.id = ${paymentId}
+    for update
+  `);
+  const row = extractRows<LockedPaymentPayoutContext>(rows)[0];
+  return row?.paymentId ? row : null;
+}
+
+async function getBookingDisputeStatusInTx(tx: any, bookingId: string): Promise<string | null> {
+  await ensureBookingDisputesTable();
+  const rows = await tx
+    .select({
+      status: bookingDisputes.status,
+    })
+    .from(bookingDisputes)
+    .where(eq(bookingDisputes.bookingId, bookingId))
+    .limit(1);
+  const status = rows[0]?.status;
+  return typeof status === "string" ? status : null;
+}
+
+async function refreshPaymentPayoutStateInTx(
+  tx: any,
+  paymentId: string,
+  now = new Date()
+) {
+  const paymentContext = await loadPaymentPayoutContextForUpdateInTx(tx, paymentId);
+  if (!paymentContext?.paymentId || !paymentContext.bookingId) return null;
+
+  const payoutEligibility = computePayoutEligibility(
+    {
+      bookingStatus: paymentContext.bookingStatus,
+      paymentStatus: paymentContext.paymentStatus,
+      payoutStatus: paymentContext.payoutStatus,
+      payoutBlockedReason: paymentContext.payoutBlockedReason,
+      disputeStatus: paymentContext.disputeStatus,
+      bookingDisputeStatus: paymentContext.bookingDisputeStatus,
+      paidOutAt: paymentContext.paidOutAt,
+      payoutEligibleAt: paymentContext.payoutEligibleAt,
+      bookingEndAt: paymentContext.bookingEndAt,
+      totalAmount:
+        parseIntegerValue(paymentContext.totalAmount) ??
+        parseIntegerValue(paymentContext.amount) ??
+        0,
+      refundedAmount:
+        parseIntegerValue(paymentContext.refundedAmount) ??
+        parseIntegerValue(paymentContext.refundAmount) ??
+        0,
+      vendorNetPayoutAmount:
+        parseIntegerValue(paymentContext.vendorNetPayoutAmount) ??
+        parseIntegerValue(paymentContext.vendorPayout) ??
+        0,
+      actualStripeFeeAmount: paymentContext.actualStripeFeeAmount,
+      stripeConnectedAccountId: paymentContext.stripeConnectedAccountId,
+      stripeChargeId: paymentContext.stripeChargeId,
+      stripeTransferId: paymentContext.stripeTransferId,
+      vendorAbsorbsStripeFees: VENDOR_ABSORBS_STRIPE_FEES,
+    },
+    now
+  );
+
+  await tx
+    .update(payments)
+    .set({
+      payoutStatus: payoutEligibility.payoutStatus,
+      payoutEligibleAt: payoutEligibility.payoutEligibleAt,
+      payoutBlockedReason: payoutEligibility.payoutBlockedReason,
+      payoutAdjustedAmount: payoutEligibility.adjustedPayoutAmount,
+    })
+    .where(eq(payments.id, paymentContext.paymentId));
+
+  await tx
+    .update(bookings)
+    .set({
+      payoutStatus: payoutEligibility.payoutStatus,
+      payoutEligibleAt: payoutEligibility.payoutEligibleAt,
+      payoutBlockedReason: payoutEligibility.payoutBlockedReason,
+      updatedAt: now,
+    })
+    .where(eq(bookings.id, paymentContext.bookingId));
+
+  return {
+    paymentContext,
+    payoutEligibility,
+  };
+}
+
+type PayoutProcessingResult = {
+  paymentId: string;
+  bookingId: string;
+  outcome: "paid" | "eligible" | "skipped" | "blocked" | "duplicate";
+  reason: string | null;
+  payoutAmount: number;
+  transferId: string | null;
+};
+
+async function processSinglePayoutCandidate(params: {
+  paymentId: string;
+  bookingId: string;
+  dryRun: boolean;
+}): Promise<PayoutProcessingResult> {
+  const paymentId = asTrimmedString(params.paymentId);
+  const bookingId = asTrimmedString(params.bookingId);
+  if (!paymentId || !bookingId) {
+    return {
+      paymentId,
+      bookingId,
+      outcome: "skipped",
+      reason: "invalid_candidate",
+      payoutAmount: 0,
+      transferId: null,
+    };
+  }
+
+  const now = new Date();
+  const refreshed = await db.transaction(async (tx) => refreshPaymentPayoutStateInTx(tx, paymentId, now));
+
+  if (!refreshed?.paymentContext) {
+    return {
+      paymentId,
+      bookingId,
+      outcome: "skipped",
+      reason: "payment_not_found",
+      payoutAmount: 0,
+      transferId: null,
+    };
+  }
+
+  const eligibility = refreshed.payoutEligibility;
+  const payoutAmount = Math.max(0, Math.round(eligibility.adjustedPayoutAmount || 0));
+
+  if (!eligibility.eligible) {
+    return {
+      paymentId,
+      bookingId,
+      outcome: eligibility.payoutStatus === "blocked" ? "blocked" : "skipped",
+      reason: eligibility.payoutBlockedReason || "not_eligible",
+      payoutAmount,
+      transferId: null,
+    };
+  }
+
+  if (params.dryRun) {
+    return {
+      paymentId,
+      bookingId,
+      outcome: "eligible",
+      reason: null,
+      payoutAmount,
+      transferId: null,
+    };
+  }
+
+  const connectedAccountId = asTrimmedString(refreshed.paymentContext.stripeConnectedAccountId);
+  const chargeId = asTrimmedString(refreshed.paymentContext.stripeChargeId);
+
+  if (!connectedAccountId || !chargeId || payoutAmount <= 0) {
+    await db.transaction(async (tx) => {
+      await tx
+        .update(payments)
+        .set({
+          payoutStatus: "blocked",
+          payoutBlockedReason: "missing_transfer_requirements",
+          payoutAdjustedAmount: payoutAmount,
+        })
+        .where(eq(payments.id, paymentId));
+      await tx
+        .update(bookings)
+        .set({
+          payoutStatus: "blocked",
+          payoutBlockedReason: "missing_transfer_requirements",
+          updatedAt: new Date(),
+        })
+        .where(eq(bookings.id, bookingId));
+    });
+    return {
+      paymentId,
+      bookingId,
+      outcome: "blocked",
+      reason: "missing_transfer_requirements",
+      payoutAmount,
+      transferId: null,
+    };
+  }
+
+  try {
+    const { transferToVendor } = await import("./stripe");
+    const transfer = await transferToVendor({
+      amount: payoutAmount,
+      vendorStripeAccountId: connectedAccountId,
+      description: `EventHub payout for booking ${bookingId}`,
+      sourceTransaction: chargeId,
+      transferGroup: `booking_${bookingId}`,
+      metadata: {
+        bookingId,
+        paymentId,
+        payoutAmount: String(payoutAmount),
+        sourceChargeId: chargeId,
+      },
+      idempotencyKey: `eventhub-payout:${paymentId}:${payoutAmount}`,
+    });
+
+    const persisted = await db.transaction(async (tx) => {
+      const locked = await loadPaymentPayoutContextForUpdateInTx(tx, paymentId);
+      if (!locked?.paymentId || !locked.bookingId) {
+        return {
+          outcome: "skipped" as const,
+          reason: "payment_not_found",
+          transferId: null as string | null,
+        };
+      }
+
+      const existingTransferId = asTrimmedString(locked.stripeTransferId);
+      if (existingTransferId) {
+        return {
+          outcome: "duplicate" as const,
+          reason: "already_paid",
+          transferId: existingTransferId,
+        };
+      }
+
+      const nowLocked = new Date();
+      const eligibilityLocked = computePayoutEligibility(
+        {
+          bookingStatus: locked.bookingStatus,
+          paymentStatus: locked.paymentStatus,
+          payoutStatus: locked.payoutStatus,
+          payoutBlockedReason: locked.payoutBlockedReason,
+          disputeStatus: locked.disputeStatus,
+          bookingDisputeStatus: locked.bookingDisputeStatus,
+          paidOutAt: locked.paidOutAt,
+          payoutEligibleAt: locked.payoutEligibleAt,
+          bookingEndAt: locked.bookingEndAt,
+          totalAmount: parseIntegerValue(locked.totalAmount) ?? parseIntegerValue(locked.amount) ?? 0,
+          refundedAmount: parseIntegerValue(locked.refundedAmount) ?? parseIntegerValue(locked.refundAmount) ?? 0,
+          vendorNetPayoutAmount:
+            parseIntegerValue(locked.vendorNetPayoutAmount) ?? parseIntegerValue(locked.vendorPayout) ?? 0,
+          actualStripeFeeAmount: locked.actualStripeFeeAmount,
+          stripeConnectedAccountId: locked.stripeConnectedAccountId,
+          stripeChargeId: locked.stripeChargeId,
+          stripeTransferId: locked.stripeTransferId,
+          vendorAbsorbsStripeFees: VENDOR_ABSORBS_STRIPE_FEES,
+        },
+        nowLocked
+      );
+
+      if (!eligibilityLocked.eligible) {
+        await tx
+          .update(payments)
+          .set({
+            payoutStatus: eligibilityLocked.payoutStatus,
+            payoutEligibleAt: eligibilityLocked.payoutEligibleAt,
+            payoutBlockedReason: eligibilityLocked.payoutBlockedReason,
+            payoutAdjustedAmount: eligibilityLocked.adjustedPayoutAmount,
+          })
+          .where(eq(payments.id, paymentId));
+        await tx
+          .update(bookings)
+          .set({
+            payoutStatus: eligibilityLocked.payoutStatus,
+            payoutEligibleAt: eligibilityLocked.payoutEligibleAt,
+            payoutBlockedReason: eligibilityLocked.payoutBlockedReason,
+            updatedAt: nowLocked,
+          })
+          .where(eq(bookings.id, locked.bookingId));
+        return {
+          outcome: eligibilityLocked.payoutStatus === "blocked" ? "blocked" : "skipped",
+          reason: eligibilityLocked.payoutBlockedReason || "not_eligible",
+          transferId: null as string | null,
+        };
+      }
+
+      await tx
+        .update(payments)
+        .set({
+          stripeTransferId: transfer.id,
+          payoutStatus: "paid",
+          payoutScheduledAt: nowLocked,
+          paidOutAt: nowLocked,
+          payoutBlockedReason: null,
+          payoutAdjustedAmount: payoutAmount,
+        })
+        .where(eq(payments.id, paymentId));
+      await tx
+        .update(bookings)
+        .set({
+          payoutStatus: "paid",
+          payoutEligibleAt: eligibilityLocked.payoutEligibleAt,
+          paidOutAt: nowLocked,
+          payoutBlockedReason: null,
+          updatedAt: nowLocked,
+        })
+        .where(eq(bookings.id, locked.bookingId));
+
+      return {
+        outcome: "paid" as const,
+        reason: null as string | null,
+        transferId: transfer.id,
+      };
+    });
+
+    return {
+      paymentId,
+      bookingId,
+      outcome: persisted.outcome as PayoutProcessingResult["outcome"],
+      reason: persisted.reason,
+      payoutAmount,
+      transferId: persisted.transferId,
+    };
+  } catch (error: any) {
+    const errorMessage =
+      typeof error?.message === "string" && error.message.trim().length > 0
+        ? error.message.trim().slice(0, 200)
+        : "transfer_failed";
+    await db.transaction(async (tx) => {
+      await tx
+        .update(payments)
+        .set({
+          payoutStatus: "blocked",
+          payoutBlockedReason: "transfer_failed",
+          payoutAdjustedAmount: payoutAmount,
+        })
+        .where(eq(payments.id, paymentId));
+      await tx
+        .update(bookings)
+        .set({
+          payoutStatus: "blocked",
+          payoutBlockedReason: "transfer_failed",
+          updatedAt: new Date(),
+        })
+        .where(eq(bookings.id, bookingId));
+    });
+    return {
+      paymentId,
+      bookingId,
+      outcome: "blocked",
+      reason: errorMessage,
+      payoutAmount,
+      transferId: null,
+    };
+  }
+}
+
+async function runAutoPayoutTick() {
+  if (autoPayoutTickInFlight) return;
+  autoPayoutTickInFlight = true;
+  try {
+    const payoutCandidates = await db
+      .select({
+        paymentId: payments.id,
+        bookingId: payments.bookingId,
+      })
+      .from(payments)
+      .where(
+        and(
+          eq(payments.paymentType, "deposit"),
+          isNull(payments.stripeTransferId),
+          inArray(payments.payoutStatus, ["not_ready", "eligible", "scheduled"])
+        )
+      )
+      .orderBy(asc(payments.payoutEligibleAt), asc(payments.createdAt))
+      .limit(25);
+
+    for (const candidate of payoutCandidates) {
+      await processSinglePayoutCandidate({
+        paymentId: candidate.paymentId,
+        bookingId: candidate.bookingId,
+        dryRun: false,
+      });
+    }
+  } catch (error) {
+    console.error("auto payout tick failed:", error);
+  } finally {
+    autoPayoutTickInFlight = false;
+  }
+}
+
+function startAutoPayoutWorker() {
+  if (autoPayoutWorkerStarted) return;
+  autoPayoutWorkerStarted = true;
+
+  // Kick once on start so recently elapsed windows release without waiting for first interval.
+  void runAutoPayoutTick();
+  setInterval(() => {
+    void runAutoPayoutTick();
+  }, AUTO_PAYOUT_INTERVAL_MS);
+}
+
+async function expireStalePendingBookings() {
+  const now = new Date();
+  const expiredRows: any = await db.execute(drizzleSql`
+    update bookings b
+    set
+      status = 'expired',
+      payment_status = 'failed',
+      cancellation_reason = coalesce(nullif(trim(b.cancellation_reason), ''), ${BOOKING_PENDING_EXPIRY_REASON}),
+      cancelled_at = coalesce(b.cancelled_at, ${now}),
+      updated_at = ${now}
+    where b.status in ('pending', 'confirmed')
+      and b.payment_status = 'pending'
+      and b.created_at < now() - (${BOOKING_PENDING_EXPIRY_MINUTES} * interval '1 minute')
+      and not exists (
+        select 1
+        from payment_schedules ps
+        where ps.booking_id = b.id
+          and ps.status in ('paid', 'succeeded')
+      )
+    returning b.id
+  `);
+
+  const bookingIds = extractRows<{ id?: string | null }>(expiredRows)
+    .map((row) => asTrimmedString(row?.id))
+    .filter((id): id is string => Boolean(id));
+
+  if (bookingIds.length === 0) {
+    return 0;
+  }
+
+  await db
+    .update(paymentSchedules)
+    .set({ status: "failed" })
+    .where(and(inArray(paymentSchedules.bookingId, bookingIds), eq(paymentSchedules.status, "pending")));
+
+  await db
+    .update(payments)
+    .set({ status: "failed" })
+    .where(and(inArray(payments.bookingId, bookingIds), eq(payments.status, "pending")));
+
+  return bookingIds.length;
+}
+
+async function ensurePaymentRecordForIntentInTx(
+  tx: any,
+  params: {
+    paymentIntentId: string;
+    fallbackBookingId?: string | null;
+    fallbackScheduleId?: string | null;
+    fallbackPaymentType?: string | null;
+    fallbackAmount?: number | null;
+    fallbackTotalAmount?: number | null;
+    fallbackPlatformFeeAmount?: number | null;
+    fallbackVendorGrossAmount?: number | null;
+    fallbackVendorNetPayoutAmount?: number | null;
+    fallbackStripeProcessingFeeEstimate?: number | null;
+    fallbackStripeConnectedAccountId?: string | null;
+  }
+) {
+  const paymentIntentId = asTrimmedString(params.paymentIntentId);
+  if (!paymentIntentId) return null;
+
+  const existingRows = await tx
+    .select({
+      id: payments.id,
+      bookingId: payments.bookingId,
+      scheduleId: payments.scheduleId,
+      paymentType: payments.paymentType,
+      status: payments.status,
+      amount: payments.amount,
+      totalAmount: payments.totalAmount,
+      platformFee: payments.platformFee,
+      platformFeeAmount: payments.platformFeeAmount,
+      vendorPayout: payments.vendorPayout,
+      vendorGrossAmount: payments.vendorGrossAmount,
+      vendorNetPayoutAmount: payments.vendorNetPayoutAmount,
+      stripeProcessingFeeEstimate: payments.stripeProcessingFeeEstimate,
+      actualStripeFeeAmount: payments.actualStripeFeeAmount,
+      refundedAmount: payments.refundedAmount,
+      refundAmount: payments.refundAmount,
+      disputeStatus: payments.disputeStatus,
+      payoutStatus: payments.payoutStatus,
+      payoutEligibleAt: payments.payoutEligibleAt,
+      payoutBlockedReason: payments.payoutBlockedReason,
+      payoutAdjustedAmount: payments.payoutAdjustedAmount,
+      paidOutAt: payments.paidOutAt,
+      stripeChargeId: payments.stripeChargeId,
+      stripeTransferId: payments.stripeTransferId,
+      stripeConnectedAccountId: payments.stripeConnectedAccountId,
+      customerId: payments.customerId,
+      vendorAccountId: payments.vendorAccountId,
+    })
+    .from(payments)
+    .where(eq(payments.stripePaymentIntentId, paymentIntentId))
+    .limit(1);
+  if (existingRows[0]) {
+    const existingPayment = existingRows[0];
+    const connectedAccountId = asTrimmedString(params.fallbackStripeConnectedAccountId);
+    const patch: Record<string, unknown> = {};
+    if (!asTrimmedString(existingPayment.stripeConnectedAccountId) && connectedAccountId) {
+      patch.stripeConnectedAccountId = connectedAccountId;
+    }
+    if (parseIntegerValue(existingPayment.totalAmount) == null && parseIntegerValue(params.fallbackTotalAmount) != null) {
+      patch.totalAmount = Math.max(0, parseIntegerValue(params.fallbackTotalAmount) ?? 0);
+    }
+    if (
+      parseIntegerValue(existingPayment.platformFeeAmount) == null &&
+      parseIntegerValue(params.fallbackPlatformFeeAmount) != null
+    ) {
+      patch.platformFeeAmount = Math.max(0, parseIntegerValue(params.fallbackPlatformFeeAmount) ?? 0);
+    }
+    if (
+      parseIntegerValue(existingPayment.vendorNetPayoutAmount) == null &&
+      parseIntegerValue(params.fallbackVendorNetPayoutAmount) != null
+    ) {
+      patch.vendorNetPayoutAmount = Math.max(0, parseIntegerValue(params.fallbackVendorNetPayoutAmount) ?? 0);
+    }
+    if (Object.keys(patch).length > 0) {
+      await tx.update(payments).set(patch as any).where(eq(payments.id, existingPayment.id));
+    }
+    return existingPayment;
+  }
+
+  const bookingId = asTrimmedString(params.fallbackBookingId);
+  if (!bookingId) return null;
+
+  const [bookingRow] = await tx
+    .select({
+      id: bookings.id,
+      customerId: bookings.customerId,
+      vendorAccountId: bookings.vendorAccountId,
+      bookingEndAt: bookings.bookingEndAt,
+      totalAmount: bookings.totalAmount,
+      platformFee: bookings.platformFee,
+      subtotalAmountCents: bookings.subtotalAmountCents,
+      vendorPayout: bookings.vendorPayout,
+    })
+    .from(bookings)
+    .where(eq(bookings.id, bookingId))
+    .limit(1);
+  if (!bookingRow?.id) return null;
+
+  let scheduleRow: {
+    id: string;
+    amount: number;
+    paymentType: "deposit" | "final" | "installment";
+  } | null = null;
+  const scheduleId = asTrimmedString(params.fallbackScheduleId);
+  if (scheduleId) {
+    const [specificSchedule] = await tx
+      .select({
+        id: paymentSchedules.id,
+        amount: paymentSchedules.amount,
+        paymentType: paymentSchedules.paymentType,
+      })
+      .from(paymentSchedules)
+      .where(and(eq(paymentSchedules.id, scheduleId), eq(paymentSchedules.bookingId, bookingId)))
+      .limit(1);
+    if (specificSchedule?.id) {
+      scheduleRow = specificSchedule;
+    }
+  }
+
+  if (!scheduleRow) {
+    const fallbackType = normalizePaymentStateValue(params.fallbackPaymentType) || "deposit";
+    const [typedSchedule] = await tx
+      .select({
+        id: paymentSchedules.id,
+        amount: paymentSchedules.amount,
+        paymentType: paymentSchedules.paymentType,
+      })
+      .from(paymentSchedules)
+      .where(and(eq(paymentSchedules.bookingId, bookingId), eq(paymentSchedules.paymentType, fallbackType as any)))
+      .limit(1);
+    if (typedSchedule?.id) {
+      scheduleRow = typedSchedule;
+    }
+  }
+
+  const amount =
+    (scheduleRow?.amount ?? parseIntegerValue(params.fallbackAmount)) && Number.isFinite(Number(scheduleRow?.amount ?? params.fallbackAmount))
+      ? Math.max(0, Number(scheduleRow?.amount ?? params.fallbackAmount))
+      : 0;
+  if (!amount) return null;
+
+  const totalAmount =
+    parseIntegerValue(params.fallbackTotalAmount) ??
+    parseIntegerValue(bookingRow.totalAmount) ??
+    amount;
+  const platformFeeAmount =
+    parseIntegerValue(params.fallbackPlatformFeeAmount) ??
+    parseIntegerValue(bookingRow.platformFee) ??
+    Math.round(amount * VENDOR_FEE_RATE);
+  const vendorGrossAmount =
+    parseIntegerValue(params.fallbackVendorGrossAmount) ??
+    parseIntegerValue(bookingRow.subtotalAmountCents) ??
+    Math.max(0, totalAmount - Math.max(0, parseIntegerValue(bookingRow.platformFee) ?? 0));
+  const vendorNetPayoutAmount =
+    parseIntegerValue(params.fallbackVendorNetPayoutAmount) ??
+    parseIntegerValue(bookingRow.vendorPayout) ??
+    Math.max(0, amount - platformFeeAmount);
+  const stripeProcessingFeeEstimate =
+    parseIntegerValue(params.fallbackStripeProcessingFeeEstimate) ??
+    estimateStripeProcessingFeeCents(totalAmount);
+  const connectedAccountId = asTrimmedString(params.fallbackStripeConnectedAccountId) || null;
+  const payoutEligibleAt =
+    bookingRow.bookingEndAt instanceof Date
+      ? new Date(bookingRow.bookingEndAt.getTime() + DISPUTE_WINDOW_HOURS * 60 * 60 * 1000)
+      : null;
+
+  const [inserted] = await tx
+    .insert(payments)
+    .values({
+      bookingId,
+      scheduleId: scheduleRow?.id ?? null,
+      customerId: bookingRow.customerId,
+      vendorAccountId: bookingRow.vendorAccountId,
+      stripePaymentIntentId: paymentIntentId,
+      amount,
+      totalAmount,
+      platformFee: platformFeeAmount,
+      platformFeeAmount,
+      vendorGrossAmount,
+      vendorPayout: vendorNetPayoutAmount,
+      vendorNetPayoutAmount,
+      stripeProcessingFeeEstimate,
+      stripeConnectedAccountId: connectedAccountId,
+      payoutStatus: "not_ready",
+      payoutEligibleAt,
+      paymentType: (scheduleRow?.paymentType ??
+        (normalizePaymentStateValue(params.fallbackPaymentType) || "deposit")) as "deposit" | "final" | "installment",
+      status: "pending",
+    })
+    .returning({
+      id: payments.id,
+      bookingId: payments.bookingId,
+      scheduleId: payments.scheduleId,
+      paymentType: payments.paymentType,
+      status: payments.status,
+      amount: payments.amount,
+      totalAmount: payments.totalAmount,
+      platformFee: payments.platformFee,
+      platformFeeAmount: payments.platformFeeAmount,
+      vendorPayout: payments.vendorPayout,
+      vendorNetPayoutAmount: payments.vendorNetPayoutAmount,
+      vendorGrossAmount: payments.vendorGrossAmount,
+      refundedAmount: payments.refundedAmount,
+      refundAmount: payments.refundAmount,
+      disputeStatus: payments.disputeStatus,
+      payoutStatus: payments.payoutStatus,
+      payoutEligibleAt: payments.payoutEligibleAt,
+      payoutBlockedReason: payments.payoutBlockedReason,
+      payoutAdjustedAmount: payments.payoutAdjustedAmount,
+      paidOutAt: payments.paidOutAt,
+      actualStripeFeeAmount: payments.actualStripeFeeAmount,
+      stripeChargeId: payments.stripeChargeId,
+      stripeTransferId: payments.stripeTransferId,
+      stripeConnectedAccountId: payments.stripeConnectedAccountId,
+      customerId: payments.customerId,
+      vendorAccountId: payments.vendorAccountId,
+    });
+
+  return inserted ?? null;
+}
+
+async function initializeBookingPaymentIntentForSchedule(input: {
+  bookingId: string;
+  scheduleId: string;
+  customerId: string;
+}) {
+  const bookingId = asTrimmedString(input.bookingId);
+  const scheduleId = asTrimmedString(input.scheduleId);
+  const customerId = asTrimmedString(input.customerId);
+  if (!bookingId || !scheduleId || !customerId) {
+    throw new Error("Invalid payment initialization payload");
+  }
+
+  const [booking] = await db
+    .select({
+      id: bookings.id,
+      customerId: bookings.customerId,
+      vendorAccountId: bookings.vendorAccountId,
+      status: bookings.status,
+      listingId: bookings.listingId,
+      bookingStartAt: bookings.bookingStartAt,
+      bookingEndAt: bookings.bookingEndAt,
+      totalAmount: bookings.totalAmount,
+      platformFee: bookings.platformFee,
+      subtotalAmountCents: bookings.subtotalAmountCents,
+      vendorPayout: bookings.vendorPayout,
+    })
+    .from(bookings)
+    .where(eq(bookings.id, bookingId))
+    .limit(1);
+
+  if (!booking) {
+    throw new Error("Booking not found");
+  }
+  if (!booking.customerId || booking.customerId !== customerId) {
+    throw new Error("You do not have access to this booking");
+  }
+  if (!booking.vendorAccountId) {
+    throw new Error("Booking is missing vendor account");
+  }
+  const bookingStatus = normalizePaymentStateValue(booking.status);
+  if (bookingStatus === "cancelled" || bookingStatus === "expired" || bookingStatus === "failed") {
+    throw new Error("This booking is no longer payable");
+  }
+
+  const [schedule] = await db
+    .select({
+      id: paymentSchedules.id,
+      bookingId: paymentSchedules.bookingId,
+      amount: paymentSchedules.amount,
+      paymentType: paymentSchedules.paymentType,
+      status: paymentSchedules.status,
+      stripePaymentIntentId: paymentSchedules.stripePaymentIntentId,
+    })
+    .from(paymentSchedules)
+    .where(
+      and(
+        eq(paymentSchedules.id, scheduleId),
+        eq(paymentSchedules.bookingId, bookingId)
+      )
+    )
+    .limit(1);
+
+  if (!schedule) {
+    throw new Error("Payment schedule not found");
+  }
+  if (isPaymentSucceededStatus(schedule.status)) {
+    throw new Error("This payment has already been completed");
+  }
+  if (schedule.status === "refunded") {
+    throw new Error("This payment has already been refunded");
+  }
+  if (schedule.status === "disputed") {
+    throw new Error("This payment is currently disputed");
+  }
+
+  const [vendorAccount] = await db
+    .select({
+      id: vendorAccounts.id,
+      stripeConnectId: vendorAccounts.stripeConnectId,
+      stripeOnboardingComplete: vendorAccounts.stripeOnboardingComplete,
+    })
+    .from(vendorAccounts)
+    .where(eq(vendorAccounts.id, booking.vendorAccountId))
+    .limit(1);
+
+  if (!vendorAccount?.stripeConnectId || !vendorAccount.stripeOnboardingComplete) {
+    throw new Error("Vendor payment processing not set up");
+  }
+
+  const { stripe, createBookingPaymentIntent } = await import("./stripe");
+  if (schedule.stripePaymentIntentId) {
+    const existingIntent = await stripe.paymentIntents.retrieve(schedule.stripePaymentIntentId);
+    if (existingIntent.status === "succeeded") {
+      throw new Error("This payment has already been completed");
+    }
+    if (existingIntent.client_secret && existingIntent.status !== "canceled") {
+      return {
+        booking,
+        schedule,
+        clientSecret: existingIntent.client_secret,
+        paymentIntentId: existingIntent.id,
+      };
+    }
+  }
+
+  const totalAmountCents = parseIntegerValue(booking.totalAmount) ?? schedule.amount;
+  const platformFeeAmount = parseIntegerValue(booking.platformFee) ?? Math.round(schedule.amount * VENDOR_FEE_RATE);
+  const vendorGrossAmount =
+    parseIntegerValue(booking.subtotalAmountCents) ?? Math.max(0, totalAmountCents - Math.max(0, parseIntegerValue(booking.platformFee) ?? 0));
+  const vendorNetPayoutAmount =
+    parseIntegerValue(booking.vendorPayout) ?? Math.max(0, totalAmountCents - platformFeeAmount);
+  const stripeProcessingFeeEstimate = estimateStripeProcessingFeeCents(totalAmountCents);
+
+  const paymentIntent = await createBookingPaymentIntent({
+    amount: schedule.amount,
+    platformFeeAmount,
+    vendorNetPayoutAmount,
+    vendorGrossAmount,
+    stripeProcessingFeeEstimate,
+    vendorStripeAccountId: vendorAccount.stripeConnectId,
+    vendorAccountId: booking.vendorAccountId,
+    listingId: booking.listingId ?? undefined,
+    eventStartAt: booking.bookingStartAt,
+    eventEndAt: booking.bookingEndAt,
+    totalAmount: totalAmountCents,
+    description: `Booking ${booking.id} - ${schedule.paymentType}`,
+    bookingId: booking.id,
+    scheduleId: schedule.id,
+    paymentType: schedule.paymentType,
+    idempotencyKey: `booking-payment:${booking.id}:${schedule.id}`,
+  });
+
+  await db.transaction(async (tx) => {
+    const lockedRows: any = await tx.execute(drizzleSql`
+      select id, status, stripe_payment_intent_id as "stripePaymentIntentId"
+      from payment_schedules
+      where id = ${schedule.id}
+        and booking_id = ${booking.id}
+      for update
+    `);
+    const lockedSchedule = extractRows<{ id?: string; status?: string; stripePaymentIntentId?: string | null }>(lockedRows)[0];
+    if (!lockedSchedule?.id) {
+      throw new Error("Payment schedule not found");
+    }
+    if (isPaymentSucceededStatus(lockedSchedule.status)) {
+      throw new Error("This payment has already been completed");
+    }
+    if (lockedSchedule.status === "refunded") {
+      throw new Error("This payment has already been refunded");
+    }
+    if (lockedSchedule.status === "disputed") {
+      throw new Error("This payment is currently disputed");
+    }
+
+      await tx
+        .update(paymentSchedules)
+        .set({
+          stripePaymentIntentId: paymentIntent.id,
+        })
+      .where(eq(paymentSchedules.id, schedule.id));
+
+    const existingPayments = await tx
+      .select({
+        id: payments.id,
+      })
+      .from(payments)
+      .where(eq(payments.scheduleId, schedule.id))
+      .limit(1);
+
+    if (existingPayments.length > 0) {
+      await tx
+        .update(payments)
+        .set({
+          stripePaymentIntentId: paymentIntent.id,
+          status: "pending",
+          stripeConnectedAccountId: vendorAccount.stripeConnectId,
+          totalAmount: totalAmountCents,
+          platformFeeAmount,
+          vendorGrossAmount,
+          vendorNetPayoutAmount,
+          stripeProcessingFeeEstimate,
+        })
+        .where(eq(payments.id, existingPayments[0]!.id));
+    } else {
+      await tx.insert(payments).values({
+        bookingId: booking.id,
+        scheduleId: schedule.id,
+        customerId: booking.customerId,
+        vendorAccountId: booking.vendorAccountId,
+        stripePaymentIntentId: paymentIntent.id,
+        amount: schedule.amount,
+        totalAmount: totalAmountCents,
+        platformFee: platformFeeAmount,
+        platformFeeAmount,
+        vendorGrossAmount,
+        vendorPayout: vendorNetPayoutAmount,
+        vendorNetPayoutAmount,
+        stripeProcessingFeeEstimate,
+        stripeConnectedAccountId: vendorAccount.stripeConnectId,
+        paymentType: schedule.paymentType,
+        status: "pending",
+        payoutStatus: "not_ready",
+        payoutEligibleAt:
+          booking.bookingEndAt instanceof Date
+            ? new Date(booking.bookingEndAt.getTime() + DISPUTE_WINDOW_HOURS * 60 * 60 * 1000)
+            : null,
+      });
+    }
+  });
+
+  return {
+    booking,
+    schedule,
+    clientSecret: paymentIntent.client_secret,
+    paymentIntentId: paymentIntent.id,
+  };
+}
+
 async function getBookingChatContextById(bookingId: string): Promise<BookingChatContext | null> {
-  const vendorRefCol = await getBookingsVendorRefColumn();
-
-  if (vendorRefCol === "vendor_account_id") {
-    const rows: any = await db.execute(drizzleSql`
-      select
-        b.id as "bookingId",
-        b.event_id as "eventId",
-        b.customer_id as "customerId",
-        coalesce(nullif(u.display_name, ''), nullif(u.name, ''), 'Customer') as "customerName",
-        u.email as "customerEmail",
-        b.vendor_account_id as "vendorAccountId",
-        va.business_name as "vendorName",
-        va.email as "vendorEmail",
-        coalesce(b.event_date, e.date) as "eventDate",
-        e.path as "eventTitle",
-        b.status as "status",
-        b.payment_status as "paymentStatus",
-        b.created_at as "createdAt",
-        (
-          select bi.item_data->>'paymentMethodId'
-          from booking_items bi
-          where bi.booking_id = b.id
-          limit 1
-        ) as "paymentMethodId"
-      from bookings b
-      left join users u on u.id = b.customer_id
-      left join vendor_accounts va on va.id = b.vendor_account_id
-      left join events e on e.id = b.event_id
-      where b.id = ${bookingId}
-      limit 1
-    `);
-    const row = extractRows(rows)[0];
-    return row ? normalizeBookingChatContext(row) : null;
-  }
-
-  if (vendorRefCol === "vendor_id") {
-    const rows: any = await db.execute(drizzleSql`
-      select
-        b.id as "bookingId",
-        b.event_id as "eventId",
-        b.customer_id as "customerId",
-        coalesce(nullif(u.display_name, ''), nullif(u.name, ''), 'Customer') as "customerName",
-        u.email as "customerEmail",
-        b.vendor_id as "vendorAccountId",
-        va.business_name as "vendorName",
-        va.email as "vendorEmail",
-        coalesce(b.event_date, e.date) as "eventDate",
-        e.path as "eventTitle",
-        b.status as "status",
-        b.payment_status as "paymentStatus",
-        b.created_at as "createdAt",
-        (
-          select bi.item_data->>'paymentMethodId'
-          from booking_items bi
-          where bi.booking_id = b.id
-          limit 1
-        ) as "paymentMethodId"
-      from bookings b
-      left join users u on u.id = b.customer_id
-      left join vendor_accounts va on va.id = b.vendor_id
-      left join events e on e.id = b.event_id
-      where b.id = ${bookingId}
-      limit 1
-    `);
-    const row = extractRows(rows)[0];
-    return row ? normalizeBookingChatContext(row) : null;
-  }
-
   const rows: any = await db.execute(drizzleSql`
     select
       b.id as "bookingId",
@@ -584,7 +2596,7 @@ async function getBookingChatContextById(bookingId: string): Promise<BookingChat
       b.customer_id as "customerId",
       coalesce(nullif(u.display_name, ''), nullif(u.name, ''), 'Customer') as "customerName",
       u.email as "customerEmail",
-      owner.vendor_account_id as "vendorAccountId",
+      coalesce(b.vendor_account_id, listing_owner.account_id, legacy_owner.account_id) as "vendorAccountId",
       va.business_name as "vendorName",
       va.email as "vendorEmail",
       coalesce(b.event_date, e.date) as "eventDate",
@@ -601,14 +2613,16 @@ async function getBookingChatContextById(bookingId: string): Promise<BookingChat
     from bookings b
     left join users u on u.id = b.customer_id
     left join events e on e.id = b.event_id
+    left join vendor_listings listing_owner on listing_owner.id = b.listing_id
     left join lateral (
-      select vl.account_id as vendor_account_id
+      select vl.account_id
       from booking_items bi
       inner join vendor_listings vl on vl.id = bi.listing_id
       where bi.booking_id = b.id
+      order by bi.id asc
       limit 1
-    ) owner on true
-    left join vendor_accounts va on va.id = owner.vendor_account_id
+    ) legacy_owner on true
+    left join vendor_accounts va on va.id = coalesce(b.vendor_account_id, listing_owner.account_id, legacy_owner.account_id)
     where b.id = ${bookingId}
     limit 1
   `);
@@ -617,72 +2631,6 @@ async function getBookingChatContextById(bookingId: string): Promise<BookingChat
 }
 
 async function listCustomerBookingChatContexts(customerId: string): Promise<BookingChatContext[]> {
-  const vendorRefCol = await getBookingsVendorRefColumn();
-
-  if (vendorRefCol === "vendor_account_id") {
-    const rows: any = await db.execute(drizzleSql`
-      select
-        b.id as "bookingId",
-        b.event_id as "eventId",
-        b.customer_id as "customerId",
-        coalesce(nullif(u.display_name, ''), nullif(u.name, ''), 'Customer') as "customerName",
-        u.email as "customerEmail",
-        b.vendor_account_id as "vendorAccountId",
-        va.business_name as "vendorName",
-        va.email as "vendorEmail",
-        coalesce(b.event_date, e.date) as "eventDate",
-        e.path as "eventTitle",
-        b.status as "status",
-        b.payment_status as "paymentStatus",
-        b.created_at as "createdAt",
-        (
-          select bi.item_data->>'paymentMethodId'
-          from booking_items bi
-          where bi.booking_id = b.id
-          limit 1
-        ) as "paymentMethodId"
-      from bookings b
-      left join users u on u.id = b.customer_id
-      left join vendor_accounts va on va.id = b.vendor_account_id
-      left join events e on e.id = b.event_id
-      where b.customer_id = ${customerId}
-      order by b.created_at desc
-    `);
-    return extractRows(rows).map(normalizeBookingChatContext);
-  }
-
-  if (vendorRefCol === "vendor_id") {
-    const rows: any = await db.execute(drizzleSql`
-      select
-        b.id as "bookingId",
-        b.event_id as "eventId",
-        b.customer_id as "customerId",
-        coalesce(nullif(u.display_name, ''), nullif(u.name, ''), 'Customer') as "customerName",
-        u.email as "customerEmail",
-        b.vendor_id as "vendorAccountId",
-        va.business_name as "vendorName",
-        va.email as "vendorEmail",
-        coalesce(b.event_date, e.date) as "eventDate",
-        e.path as "eventTitle",
-        b.status as "status",
-        b.payment_status as "paymentStatus",
-        b.created_at as "createdAt",
-        (
-          select bi.item_data->>'paymentMethodId'
-          from booking_items bi
-          where bi.booking_id = b.id
-          limit 1
-        ) as "paymentMethodId"
-      from bookings b
-      left join users u on u.id = b.customer_id
-      left join vendor_accounts va on va.id = b.vendor_id
-      left join events e on e.id = b.event_id
-      where b.customer_id = ${customerId}
-      order by b.created_at desc
-    `);
-    return extractRows(rows).map(normalizeBookingChatContext);
-  }
-
   const rows: any = await db.execute(drizzleSql`
     select
       b.id as "bookingId",
@@ -690,7 +2638,7 @@ async function listCustomerBookingChatContexts(customerId: string): Promise<Book
       b.customer_id as "customerId",
       coalesce(nullif(u.display_name, ''), nullif(u.name, ''), 'Customer') as "customerName",
       u.email as "customerEmail",
-      owner.vendor_account_id as "vendorAccountId",
+      coalesce(b.vendor_account_id, listing_owner.account_id, legacy_owner.account_id) as "vendorAccountId",
       va.business_name as "vendorName",
       va.email as "vendorEmail",
       coalesce(b.event_date, e.date) as "eventDate",
@@ -707,14 +2655,16 @@ async function listCustomerBookingChatContexts(customerId: string): Promise<Book
     from bookings b
     left join users u on u.id = b.customer_id
     left join events e on e.id = b.event_id
+    left join vendor_listings listing_owner on listing_owner.id = b.listing_id
     left join lateral (
-      select vl.account_id as vendor_account_id
+      select vl.account_id
       from booking_items bi
       inner join vendor_listings vl on vl.id = bi.listing_id
       where bi.booking_id = b.id
+      order by bi.id asc
       limit 1
-    ) owner on true
-    left join vendor_accounts va on va.id = owner.vendor_account_id
+    ) legacy_owner on true
+    left join vendor_accounts va on va.id = coalesce(b.vendor_account_id, listing_owner.account_id, legacy_owner.account_id)
     where b.customer_id = ${customerId}
     order by b.created_at desc
   `);
@@ -722,80 +2672,14 @@ async function listCustomerBookingChatContexts(customerId: string): Promise<Book
 }
 
 async function listVendorBookingChatContexts(vendorAccountId: string): Promise<BookingChatContext[]> {
-  const vendorRefCol = await getBookingsVendorRefColumn();
-
-  if (vendorRefCol === "vendor_account_id") {
-    const rows: any = await db.execute(drizzleSql`
-      select
-        b.id as "bookingId",
-        b.event_id as "eventId",
-        b.customer_id as "customerId",
-        coalesce(nullif(u.display_name, ''), nullif(u.name, ''), 'Customer') as "customerName",
-        u.email as "customerEmail",
-        b.vendor_account_id as "vendorAccountId",
-        va.business_name as "vendorName",
-        va.email as "vendorEmail",
-        coalesce(b.event_date, e.date) as "eventDate",
-        e.path as "eventTitle",
-        b.status as "status",
-        b.payment_status as "paymentStatus",
-        b.created_at as "createdAt",
-        (
-          select bi.item_data->>'paymentMethodId'
-          from booking_items bi
-          where bi.booking_id = b.id
-          limit 1
-        ) as "paymentMethodId"
-      from bookings b
-      left join users u on u.id = b.customer_id
-      left join vendor_accounts va on va.id = b.vendor_account_id
-      left join events e on e.id = b.event_id
-      where b.vendor_account_id = ${vendorAccountId}
-      order by b.created_at desc
-    `);
-    return extractRows(rows).map(normalizeBookingChatContext);
-  }
-
-  if (vendorRefCol === "vendor_id") {
-    const rows: any = await db.execute(drizzleSql`
-      select
-        b.id as "bookingId",
-        b.event_id as "eventId",
-        b.customer_id as "customerId",
-        coalesce(nullif(u.display_name, ''), nullif(u.name, ''), 'Customer') as "customerName",
-        u.email as "customerEmail",
-        b.vendor_id as "vendorAccountId",
-        va.business_name as "vendorName",
-        va.email as "vendorEmail",
-        coalesce(b.event_date, e.date) as "eventDate",
-        e.path as "eventTitle",
-        b.status as "status",
-        b.payment_status as "paymentStatus",
-        b.created_at as "createdAt",
-        (
-          select bi.item_data->>'paymentMethodId'
-          from booking_items bi
-          where bi.booking_id = b.id
-          limit 1
-        ) as "paymentMethodId"
-      from bookings b
-      left join users u on u.id = b.customer_id
-      left join vendor_accounts va on va.id = b.vendor_id
-      left join events e on e.id = b.event_id
-      where b.vendor_id = ${vendorAccountId}
-      order by b.created_at desc
-    `);
-    return extractRows(rows).map(normalizeBookingChatContext);
-  }
-
   const rows: any = await db.execute(drizzleSql`
-    select distinct on (b.id)
+    select
       b.id as "bookingId",
       b.event_id as "eventId",
       b.customer_id as "customerId",
       coalesce(nullif(u.display_name, ''), nullif(u.name, ''), 'Customer') as "customerName",
       u.email as "customerEmail",
-      owner.vendor_account_id as "vendorAccountId",
+      coalesce(b.vendor_account_id, listing_owner.account_id, legacy_owner.account_id) as "vendorAccountId",
       va.business_name as "vendorName",
       va.email as "vendorEmail",
       coalesce(b.event_date, e.date) as "eventDate",
@@ -812,16 +2696,18 @@ async function listVendorBookingChatContexts(vendorAccountId: string): Promise<B
     from bookings b
     left join users u on u.id = b.customer_id
     left join events e on e.id = b.event_id
-    inner join lateral (
-      select vl.account_id as vendor_account_id
+    left join vendor_listings listing_owner on listing_owner.id = b.listing_id
+    left join lateral (
+      select vl.account_id
       from booking_items bi
       inner join vendor_listings vl on vl.id = bi.listing_id
       where bi.booking_id = b.id
+      order by bi.id asc
       limit 1
-    ) owner on true
-    left join vendor_accounts va on va.id = owner.vendor_account_id
-    where owner.vendor_account_id = ${vendorAccountId}
-    order by b.id, b.created_at desc
+    ) legacy_owner on true
+    left join vendor_accounts va on va.id = coalesce(b.vendor_account_id, listing_owner.account_id, legacy_owner.account_id)
+    where coalesce(b.vendor_account_id, listing_owner.account_id, legacy_owner.account_id) = ${vendorAccountId}
+    order by b.created_at desc
   `);
   return extractRows(rows).map(normalizeBookingChatContext);
 }
@@ -865,27 +2751,23 @@ async function cleanupExpiredStreamChannels() {
   };
 }
 
-function extractListingBasePriceCents(listingData: any): number | null {
+function extractListingBasePriceCents(
+  listingData: any,
+  canonicalListingPriceCents?: unknown
+): number | null {
+  const canonicalPrice = parseIntegerValue(canonicalListingPriceCents);
+  if (canonicalPrice != null && canonicalPrice > 0) {
+    return canonicalPrice;
+  }
+
   if (!listingData || typeof listingData !== "object") return null;
+  // Legacy compatibility: allow direct mirrored draft keys while canonical price_cents is rolling out.
+  const explicitPriceCents = parseIntegerValue(listingData?.priceCents);
+  if (explicitPriceCents != null && explicitPriceCents > 0) {
+    return explicitPriceCents;
+  }
 
-  const rentalTypes = Array.isArray(listingData?.rentalTypes)
-    ? listingData.rentalTypes
-    : Array.isArray(listingData?.rentalTypes?.selected)
-      ? listingData.rentalTypes.selected
-      : Array.isArray(listingData?.propTypes)
-        ? listingData.propTypes
-        : Array.isArray(listingData?.propTypes?.selected)
-          ? listingData.propTypes.selected
-          : [];
-  const firstRentalType = rentalTypes[0];
-
-  const candidates = [
-    listingData?.pricing?.rate,
-    firstRentalType ? listingData?.pricing?.pricingByPropType?.[firstRentalType]?.rate : null,
-    firstRentalType ? listingData?.pricingByPropType?.[firstRentalType]?.rate : null,
-    listingData?.pricingByPropType?.__listing__?.rate,
-    listingData?.rate,
-  ];
+  const candidates = [listingData?.price, listingData?.rate];
 
   const dollars = candidates
     .map((v) => toOptionalNumber(v))
@@ -895,32 +2777,1102 @@ function extractListingBasePriceCents(listingData: any): number | null {
   return Math.max(1, Math.round(dollars * 100));
 }
 
+function getListingPricingUnit(listingData: any, canonicalPricingUnit?: unknown): "per_day" | "per_hour" {
+  const canonicalUnit = asTrimmedString(canonicalPricingUnit).toLowerCase();
+  if (canonicalUnit === "per_hour" || canonicalUnit === "per_day") {
+    return canonicalUnit;
+  }
+
+  // Legacy compatibility: read only the direct mirrored key (not nested alias trees).
+  const unit = asTrimmedString(listingData?.pricingUnit).toLowerCase();
+  return unit === "per_hour" ? "per_hour" : "per_day";
+}
+
+function getListingMinimumHours(listingData: any, canonicalMinimumHours?: unknown): number | null {
+  const canonicalHours = parseIntegerValue(canonicalMinimumHours);
+  if (canonicalHours != null && canonicalHours > 0) {
+    return canonicalHours;
+  }
+
+  if (!listingData || typeof listingData !== "object") return null;
+
+  const candidates = [listingData?.minimumHours];
+
+  const hours = candidates
+    .map((value) => toOptionalNumber(value))
+    .find((value) => typeof value === "number" && Number.isFinite(value) && value > 0);
+
+  return hours != null ? Math.max(1, Math.round(hours)) : null;
+}
+
+function getListingAvailableQuantity(listingData: any, canonicalQuantity?: unknown): number {
+  const quantityFromCanonicalColumn = parseIntegerValue(canonicalQuantity);
+  if (quantityFromCanonicalColumn != null && quantityFromCanonicalColumn > 0) {
+    return Math.max(1, Math.floor(quantityFromCanonicalColumn));
+  }
+
+  if (!listingData || typeof listingData !== "object") return 1;
+
+  const quantityCandidates = [listingData?.quantity];
+
+  const quantity =
+    quantityCandidates
+      .map((value) => parseIntegerValue(value))
+      .find((value) => typeof value === "number" && Number.isFinite(value) && value > 0) ?? 1;
+
+  return Math.max(1, Math.floor(quantity));
+}
+
+function mirrorListingQuantityIntoListingData(input: {
+  listingDataRaw: unknown;
+  canonical: {
+    category?: ListingCategoryValue | null;
+    quantity?: unknown;
+    instantBookEnabled?: unknown;
+    pricingUnit?: unknown;
+    priceCents?: unknown;
+    minimumHours?: unknown;
+    serviceAreaMode?: unknown;
+    serviceRadiusMiles?: unknown;
+    listingServiceCenterLabel?: unknown;
+    listingServiceCenterLat?: unknown;
+    listingServiceCenterLng?: unknown;
+    pickupOffered?: unknown;
+    deliveryOffered?: unknown;
+    deliveryFeeEnabled?: unknown;
+    deliveryFeeAmountCents?: unknown;
+    setupOffered?: unknown;
+    setupFeeEnabled?: unknown;
+    setupFeeAmountCents?: unknown;
+    travelOffered?: unknown;
+    travelFeeEnabled?: unknown;
+    travelFeeType?: unknown;
+    travelFeeAmountCents?: unknown;
+  };
+}): Record<string, any> {
+  const listingData =
+    input.listingDataRaw && typeof input.listingDataRaw === "object" && !Array.isArray(input.listingDataRaw)
+      ? ({ ...(input.listingDataRaw as Record<string, any>) } as Record<string, any>)
+      : {};
+
+  const canonical = input.canonical ?? {};
+  const parsedQuantity = parseIntegerValue(canonical.quantity);
+  const normalizedQuantity = parsedQuantity != null && parsedQuantity > 0 ? Math.max(1, parsedQuantity) : 1;
+  const category = canonical.category ?? null;
+
+  if (category) {
+    listingData.category = category;
+  }
+  if (typeof canonical.instantBookEnabled === "boolean") {
+    listingData.instantBookEnabled = canonical.instantBookEnabled;
+  }
+  if (typeof canonical.pricingUnit === "string" && canonical.pricingUnit.trim()) {
+    listingData.pricingUnit = canonical.pricingUnit.trim();
+  }
+  const mirroredPriceCents = parseIntegerValue(canonical.priceCents);
+  if (mirroredPriceCents != null && mirroredPriceCents >= 0) {
+    listingData.priceCents = mirroredPriceCents;
+  }
+  const mirroredMinimumHours = parseIntegerValue(canonical.minimumHours);
+  listingData.minimumHours = mirroredMinimumHours != null && mirroredMinimumHours > 0 ? mirroredMinimumHours : null;
+
+  if (typeof canonical.serviceAreaMode === "string" && canonical.serviceAreaMode.trim()) {
+    listingData.serviceAreaMode = canonical.serviceAreaMode.trim();
+  }
+  const mirroredServiceRadius = parseIntegerValue(canonical.serviceRadiusMiles);
+  listingData.serviceRadiusMiles = mirroredServiceRadius != null && mirroredServiceRadius > 0 ? mirroredServiceRadius : null;
+
+  const mirroredCenterLabel = asTrimmedString(canonical.listingServiceCenterLabel);
+  listingData.listingServiceCenterLabel = mirroredCenterLabel || null;
+  const mirroredCenterLat = parseLatLngValue(canonical.listingServiceCenterLat);
+  const mirroredCenterLng = parseLatLngValue(canonical.listingServiceCenterLng);
+  listingData.listingServiceCenterLat = mirroredCenterLat;
+  listingData.listingServiceCenterLng = mirroredCenterLng;
+
+  if (mirroredCenterLat != null && mirroredCenterLng != null) {
+    listingData.serviceCenter = {
+      lat: mirroredCenterLat,
+      lng: mirroredCenterLng,
+    };
+  }
+
+  const pickupOffered = parseBooleanInput(canonical.pickupOffered);
+  if (pickupOffered != null) {
+    listingData.pickupOffered = pickupOffered;
+  }
+
+  const deliveryOffered = parseBooleanInput(canonical.deliveryOffered);
+  const deliveryFeeEnabled = parseBooleanInput(canonical.deliveryFeeEnabled);
+  const deliveryFeeAmountCents = parseIntegerValue(canonical.deliveryFeeAmountCents);
+  if (deliveryOffered != null) {
+    listingData.deliveryOffered = deliveryOffered;
+  }
+  if (deliveryFeeEnabled != null) {
+    listingData.deliveryFeeEnabled = deliveryFeeEnabled;
+  }
+  listingData.deliveryFeeAmountCents =
+    deliveryFeeEnabled && deliveryFeeAmountCents != null && deliveryFeeAmountCents > 0 ? deliveryFeeAmountCents : null;
+
+  const setupOffered = parseBooleanInput(canonical.setupOffered);
+  const setupFeeEnabled = parseBooleanInput(canonical.setupFeeEnabled);
+  const setupFeeAmountCents = parseIntegerValue(canonical.setupFeeAmountCents);
+  if (setupOffered != null) {
+    listingData.setupOffered = setupOffered;
+  }
+  if (setupFeeEnabled != null) {
+    listingData.setupFeeEnabled = setupFeeEnabled;
+  }
+  listingData.setupFeeAmountCents =
+    setupFeeEnabled && setupFeeAmountCents != null && setupFeeAmountCents > 0 ? setupFeeAmountCents : null;
+
+  const travelOffered = parseBooleanInput(canonical.travelOffered);
+  const travelFeeEnabled = parseBooleanInput(canonical.travelFeeEnabled);
+  const travelFeeType = asTrimmedString(canonical.travelFeeType).toLowerCase();
+  const travelFeeAmountCents = parseIntegerValue(canonical.travelFeeAmountCents);
+  if (travelOffered != null) {
+    listingData.travelOffered = travelOffered;
+  }
+  if (travelFeeEnabled != null) {
+    listingData.travelFeeEnabled = travelFeeEnabled;
+  }
+  listingData.travelFeeType =
+    travelFeeEnabled && (travelFeeType === "flat" || travelFeeType === "per_mile" || travelFeeType === "per_hour")
+      ? travelFeeType
+      : null;
+  listingData.travelFeeAmountCents =
+    travelFeeEnabled && travelFeeAmountCents != null && travelFeeAmountCents > 0 ? travelFeeAmountCents : null;
+
+  if (category === "Rentals") {
+    listingData.quantity = normalizedQuantity;
+  } else {
+    listingData.quantity = null;
+  }
+
+  return listingData;
+}
+
+function getListingLogisticsFeeSummaryCents(input: {
+  listingData: any;
+  canonical?: {
+    pickupOffered?: unknown;
+    deliveryOffered?: unknown;
+    deliveryFeeEnabled?: unknown;
+    deliveryFeeAmountCents?: unknown;
+    setupOffered?: unknown;
+    setupFeeEnabled?: unknown;
+    setupFeeAmountCents?: unknown;
+    travelOffered?: unknown;
+    travelFeeEnabled?: unknown;
+    travelFeeType?: unknown;
+    travelFeeAmountCents?: unknown;
+  };
+}) {
+  const listingData =
+    input.listingData && typeof input.listingData === "object" && !Array.isArray(input.listingData)
+      ? input.listingData
+      : {};
+  const canonical = input.canonical ?? {};
+
+  const deliveryIncluded =
+    parseBooleanInput(canonical.deliveryOffered) ??
+    parseBooleanInput(listingData?.deliveryIncluded) ??
+    parseBooleanInput(listingData?.deliveryOffered) ??
+    false;
+  const deliveryFeeAmountFromCanonical = parseIntegerValue(canonical.deliveryFeeAmountCents);
+  const deliveryFeeEnabled =
+    parseBooleanInput(canonical.deliveryFeeEnabled) ??
+    parseBooleanInput(listingData?.deliveryFeeEnabled) ??
+    false;
+  const deliveryFeeCents =
+    deliveryIncluded && deliveryFeeEnabled
+      ? deliveryFeeAmountFromCanonical ??
+        parseIntegerValue(listingData?.deliveryFeeAmountCents) ??
+        parseMoneyToCents(listingData?.deliveryFeeAmount) ??
+        0
+      : 0;
+
+  const setupIncluded =
+    parseBooleanInput(canonical.setupOffered) ??
+    parseBooleanInput(listingData?.setupIncluded) ??
+    parseBooleanInput(listingData?.setupOffered) ??
+    false;
+  const setupFeeAmountFromCanonical = parseIntegerValue(canonical.setupFeeAmountCents);
+  const setupFeeEnabled =
+    parseBooleanInput(canonical.setupFeeEnabled) ??
+    parseBooleanInput(listingData?.setupFeeEnabled) ??
+    false;
+  const setupFeeCents =
+    setupIncluded && setupFeeEnabled
+      ? setupFeeAmountFromCanonical ??
+        parseIntegerValue(listingData?.setupFeeAmountCents) ??
+        parseMoneyToCents(listingData?.setupFeeAmount) ??
+        0
+      : 0;
+
+  const travelOffered =
+    parseBooleanInput(canonical.travelOffered) ??
+    parseBooleanInput(listingData?.travelOffered) ??
+    false;
+  const travelFeeEnabled =
+    parseBooleanInput(canonical.travelFeeEnabled) ??
+    parseBooleanInput(listingData?.travelFeeEnabled) ??
+    false;
+  const travelFeeType = asTrimmedString(canonical.travelFeeType ?? listingData?.travelFeeType).toLowerCase();
+  const travelFeeAmountFromCanonical = parseIntegerValue(canonical.travelFeeAmountCents);
+  const travelFeeCents =
+    travelOffered && travelFeeEnabled && (!travelFeeType || travelFeeType === "flat")
+      ? travelFeeAmountFromCanonical ??
+        parseIntegerValue(listingData?.travelFeeAmountCents) ??
+        parseMoneyToCents(listingData?.travelFeeAmount) ??
+        0
+      : 0;
+  const variableTravelFeePending =
+    travelOffered &&
+    travelFeeEnabled &&
+    (travelFeeType === "per_mile" || travelFeeType === "per_hour");
+
+  return {
+    deliveryFeeCents: Math.max(0, deliveryFeeCents),
+    setupFeeCents: Math.max(0, setupFeeCents),
+    travelFlatFeeCents: Math.max(0, travelFeeCents),
+    variableTravelFeePending,
+  };
+}
+
+function computeCanonicalBookingTimeRange(input: {
+  listingData: any;
+  listingPricingUnit?: unknown;
+  listingMinimumHours?: unknown;
+  vendorTimeZone?: unknown;
+  eventDate: string;
+  eventStartTime?: string | null;
+  eventEndDate?: string | null;
+  eventEndTime?: string | null;
+  itemNeededByTime?: string | null;
+  itemDoneByTime?: string | null;
+}) {
+  const pricingUnit = getListingPricingUnit(input.listingData, input.listingPricingUnit);
+  const minimumHours = getListingMinimumHours(input.listingData, input.listingMinimumHours);
+  const vendorTimeZone = normalizeIanaTimeZone(input.vendorTimeZone);
+  const eventDate = asTrimmedString(input.eventDate);
+
+  if (!eventDate || !parseIsoDateValue(eventDate)) {
+    throw new Error("Booking event date is invalid");
+  }
+
+  const eventStartTime = asTrimmedString(input.eventStartTime);
+  const eventEndTime = asTrimmedString(input.eventEndTime);
+  const endDate = asTrimmedString(input.eventEndDate) || eventDate;
+
+  if (pricingUnit === "per_hour") {
+    const startTime = eventStartTime;
+    const endTime = eventEndTime;
+
+    if (!startTime || !endTime) {
+      throw new Error("Hourly bookings require a start time and end time");
+    }
+    if (endDate !== eventDate) {
+      throw new Error("Hourly bookings must start and end on the same day");
+    }
+
+    const startMinutes = parseTimeValueToMinutes(startTime);
+    const endMinutes = parseTimeValueToMinutes(endTime);
+    if (startMinutes == null || endMinutes == null) {
+      throw new Error("Hourly booking time range is invalid");
+    }
+    if (endMinutes <= startMinutes) {
+      throw new Error("Hourly booking end time must be after the start time");
+    }
+
+    const durationHours = (endMinutes - startMinutes) / 60;
+    if (minimumHours != null && durationHours < minimumHours) {
+      throw new Error(`Hourly bookings must be at least ${minimumHours} hour${minimumHours === 1 ? "" : "s"}`);
+    }
+
+    const bookingStartAt = zonedDateTimeToUtc(eventDate, startMinutes, vendorTimeZone);
+    const bookingEndAt = zonedDateTimeToUtc(eventDate, endMinutes, vendorTimeZone);
+    if (!(bookingStartAt instanceof Date) || Number.isNaN(bookingStartAt.getTime())) {
+      throw new Error("Hourly booking start time is invalid");
+    }
+    if (!(bookingEndAt instanceof Date) || Number.isNaN(bookingEndAt.getTime())) {
+      throw new Error("Hourly booking end time is invalid");
+    }
+
+    return {
+      pricingUnit,
+      minimumHours,
+      vendorTimeZone,
+      bookingStartAt,
+      bookingEndAt,
+    };
+  }
+
+  const itemNeededByTime = asTrimmedString(input.itemNeededByTime);
+  const itemDoneByTime = asTrimmedString(input.itemDoneByTime);
+  const hasEventTimeRange = Boolean(eventStartTime && eventEndTime);
+  const hasLogisticsRange = Boolean(itemNeededByTime && itemDoneByTime);
+
+  if ((eventStartTime && !eventEndTime) || (!eventStartTime && eventEndTime)) {
+    throw new Error("Per-day bookings require both event start and end times");
+  }
+
+  if ((itemNeededByTime && !itemDoneByTime) || (!itemNeededByTime && itemDoneByTime)) {
+    throw new Error("Per-day logistics require both the needed-by time and done-with time");
+  }
+
+  if (hasEventTimeRange) {
+    const eventStartMinutes = parseTimeValueToMinutes(eventStartTime);
+    const eventEndMinutes = parseTimeValueToMinutes(eventEndTime);
+    if (eventStartMinutes == null || eventEndMinutes == null) {
+      throw new Error("Per-day event start/end times are invalid");
+    }
+    if (eventEndMinutes <= eventStartMinutes) {
+      throw new Error("Per-day event end time must be after the event start time");
+    }
+    if (endDate !== eventDate) {
+      throw new Error("Per-day bookings must start and end on the same day");
+    }
+  } else if (itemNeededByTime || itemDoneByTime) {
+    throw new Error("Per-day bookings require event start and end times");
+  }
+
+  if (hasLogisticsRange) {
+    const startMinutes = parseTimeValueToMinutes(itemNeededByTime);
+    const endMinutes = parseTimeValueToMinutes(itemDoneByTime);
+    if (startMinutes == null || endMinutes == null) {
+      throw new Error("Per-day logistics time range is invalid");
+    }
+    if (endMinutes <= startMinutes) {
+      throw new Error("Done-with time must be after the needed-by time");
+    }
+
+    const bookingStartAt = zonedDateTimeToUtc(eventDate, startMinutes, vendorTimeZone);
+    const bookingEndAt = zonedDateTimeToUtc(eventDate, endMinutes, vendorTimeZone);
+    if (!(bookingStartAt instanceof Date) || Number.isNaN(bookingStartAt.getTime())) {
+      throw new Error("Needed-by time is invalid");
+    }
+    if (!(bookingEndAt instanceof Date) || Number.isNaN(bookingEndAt.getTime())) {
+      throw new Error("Done-with time is invalid");
+    }
+
+    return {
+      pricingUnit,
+      minimumHours,
+      vendorTimeZone,
+      bookingStartAt,
+      bookingEndAt,
+    };
+  }
+
+  if (hasEventTimeRange) {
+    const startMinutes = parseTimeValueToMinutes(eventStartTime);
+    const endMinutes = parseTimeValueToMinutes(eventEndTime);
+    if (startMinutes == null || endMinutes == null) {
+      throw new Error("Per-day event start/end times are invalid");
+    }
+    const bookingStartAt = zonedDateTimeToUtc(eventDate, startMinutes, vendorTimeZone);
+    const bookingEndAt = zonedDateTimeToUtc(eventDate, endMinutes, vendorTimeZone);
+    if (!(bookingStartAt instanceof Date) || Number.isNaN(bookingStartAt.getTime())) {
+      throw new Error("Per-day event start time is invalid");
+    }
+    if (!(bookingEndAt instanceof Date) || Number.isNaN(bookingEndAt.getTime())) {
+      throw new Error("Per-day event end time is invalid");
+    }
+    return {
+      pricingUnit,
+      minimumHours,
+      vendorTimeZone,
+      bookingStartAt,
+      bookingEndAt,
+    };
+  }
+
+  const bookingStartAt = zonedDateStartToUtc(eventDate, vendorTimeZone);
+  const requestedEndDate = endDate;
+  if (!parseIsoDateValue(requestedEndDate)) {
+    throw new Error("Booking end date is invalid");
+  }
+  const bookingEndDateExclusive = addDaysToIsoDate(requestedEndDate, 1);
+  const bookingEndAt = bookingEndDateExclusive
+    ? zonedDateStartToUtc(bookingEndDateExclusive, vendorTimeZone)
+    : null;
+
+  if (!(bookingStartAt instanceof Date) || Number.isNaN(bookingStartAt.getTime())) {
+    throw new Error("Booking start date is invalid");
+  }
+  if (!(bookingEndAt instanceof Date) || Number.isNaN(bookingEndAt.getTime())) {
+    throw new Error("Booking end date is invalid");
+  }
+  if (bookingEndAt.getTime() <= bookingStartAt.getTime()) {
+    throw new Error("Booking end date must be on or after the start date");
+  }
+
+  return {
+    pricingUnit,
+    minimumHours,
+    vendorTimeZone,
+    bookingStartAt,
+    bookingEndAt,
+  };
+}
+
+function doTimeRangesOverlap(
+  firstStartAt: Date,
+  firstEndAt: Date,
+  secondStartAt: Date,
+  secondEndAt: Date
+) {
+  return firstStartAt.getTime() < secondEndAt.getTime() && firstEndAt.getTime() > secondStartAt.getTime();
+}
+
+function getComparableGoogleEventRange(input: {
+  event: Awaited<ReturnType<typeof listSelectedGoogleCalendarEventsForVendorAccount>>[number];
+  vendorTimeZone: string;
+}) {
+  const { event, vendorTimeZone } = input;
+  const allDayStartDate = asTrimmedString(event?.start?.date);
+  const allDayEndDate = asTrimmedString(event?.end?.date);
+
+  if (event?.isAllDay && allDayStartDate && allDayEndDate) {
+    const startAt = zonedDateStartToUtc(allDayStartDate, vendorTimeZone);
+    const endAt = zonedDateStartToUtc(allDayEndDate, vendorTimeZone);
+    if (startAt instanceof Date && !Number.isNaN(startAt.getTime()) && endAt instanceof Date && !Number.isNaN(endAt.getTime())) {
+      return { startAt, endAt };
+    }
+  }
+
+  if (
+    event?.startAt instanceof Date &&
+    !Number.isNaN(event.startAt.getTime()) &&
+    event?.endAt instanceof Date &&
+    !Number.isNaN(event.endAt.getTime())
+  ) {
+    return {
+      startAt: event.startAt,
+      endAt: event.endAt,
+    };
+  }
+
+  return null;
+}
+
+async function findOverlappingEventHubBookingsForListing(params: {
+  listingId: string;
+  bookingStartAt: Date;
+  bookingEndAt: Date;
+  excludeBookingId?: string | null;
+}) {
+  // Legacy compatibility remains only for rows missing canonical bookings.listing_id.
+  const rows: any = await db.execute(drizzleSql`
+    select
+      b.id,
+      b.status,
+      b.booking_start_at as "bookingStartAt",
+      b.booking_end_at as "bookingEndAt",
+      coalesce(b.booked_quantity, booking_item_totals.quantity, 1) as "quantity"
+    from bookings b
+    left join lateral (
+      select sum(coalesce(bi.quantity, 1))::int as quantity
+      from booking_items bi
+      where bi.booking_id = b.id
+        and bi.listing_id = ${params.listingId}
+    ) booking_item_totals on true
+    where (
+      b.listing_id = ${params.listingId}
+      or (
+        b.listing_id is null
+        and exists (
+          select 1
+          from booking_items bi
+          where bi.booking_id = b.id
+            and bi.listing_id = ${params.listingId}
+        )
+      )
+    )
+      and b.status in ('pending', 'confirmed', 'completed')
+      and (${params.excludeBookingId ?? null} is null or b.id <> ${params.excludeBookingId ?? null})
+      and b.booking_start_at is not null
+      and b.booking_end_at is not null
+      and b.booking_start_at < ${params.bookingEndAt}
+      and b.booking_end_at > ${params.bookingStartAt}
+    order by b.booking_start_at asc
+  `);
+
+  return extractRows<{
+    id?: string;
+    status?: string | null;
+    bookingStartAt?: Date | null;
+    bookingEndAt?: Date | null;
+    quantity?: number | null;
+  }>(rows);
+}
+
+function escapeRegExp(value: string) {
+  return value.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
+}
+
+function extractGoogleMetadataValueFromDescription(description: string | null | undefined, label: string) {
+  const source = asTrimmedString(description);
+  if (!source) return null;
+  const match = source.match(new RegExp(`^${escapeRegExp(label)}:\\s*(.+)$`, "im"));
+  return match?.[1] ? asTrimmedString(match[1]) : null;
+}
+
+function normalizeComparableListingTitle(value: unknown) {
+  const title = normalizeListingTitleCandidate(value);
+  return title ? title.toLowerCase() : null;
+}
+
+async function loadVendorListingMatchContext(vendorAccountId: string): Promise<VendorListingMatchContext> {
+  const rows = await db
+    .select({
+      id: vendorListings.id,
+      title: vendorListings.title,
+      listingData: vendorListings.listingData,
+    })
+    .from(vendorListings)
+    .where(eq(vendorListings.accountId, vendorAccountId));
+
+  const listingsById = new Map<string, { id: string; title: string | null; normalizedTitle: string | null }>();
+  const listingIds = new Set<string>();
+  const listingIdsByNormalizedTitle = new Map<string, string[]>();
+
+  for (const row of rows) {
+    const listingId = asTrimmedString(row.id);
+    if (!listingId) continue;
+
+    const listingData = row.listingData && typeof row.listingData === "object" ? row.listingData as any : {};
+    const title =
+      normalizeListingTitleCandidate(row.title) ??
+      normalizeListingTitleCandidate(listingData?.listingTitle) ??
+      null;
+    const normalizedTitle = normalizeComparableListingTitle(title);
+
+    listingsById.set(listingId, {
+      id: listingId,
+      title,
+      normalizedTitle,
+    });
+    listingIds.add(listingId);
+
+    if (normalizedTitle) {
+      const current = listingIdsByNormalizedTitle.get(normalizedTitle) ?? [];
+      current.push(listingId);
+      listingIdsByNormalizedTitle.set(normalizedTitle, current);
+    }
+  }
+
+  return {
+    listingsById,
+    listingIds,
+    listingIdsByNormalizedTitle,
+  };
+}
+
+async function loadGoogleEventMappingContext(params: {
+  vendorAccountId: string;
+  googleCalendarId: string;
+  googleEventIds?: string[];
+}): Promise<GoogleEventMappingContext> {
+  const eventIds = Array.from(
+    new Set(
+      (params.googleEventIds ?? [])
+        .map((value) => asTrimmedString(value))
+        .filter((value): value is string => Boolean(value))
+    )
+  );
+
+  const query = db
+    .select({
+      googleEventId: googleCalendarEventMappings.googleEventId,
+      listingId: googleCalendarEventMappings.listingId,
+      mappingSource: googleCalendarEventMappings.mappingSource,
+      mappingStatus: googleCalendarEventMappings.mappingStatus,
+    })
+    .from(googleCalendarEventMappings)
+    .where(
+      and(
+        eq(googleCalendarEventMappings.vendorAccountId, params.vendorAccountId),
+        eq(googleCalendarEventMappings.googleCalendarId, params.googleCalendarId),
+        eventIds.length > 0
+          ? inArray(googleCalendarEventMappings.googleEventId, eventIds)
+          : drizzleSql`true`
+      )
+    );
+
+  const rows = await query;
+  const mappingsByEventId = new Map<
+    string,
+    {
+      googleEventId: string;
+      listingId: string;
+      mappingSource: string;
+      mappingStatus: string;
+    }
+  >();
+
+  for (const row of rows) {
+    const googleEventId = asTrimmedString(row.googleEventId);
+    const listingId = asTrimmedString(row.listingId);
+    if (!googleEventId || !listingId) continue;
+    mappingsByEventId.set(googleEventId, {
+      googleEventId,
+      listingId,
+      mappingSource: asTrimmedString(row.mappingSource) || "manual",
+      mappingStatus: asTrimmedString(row.mappingStatus) || "reviewed",
+    });
+  }
+
+  return {
+    calendarId: params.googleCalendarId,
+    mappingsByEventId,
+  };
+}
+
+function matchGoogleCalendarEventToListing(
+  event: Awaited<ReturnType<typeof listSelectedGoogleCalendarEventsForVendorAccount>>[number],
+  params: {
+    listingContext: VendorListingMatchContext;
+    mappingContext: GoogleEventMappingContext | null;
+  }
+) {
+  const metadataListingId =
+    asTrimmedString(event.extendedProperties.private.eventHubListingId) ||
+    asTrimmedString(event.extendedProperties.shared.eventHubListingId) ||
+    extractGoogleMetadataValueFromDescription(event.description, "Listing ID");
+
+  if (metadataListingId && params.listingContext.listingIds.has(metadataListingId)) {
+    return {
+      matched: true as const,
+      listingId: metadataListingId,
+      matchedBy: "metadata" as const,
+    };
+  }
+
+  const manualMapping = params.mappingContext?.mappingsByEventId.get(event.id);
+  if (manualMapping && params.listingContext.listingIds.has(manualMapping.listingId)) {
+    return {
+      matched: true as const,
+      listingId: manualMapping.listingId,
+      matchedBy: "manual" as const,
+    };
+  }
+
+  const normalizedEventTitle = normalizeComparableListingTitle(event.summary);
+  const exactTitleMatches = normalizedEventTitle
+    ? params.listingContext.listingIdsByNormalizedTitle.get(normalizedEventTitle) ?? []
+    : [];
+  if (
+    normalizedEventTitle &&
+    exactTitleMatches.length === 1
+  ) {
+    return {
+      matched: true as const,
+      listingId: exactTitleMatches[0],
+      matchedBy: "title" as const,
+    };
+  }
+
+  return {
+    matched: false as const,
+    listingId: null,
+    matchedBy: "unmatched" as const,
+  };
+}
+
+async function findOverlappingGoogleCalendarEventForListing(params: {
+  vendorAccountId: string;
+  vendorGoogleCalendarId?: string | null;
+  vendorTimeZone?: string | null;
+  listingId: string;
+  listingTitle: string | null;
+  bookingStartAt: Date;
+  bookingEndAt: Date;
+  enabled: boolean;
+}) {
+  if (!params.enabled) {
+    return {
+      status: "skipped" as const,
+      reason: "google_not_enabled",
+      conflict: null,
+    };
+  }
+
+  try {
+    const vendorTimeZone = normalizeIanaTimeZone(params.vendorTimeZone);
+    const selectedCalendarId = asTrimmedString(params.vendorGoogleCalendarId);
+    if (!selectedCalendarId) {
+      return {
+        status: "skipped" as const,
+        reason: "google_calendar_not_selected",
+        conflict: null,
+      };
+    }
+
+    const events = await listSelectedGoogleCalendarEventsForVendorAccount(params.vendorAccountId, {
+      timeMin: params.bookingStartAt,
+      timeMax: params.bookingEndAt,
+      maxResults: 250,
+    });
+    const listingContext = await loadVendorListingMatchContext(params.vendorAccountId);
+    const mappingContext = await loadGoogleEventMappingContext({
+      vendorAccountId: params.vendorAccountId,
+      googleCalendarId: selectedCalendarId,
+      googleEventIds: events.map((event) => event.id),
+    });
+
+    for (const event of events) {
+      if ((asTrimmedString(event.status) || "").toLowerCase() === "cancelled") continue;
+      const comparableRange = getComparableGoogleEventRange({
+        event,
+        vendorTimeZone,
+      });
+      if (!comparableRange) continue;
+      if (!doTimeRangesOverlap(params.bookingStartAt, params.bookingEndAt, comparableRange.startAt, comparableRange.endAt)) {
+        continue;
+      }
+
+      const match = matchGoogleCalendarEventToListing(event, {
+        listingContext,
+        mappingContext,
+      });
+      if (!match.matched || match.listingId !== params.listingId) continue;
+
+      return {
+        status: "checked" as const,
+        reason: null,
+        conflict: {
+          event,
+          matchedBy: match.matchedBy,
+        },
+      };
+    }
+
+    return {
+      status: "checked" as const,
+      reason: null,
+      conflict: null,
+    };
+  } catch (error) {
+    if (
+      error instanceof GoogleCalendarConnectionError &&
+      (error.code === "google_not_connected" || error.code === "google_calendar_not_selected")
+    ) {
+      return {
+        status: "skipped" as const,
+        reason: error.code,
+        conflict: null,
+      };
+    }
+
+    const message = error instanceof Error ? error.message : "Google availability could not be verified";
+    logRouteError("/api/bookings google-conflict-read", error);
+    return {
+      status: "failed" as const,
+      reason: error instanceof GoogleCalendarConnectionError ? error.code : "google_calendar_check_failed",
+      message,
+      conflict: null,
+    };
+  }
+}
+
+async function checkListingAvailabilityForBookingRequest(params: {
+  vendorAccountId: string;
+  vendorGoogleConnectionStatus?: string | null;
+  vendorGoogleCalendarId?: string | null;
+  vendorTimeZone?: string | null;
+  listingId: string;
+  listingTitle: string | null;
+  bookingStartAt: Date;
+  bookingEndAt: Date;
+  requestedQuantity: number;
+  listingAvailableQuantity: number;
+  excludeBookingId?: string | null;
+}) {
+  const overlappingEventHubBookings = await findOverlappingEventHubBookingsForListing({
+    listingId: params.listingId,
+    bookingStartAt: params.bookingStartAt,
+    bookingEndAt: params.bookingEndAt,
+    excludeBookingId: params.excludeBookingId ?? null,
+  });
+
+  const totalReservedUnits = overlappingEventHubBookings.reduce((sum, row) => {
+    const quantity = parseIntegerValue(row.quantity);
+    return sum + (quantity && quantity > 0 ? quantity : 1);
+  }, 0);
+  const requestedQuantity = Math.max(1, Math.floor(params.requestedQuantity || 1));
+  const listingCapacity = Math.max(1, Math.floor(params.listingAvailableQuantity || 1));
+  const capacityExceeded = totalReservedUnits + requestedQuantity > listingCapacity;
+  const eventHubConflict = capacityExceeded
+    ? {
+        id: overlappingEventHubBookings[0]?.id ?? null,
+        reservedUnits: totalReservedUnits,
+        requestedQuantity,
+        availableQuantity: listingCapacity,
+      }
+    : null;
+
+  const googleEnabled =
+    asTrimmedString(params.vendorGoogleConnectionStatus).toLowerCase() === "connected" &&
+    asTrimmedString(params.vendorGoogleCalendarId).length > 0;
+
+  const google = await findOverlappingGoogleCalendarEventForListing({
+    vendorAccountId: params.vendorAccountId,
+    vendorGoogleCalendarId: params.vendorGoogleCalendarId,
+    vendorTimeZone: params.vendorTimeZone,
+    listingId: params.listingId,
+    listingTitle: params.listingTitle,
+    bookingStartAt: params.bookingStartAt,
+    bookingEndAt: params.bookingEndAt,
+    enabled: googleEnabled,
+  });
+
+  return {
+    eventHub: {
+      status: "checked" as const,
+      conflict: eventHubConflict,
+    },
+    google,
+  };
+}
+
+async function listGoogleSyncReconciliationCandidatesForVendorAccount(vendorAccountId: string) {
+  // Legacy compatibility remains only when canonical ownership/linkage fields are null.
+  const rows: any = await db.execute(drizzleSql`
+    select
+      b.id,
+      b.status,
+      b.booking_start_at as "bookingStartAt",
+      b.booking_end_at as "bookingEndAt",
+      b.google_sync_status as "googleSyncStatus",
+      b.google_sync_error as "googleSyncError",
+      b.google_event_id as "googleEventId",
+      b.google_calendar_id as "googleCalendarId",
+      b.created_at as "createdAt",
+      coalesce(b.listing_id, legacy_item.listing_id) as "listingId",
+      coalesce(
+        nullif(trim(b.listing_title_snapshot), ''),
+        nullif(trim(legacy_item.title), ''),
+        nullif(trim(listing_owner.title), ''),
+        nullif(trim(legacy_listing.title), '')
+      ) as "listingTitle"
+    from bookings b
+    left join vendor_listings listing_owner on listing_owner.id = b.listing_id
+    left join lateral (
+      select
+        bi.listing_id,
+        bi.title
+      from booking_items bi
+      where b.listing_id is null
+        and bi.booking_id = b.id
+      order by bi.id asc
+      limit 1
+    ) legacy_item on true
+    left join vendor_listings legacy_listing on legacy_listing.id = legacy_item.listing_id
+    where coalesce(b.vendor_account_id, listing_owner.account_id, legacy_listing.account_id) = ${vendorAccountId}
+    order by b.created_at desc
+  `);
+  return extractRows(rows);
+}
+
+async function listSyncableExistingBookingIdsForVendorAccount(vendorAccountId: string) {
+  // Legacy compatibility remains only when canonical ownership/linkage fields are null.
+  const rows: any = await db.execute(drizzleSql`
+    select
+      b.id
+    from bookings b
+    left join vendor_listings listing_owner on listing_owner.id = b.listing_id
+    left join lateral (
+      select bi.listing_id
+      from booking_items bi
+      where b.listing_id is null
+        and bi.booking_id = b.id
+      order by bi.id asc
+      limit 1
+    ) legacy_item on true
+    left join vendor_listings legacy_listing on legacy_listing.id = legacy_item.listing_id
+    where coalesce(b.vendor_account_id, listing_owner.account_id, legacy_listing.account_id) = ${vendorAccountId}
+      and b.status in ('pending', 'confirmed', 'completed')
+    order by b.created_at asc
+  `);
+  return extractRows<{ id?: string | null }>(rows)
+    .map((row) => asTrimmedString(row?.id))
+    .filter((bookingId): bookingId is string => Boolean(bookingId));
+}
+
+type GoogleBookingReconciliationIssue = {
+  bookingId: string | null;
+  listingId: string | null;
+  listingTitle: string;
+  status: string;
+  bookingStartAt: Date | string | null;
+  bookingEndAt: Date | string | null;
+  googleSyncStatus: string | null;
+  googleSyncError: string | null;
+  googleEventId: string | null;
+  googleCalendarId: string | null;
+  selectedGoogleCalendarId: string | null;
+  issueCodes: string[];
+  createdAt: Date | string | null;
+};
+
+async function buildGoogleBookingReconciliationForVendorAccount(account: any) {
+  const selectedGoogleCalendarId = asTrimmedString(account?.googleCalendarId) || null;
+  const googleEnabled =
+    asTrimmedString(account?.googleConnectionStatus).toLowerCase() === "connected" &&
+    Boolean(selectedGoogleCalendarId);
+
+  const bookingRows = await listGoogleSyncReconciliationCandidatesForVendorAccount(account.id);
+  const activeBookingRows = bookingRows.filter((row: any) => asTrimmedString(row?.status).toLowerCase() !== "cancelled");
+  let googleCalendarReadStatus: "checked" | "skipped" | "failed" = googleEnabled ? "checked" : "skipped";
+  let googleCalendarReadError: string | null = null;
+  let existingGoogleEventIds = new Set<string>();
+  let selectedGoogleCalendarEvents: Awaited<ReturnType<typeof listSelectedGoogleCalendarEventsForVendorAccount>> = [];
+  let unmatchedEventsCount: number | null = googleEnabled ? 0 : null;
+
+  if (googleEnabled) {
+    try {
+      const events = await listSelectedGoogleCalendarEventsForVendorAccount(account.id, {
+        maxResults: 2500,
+      });
+      selectedGoogleCalendarEvents = events;
+      existingGoogleEventIds = new Set(
+        events
+          .map((event) => asTrimmedString(event.id))
+          .filter((eventId): eventId is string => Boolean(eventId))
+      );
+    } catch (error) {
+      googleCalendarReadStatus = "failed";
+      googleCalendarReadError =
+        error instanceof Error && error.message.trim()
+          ? error.message.trim()
+          : "Unable to read selected Google calendar";
+      unmatchedEventsCount = null;
+    }
+  }
+
+  if (
+    googleEnabled &&
+    googleCalendarReadStatus === "checked" &&
+    selectedGoogleCalendarId &&
+    selectedGoogleCalendarEvents.length > 0
+  ) {
+    const listingContext = await loadVendorListingMatchContext(account.id);
+    const mappingContext = await loadGoogleEventMappingContext({
+      vendorAccountId: account.id,
+      googleCalendarId: selectedGoogleCalendarId,
+      googleEventIds: selectedGoogleCalendarEvents.map((event) => event.id),
+    });
+
+    unmatchedEventsCount = selectedGoogleCalendarEvents
+      .filter((event) => (asTrimmedString(event.status) || "").toLowerCase() !== "cancelled")
+      .filter((event) => {
+        const match = matchGoogleCalendarEventToListing(event, {
+          listingContext,
+          mappingContext,
+        });
+        return !match.matched;
+      }).length;
+  } else if (googleEnabled && googleCalendarReadStatus === "checked") {
+    unmatchedEventsCount = 0;
+  }
+
+  if (activeBookingRows.length === 0) {
+    return {
+      googleEnabled,
+      googleCalendarId: selectedGoogleCalendarId,
+      googleCalendarReadStatus,
+      googleCalendarReadError,
+      bookingsChecked: 0,
+      issuesFound: 0,
+      unmatchedEventsCount,
+      issues: [],
+    };
+  }
+
+  const issues: GoogleBookingReconciliationIssue[] = bookingRows.flatMap((row: any) => {
+    const status = asTrimmedString(row?.status).toLowerCase();
+    if (status === "cancelled") return [];
+
+    const issueCodes: string[] = [];
+    const googleSyncStatus = asTrimmedString(row?.googleSyncStatus).toLowerCase();
+    const googleSyncError = asTrimmedString(row?.googleSyncError);
+    const googleEventId = asTrimmedString(row?.googleEventId);
+    const bookingGoogleCalendarId = asTrimmedString(row?.googleCalendarId);
+    const calendarMismatch =
+      googleEnabled &&
+      Boolean(bookingGoogleCalendarId) &&
+      Boolean(selectedGoogleCalendarId) &&
+      bookingGoogleCalendarId !== selectedGoogleCalendarId;
+
+    if (googleSyncStatus === "failed" || googleSyncError) {
+      issueCodes.push("sync_failed");
+    }
+    if (googleEnabled && !googleEventId) {
+      issueCodes.push("missing_google_event_id");
+    }
+    if (calendarMismatch) {
+      issueCodes.push("calendar_mismatch");
+    }
+    if (
+      googleEnabled &&
+      googleCalendarReadStatus === "checked" &&
+      googleEventId &&
+      !existingGoogleEventIds.has(googleEventId) &&
+      !calendarMismatch
+    ) {
+      issueCodes.push("missing_in_selected_calendar");
+    }
+
+    if (issueCodes.length === 0) return [];
+
+    return [{
+      bookingId: asTrimmedString(row?.id),
+      listingId: asTrimmedString(row?.listingId),
+      listingTitle: asTrimmedString(row?.listingTitle) || "Listing",
+      status: asTrimmedString(row?.status) || "unknown",
+      bookingStartAt: row?.bookingStartAt ?? null,
+      bookingEndAt: row?.bookingEndAt ?? null,
+      googleSyncStatus: asTrimmedString(row?.googleSyncStatus) || null,
+      googleSyncError,
+      googleEventId,
+      googleCalendarId: bookingGoogleCalendarId || null,
+      selectedGoogleCalendarId,
+      issueCodes,
+      createdAt: row?.createdAt ?? null,
+    }];
+  });
+
+  return {
+    googleEnabled,
+    googleCalendarId: selectedGoogleCalendarId,
+    googleCalendarReadStatus,
+    googleCalendarReadError,
+    bookingsChecked: activeBookingRows.length,
+    issuesFound: issues.length,
+    unmatchedEventsCount,
+    issues,
+  };
+}
+
+async function runGoogleBookingSyncVerificationForVendorAccount(account: any) {
+  const reconciliation = await buildGoogleBookingReconciliationForVendorAccount(account);
+  return {
+    vendorAccountId: asTrimmedString(account?.id) || null,
+    googleEnabled: reconciliation.googleEnabled,
+    googleCalendarId: reconciliation.googleCalendarId,
+    googleCalendarReadStatus: reconciliation.googleCalendarReadStatus,
+    googleCalendarReadError: reconciliation.googleCalendarReadError,
+    bookingsChecked: reconciliation.bookingsChecked,
+    issuesFound: reconciliation.issuesFound,
+    unmatchedEventsCount: reconciliation.unmatchedEventsCount,
+    issues: reconciliation.issues,
+  };
+}
+
 function formatVendorTypeForDraftTitle(vendorType: string): string {
   if (vendorType === "prop-decor") return "rental";
   return vendorType.replace(/-/g, " ");
-}
-
-async function getBookingsVendorRefColumn(): Promise<"vendor_account_id" | "vendor_id" | "none"> {
-  if (bookingsVendorRefColumnCache) return bookingsVendorRefColumnCache;
-
-  const result: any = await db.execute(drizzleSql`
-    select column_name
-    from information_schema.columns
-    where table_schema = 'public'
-      and table_name = 'bookings'
-      and column_name in ('vendor_account_id', 'vendor_id')
-    order by case when column_name = 'vendor_account_id' then 0 else 1 end
-    limit 1
-  `);
-
-  const rows = extractRows<{ column_name?: string }>(result);
-  const col = rows[0]?.column_name as "vendor_account_id" | "vendor_id" | undefined;
-  if (col === "vendor_account_id" || col === "vendor_id") {
-    bookingsVendorRefColumnCache = col;
-  } else {
-    bookingsVendorRefColumnCache = "none";
-  }
-  return bookingsVendorRefColumnCache;
 }
 
 function requireCustomerAnyAuth(req: any, res: any, next: any) {
@@ -1331,6 +4283,23 @@ function detectUploadedImageFormat(buffer: Buffer): "jpg" | "png" | "webp" | nul
   return null;
 }
 
+function decodeImageDataUrlToBuffer(dataUrl: string): Buffer | null {
+  if (typeof dataUrl !== "string") return null;
+  const trimmed = dataUrl.trim();
+  if (!trimmed) return null;
+
+  const match = trimmed.match(/^data:image\/(png|jpe?g|webp);base64,([A-Za-z0-9+/=\s]+)$/i);
+  if (!match) return null;
+
+  try {
+    const base64 = match[2].replace(/\s+/g, "");
+    const buffer = Buffer.from(base64, "base64");
+    return buffer.length > 0 ? buffer : null;
+  } catch {
+    return null;
+  }
+}
+
 async function persistUploadedImage(buffer: Buffer, dir: string): Promise<{ filename: string; format: "jpg" | "png" | "webp" }> {
   const format = detectUploadedImageFormat(buffer);
   if (!format) {
@@ -1350,16 +4319,32 @@ export async function registerRoutes(app: Express): Promise<Server> {
   const vendorShopUploadsDir = path.join(process.cwd(), "server/uploads/vendor-shops");
   if (!fs.existsSync(vendorShopUploadsDir)) fs.mkdirSync(vendorShopUploadsDir, { recursive: true });
 
-  // One-time startup reconciliation so legacy active listings without valid prices
-  // are immediately hidden from public browse after deploy.
+  await assertCanonicalBookingSchemaReady();
+
+  // One-time startup reconciliation so legacy active listings that fail publish rules
+  // (missing price and/or insufficient photos) are immediately hidden after deploy.
   try {
-    await deactivateActiveListingsWithoutValidPrice();
+    await deactivateActiveListingsViolatingPublishGate();
   } catch (error: any) {
     console.warn(
-      "[listing price gate] startup reconciliation failed:",
+      "[listing publish gate] startup reconciliation failed:",
       error?.message || error
     );
   }
+
+  const runPendingExpiryCleanup = async () => {
+    try {
+      const expiredCount = await expireStalePendingBookings();
+      if (expiredCount > 0) {
+        console.log(`[booking expiry] expired stale pending bookings: ${expiredCount}`);
+      }
+    } catch (error: any) {
+      console.warn("[booking expiry] cleanup failed:", error?.message || error);
+    }
+  };
+  void runPendingExpiryCleanup();
+  const pendingExpiryTimer = setInterval(runPendingExpiryCleanup, 5 * 60 * 1000);
+  pendingExpiryTimer.unref();
 
   if (isStreamChatConfigured()) {
     const runChatCleanup = async () => {
@@ -1372,6 +4357,62 @@ export async function registerRoutes(app: Express): Promise<Server> {
     void runChatCleanup();
     const cleanupTimer = setInterval(runChatCleanup, 6 * 60 * 60 * 1000);
     cleanupTimer.unref();
+  }
+
+  const googleVerificationIntervalMinutesRaw = Number(process.env.GOOGLE_SYNC_VERIFICATION_INTERVAL_MINUTES || 30);
+  const googleVerificationIntervalMinutes =
+    Number.isFinite(googleVerificationIntervalMinutesRaw) && googleVerificationIntervalMinutesRaw > 0
+      ? Math.max(5, Math.round(googleVerificationIntervalMinutesRaw))
+      : 0;
+
+  if (googleVerificationIntervalMinutes > 0) {
+    const runRecurringGoogleVerification = async () => {
+      try {
+        const eligibleAccounts = await db
+          .select({
+            id: vendorAccounts.id,
+            googleConnectionStatus: vendorAccounts.googleConnectionStatus,
+            googleCalendarId: vendorAccounts.googleCalendarId,
+          })
+          .from(vendorAccounts)
+          .where(
+            and(
+              eq(vendorAccounts.googleConnectionStatus, "connected"),
+              drizzleSql`nullif(trim(${vendorAccounts.googleCalendarId}), '') is not null`
+            )
+          );
+
+        for (const account of eligibleAccounts) {
+          try {
+            const summary = await runGoogleBookingSyncVerificationForVendorAccount(account);
+            if (summary.googleCalendarReadStatus === "failed" || summary.issuesFound > 0) {
+              console.warn(
+                "[google verification] vendor=%s checked=%d issues=%d unmatched=%s readStatus=%s",
+                summary.vendorAccountId || "unknown",
+                summary.bookingsChecked,
+                summary.issuesFound,
+                summary.unmatchedEventsCount == null ? "n/a" : String(summary.unmatchedEventsCount),
+                summary.googleCalendarReadStatus
+              );
+            }
+          } catch (error: any) {
+            console.warn(
+              "[google verification] vendor=%s failed: %s",
+              asTrimmedString(account.id) || "unknown",
+              error?.message || error
+            );
+          }
+        }
+      } catch (error: any) {
+        console.warn("[google verification] recurring run failed:", error?.message || error);
+      }
+    };
+
+    const verificationTimer = setInterval(
+      runRecurringGoogleVerification,
+      googleVerificationIntervalMinutes * 60 * 1000
+    );
+    verificationTimer.unref();
   }
 
   const listingUpload = multer({
@@ -1453,9 +4494,19 @@ app.post(
       const q = String(req.query.q || "").trim();
       if (!q || q.length < 2) return res.json([]);
 
-      const token = process.env.MAPBOX_ACCESS_TOKEN;
+      // Accept legacy/current env names so autocomplete works across environments.
+      const token =
+        (process.env.MAPBOX_ACCESS_TOKEN || "").trim() ||
+        (process.env.MAPBOX_PLACES_TOKEN || "").trim() ||
+        (process.env.MAPBOX_TOKEN || "").trim() ||
+        (process.env.VITE_MAPBOX_TOKEN || "").trim();
       if (!token) {
-        logRouteError("/api/locations/search", new Error("MAPBOX_ACCESS_TOKEN missing"));
+        logRouteError(
+          "/api/locations/search",
+          new Error(
+            "Mapbox token missing (expected MAPBOX_ACCESS_TOKEN, MAPBOX_PLACES_TOKEN, MAPBOX_TOKEN, or VITE_MAPBOX_TOKEN)"
+          )
+        );
         return res.status(500).json({ error: "Location search is unavailable" });
       }
 
@@ -1530,13 +4581,9 @@ app.post(
         .where(eq(vendorAccounts.id, vendorAuth.id));
 
       const account = accounts[0];
-
-      const profiles = await db
-        .select()
-        .from(vendorProfiles)
-        .where(eq(vendorProfiles.accountId, account.id));
-
-      const profile = profiles[0];
+      (req as any).vendorAccount = account;
+      const profileContext = await resolveActiveVendorProfile(req);
+      const profile = profileContext?.activeProfile;
 
             // ---- Seed listing defaults from vendor profile (so new listings are valid-by-default) ----
       const profileAddress = String((profile as any)?.address || "").trim();
@@ -1566,12 +4613,13 @@ app.post(
       res.json({
         id: account.id,
         email: account.email,
-        businessName: account.businessName,
+        businessName: profile ? getProfileDisplayName(profile, account.businessName) : account.businessName,
         stripeConnectId: account.stripeConnectId,
         stripeAccountType: account.stripeAccountType,
         stripeOnboardingComplete: account.stripeOnboardingComplete,
-        profileComplete: profile !== undefined,
+        profileComplete: Boolean(profile),
         profileId: profile?.id || null,
+        activeProfileId: profileContext?.activeProfileId ?? null,
       });
     } catch (error: any) {
       res.status(500).json({ error: error.message });
@@ -1636,6 +4684,12 @@ app.post(
         return res.status(401).json({ error: AUTH_FAILURE_MESSAGE });
       }
       const account = accounts[0];
+      if (account.deletedAt) {
+        return res.status(403).json({ error: "Vendor account is deleted" });
+      }
+      if (account.active === false) {
+        return res.status(403).json({ error: "Vendor account is not active" });
+      }
 
       // Verify password
       const valid = await comparePassword(password, account.password);
@@ -1676,39 +4730,137 @@ app.post(
     res.setHeader("Last-Modified", new Date().toUTCString());
 
     try {
-      const vendorAuth = (req as any).vendorAuth;
-
-      const accounts = await db
-        .select()
-        .from(vendorAccounts)
-        .where(eq(vendorAccounts.id, vendorAuth.id));
-
-      if (accounts.length === 0) {
+      const context = await resolveActiveVendorProfile(req);
+      if (!context?.account?.id) {
         return res.status(404).json({ error: "Account not found" });
       }
-      const account = accounts[0];
-
-      // Check if vendor has completed profile (using database)
-      const profiles = await db
-        .select()
-        .from(vendorProfiles)
-        .where(eq(vendorProfiles.accountId, account.id));
-      const profile = profiles[0];
+      const account = context.account;
+      const activeProfile = context.activeProfile;
+      const activeProfileName = activeProfile ? getProfileDisplayName(activeProfile, account.businessName) : null;
 
       res.json({
         id: account.id,
         email: account.email,
-        businessName: account.businessName,
+        businessName: activeProfileName || account.businessName,
+        accountBusinessName: account.businessName,
         stripeConnectId: account.stripeConnectId,
         stripeAccountType: account.stripeAccountType,
-        stripeOnboardingComplete: account.stripeOnboardingComplete,        profileComplete: profile !== undefined,
-        profileId: profile?.id || null,
-        vendorType: profile?.serviceType || "unspecified",
+        stripeOnboardingComplete: account.stripeOnboardingComplete,
+        profileComplete: context.profiles.length > 0,
+        profileId: activeProfile?.id || null,
+        activeProfileId: context.activeProfileId,
+        profileName: activeProfileName,
+        vendorType: activeProfile?.serviceType || "unspecified",
+        operatingTimezone: normalizeIanaTimeZone(activeProfile?.operatingTimezone),
+        googleConnectionStatus: account.googleConnectionStatus,
+        googleCalendarId: account.googleCalendarId,
         __marker: "vendor_me_route_hit",
       });
     } catch (error: any) {
       logRouteError("/api/vendor/me", error);
       res.status(500).json({ error: "Unable to load vendor account" });
+    }
+  });
+
+  /**
+   * POST /api/vendor/me/deactivate
+   * Deprecated product concept: account deactivation is no longer supported.
+   */
+  app.post("/api/vendor/me/deactivate", ...requireVendorAuth0, async (_req, res) => {
+    return res.status(410).json({
+      error:
+        "Account deactivation is no longer supported. Use profile deactivation for reversible offboarding or account deletion for full exit.",
+    });
+  });
+
+  /**
+   * POST /api/vendor/me/delete ✅ Auth0-only
+   * Final account exit while preserving historical booking/payment integrity.
+   */
+  app.post("/api/vendor/me/delete", ...requireVendorAuth0, async (req, res) => {
+    try {
+      const vendorAuth = (req as any).vendorAuth;
+      if (!vendorAuth?.id) {
+        return res.status(403).json({ error: "Vendor account required" });
+      }
+
+      const accountRows = await db
+        .select({
+          id: vendorAccounts.id,
+          deletedAt: vendorAccounts.deletedAt,
+        })
+        .from(vendorAccounts)
+        .where(eq(vendorAccounts.id, vendorAuth.id))
+        .limit(1);
+      const account = accountRows[0];
+      if (!account?.id) {
+        return res.status(404).json({ error: "Account not found" });
+      }
+      if (account.deletedAt) {
+        return res.json({
+          accountId: vendorAuth.id,
+          deleted: true,
+          alreadyDeleted: true,
+        });
+      }
+
+      const now = new Date();
+      const obfuscatedEmail = `deleted+${vendorAuth.id}@eventhub.deleted`;
+      const randomPassword = await hashPassword(`deleted-${vendorAuth.id}-${now.getTime()}-${crypto.randomUUID()}`);
+
+      const inactivatedListings = await db
+        .update(vendorListings)
+        .set({ status: "inactive", updatedAt: now })
+        .where(
+          and(
+            eq(vendorListings.accountId, vendorAuth.id),
+            or(eq(vendorListings.status, "active"), eq(vendorListings.status, "draft"))
+          )
+        )
+        .returning({ id: vendorListings.id });
+
+      const deactivatedProfiles = await db
+        .update(vendorProfiles)
+        .set({ active: false, deactivatedAt: now, updatedAt: now })
+        .where(and(eq(vendorProfiles.accountId, vendorAuth.id), eq(vendorProfiles.active, true)))
+        .returning({ id: vendorProfiles.id });
+
+      await db
+        .update(vendorAccounts)
+        .set({
+          active: false,
+          deletedAt: now,
+          email: obfuscatedEmail,
+          auth0Sub: null,
+          password: randomPassword,
+          businessName: `Deleted Vendor ${vendorAuth.id.slice(0, 8)}`,
+          stripeConnectId: null,
+          stripeAccountType: null,
+          stripeOnboardingComplete: false,
+          googleAccessToken: null,
+          googleRefreshToken: null,
+          googleTokenExpiresAt: null,
+          googleCalendarId: null,
+          googleConnectionStatus: "disconnected",
+          activeProfileId: null,
+        })
+        .where(eq(vendorAccounts.id, vendorAuth.id));
+
+      const [preservedBookingsResult] = await db
+        .select({ count: count() })
+        .from(bookings)
+        .where(eq(bookings.vendorAccountId, vendorAuth.id));
+
+      return res.json({
+        accountId: vendorAuth.id,
+        deleted: true,
+        listingsInactivated: inactivatedListings.length,
+        profilesDeactivated: deactivatedProfiles.length,
+        preservedHistoricalBookings: Number(preservedBookingsResult?.count || 0),
+      });
+    } catch (error: any) {
+      logRouteError("/api/vendor/me/delete", error);
+      return res.status(500).json({ error: "Unable to delete vendor account" });
     }
   });
 
@@ -1979,6 +5131,719 @@ app.post(
     password: z.string(),
   });
 
+  app.get("/api/google/oauth/start", async (req, res) => {
+    const clientId = (process.env.GOOGLE_CLIENT_ID || "").trim();
+    if (!clientId) {
+      return res.status(500).json({ error: "Missing GOOGLE_CLIENT_ID" });
+    }
+
+    const redirectUri = (
+      process.env.GOOGLE_REDIRECT_URI ||
+      `${req.protocol}://${req.get("host")}/api/google/oauth/callback`
+    ).trim();
+
+    const authHeader = typeof req.headers.authorization === "string" ? req.headers.authorization.trim() : "";
+    if (!authHeader.startsWith("Bearer ")) {
+      return res.status(401).json({ error: "Missing Authorization Bearer token" });
+    }
+
+    let state = "";
+
+    try {
+      const auth0 = await verifyAuth0Token(authHeader.slice("Bearer ".length).trim());
+      const vendorAccount = await resolveVendorAccountForAuth0Identity(auth0.sub, auth0.email);
+
+      if (!vendorAccount?.id) {
+        return res.status(404).json({ error: "Vendor account not found for this Auth0 user" });
+      }
+
+      state = createGoogleOauthState(vendorAccount.id);
+    } catch (error: any) {
+      console.error("Google OAuth start auth failed:", error?.message || error);
+      return res.status(401).json({ error: "Invalid Auth0 token" });
+    }
+
+    const params = new URLSearchParams({
+      client_id: clientId,
+      redirect_uri: redirectUri,
+      response_type: "code",
+      scope: [
+        "https://www.googleapis.com/auth/calendar.readonly",
+        "https://www.googleapis.com/auth/calendar.events",
+      ].join(" "),
+      access_type: "offline",
+      prompt: "consent",
+    });
+
+    if (state) {
+      params.set("state", state);
+    }
+
+    const authUrl = `https://accounts.google.com/o/oauth2/v2/auth?${params.toString()}`;
+    return res.json({ url: authUrl });
+  });
+
+  app.get("/api/google/oauth/callback", async (req, res) => {
+    const code = typeof req.query.code === "string" ? req.query.code.trim() : "";
+    const state = typeof req.query.state === "string" ? req.query.state.trim() : "";
+    if (!code) {
+      return res.status(400).json({ error: "Missing OAuth code" });
+    }
+
+    const clientId = (process.env.GOOGLE_CLIENT_ID || "").trim();
+    const clientSecret = (process.env.GOOGLE_CLIENT_SECRET || "").trim();
+    if (!clientId || !clientSecret) {
+      return res.status(500).json({ error: "Missing Google OAuth configuration" });
+    }
+
+    const redirectUri = (
+      process.env.GOOGLE_REDIRECT_URI ||
+      `${req.protocol}://${req.get("host")}/api/google/oauth/callback`
+    ).trim();
+    const appUrl = (process.env.APP_URL || "http://localhost:5173").trim().replace(/\/+$/, "");
+    const parsedState = parseGoogleOauthState(state);
+
+    if (!parsedState?.vendorAccountId) {
+      return res.redirect(`${appUrl}/vendor/dashboard?google_calendar=error`);
+    }
+
+    try {
+      const vendorRows = await db
+        .select({
+          id: vendorAccounts.id,
+          googleRefreshToken: vendorAccounts.googleRefreshToken,
+          googleCalendarId: vendorAccounts.googleCalendarId,
+        })
+        .from(vendorAccounts)
+        .where(eq(vendorAccounts.id, parsedState.vendorAccountId))
+        .limit(1);
+
+      const vendorAccount = vendorRows[0];
+      if (!vendorAccount) {
+        return res.redirect(`${appUrl}/vendor/dashboard?google_calendar=error`);
+      }
+
+      const tokenResponse = await fetch("https://oauth2.googleapis.com/token", {
+        method: "POST",
+        headers: { "Content-Type": "application/x-www-form-urlencoded" },
+        body: new URLSearchParams({
+          code,
+          client_id: clientId,
+          client_secret: clientSecret,
+          redirect_uri: redirectUri,
+          grant_type: "authorization_code",
+        }),
+      });
+
+      if (!tokenResponse.ok) {
+        const tokenError = await tokenResponse.text();
+        console.error("Google OAuth token exchange failed:", tokenResponse.status, tokenError);
+        await db
+          .update(vendorAccounts)
+          .set({ googleConnectionStatus: "error" })
+          .where(eq(vendorAccounts.id, vendorAccount.id));
+        return res.redirect(`${appUrl}/vendor/dashboard?google_calendar=error`);
+      }
+
+      const tokens = (await tokenResponse.json()) as {
+        access_token?: string;
+        refresh_token?: string;
+        expires_in?: number;
+      };
+
+      const accessToken =
+        typeof tokens.access_token === "string" ? tokens.access_token.trim() : "";
+      if (!accessToken) {
+        console.error("Google OAuth token exchange succeeded without an access token");
+        await db
+          .update(vendorAccounts)
+          .set({ googleConnectionStatus: "error" })
+          .where(eq(vendorAccounts.id, vendorAccount.id));
+        return res.redirect(`${appUrl}/vendor/dashboard?google_calendar=error`);
+      }
+
+      const refreshToken =
+        typeof tokens.refresh_token === "string" && tokens.refresh_token.trim()
+          ? tokens.refresh_token.trim()
+          : vendorAccount.googleRefreshToken ?? null;
+      const expiresAt =
+        typeof tokens.expires_in === "number" && Number.isFinite(tokens.expires_in)
+          ? new Date(Date.now() + tokens.expires_in * 1000)
+          : null;
+
+      await db
+        .update(vendorAccounts)
+        .set({
+          googleAccessToken: accessToken,
+          googleRefreshToken: refreshToken,
+          googleTokenExpiresAt: expiresAt,
+          googleCalendarId: vendorAccount.googleCalendarId ?? null,
+          googleConnectionStatus: "connected",
+        })
+        .where(eq(vendorAccounts.id, vendorAccount.id));
+
+      return res.redirect(`${appUrl}/vendor/dashboard?google_calendar=connected`);
+    } catch (error: any) {
+      console.error("Google OAuth callback error:", error?.message || error);
+      return res.redirect(`${appUrl}/vendor/dashboard?google_calendar=error`);
+    }
+  });
+
+  const selectGoogleCalendarSchema = z.object({
+    calendarId: z.string().trim().min(1, "Calendar id is required"),
+  });
+  const saveGoogleEventMappingSchema = z.object({
+    googleEventId: z.string().trim().min(1, "Google event id is required"),
+    listingId: z.string().trim().min(1, "Listing id is required"),
+  });
+
+  app.get("/api/google/calendars", ...requireVendorAuth0, async (req, res) => {
+    try {
+      const account = await getVendorAccountFromRequest(req);
+      if (!account?.id) {
+        return res.status(404).json({ error: "Account not found" });
+      }
+
+      const calendars = await listGoogleCalendarsForVendorAccount(account.id);
+      return res.json(calendars);
+    } catch (error: any) {
+      if (error instanceof GoogleCalendarConnectionError) {
+        return res.status(error.statusCode).json({ error: error.message, code: error.code });
+      }
+      logRouteError("/api/google/calendars", error);
+      return res.status(500).json({ error: "Unable to load Google calendars" });
+    }
+  });
+
+  app.post("/api/google/calendars/select", ...requireVendorAuth0, async (req, res) => {
+    try {
+      const account = await getVendorAccountFromRequest(req);
+      if (!account?.id) {
+        return res.status(404).json({ error: "Account not found" });
+      }
+
+      const { calendarId } = selectGoogleCalendarSchema.parse(req.body ?? {});
+      const calendars = await listGoogleCalendarsForVendorAccount(account.id);
+      const selectedCalendar = calendars.find((calendar) => calendar.id === calendarId);
+
+      if (!selectedCalendar) {
+        return res.status(400).json({ error: "Selected calendar is not available for this Google account" });
+      }
+
+      await db
+        .update(vendorAccounts)
+        .set({
+          googleCalendarId: selectedCalendar.id,
+        })
+        .where(eq(vendorAccounts.id, account.id));
+
+      let existingBookingsSync:
+        | Awaited<ReturnType<typeof syncExistingBookingsToSelectedGoogleCalendar>>
+        | null = null;
+
+      try {
+        existingBookingsSync = await syncExistingBookingsToSelectedGoogleCalendar(
+          account.id,
+          selectedCalendar.id
+        );
+      } catch (syncError) {
+        logRouteError("/api/google/calendars/select auto-sync", syncError);
+      }
+
+      return res.json({
+        ...selectedCalendar,
+        existingBookingsSync,
+      });
+    } catch (error: any) {
+      if (error instanceof GoogleCalendarConnectionError) {
+        return res.status(error.statusCode).json({ error: error.message, code: error.code });
+      }
+      if (error instanceof z.ZodError) {
+        return res.status(400).json({ error: error.issues[0]?.message || "Invalid calendar selection" });
+      }
+      logRouteError("/api/google/calendars/select", error);
+      return res.status(500).json({ error: "Unable to save selected Google calendar" });
+    }
+  });
+
+  app.post("/api/google/calendars/create", ...requireVendorAuth0, async (req, res) => {
+    try {
+      const account = await getVendorAccountFromRequest(req);
+      if (!account?.id) {
+        return res.status(404).json({ error: "Account not found" });
+      }
+
+      const calendar = await createGoogleCalendarForVendorAccount(account.id);
+      return res.json(calendar);
+    } catch (error: any) {
+      if (error instanceof GoogleCalendarConnectionError) {
+        return res.status(error.statusCode).json({ error: error.message, code: error.code });
+      }
+      logRouteError("/api/google/calendars/create", error);
+      return res.status(500).json({ error: "Unable to create Google calendar" });
+    }
+  });
+
+  app.post("/api/google/calendars/sync-existing", ...requireVendorAuth0, async (req, res) => {
+    try {
+      const account = await getVendorAccountFromRequest(req);
+      if (!account?.id) {
+        return res.status(404).json({ error: "Account not found" });
+      }
+
+      const selectedGoogleCalendarId = asTrimmedString(account.googleCalendarId);
+      if (!selectedGoogleCalendarId) {
+        return res.status(400).json({
+          error: "Google calendar is not selected",
+          code: "google_calendar_not_selected",
+        });
+      }
+
+      if (asTrimmedString(account.googleConnectionStatus).toLowerCase() !== "connected") {
+        return res.status(400).json({
+          error: "Google Calendar is not connected",
+          code: "google_not_connected",
+        });
+      }
+
+      const summary = await syncExistingBookingsToSelectedGoogleCalendar(
+        account.id,
+        selectedGoogleCalendarId
+      );
+      return res.json(summary);
+    } catch (error: any) {
+      if (error instanceof GoogleCalendarConnectionError) {
+        return res.status(error.statusCode).json({ error: error.message, code: error.code });
+      }
+      logRouteError("/api/google/calendars/sync-existing", error);
+      return res.status(500).json({ error: "Unable to sync existing EventHub bookings to Google Calendar" });
+    }
+  });
+
+  app.get("/api/google/events/unmatched", ...requireVendorAuth0, async (req, res) => {
+    try {
+      const account = await getVendorAccountFromRequest(req);
+      if (!account?.id) {
+        return res.status(404).json({ error: "Account not found" });
+      }
+
+      const googleCalendarId = asTrimmedString(account.googleCalendarId);
+      if (!googleCalendarId) {
+        return res.status(400).json({ error: "Google calendar is not selected", code: "google_calendar_not_selected" });
+      }
+
+      const events = await listSelectedGoogleCalendarEventsForVendorAccount(account.id, {
+        maxResults: 2500,
+      });
+      if (events.length === 0) {
+        return res.json({ events: [] });
+      }
+
+      const listingContext = await loadVendorListingMatchContext(account.id);
+      const mappingContext = await loadGoogleEventMappingContext({
+        vendorAccountId: account.id,
+        googleCalendarId,
+        googleEventIds: events.map((event) => event.id),
+      });
+
+      const unmatchedEvents = events
+        .filter((event) => (asTrimmedString(event.status) || "").toLowerCase() !== "cancelled")
+        .filter((event) => {
+          const match = matchGoogleCalendarEventToListing(event, {
+            listingContext,
+            mappingContext,
+          });
+          return !match.matched;
+        })
+        .map((event) => ({
+          id: event.id,
+          summary: event.summary,
+          description: event.description,
+          status: event.status,
+          start: event.start,
+          end: event.end,
+          updated: event.updated,
+        }));
+
+      return res.json({ events: unmatchedEvents });
+    } catch (error: any) {
+      if (error instanceof GoogleCalendarConnectionError) {
+        return res.status(error.statusCode).json({ error: error.message, code: error.code });
+      }
+      logRouteError("/api/google/events/unmatched", error);
+      return res.status(500).json({ error: "Unable to load unmatched Google events" });
+    }
+  });
+
+  app.post("/api/google/events/map", ...requireVendorAuth0, async (req, res) => {
+    try {
+      const account = await getVendorAccountFromRequest(req);
+      if (!account?.id) {
+        return res.status(404).json({ error: "Account not found" });
+      }
+
+      const googleCalendarId = asTrimmedString(account.googleCalendarId);
+      if (!googleCalendarId) {
+        return res.status(400).json({ error: "Google calendar is not selected", code: "google_calendar_not_selected" });
+      }
+
+      const { googleEventId, listingId } = saveGoogleEventMappingSchema.parse(req.body ?? {});
+
+      const [listingRow] = await db
+        .select({
+          id: vendorListings.id,
+        })
+        .from(vendorListings)
+        .where(
+          and(
+            eq(vendorListings.id, listingId),
+            eq(vendorListings.accountId, account.id),
+            ne(vendorListings.status, "deleted")
+          )
+        )
+        .limit(1);
+      if (!listingRow?.id) {
+        return res.status(400).json({ error: "Listing is not available for this vendor account" });
+      }
+
+      const events = await listSelectedGoogleCalendarEventsForVendorAccount(account.id, {
+        maxResults: 2500,
+      });
+      const selectedEvent = events.find((event) => event.id === googleEventId);
+      if (!selectedEvent) {
+        return res.status(400).json({ error: "Google event was not found in the selected calendar" });
+      }
+
+      const now = new Date();
+      await db
+        .insert(googleCalendarEventMappings)
+        .values({
+          vendorAccountId: account.id,
+          googleEventId,
+          googleCalendarId,
+          listingId,
+          mappingSource: "manual",
+          mappingStatus: "reviewed",
+          createdAt: now,
+          updatedAt: now,
+        })
+        .onConflictDoUpdate({
+          target: [
+            googleCalendarEventMappings.vendorAccountId,
+            googleCalendarEventMappings.googleCalendarId,
+            googleCalendarEventMappings.googleEventId,
+          ],
+          set: {
+            listingId,
+            mappingSource: "manual",
+            mappingStatus: "reviewed",
+            updatedAt: now,
+          },
+        });
+
+      return res.json({
+        googleEventId,
+        googleCalendarId,
+        listingId,
+        mappingSource: "manual",
+        mappingStatus: "reviewed",
+      });
+    } catch (error: any) {
+      if (error instanceof GoogleCalendarConnectionError) {
+        return res.status(error.statusCode).json({ error: error.message, code: error.code });
+      }
+      if (error instanceof z.ZodError) {
+        return res.status(400).json({ error: error.issues[0]?.message || "Invalid Google event mapping" });
+      }
+      logRouteError("/api/google/events/map", error);
+      return res.status(500).json({ error: "Unable to save Google event mapping" });
+    }
+  });
+
+  app.delete("/api/google/events/map/:googleEventId", ...requireVendorAuth0, async (req, res) => {
+    try {
+      const account = await getVendorAccountFromRequest(req);
+      if (!account?.id) {
+        return res.status(404).json({ error: "Account not found" });
+      }
+
+      const googleCalendarId = asTrimmedString(account.googleCalendarId);
+      if (!googleCalendarId) {
+        return res.status(400).json({ error: "Google calendar is not selected", code: "google_calendar_not_selected" });
+      }
+
+      const googleEventId = asTrimmedString(req.params.googleEventId);
+      if (!googleEventId) {
+        return res.status(400).json({ error: "Google event id is required" });
+      }
+
+      await db
+        .delete(googleCalendarEventMappings)
+        .where(
+          and(
+            eq(googleCalendarEventMappings.vendorAccountId, account.id),
+            eq(googleCalendarEventMappings.googleCalendarId, googleCalendarId),
+            eq(googleCalendarEventMappings.googleEventId, googleEventId)
+          )
+        );
+
+      return res.json({ googleEventId, cleared: true });
+    } catch (error: any) {
+      logRouteError("/api/google/events/map/:googleEventId DELETE", error);
+      return res.status(500).json({ error: "Unable to clear Google event mapping" });
+    }
+  });
+
+  app.get("/api/google/bookings/reconciliation", ...requireVendorAuth0, async (req, res) => {
+    try {
+      const account = await getVendorAccountFromRequest(req);
+      if (!account?.id) {
+        return res.status(404).json({ error: "Account not found" });
+      }
+
+      return res.json(await buildGoogleBookingReconciliationForVendorAccount(account));
+    } catch (error: any) {
+      logRouteError("/api/google/bookings/reconciliation", error);
+      return res.status(500).json({ error: "Unable to load Google booking reconciliation" });
+    }
+  });
+
+  app.get("/api/google/bookings/verification/run", ...requireVendorAuth0, async (req, res) => {
+    try {
+      const account = await getVendorAccountFromRequest(req);
+      if (!account?.id) {
+        return res.status(404).json({ error: "Account not found" });
+      }
+
+      return res.json(await runGoogleBookingSyncVerificationForVendorAccount(account));
+    } catch (error: any) {
+      logRouteError("/api/google/bookings/verification/run", error);
+      return res.status(500).json({ error: "Unable to run Google booking verification" });
+    }
+  });
+
+  app.get("/api/internal/launch/smoke-summary", ...requireVendorAuth0, async (req, res) => {
+    try {
+      const account = await getVendorAccountFromRequest(req);
+      if (!account?.id) {
+        return res.status(404).json({ error: "Account not found" });
+      }
+
+      const profileContext = await resolveActiveVendorProfile(req);
+      const activeProfile = profileContext?.activeProfile ?? null;
+      const activeProfileId = profileContext?.activeProfileId ?? null;
+      if (!activeProfile?.id || !activeProfileId) {
+        return res.status(404).json({ error: "Active profile not found" });
+      }
+
+      const [latestListing] = await db
+        .select({
+          id: vendorListings.id,
+          status: vendorListings.status,
+          title: vendorListings.title,
+          instantBookEnabled: vendorListings.instantBookEnabled,
+          pricingUnit: vendorListings.pricingUnit,
+          quantity: vendorListings.quantity,
+          serviceAreaMode: vendorListings.serviceAreaMode,
+          serviceRadiusMiles: vendorListings.serviceRadiusMiles,
+          listingServiceCenterLabel: vendorListings.listingServiceCenterLabel,
+          listingServiceCenterLat: vendorListings.listingServiceCenterLat,
+          listingServiceCenterLng: vendorListings.listingServiceCenterLng,
+          updatedAt: vendorListings.updatedAt,
+        })
+        .from(vendorListings)
+        .where(
+          and(
+            eq(vendorListings.accountId, account.id),
+            eq(vendorListings.profileId, activeProfileId),
+            ne(vendorListings.status, "deleted")
+          )
+        )
+        .orderBy(desc(vendorListings.updatedAt), desc(vendorListings.createdAt))
+        .limit(1);
+
+      const [latestBooking] = await db
+        .select({
+          id: bookings.id,
+          status: bookings.status,
+          listingId: bookings.listingId,
+          pricingUnitSnapshot: bookings.pricingUnitSnapshot,
+          bookingStartAt: bookings.bookingStartAt,
+          bookingEndAt: bookings.bookingEndAt,
+          vendorTimezoneSnapshot: bookings.vendorTimezoneSnapshot,
+          googleSyncStatus: bookings.googleSyncStatus,
+          googleEventId: bookings.googleEventId,
+          googleCalendarId: bookings.googleCalendarId,
+          createdAt: bookings.createdAt,
+        })
+        .from(bookings)
+        .where(and(eq(bookings.vendorAccountId, account.id), eq(bookings.vendorProfileId, activeProfileId)))
+        .orderBy(desc(bookings.createdAt))
+        .limit(1);
+
+      const googleVerification = await runGoogleBookingSyncVerificationForVendorAccount(account);
+      const operatingTimezone = normalizeIanaTimeZone(activeProfile.operatingTimezone);
+
+      const onboardingCanonicalReady = Boolean(
+        asTrimmedString(activeProfile.profileName) &&
+          asTrimmedString(activeProfile.businessPhone) &&
+          asTrimmedString(activeProfile.businessEmail) &&
+          asTrimmedString(activeProfile.businessAddressLabel)
+      );
+      const listingCanonicalReady = Boolean(
+        latestListing?.id &&
+          asTrimmedString(latestListing.pricingUnit) &&
+          asTrimmedString(latestListing.serviceAreaMode) &&
+          typeof latestListing.instantBookEnabled === "boolean"
+      );
+      const bookingTimingReady = Boolean(
+        latestBooking?.id &&
+          latestBooking.bookingStartAt instanceof Date &&
+          latestBooking.bookingEndAt instanceof Date &&
+          latestBooking.bookingEndAt.getTime() > latestBooking.bookingStartAt.getTime()
+      );
+
+      return res.json({
+        generatedAt: new Date().toISOString(),
+        vendor: {
+          accountId: account.id,
+          activeProfileId,
+          operatingTimezone,
+        },
+        onboarding: {
+          profileName: activeProfile.profileName,
+          businessPhone: activeProfile.businessPhone,
+          businessEmail: activeProfile.businessEmail,
+          businessAddressLabel: activeProfile.businessAddressLabel,
+          homeBaseLat: activeProfile.homeBaseLat,
+          homeBaseLng: activeProfile.homeBaseLng,
+          showBusinessPhoneToCustomers: activeProfile.showBusinessPhoneToCustomers,
+          showBusinessEmailToCustomers: activeProfile.showBusinessEmailToCustomers,
+          showBusinessAddressToCustomers: activeProfile.showBusinessAddressToCustomers,
+          aboutVendor: activeProfile.aboutVendor,
+          aboutBusiness: activeProfile.aboutBusiness,
+          canonicalReady: onboardingCanonicalReady,
+        },
+        latestListing: latestListing
+          ? {
+              ...latestListing,
+              ctaLabel: latestListing.instantBookEnabled ? "Book Now" : "Request to Book",
+              canonicalReady: listingCanonicalReady,
+            }
+          : null,
+        latestBooking: latestBooking
+          ? {
+              ...latestBooking,
+              canonicalTimingReady: bookingTimingReady,
+            }
+          : null,
+        google: googleVerification,
+        checks: {
+          onboardingCanonicalReady,
+          listingCanonicalReady,
+          bookingTimingReady,
+        },
+      });
+    } catch (error: any) {
+      logRouteError("/api/internal/launch/smoke-summary", error);
+      return res.status(500).json({ error: "Unable to build launch smoke summary" });
+    }
+  });
+
+  app.post("/api/google/bookings/reconciliation/:bookingId/repair", ...requireVendorAuth0, async (req, res) => {
+    try {
+      const account = await getVendorAccountFromRequest(req);
+      if (!account?.id) {
+        return res.status(404).json({ error: "Account not found" });
+      }
+
+      const selectedGoogleCalendarId = asTrimmedString(account.googleCalendarId) || null;
+      const googleEnabled =
+        asTrimmedString(account.googleConnectionStatus).toLowerCase() === "connected" &&
+        Boolean(selectedGoogleCalendarId);
+      if (!googleEnabled || !selectedGoogleCalendarId) {
+        return res.status(400).json({
+          error: "Google Calendar must be connected and a calendar selected before repair can run.",
+          code: "google_calendar_not_ready",
+        });
+      }
+
+      const bookingId = asTrimmedString(req.params.bookingId);
+      if (!bookingId) {
+        return res.status(400).json({ error: "Booking id is required" });
+      }
+
+      const candidateRows = await listGoogleSyncReconciliationCandidatesForVendorAccount(account.id);
+      const candidateRow = candidateRows.find((row: any) => asTrimmedString(row?.id) === bookingId);
+      if (!candidateRow) {
+        return res.status(404).json({ error: "Booking not found for this vendor account" });
+      }
+
+      const syncResult = await syncEventHubBookingToGoogleCalendar({
+        bookingId,
+        targetCalendarId: selectedGoogleCalendarId,
+      });
+
+      if (syncResult.status === "failed") {
+        return res.status(502).json({
+          bookingId,
+          status: "failed",
+          syncResult,
+          remainingIssueCodes: ["sync_failed"],
+          googleCalendarId: selectedGoogleCalendarId,
+          googleCalendarReadStatus: "skipped",
+          googleCalendarReadError: null,
+        });
+      }
+
+      if (syncResult.status === "skipped") {
+        return res.status(400).json({
+          bookingId,
+          status: "skipped",
+          syncResult,
+          remainingIssueCodes: [],
+          googleCalendarId: selectedGoogleCalendarId,
+          googleCalendarReadStatus: "skipped",
+          googleCalendarReadError: null,
+        });
+      }
+
+      const reconciliation = await buildGoogleBookingReconciliationForVendorAccount(account);
+      const remainingIssue =
+        reconciliation.issues.find((issue) => issue.bookingId === bookingId) || null;
+
+      if (reconciliation.googleCalendarReadStatus === "failed") {
+        return res.status(502).json({
+          bookingId,
+          status: "verification_failed",
+          syncResult,
+          remainingIssueCodes: remainingIssue?.issueCodes || [],
+          issue: remainingIssue,
+          googleCalendarId: reconciliation.googleCalendarId,
+          googleCalendarReadStatus: reconciliation.googleCalendarReadStatus,
+          googleCalendarReadError: reconciliation.googleCalendarReadError,
+        });
+      }
+
+      return res.json({
+        bookingId,
+        status: remainingIssue ? "needs_attention" : "repaired",
+        syncResult,
+        remainingIssueCodes: remainingIssue?.issueCodes || [],
+        issue: remainingIssue,
+        googleCalendarId: reconciliation.googleCalendarId,
+        googleCalendarReadStatus: reconciliation.googleCalendarReadStatus,
+        googleCalendarReadError: reconciliation.googleCalendarReadError,
+      });
+    } catch (error: any) {
+      if (error instanceof GoogleCalendarConnectionError) {
+        return res.status(error.statusCode).json({ error: error.message, code: error.code });
+      }
+      logRouteError("/api/google/bookings/reconciliation/:bookingId/repair", error);
+      return res.status(500).json({ error: "Unable to repair Google booking sync" });
+    }
+  });
+
   app.post("/api/auth/login", authRateLimiter, async (req, res) => {
     try {
       const { email, password } = unifiedLoginSchema.parse(req.body);
@@ -2095,6 +5960,7 @@ app.post(
   const completeOnboardingSchema = z.object({
     vendorType: z.enum(ENABLED_VENDOR_TYPES),
     businessName: z.string().min(2),
+    operatingTimezone: z.string().min(1).max(120).optional(),
 
     streetAddress: z.string().min(1),
     city: z.string().min(1),
@@ -2103,7 +5969,20 @@ app.post(
 
     businessPhone: z.string().min(1),
     businessEmail: z.string().email(),
+    showBusinessPhoneToCustomers: z.boolean().optional(),
+    showBusinessEmailToCustomers: z.boolean().optional(),
+    showBusinessAddressToCustomers: z.boolean().optional(),
+    aboutVendor: z.string().optional(),
     aboutBusiness: z.string().optional(),
+    shopTagline: z.string().optional(),
+    inBusinessSinceYear: z.string().optional(),
+    specialties: z.string().optional(),
+    eventsServedBaseline: z.string().optional(),
+    hobbies: z.string().optional(),
+    homeState: z.string().optional(),
+    funFacts: z.string().optional(),
+    shopProfilePhotoDataUrl: z.string().trim().max(3000000).optional(),
+    shopCoverPhotoDataUrl: z.string().trim().max(3000000).optional(),
 
     homeBaseLocation: z
       .object({
@@ -2112,7 +5991,7 @@ app.post(
       })
       .optional(),
 
-    serviceRadiusMiles: z.coerce.number().optional(),
+    createNewProfile: z.boolean().optional(),
   });
 
   app.post("/api/vendor/onboarding/complete", requireAuth0, async (req, res) => {
@@ -2122,6 +6001,12 @@ app.post(
       const auth0 = (req as any).auth0 as { sub: string; email?: string } | undefined;
 
       const onboardingData = completeOnboardingSchema.parse(req.body);
+      const normalizedProfileName = normalizeProfileNameText(onboardingData.businessName, 120);
+      if (normalizedProfileName.length < 2) {
+        return res.status(400).json({
+          error: "Business profile name is invalid. Use letters, numbers, spaces, and apostrophes only.",
+        });
+      }
 
       const rawEmail = auth0?.email;
       const email = rawEmail ? rawEmail.toLowerCase().trim() : undefined;
@@ -2144,17 +6029,18 @@ app.post(
             email,
             auth0Sub,
             password: "auth0-external",
-            businessName: onboardingData.businessName,
+            businessName: normalizedProfileName,
             profileComplete: false,
           })
           .returning();
 
         account = created;
       } else {
+        const currentBusinessName = asTrimmedString(account.businessName);
         const [updated] = await db
           .update(vendorAccounts)
           .set({
-            businessName: onboardingData.businessName,
+            businessName: currentBusinessName || normalizedProfileName,
             auth0Sub: auth0Sub ?? account.auth0Sub,
           })
           .where(eq(vendorAccounts.id, account.id))
@@ -2164,6 +6050,12 @@ app.post(
       }
 
       const existingProfiles = await db.select().from(vendorProfiles).where(eq(vendorProfiles.accountId, account.id));
+      const existingActiveProfile =
+        existingProfiles.find((candidate) => candidate.id === account.activeProfileId) || existingProfiles[0] || null;
+      const resolvedOperatingTimezone = normalizeIanaTimeZone(
+        onboardingData.operatingTimezone,
+        existingActiveProfile?.operatingTimezone
+      );
 
       const address = [
         onboardingData.streetAddress,
@@ -2174,19 +6066,98 @@ app.post(
         .filter(Boolean)
         .join(", ");
 
-      const radius = onboardingData.serviceRadiusMiles ?? 25;
+      const aboutVendor = asTrimmedString(onboardingData.aboutVendor);
+      const aboutBusiness = asTrimmedString(onboardingData.aboutBusiness);
+      const shopTagline = asTrimmedString(onboardingData.shopTagline);
+      const inBusinessSinceYear = asTrimmedString(onboardingData.inBusinessSinceYear).replace(/[^\d]/g, "").slice(0, 4);
+      const specialties = normalizeSpecialties(onboardingData.specialties);
+      const eventsServedBaseline = toNonNegativeInt(onboardingData.eventsServedBaseline, 0);
+      const hobbies = serializeHobbyList(onboardingData.hobbies);
+      const homeState = asTrimmedString(onboardingData.homeState);
+      const funFacts = asTrimmedString(onboardingData.funFacts);
+      const existingOnlineProfiles =
+        existingActiveProfile?.onlineProfiles &&
+        typeof existingActiveProfile.onlineProfiles === "object" &&
+        !Array.isArray(existingActiveProfile.onlineProfiles)
+          ? (existingActiveProfile.onlineProfiles as Record<string, unknown>)
+          : {};
+      const existingShopProfileImageUrl = asTrimmedString((existingOnlineProfiles as any).shopProfileImageUrl);
+      const existingShopCoverImageUrl = asTrimmedString((existingOnlineProfiles as any).shopCoverImageUrl);
+      const existingCoverPhotoPosition =
+        normalizePhotoPosition((existingOnlineProfiles as any).shopCoverImagePosition) || { x: 0, y: 0 };
+      const shopProfilePhotoDataUrl = asTrimmedString(onboardingData.shopProfilePhotoDataUrl);
+      const shopCoverPhotoDataUrl = asTrimmedString(onboardingData.shopCoverPhotoDataUrl);
+      let shopProfileImageUrl = existingShopProfileImageUrl || "";
+      let shopCoverImageUrl = existingShopCoverImageUrl || "";
+      let shopCoverImagePosition = existingCoverPhotoPosition;
+
+      if (shopProfilePhotoDataUrl) {
+        const profileBuffer = decodeImageDataUrlToBuffer(shopProfilePhotoDataUrl);
+        if (!profileBuffer) {
+          return res.status(400).json({ error: "Invalid profile photo format." });
+        }
+        const persistedProfilePhoto = await persistUploadedImage(profileBuffer, vendorShopUploadsDir);
+        shopProfileImageUrl = `/uploads/vendor-shops/${persistedProfilePhoto.filename}`;
+      }
+
+      if (shopCoverPhotoDataUrl) {
+        const coverBuffer = decodeImageDataUrlToBuffer(shopCoverPhotoDataUrl);
+        if (!coverBuffer) {
+          return res.status(400).json({ error: "Invalid cover photo format." });
+        }
+        const persistedCoverPhoto = await persistUploadedImage(coverBuffer, vendorShopUploadsDir);
+        shopCoverImageUrl = `/uploads/vendor-shops/${persistedCoverPhoto.filename}`;
+        shopCoverImagePosition = { x: 0, y: 0 };
+      }
+      const showBusinessPhoneToCustomers = Boolean(onboardingData.showBusinessPhoneToCustomers);
+      const showBusinessEmailToCustomers = Boolean(onboardingData.showBusinessEmailToCustomers);
+      const showBusinessAddressToCustomers = Boolean(onboardingData.showBusinessAddressToCustomers);
 
       const profilePayload = {
         accountId: account.id,
+        profileName: normalizedProfileName,
+        businessPhone: onboardingData.businessPhone,
+        businessEmail: onboardingData.businessEmail,
+        businessAddressLabel: address,
+        businessStreet: onboardingData.streetAddress,
+        businessCity: onboardingData.city,
+        businessState: onboardingData.state,
+        businessZip: onboardingData.zipCode,
+        homeBaseLat: onboardingData.homeBaseLocation?.lat ?? null,
+        homeBaseLng: onboardingData.homeBaseLocation?.lng ?? null,
+        operatingTimezone: resolvedOperatingTimezone,
+        showBusinessPhoneToCustomers,
+        showBusinessEmailToCustomers,
+        showBusinessAddressToCustomers,
+        aboutVendor: aboutVendor || null,
+        aboutBusiness: aboutBusiness || null,
         serviceType: onboardingData.vendorType,
         experience: 0,
         qualifications: [] as string[],
         onlineProfiles: {
+          profileBusinessName: normalizedProfileName,
           businessPhone: onboardingData.businessPhone,
           businessEmail: onboardingData.businessEmail,
           streetAddress: onboardingData.streetAddress,
+          city: onboardingData.city,
           state: onboardingData.state,
           zipCode: onboardingData.zipCode,
+          showBusinessPhoneToCustomers,
+          showBusinessEmailToCustomers,
+          showBusinessAddressToCustomers,
+          aboutOwner: aboutVendor || null,
+          aboutBusiness: aboutBusiness || null,
+          shopTagline: shopTagline || null,
+          inBusinessSinceYear: inBusinessSinceYear || null,
+          specialties,
+          eventsServedBaseline,
+          hobbies: hobbies || null,
+          homeState: homeState || null,
+          funFacts: funFacts || null,
+          shopProfileImageUrl: shopProfileImageUrl || null,
+          shopCoverImageUrl: shopCoverImageUrl || null,
+          shopCoverImagePosition: shopCoverImageUrl ? shopCoverImagePosition : null,
+          operatingTimezone: resolvedOperatingTimezone,
 
           // for LocationPicker autofill later
           homeBaseLocation: onboardingData.homeBaseLocation ?? null,
@@ -2203,15 +6174,17 @@ app.post(
         address,
         city: onboardingData.city,
         travelMode: "included",
-        serviceRadius: radius,
+        serviceRadius: null,
         serviceAddress: address,
         photos: [],
-        serviceDescription: onboardingData.aboutBusiness?.trim() || "",
+        serviceDescription: aboutBusiness || "",
       };
 
       let profile;
-      if (existingProfiles.length > 0) {
-        const current = existingProfiles[0];
+      const createNewProfile = Boolean(onboardingData.createNewProfile);
+      if (existingProfiles.length > 0 && !createNewProfile) {
+        const current =
+          existingProfiles.find((candidate) => candidate.id === account.activeProfileId) || existingProfiles[0];
         const [updatedProfile] = await db
           .update(vendorProfiles)
           .set({
@@ -2227,13 +6200,20 @@ app.post(
         profile = createdProfile;
       }
 
-      await db.update(vendorAccounts).set({ profileComplete: true }).where(eq(vendorAccounts.id, account.id));
+      await db
+        .update(vendorAccounts)
+        .set({
+          profileComplete: true,
+          activeProfileId: profile.id,
+        })
+        .where(eq(vendorAccounts.id, account.id));
 
       const isUpgrade = Boolean(customerAuth || vendorAuth);
 
       return res.json({
         vendorAccountId: account.id,
         profileId: profile.id,
+        activeProfileId: profile.id,
         isUpgrade,
       });
     } catch (error: any) {
@@ -2248,6 +6228,7 @@ app.post(
   const createVendorProfileSchema = insertVendorProfileSchema
     .omit({ accountId: true })
     .extend({
+      profileName: z.string().min(2).max(120).optional(),
       serviceType: z.enum(ENABLED_VENDOR_TYPES, {
         errorMap: () => ({ message: "Select a valid vendor type" }),
       }),
@@ -2282,6 +6263,7 @@ app.post(
 
   const updateVendorProfileSchema = z
     .object({
+      profileName: z.string().min(2).max(120).optional(),
       serviceType: z.string().min(1).optional(),
       experience: z.number().int().optional(),
       qualifications: z.array(z.string()).optional(),
@@ -2291,6 +6273,7 @@ app.post(
       travelMode: z.string().optional(),
       serviceRadius: z.number().nullable().optional(),
       serviceAddress: z.string().nullable().optional(),
+      operatingTimezone: z.string().optional(),
       photos: z.array(z.string()).optional(),
       serviceDescription: z.string().optional(),
     })
@@ -2309,21 +6292,26 @@ app.post(
       }
       const account = accounts[0];
 
-      const existingProfiles = await db.select().from(vendorProfiles).where(eq(vendorProfiles.accountId, account.id));
-      if (existingProfiles.length > 0) {
-        return res.status(409).json({
-          error: "Profile already exists. Use PUT/PATCH to update existing profile.",
-        });
-      }
-
       const validatedData = createVendorProfileSchema.parse(req.body);
+      const normalizedRequestedProfileName = normalizeProfileNameText((validatedData as any).profileName, 120);
+      const normalizedFallbackProfileName = normalizeProfileNameText(account.businessName, 120);
+      const resolvedProfileName = normalizedRequestedProfileName || normalizedFallbackProfileName || "Vendor Profile";
 
       const profileData = {
         ...validatedData,
+        profileName: resolvedProfileName,
         accountId: account.id,
       };
 
       const [profile] = await db.insert(vendorProfiles).values(profileData).returning();
+
+      await db
+        .update(vendorAccounts)
+        .set({
+          profileComplete: true,
+          activeProfileId: profile.id,
+        })
+        .where(eq(vendorAccounts.id, account.id));
 
       res.json({
         account: {
@@ -2352,17 +6340,12 @@ app.post(
   app.get("/api/vendor/profile", ...requireVendorAuth0, async (req, res) => {
     try {
       const vendorAuth = (req as any).vendorAuth;
-
-      const profiles = await db
-        .select()
-        .from(vendorProfiles)
-        .where(eq(vendorProfiles.accountId, vendorAuth.id));
-
-      if (profiles.length === 0) {
+      const context = await resolveActiveVendorProfile(req);
+      if (!context?.activeProfile) {
         return res.status(404).json({ error: "Vendor profile not found" });
       }
 
-      const existingProfile = profiles[0];
+      const existingProfile = context.activeProfile;
       const onlineRaw = existingProfile.onlineProfiles;
       const onlineProfiles =
         onlineRaw && typeof onlineRaw === "object" && !Array.isArray(onlineRaw)
@@ -2374,6 +6357,12 @@ app.post(
       const fallbackEmail = asTrimmedString(vendorAuth?.email);
       if (!asTrimmedString(onlineProfiles.businessEmail) && fallbackEmail) {
         onlineProfiles.businessEmail = fallbackEmail;
+        didBackfill = true;
+      }
+
+      const fallbackProfileName = getProfileDisplayName(existingProfile, context.account?.businessName ?? "Vendor Profile");
+      if (!asTrimmedString(onlineProfiles.profileBusinessName) && fallbackProfileName) {
+        onlineProfiles.profileBusinessName = fallbackProfileName;
         didBackfill = true;
       }
 
@@ -2407,19 +6396,32 @@ app.post(
       }
 
       if (didBackfill) {
+        const normalizedProfileName = getProfileDisplayName(
+          { ...existingProfile, onlineProfiles },
+          context.account?.businessName ?? "Vendor Profile"
+        );
         const [updatedProfile] = await db
           .update(vendorProfiles)
           .set({
+            profileName: normalizedProfileName,
             onlineProfiles,
             updatedAt: new Date(),
           })
           .where(eq(vendorProfiles.id, existingProfile.id))
           .returning();
 
-        return res.json(updatedProfile ?? { ...existingProfile, onlineProfiles });
+        return res.json({
+          ...(updatedProfile ?? { ...existingProfile, profileName: normalizedProfileName, onlineProfiles }),
+          activeProfileId: context.activeProfileId,
+        });
       }
 
-      return res.json({ ...existingProfile, onlineProfiles });
+      return res.json({
+        ...existingProfile,
+        profileName: getProfileDisplayName(existingProfile, context.account?.businessName ?? "Vendor Profile"),
+        onlineProfiles,
+        activeProfileId: context.activeProfileId,
+      });
     } catch (error: any) {
       console.error("GET /api/vendor/profile failed:", error);
       return res.status(500).json({ error: error?.message ?? "Unknown error" });
@@ -2432,18 +6434,12 @@ app.post(
    */
   app.patch("/api/vendor/profile", ...requireVendorAuth0, async (req, res) => {
     try {
-      const vendorAuth = (req as any).vendorAuth;
-
-      const profiles = await db
-        .select()
-        .from(vendorProfiles)
-        .where(eq(vendorProfiles.accountId, vendorAuth.id));
-
-      if (profiles.length === 0) {
+      const context = await resolveActiveVendorProfile(req);
+      if (!context?.activeProfile) {
         return res.status(404).json({ error: "Vendor profile not found" });
       }
 
-      const existing = profiles[0];
+      const existing = context.activeProfile;
 
       const parsed = updateVendorProfileSchema.safeParse(req.body ?? {});
       if (!parsed.success) {
@@ -2453,6 +6449,16 @@ app.post(
       const payload = parsed.data as Record<string, unknown>;
       const updates: Record<string, unknown> = {};
 
+      if (payload.profileName !== undefined) {
+        const normalized = normalizeProfileNameText(payload.profileName, 120);
+        if (!normalized || normalized.length < 2) {
+          return res.status(400).json({
+            error: "Validation failed",
+            details: [{ message: "profileName is invalid. Use letters, numbers, spaces, and apostrophes only." }],
+          });
+        }
+        updates.profileName = normalized;
+      }
       if (payload.serviceType !== undefined) updates.serviceType = payload.serviceType;
       if (payload.experience !== undefined) updates.experience = payload.experience;
       if (payload.qualifications !== undefined) updates.qualifications = payload.qualifications;
@@ -2461,6 +6467,9 @@ app.post(
       if (payload.travelMode !== undefined) updates.travelMode = payload.travelMode;
       if (payload.serviceRadius !== undefined) updates.serviceRadius = payload.serviceRadius;
       if (payload.serviceAddress !== undefined) updates.serviceAddress = payload.serviceAddress;
+      if (payload.operatingTimezone !== undefined) {
+        updates.operatingTimezone = normalizeIanaTimeZone(payload.operatingTimezone, existing.operatingTimezone);
+      }
       if (payload.photos !== undefined) updates.photos = payload.photos;
       if (payload.serviceDescription !== undefined) updates.serviceDescription = payload.serviceDescription ?? "";
 
@@ -2476,12 +6485,48 @@ app.post(
             ...existingOnlineProfiles,
             ...(payload.onlineProfiles as Record<string, unknown>),
           };
+
+          if (updates.profileName && typeof updates.onlineProfiles === "object" && updates.onlineProfiles) {
+            (updates.onlineProfiles as Record<string, unknown>).profileBusinessName = updates.profileName;
+          }
+
+          const incomingProfileNameRaw = (updates.onlineProfiles as Record<string, unknown>).profileBusinessName;
+          if (incomingProfileNameRaw !== undefined) {
+            const incomingProfileName = normalizeProfileNameText(incomingProfileNameRaw, 120);
+            if (!incomingProfileName || incomingProfileName.length < 2) {
+              return res.status(400).json({
+                error: "Validation failed",
+                details: [{ message: "profileBusinessName is invalid" }],
+              });
+            }
+            (updates.onlineProfiles as Record<string, unknown>).profileBusinessName = incomingProfileName;
+            if (!updates.profileName) {
+              updates.profileName = incomingProfileName;
+            }
+          }
+
+          const incomingHobbiesRaw = (updates.onlineProfiles as Record<string, unknown>).hobbies;
+          if (incomingHobbiesRaw !== undefined) {
+            const normalizedHobbies = serializeHobbyList(incomingHobbiesRaw);
+            (updates.onlineProfiles as Record<string, unknown>).hobbies = normalizedHobbies || null;
+          }
         } else {
           return res.status(400).json({
             error: "Validation failed",
             details: [{ message: "onlineProfiles must be an object" }],
           });
         }
+      }
+
+      if (updates.profileName && payload.onlineProfiles === undefined) {
+        const existingOnlineProfiles =
+          existing.onlineProfiles && typeof existing.onlineProfiles === "object" && !Array.isArray(existing.onlineProfiles)
+            ? (existing.onlineProfiles as Record<string, unknown>)
+            : {};
+        updates.onlineProfiles = {
+          ...existingOnlineProfiles,
+          profileBusinessName: updates.profileName,
+        };
       }
 
       if (Object.keys(updates).length === 0) {
@@ -2497,7 +6542,7 @@ app.post(
         .where(eq(vendorProfiles.id, existing.id))
         .returning();
 
-      return res.json(updated);
+      return res.json({ ...updated, activeProfileId: context.activeProfileId });
     } catch (error: any) {
       if (error.name === "ZodError") {
         return res.status(400).json({ error: "Validation failed", details: error.errors });
@@ -2506,13 +6551,284 @@ app.post(
     }
   });
 
+  const createAdditionalVendorProfileSchema = z.object({
+    profileName: z.string().min(2).max(120),
+    serviceType: z.enum(ENABLED_VENDOR_TYPES).optional(),
+    cloneFromActive: z.boolean().optional(),
+  });
+
+  app.get("/api/vendor/profiles", ...requireVendorAuth0, async (req, res) => {
+    try {
+      const context = await resolveActiveVendorProfile(req);
+      if (!context?.account?.id) {
+        return res.status(404).json({ error: "Vendor account not found" });
+      }
+
+      const profiles = context.profiles.map((profile) => ({
+        id: profile.id,
+        profileName: getProfileDisplayName(profile, context.account.businessName),
+        serviceType: profile.serviceType,
+        city: profile.city,
+        createdAt: profile.createdAt,
+        isActive: profile.id === context.activeProfileId,
+        isOperational: profile.active !== false,
+        deactivatedAt: profile.deactivatedAt ?? null,
+      }));
+
+      return res.json({
+        activeProfileId: context.activeProfileId,
+        profiles,
+      });
+    } catch (error: any) {
+      return res.status(500).json({ error: error.message });
+    }
+  });
+
+  app.post("/api/vendor/profiles", ...requireVendorAuth0, async (req, res) => {
+    try {
+      const context = await resolveActiveVendorProfile(req);
+      if (!context?.account?.id) {
+        return res.status(404).json({ error: "Vendor account not found" });
+      }
+
+      const data = createAdditionalVendorProfileSchema.parse(req.body ?? {});
+      const normalizedProfileName = normalizeProfileNameText(data.profileName, 120);
+      if (!normalizedProfileName || normalizedProfileName.length < 2) {
+        return res.status(400).json({
+          error: "Validation failed",
+          details: [{ message: "profileName is invalid. Use letters, numbers, spaces, and apostrophes only." }],
+        });
+      }
+      const cloneFromActive = data.cloneFromActive !== false;
+      const source = cloneFromActive ? context.activeProfile : null;
+
+      const sourceOnlineProfiles =
+        source?.onlineProfiles && typeof source.onlineProfiles === "object" && !Array.isArray(source.onlineProfiles)
+          ? (source.onlineProfiles as Record<string, unknown>)
+          : {};
+
+      const [createdProfile] = await db
+        .insert(vendorProfiles)
+        .values({
+          accountId: context.account.id,
+          profileName: normalizedProfileName,
+          businessPhone: source?.businessPhone ?? null,
+          businessEmail: source?.businessEmail ?? null,
+          businessAddressLabel: source?.businessAddressLabel ?? source?.serviceAddress ?? source?.address ?? null,
+          businessStreet: source?.businessStreet ?? null,
+          businessCity: source?.businessCity ?? source?.city ?? null,
+          businessState: source?.businessState ?? null,
+          businessZip: source?.businessZip ?? null,
+          homeBaseLat: source?.homeBaseLat ?? null,
+          homeBaseLng: source?.homeBaseLng ?? null,
+          operatingTimezone: normalizeIanaTimeZone(source?.operatingTimezone, "UTC"),
+          showBusinessPhoneToCustomers: Boolean(source?.showBusinessPhoneToCustomers),
+          showBusinessEmailToCustomers: Boolean(source?.showBusinessEmailToCustomers),
+          showBusinessAddressToCustomers: Boolean(source?.showBusinessAddressToCustomers),
+          aboutVendor: source?.aboutVendor ?? null,
+          aboutBusiness: source?.aboutBusiness ?? null,
+          serviceType: data.serviceType ?? source?.serviceType ?? "prop-decor",
+          experience: Number.isFinite(source?.experience) ? Number(source.experience) : 0,
+          qualifications: Array.isArray(source?.qualifications) ? source.qualifications : [],
+          onlineProfiles: {
+            ...sourceOnlineProfiles,
+            profileBusinessName: normalizedProfileName,
+            operatingTimezone: normalizeIanaTimeZone(source?.operatingTimezone, "UTC"),
+          },
+          address: source?.address ?? "",
+          city: source?.city ?? "",
+          travelMode: source?.travelMode ?? "included",
+          serviceRadius: source?.serviceRadius ?? null,
+          serviceAddress: source?.serviceAddress ?? "",
+          photos: Array.isArray(source?.photos) ? source.photos : [],
+          serviceDescription: source?.serviceDescription ?? "",
+          createdAt: new Date(),
+          updatedAt: new Date(),
+        })
+        .returning();
+
+      await db
+        .update(vendorAccounts)
+        .set({
+          profileComplete: true,
+          activeProfileId: createdProfile.id,
+        })
+        .where(eq(vendorAccounts.id, context.account.id));
+
+      return res.status(201).json({
+        activeProfileId: createdProfile.id,
+        profile: createdProfile,
+      });
+    } catch (error: any) {
+      if (error?.name === "ZodError") {
+        return res.status(400).json({ error: "Validation failed", details: error.errors });
+      }
+      return res.status(500).json({ error: error.message });
+    }
+  });
+
+  app.post("/api/vendor/profiles/switch", ...requireVendorAuth0, async (req, res) => {
+    try {
+      const context = await resolveActiveVendorProfile(req);
+      if (!context?.account?.id) {
+        return res.status(404).json({ error: "Vendor account not found" });
+      }
+
+      const schema = z.object({
+        profileId: z.string().min(1),
+      });
+      const data = schema.parse(req.body ?? {});
+      const profileId = data.profileId.trim();
+
+      const target = context.profiles.find((profile) => profile.id === profileId);
+      if (!target) {
+        return res.status(404).json({ error: "Profile not found for this vendor account" });
+      }
+
+      await db
+        .update(vendorAccounts)
+        .set({ activeProfileId: target.id })
+        .where(eq(vendorAccounts.id, context.account.id));
+
+      return res.json({
+        activeProfileId: target.id,
+        profile: {
+          id: target.id,
+          profileName: getProfileDisplayName(target, context.account.businessName),
+          serviceType: target.serviceType,
+          city: target.city,
+          isOperational: target.active !== false,
+        },
+      });
+    } catch (error: any) {
+      if (error?.name === "ZodError") {
+        return res.status(400).json({ error: "Validation failed", details: error.errors });
+      }
+      return res.status(500).json({ error: error.message });
+    }
+  });
+
+  app.post("/api/vendor/profiles/:id/deactivate", ...requireVendorAuth0, async (req, res) => {
+    try {
+      const context = await resolveActiveVendorProfile(req);
+      if (!context?.account?.id) {
+        return res.status(404).json({ error: "Vendor account not found" });
+      }
+
+      const profileId = asTrimmedString(req.params?.id);
+      if (!profileId) {
+        return res.status(400).json({ error: "Profile id is required" });
+      }
+
+      const target = context.profiles.find((profile) => profile.id === profileId);
+      if (!target) {
+        return res.status(404).json({ error: "Profile not found for this vendor account" });
+      }
+      if (target.active === false) {
+        return res.status(400).json({ error: "Profile is already inactive" });
+      }
+
+      const now = new Date();
+      const inactivatedListings = await db
+        .update(vendorListings)
+        .set({ status: "inactive", updatedAt: now })
+        .where(
+          and(
+            eq(vendorListings.accountId, context.account.id),
+            eq(vendorListings.profileId, target.id),
+            or(eq(vendorListings.status, "active"), eq(vendorListings.status, "draft"))
+          )
+        )
+        .returning({ id: vendorListings.id });
+
+      await db
+        .update(vendorProfiles)
+        .set({ active: false, deactivatedAt: now, updatedAt: now })
+        .where(eq(vendorProfiles.id, target.id));
+
+      const nextActiveProfile = context.profiles.find(
+        (profile) => profile.id !== target.id && profile.active !== false
+      );
+      const nextActiveProfileId =
+        context.activeProfileId === target.id ? nextActiveProfile?.id ?? null : context.activeProfileId;
+
+      if (context.account.activeProfileId !== nextActiveProfileId) {
+        await db
+          .update(vendorAccounts)
+          .set({ activeProfileId: nextActiveProfileId })
+          .where(eq(vendorAccounts.id, context.account.id));
+      }
+
+      return res.json({
+        profileId: target.id,
+        active: false,
+        activeProfileId: nextActiveProfileId,
+        listingsInactivated: inactivatedListings.length,
+      });
+    } catch (error: any) {
+      logRouteError("/api/vendor/profiles/:id/deactivate", error);
+      return res.status(500).json({ error: "Unable to deactivate profile" });
+    }
+  });
+
+  app.post("/api/vendor/profiles/:id/reactivate", ...requireVendorAuth0, async (req, res) => {
+    try {
+      const context = await resolveActiveVendorProfile(req);
+      if (!context?.account?.id) {
+        return res.status(404).json({ error: "Vendor account not found" });
+      }
+
+      const profileId = asTrimmedString(req.params?.id);
+      if (!profileId) {
+        return res.status(400).json({ error: "Profile id is required" });
+      }
+
+      const target = context.profiles.find((profile) => profile.id === profileId);
+      if (!target) {
+        return res.status(404).json({ error: "Profile not found for this vendor account" });
+      }
+      if (target.active !== false) {
+        return res.status(400).json({ error: "Profile is already active" });
+      }
+
+      await db
+        .update(vendorProfiles)
+        .set({ active: true, deactivatedAt: null, updatedAt: new Date() })
+        .where(eq(vendorProfiles.id, target.id));
+
+      const nextActiveProfileId = context.account.activeProfileId || target.id;
+      if (!context.account.activeProfileId) {
+        await db
+          .update(vendorAccounts)
+          .set({ activeProfileId: target.id })
+          .where(eq(vendorAccounts.id, context.account.id));
+      }
+
+      return res.json({
+        profileId: target.id,
+        active: true,
+        activeProfileId: nextActiveProfileId,
+        listingsRemainInactive: true,
+      });
+    } catch (error: any) {
+      logRouteError("/api/vendor/profiles/:id/reactivate", error);
+      return res.status(500).json({ error: "Unable to reactivate profile" });
+    }
+  });
+
   // Vendor Listings Routes (already Auth0 dual middleware and working)
   app.post("/api/vendor/listings", requireDualAuthAuth0, async (req, res) => {
     try {
       const vendorAuth = (req as any).vendorAuth;
-
       if (!vendorAuth) {
         return res.status(403).json({ error: "Vendor account required" });
+      }
+      const profileContext = await resolveActiveVendorProfile(req);
+      const activeProfile = profileContext?.activeProfile;
+      if (!activeProfile?.id) {
+        return res.status(400).json({
+          error: "Vendor profile required before creating a listing. Complete onboarding first.",
+        });
       }
 
       const listingData = req.body?.listingData;
@@ -2520,51 +6836,58 @@ app.post(
       if (!listingData || typeof listingData !== "object") {
         return res.status(400).json({ error: "listingData must be a JSON object." });
       }
+      const vendorType = activeProfile.serviceType;
+      const normalizedListingData = clampListingDescriptions(listingData) as Record<string, any>;
+      const normalizedClassification = normalizeListingClassification(normalizedListingData, {
+        allowLegacyFallback: false,
+      });
 
-      const profiles = await db.select().from(vendorProfiles).where(eq(vendorProfiles.accountId, vendorAuth.id));
-
-      if (profiles.length === 0) {
-        return res.status(400).json({
-          error: "Vendor profile required before creating a listing. Complete onboarding first.",
-        });
-      }
-
-      const profile = profiles[0];
-      const vendorType = profile.serviceType;
       const seededListingData = {
-        ...listingData,
+        ...normalizedClassification.listingData,
 
         // Service area mode (listing-owned)
-        serviceAreaMode: listingData?.serviceAreaMode ?? "radius",
+        serviceAreaMode: normalizedClassification.listingData?.serviceAreaMode ?? "radius",
 
         // Radius: listing → legacy field → default
         serviceRadiusMiles:
-          listingData?.serviceRadiusMiles ??
-          listingData?.serviceRadius ??
-          25,
+          normalizedClassification.listingData?.serviceRadiusMiles ?? 25,
 
         // Location MUST come from listing UI (map picker)
         // Do NOT infer lat/lng from vendor profile
-        serviceLocation: listingData?.serviceLocation ?? null,
-        serviceCenter: listingData?.serviceCenter ?? null,
+        serviceLocation: normalizedClassification.listingData?.serviceLocation ?? null,
+        serviceCenter: normalizedClassification.listingData?.serviceCenter ?? null,
+        instantBookEnabled:
+          parseBooleanInput(normalizedClassification.listingData?.instantBookEnabled) ??
+          (normalizedClassification.category === "Rentals"),
       };
+      const canonicalColumns = buildCanonicalListingColumns({
+        listingDataRaw: seededListingData,
+        classification: normalizedClassification,
+      });
+      const mirroredListingData = mirrorListingQuantityIntoListingData({
+        listingDataRaw: seededListingData,
+        canonical: canonicalColumns,
+      });
 
       const safeVendorType =
         typeof vendorType === "string" && vendorType.trim() ? vendorType.trim() : "vendor";
       const defaultTitleType = formatVendorTypeForDraftTitle(safeVendorType);
 
       const title =
-        (typeof listingData.title === "string" && listingData.title.trim()) || `New ${defaultTitleType} listing`;
-        const [listing] = await db
-          .insert(vendorListings)
-          .values({
-            accountId: vendorAuth.id,
-            profileId: profile.id,
-            status: "draft",
-            title,
-            listingData: seededListingData,
-          })
-          .returning();
+        canonicalColumns.title ||
+        (typeof normalizedListingData.title === "string" && normalizedListingData.title.trim()) ||
+        `New ${defaultTitleType} listing`;
+      const [listing] = await db
+        .insert(vendorListings)
+        .values({
+          accountId: vendorAuth.id,
+          profileId: activeProfile.id,
+          status: "draft",
+          ...canonicalColumns,
+          title,
+          listingData: mirroredListingData,
+        })
+        .returning();
 
       return res.status(201).json(listing);
     } catch (error: any) {
@@ -2580,8 +6903,19 @@ app.post(
       if (!vendorAuth) {
         return res.status(403).json({ error: "Vendor account required" });
       }
+      const profileContext = await resolveActiveVendorProfile(req);
+      const activeProfileId = profileContext?.activeProfileId;
+      if (!activeProfileId) {
+        return res.status(404).json({ error: "Vendor profile not found" });
+      }
       const { id } = req.params;
-      const { listingData, status, title } = req.body;
+      const { listingData, title } = req.body;
+      const normalizedListingData =
+        listingData !== undefined ? (clampListingDescriptions(listingData) as Record<string, any>) : undefined;
+      const normalizedClassification =
+        normalizedListingData !== undefined
+          ? normalizeListingClassification(normalizedListingData, { allowLegacyFallback: false })
+          : null;
 
       const existingListings = await db
         .select()
@@ -2591,28 +6925,87 @@ app.post(
       if (existingListings.length === 0) {
         return res.status(404).json({ error: "Listing not found" });
       }
-
-      const profiles = await db.select().from(vendorProfiles).where(eq(vendorProfiles.accountId, vendorAuth.id));
-
-      if (profiles.length === 0) {
-        return res.status(400).json({ error: "Vendor profile required" });
+      const existingListing = existingListings[0];
+      if ((existingListing?.status || "").toLowerCase() === "deleted") {
+        return res.status(404).json({ error: "Listing not found" });
       }
-
-      const normalizedStatus =
-        status === "active" ? "active" :
-        status === "inactive" ? "inactive" :
-        status === "draft" ? "draft" :
-        undefined;
+      if (existingListing.profileId && existingListing.profileId !== activeProfileId) {
+        return res.status(404).json({ error: "Listing not found in active profile" });
+      }
 
       const updatePayload: any = {
         updatedAt: new Date(),
       };
 
       // Only overwrite fields if they were sent
-      if (listingData !== undefined) updatePayload.listingData = listingData;
+      if (normalizedClassification) {
+        const canonicalClassification = {
+          category: normalizedClassification.category ?? normalizeListingCategory(existingListing?.category),
+          subcategory: normalizedClassification.subcategory ?? normalizeListingSubcategory(existingListing?.subcategory),
+        };
+        const canonicalColumns = buildCanonicalListingColumns({
+          listingDataRaw: normalizedClassification.listingData,
+          existingCanonical: {
+            category: existingListing?.category,
+            subcategory: existingListing?.subcategory,
+            title: existingListing?.title,
+            description: existingListing?.description,
+            whatsIncluded: existingListing?.whatsIncluded,
+            tags: existingListing?.tags,
+            popularFor: existingListing?.popularFor,
+            instantBookEnabled: existingListing?.instantBookEnabled,
+            pricingUnit: existingListing?.pricingUnit,
+            priceCents: existingListing?.priceCents,
+            quantity: existingListing?.quantity,
+            minimumHours: existingListing?.minimumHours,
+            listingServiceCenterLabel: existingListing?.listingServiceCenterLabel,
+            listingServiceCenterLat: existingListing?.listingServiceCenterLat,
+            listingServiceCenterLng: existingListing?.listingServiceCenterLng,
+            serviceRadiusMiles: existingListing?.serviceRadiusMiles,
+            serviceAreaMode: existingListing?.serviceAreaMode,
+            travelOffered: existingListing?.travelOffered,
+            travelFeeEnabled: existingListing?.travelFeeEnabled,
+            travelFeeType: existingListing?.travelFeeType,
+            travelFeeAmountCents: existingListing?.travelFeeAmountCents,
+            pickupOffered: (existingListing as any)?.pickupOffered,
+            deliveryOffered: existingListing?.deliveryOffered,
+            deliveryFeeEnabled: (existingListing as any)?.deliveryFeeEnabled,
+            deliveryFeeAmountCents: existingListing?.deliveryFeeAmountCents,
+            setupOffered: existingListing?.setupOffered,
+            setupFeeEnabled: (existingListing as any)?.setupFeeEnabled,
+            setupFeeAmountCents: existingListing?.setupFeeAmountCents,
+            photos: existingListing?.photos,
+          },
+          classification: canonicalClassification,
+        });
+        updatePayload.listingData = mirrorListingQuantityIntoListingData({
+          listingDataRaw: normalizedClassification.listingData,
+          canonical: canonicalColumns,
+        });
+        Object.assign(updatePayload, canonicalColumns);
+      }
 
       if (typeof title === "string" && title.trim()) {
         updatePayload.title = title.trim();
+      }
+
+      const nextListingData = normalizedClassification
+        ? updatePayload.listingData
+        : existingListing?.listingData;
+      const nextCanonicalPhotos = updatePayload.photos ?? existingListing?.photos;
+      const nextCanonicalCategory = updatePayload.category ?? existingListing?.category;
+      const shouldAutoDeactivateForMissingPhotos =
+        existingListing?.status === "active" && !hasMinimumListingPhotos(nextListingData, nextCanonicalPhotos);
+      const shouldAutoDeactivateForMissingCategory =
+        existingListing?.status === "active" &&
+        !resolveCanonicalListingCategory(nextListingData, nextCanonicalCategory);
+
+      if (shouldAutoDeactivateForMissingPhotos || shouldAutoDeactivateForMissingCategory) {
+        updatePayload.status = "inactive";
+      }
+
+      if (!existingListing.profileId && activeProfileId) {
+        updatePayload.profileId = activeProfileId;
       }
 
       const [updated] = await db
@@ -2635,6 +7028,11 @@ app.post(
       if (!vendorAuth) {
         return res.status(403).json({ error: "Vendor account required" });
       }
+      const profileContext = await resolveActiveVendorProfile(req);
+      const activeProfileId = profileContext?.activeProfileId;
+      if (!activeProfileId) {
+        return res.status(404).json({ error: "Vendor profile not found" });
+      }
 
       const { id } = req.params;
 
@@ -2646,6 +7044,12 @@ app.post(
       if (existing.length === 0) {
         return res.status(404).json({ error: "Listing not found" });
       }
+      if ((existing[0]?.status || "").toLowerCase() === "deleted") {
+        return res.status(404).json({ error: "Listing not found" });
+      }
+      if (existing[0]?.profileId && existing[0].profileId !== activeProfileId) {
+        return res.status(404).json({ error: "Listing not found in active profile" });
+      }
 
       const incomingListingData = req.body?.listingData;
       const incomingTitle = req.body?.title;
@@ -2654,13 +7058,87 @@ app.post(
         return res.status(400).json({ error: "listingData must be a JSON object." });
       }
 
-      const ld: any = (incomingListingData !== undefined ? incomingListingData : existing[0]?.listingData) || {};
+      const normalizedIncomingListingData =
+        incomingListingData !== undefined
+          ? (clampListingDescriptions(incomingListingData) as Record<string, any>)
+          : undefined;
+      const existingListing = existing[0];
+      const rawListingData: any =
+        (clampListingDescriptions(
+          normalizedIncomingListingData !== undefined ? normalizedIncomingListingData : existingListing?.listingData
+        ) as Record<string, any>) || {};
+      const normalizedClassification = normalizeListingClassification(rawListingData, {
+        requireCategory: false,
+        allowLegacyFallback: false,
+      });
+      const ld: any = normalizedClassification.listingData;
+      const canonicalClassification = {
+        category: normalizedClassification.category ?? normalizeListingCategory(existingListing?.category),
+        subcategory: normalizedClassification.subcategory ?? normalizeListingSubcategory(existingListing?.subcategory),
+      };
+      const canonicalColumns = buildCanonicalListingColumns({
+        listingDataRaw: ld,
+        existingCanonical: {
+          category: existingListing?.category,
+          subcategory: existingListing?.subcategory,
+          title: existingListing?.title,
+          description: existingListing?.description,
+          whatsIncluded: existingListing?.whatsIncluded,
+          tags: existingListing?.tags,
+          popularFor: existingListing?.popularFor,
+          instantBookEnabled: existingListing?.instantBookEnabled,
+          pricingUnit: existingListing?.pricingUnit,
+          priceCents: existingListing?.priceCents,
+          quantity: existingListing?.quantity,
+          minimumHours: existingListing?.minimumHours,
+          listingServiceCenterLabel: existingListing?.listingServiceCenterLabel,
+          listingServiceCenterLat: existingListing?.listingServiceCenterLat,
+          listingServiceCenterLng: existingListing?.listingServiceCenterLng,
+          serviceRadiusMiles: existingListing?.serviceRadiusMiles,
+          serviceAreaMode: existingListing?.serviceAreaMode,
+          travelOffered: existingListing?.travelOffered,
+          travelFeeEnabled: existingListing?.travelFeeEnabled,
+          travelFeeType: existingListing?.travelFeeType,
+          travelFeeAmountCents: existingListing?.travelFeeAmountCents,
+          pickupOffered: (existingListing as any)?.pickupOffered,
+          deliveryOffered: existingListing?.deliveryOffered,
+          deliveryFeeEnabled: (existingListing as any)?.deliveryFeeEnabled,
+          deliveryFeeAmountCents: existingListing?.deliveryFeeAmountCents,
+          setupOffered: existingListing?.setupOffered,
+          setupFeeEnabled: (existingListing as any)?.setupFeeEnabled,
+          setupFeeAmountCents: existingListing?.setupFeeAmountCents,
+          photos: existingListing?.photos,
+        },
+        classification: canonicalClassification,
+      });
 
       // ---- Publish validation (hard requirements) ----
-      const mode = String(ld.serviceAreaMode || "").trim(); // radius | nationwide | global
+      const mode = asTrimmedString(canonicalColumns.serviceAreaMode ?? existingListing?.serviceAreaMode).toLowerCase();
       const loc = ld.serviceLocation;
+      const categoryOk = Boolean(canonicalColumns.category ?? normalizeListingCategory(existingListing?.category));
+      const resolvedTitle = canonicalColumns.title ?? normalizeListingTitleCandidate(existingListing?.title);
+      const resolvedDescription =
+        canonicalColumns.description ?? (asTrimmedString(existingListing?.description) || null);
+      const resolvedPriceCents = canonicalColumns.priceCents ?? parseIntegerValue(existingListing?.priceCents);
+      const resolvedPhotos =
+        canonicalColumns.photos.length > 0
+          ? canonicalColumns.photos
+          : toUniqueTrimmedStringList(existingListing?.photos);
 
-      const hasLoc =
+      const centerLat =
+        canonicalColumns.listingServiceCenterLat ?? parseLatLngValue(existingListing?.listingServiceCenterLat);
+      const centerLng =
+        canonicalColumns.listingServiceCenterLng ?? parseLatLngValue(existingListing?.listingServiceCenterLng);
+      const centerLabel =
+        asTrimmedString(canonicalColumns.listingServiceCenterLabel) ||
+        asTrimmedString(existingListing?.listingServiceCenterLabel);
+
+      const hasTypedLocation = Boolean(
+        centerLabel &&
+        Number.isFinite(centerLat) &&
+        Number.isFinite(centerLng)
+      );
+      const hasLegacyLocation =
         loc &&
         typeof loc === "object" &&
         typeof loc.label === "string" &&
@@ -2668,32 +7146,24 @@ app.post(
         Number.isFinite(Number(loc.lng)) &&
         typeof loc.country === "string" &&
         loc.country.trim().length > 0;
+      const hasLoc = hasTypedLocation || Boolean(hasLegacyLocation);
 
-      const titleOk =
-        typeof ld.listingTitle === "string" && ld.listingTitle.trim().length >= 2;
-
-      const descOk =
-        typeof ld.listingDescription === "string" && ld.listingDescription.trim().length >= 10;
-
-      const photosOk =
-        Array.isArray(ld?.photos?.names) && ld.photos.names.length > 0;
-      const priceOk = hasValidListingPrice(ld);
+      const titleOk = Boolean(resolvedTitle && resolvedTitle.trim().length >= 2);
+      const descOk = Boolean(resolvedDescription && resolvedDescription.trim().length >= 10);
+      const photosOk = hasMinimumListingPhotos(ld, resolvedPhotos);
+      const priceOk = hasValidListingPrice(ld, resolvedPriceCents);
 
       // service area checks
       const modeOk = mode === "radius" || mode === "nationwide" || mode === "global";
 
-      const center = ld.serviceCenter;
-      const hasCenter =
-        center &&
-        typeof center === "object" &&
-        Number.isFinite(Number(center.lat)) &&
-        Number.isFinite(Number(center.lng));
+      const hasCenter = Number.isFinite(centerLat) && Number.isFinite(centerLng);
 
-      const radiusMiles = ld.serviceRadiusMiles ?? ld.serviceRadius ?? null;
+      const radiusMiles = canonicalColumns.serviceRadiusMiles ?? parseIntegerValue(existingListing?.serviceRadiusMiles);
       const radiusOk =
         mode !== "radius" ? true : Number.isFinite(Number(radiusMiles)) && Number(radiusMiles) > 0;
 
       const missing = {
+        category: !categoryOk,
         serviceAreaMode: !modeOk,
         serviceLocation: !hasLoc,
         listingTitle: !titleOk,
@@ -2706,9 +7176,10 @@ app.post(
 
       if (Object.values(missing).some(Boolean)) {
         const reasons: string[] = [];
+        if (missing.category) reasons.push("Select category.");
         if (missing.listingTitle) reasons.push("Add listing title.");
         if (missing.listingDescription) reasons.push("Add listing description (at least 10 characters).");
-        if (missing.photos) reasons.push("Add at least 1 photo.");
+        if (missing.photos) reasons.push(`Add at least ${MIN_LISTING_PHOTO_COUNT} photos.`);
         if (missing.price) reasons.push("Add a valid price.");
         if (missing.serviceAreaMode) reasons.push("Select service area mode.");
         if (missing.serviceLocation) reasons.push("Select service location.");
@@ -2726,8 +7197,16 @@ app.post(
         updatedAt: new Date(),
       };
 
-      if (incomingListingData !== undefined) {
-        publishUpdatePayload.listingData = incomingListingData;
+      publishUpdatePayload.listingData = mirrorListingQuantityIntoListingData({
+        listingDataRaw: ld,
+        canonical: canonicalColumns,
+      });
+      Object.assign(
+        publishUpdatePayload,
+        canonicalColumns
+      );
+      if (!existingListing?.profileId && activeProfileId) {
+        publishUpdatePayload.profileId = activeProfileId;
       }
 
       if (typeof incomingTitle === "string" && incomingTitle.trim()) {
@@ -2754,6 +7233,11 @@ app.post(
       if (!vendorAuth) {
         return res.status(403).json({ error: "Vendor account required" });
       }
+      const profileContext = await resolveActiveVendorProfile(req);
+      const activeProfileId = profileContext?.activeProfileId;
+      if (!activeProfileId) {
+        return res.status(404).json({ error: "Vendor profile not found" });
+      }
 
       const { id } = req.params;
 
@@ -2765,11 +7249,18 @@ app.post(
       if (existing.length === 0) {
         return res.status(404).json({ error: "Listing not found" });
       }
+      if ((existing[0]?.status || "").toLowerCase() === "deleted") {
+        return res.status(404).json({ error: "Listing not found" });
+      }
+      if (existing[0]?.profileId && existing[0].profileId !== activeProfileId) {
+        return res.status(404).json({ error: "Listing not found in active profile" });
+      }
 
       const [updated] = await db
         .update(vendorListings)
         .set({
           status: "inactive",
+          ...(existing[0]?.profileId ? {} : { profileId: activeProfileId }),
           updatedAt: new Date(),
         })
         .where(and(eq(vendorListings.id, id), eq(vendorListings.accountId, vendorAuth.id)))
@@ -2836,37 +7327,14 @@ app.post(
   }
 
   async function getCompletedBookingsCountForVendor(vendorId: string): Promise<number> {
-    const vendorRefCol = await getBookingsVendorRefColumn();
-
-    if (vendorRefCol === "vendor_account_id") {
-      const result: any = await db.execute(drizzleSql`
-        select count(*)::int as "count"
-        from bookings b
-        where b.vendor_account_id = ${vendorId}
-          and lower(coalesce(b.status::text, '')) = 'completed'
-      `);
-      const row = extractRows<{ count?: number | string | null }>(result)[0];
-      return toNonNegativeInt(row?.count, 0);
-    }
-
-    if (vendorRefCol === "vendor_id") {
-      const result: any = await db.execute(drizzleSql`
-        select count(*)::int as "count"
-        from bookings b
-        where b.vendor_id = ${vendorId}
-          and lower(coalesce(b.status::text, '')) = 'completed'
-      `);
-      const row = extractRows<{ count?: number | string | null }>(result)[0];
-      return toNonNegativeInt(row?.count, 0);
-    }
-
     const result: any = await db.execute(drizzleSql`
       select count(distinct b.id)::int as "count"
       from bookings b
-      inner join booking_items bi on bi.booking_id = b.id
-      inner join vendor_listings vl on vl.id = bi.listing_id
-      where vl.account_id = ${vendorId}
-        and lower(coalesce(b.status::text, '')) = 'completed'
+      left join vendor_listings listing_owner on listing_owner.id = b.listing_id
+      left join booking_items bi on b.listing_id is null and bi.booking_id = b.id
+      left join vendor_listings legacy_listing on legacy_listing.id = bi.listing_id
+      where coalesce(b.vendor_account_id, listing_owner.account_id, legacy_listing.account_id) = ${vendorId}
+        and b.status = 'completed'
     `);
     const row = extractRows<{ count?: number | string | null }>(result)[0];
     return toNonNegativeInt(row?.count, 0);
@@ -2879,35 +7347,80 @@ app.post(
       res.setHeader("Cache-Control", "no-store");
 
       const vendorId = asTrimmedString(req.params?.vendorId);
+      const requestedProfileId = asTrimmedString(req.query?.profileId);
       if (!vendorId) {
         return res.status(400).json({ error: "Invalid vendor id" });
       }
 
-      const vendorRows = await db
+      await deactivateActiveListingsViolatingPublishGate(vendorId);
+
+      const accountRows = await db
         .select({
           id: vendorAccounts.id,
           businessName: vendorAccounts.businessName,
-          serviceDescription: vendorProfiles.serviceDescription,
-          city: vendorProfiles.city,
-          serviceType: vendorProfiles.serviceType,
-          onlineProfiles: vendorProfiles.onlineProfiles,
+          activeProfileId: vendorAccounts.activeProfileId,
         })
         .from(vendorAccounts)
-        .leftJoin(vendorProfiles, eq(vendorProfiles.accountId, vendorAccounts.id))
-        .where(eq(vendorAccounts.id, vendorId))
+        .where(and(eq(vendorAccounts.id, vendorId), eq(vendorAccounts.active, true)))
         .limit(1);
 
-      const vendor = vendorRows[0];
-      if (!vendor) {
+      const account = accountRows[0];
+      if (!account) {
         return res.status(404).json({ error: "Vendor not found" });
       }
+
+      const profileWhere = requestedProfileId
+        ? and(
+            eq(vendorProfiles.accountId, vendorId),
+            eq(vendorProfiles.id, requestedProfileId),
+            eq(vendorProfiles.active, true)
+          )
+        : account.activeProfileId
+          ? and(
+              eq(vendorProfiles.accountId, vendorId),
+              eq(vendorProfiles.id, account.activeProfileId),
+              eq(vendorProfiles.active, true)
+            )
+          : and(eq(vendorProfiles.accountId, vendorId), eq(vendorProfiles.active, true));
+
+      const profileRows = await db
+        .select()
+        .from(vendorProfiles)
+        .where(profileWhere)
+        .orderBy(asc(vendorProfiles.createdAt), asc(vendorProfiles.id))
+        .limit(1);
+      if (requestedProfileId && !profileRows[0]) {
+        return res.status(404).json({ error: "Vendor profile not found" });
+      }
+      const selectedProfile =
+        profileRows[0] ||
+        (
+          await db
+            .select()
+            .from(vendorProfiles)
+            .where(and(eq(vendorProfiles.accountId, vendorId), eq(vendorProfiles.active, true)))
+            .orderBy(asc(vendorProfiles.createdAt), asc(vendorProfiles.id))
+            .limit(1)
+        )[0];
+
+      if (!selectedProfile) {
+        return res.status(404).json({ error: "Vendor profile not found" });
+      }
+
+      const vendor = {
+        id: account.id,
+        businessName: getProfileDisplayName(selectedProfile, account.businessName),
+        serviceDescription: selectedProfile.serviceDescription,
+        city: selectedProfile.city,
+        serviceType: selectedProfile.serviceType,
+        onlineProfiles: selectedProfile.onlineProfiles,
+      };
 
       const onlineProfiles =
         vendor.onlineProfiles && typeof vendor.onlineProfiles === "object" && !Array.isArray(vendor.onlineProfiles)
           ? (vendor.onlineProfiles as Record<string, unknown>)
           : {};
-      const aboutBusiness =
-        asTrimmedString((onlineProfiles as any).aboutBusiness) || asTrimmedString(vendor.serviceDescription);
+      const aboutBusiness = asTrimmedString((onlineProfiles as any).aboutBusiness);
       const aboutOwner = asTrimmedString((onlineProfiles as any).aboutOwner);
       const profileImageUrl = asTrimmedString((onlineProfiles as any).shopProfileImageUrl);
       const coverImageUrl = asTrimmedString((onlineProfiles as any).shopCoverImageUrl);
@@ -2916,7 +7429,7 @@ app.post(
       const serviceArea = asTrimmedString((onlineProfiles as any).serviceAreaLabel);
       const inBusinessSinceYear = asTrimmedString((onlineProfiles as any).inBusinessSinceYear);
       const yearsInBusiness = asTrimmedString((onlineProfiles as any).yearsInBusiness);
-      const hobbies = asTrimmedString((onlineProfiles as any).hobbies);
+      const hobbies = serializeHobbyList((onlineProfiles as any).hobbies);
       const likesDislikes = asTrimmedString((onlineProfiles as any).likesDislikes);
       const homeState = asTrimmedString((onlineProfiles as any).homeState);
       const funFacts = asTrimmedString((onlineProfiles as any).funFacts);
@@ -2926,23 +7439,69 @@ app.post(
       const listings = await db
         .select({
           id: vendorListings.id,
+          status: vendorListings.status,
+          category: vendorListings.category,
+          subcategory: vendorListings.subcategory,
           title: vendorListings.title,
+          description: vendorListings.description,
+          whatsIncluded: vendorListings.whatsIncluded,
+          tags: vendorListings.tags,
+          popularFor: vendorListings.popularFor,
+          instantBookEnabled: vendorListings.instantBookEnabled,
+          pricingUnit: vendorListings.pricingUnit,
+          priceCents: vendorListings.priceCents,
+          quantity: vendorListings.quantity,
+          minimumHours: vendorListings.minimumHours,
+          serviceAreaMode: vendorListings.serviceAreaMode,
+          listingServiceCenterLabel: vendorListings.listingServiceCenterLabel,
+          listingServiceCenterLat: vendorListings.listingServiceCenterLat,
+          listingServiceCenterLng: vendorListings.listingServiceCenterLng,
+          serviceRadiusMiles: vendorListings.serviceRadiusMiles,
+          travelOffered: vendorListings.travelOffered,
+          travelFeeEnabled: vendorListings.travelFeeEnabled,
+          travelFeeType: vendorListings.travelFeeType,
+          travelFeeAmountCents: vendorListings.travelFeeAmountCents,
+          pickupOffered: vendorListings.pickupOffered,
+          deliveryOffered: vendorListings.deliveryOffered,
+          deliveryFeeEnabled: vendorListings.deliveryFeeEnabled,
+          deliveryFeeAmountCents: vendorListings.deliveryFeeAmountCents,
+          setupOffered: vendorListings.setupOffered,
+          setupFeeEnabled: vendorListings.setupFeeEnabled,
+          setupFeeAmountCents: vendorListings.setupFeeAmountCents,
+          photos: vendorListings.photos,
           listingData: vendorListings.listingData,
           serviceType: vendorProfiles.serviceType,
           city: vendorProfiles.city,
           vendorId: vendorAccounts.id,
-          vendorName: vendorAccounts.businessName,
+          vendorName: vendorProfiles.profileName,
         })
         .from(vendorListings)
         .innerJoin(vendorAccounts, eq(vendorListings.accountId, vendorAccounts.id))
-        .leftJoin(vendorProfiles, eq(vendorListings.profileId, vendorProfiles.id))
-        .where(and(eq(vendorListings.accountId, vendorId), eq(vendorListings.status, "active")))
+        .innerJoin(vendorProfiles, eq(vendorListings.profileId, vendorProfiles.id))
+        .where(
+          and(
+            eq(vendorListings.accountId, vendorId),
+            eq(vendorListings.profileId, selectedProfile.id),
+            eq(vendorListings.status, "active"),
+            eq(vendorProfiles.active, true),
+            eq(vendorAccounts.active, true)
+          )
+        )
         .orderBy(asc(vendorListings.createdAt), asc(vendorListings.id));
 
-      const pricedListings = listings.filter((listing) => hasValidListingPrice((listing as any)?.listingData));
+      const compliantListings = listings.filter(
+        (listing) =>
+          isListingPubliclyCompliant({
+            listingDataRaw: (listing as any)?.listingData,
+            canonicalCategory: (listing as any)?.category,
+            canonicalPriceCents: (listing as any)?.priceCents,
+            canonicalPhotos: (listing as any)?.photos,
+          })
+      );
 
-      const listingsWithVendorMeta = pricedListings.map((listing: any) => ({
+      const listingsWithVendorMeta = compliantListings.map((listing: any) => ({
         ...listing,
+        vendorName: asTrimmedString(listing?.vendorName) || vendor.businessName,
         vendorProfileImageUrl: profileImageUrl || null,
       }));
 
@@ -2959,6 +7518,7 @@ app.post(
         inner join vendor_listings vl on vl.id = lr.listing_id
         left join users u on u.id = lr.user_id
         where vl.account_id = ${vendorId}
+          and vl.profile_id = ${selectedProfile.id}
           and coalesce(lr.is_published, true) = true
         order by lr.created_at desc
         limit 200
@@ -3010,7 +7570,26 @@ app.post(
         reviewBreakdown[star] += 1;
       }
 
-      const completedBookingsCount = await getCompletedBookingsCountForVendor(vendorId);
+      const completedBookingsRows: any = await db.execute(drizzleSql`
+        select count(distinct b.id)::int as "count"
+        from bookings b
+        left join vendor_listings listing_owner on listing_owner.id = b.listing_id
+        left join lateral (
+          select bi.listing_id
+          from booking_items bi
+          where b.listing_id is null
+            and bi.booking_id = b.id
+          order by bi.id asc
+          limit 1
+        ) legacy_item on true
+        left join vendor_listings legacy_listing on legacy_listing.id = legacy_item.listing_id
+        where coalesce(listing_owner.account_id, legacy_listing.account_id) = ${vendorId}
+          and coalesce(listing_owner.profile_id, legacy_listing.profile_id) = ${selectedProfile.id}
+          and b.status = 'completed'
+      `);
+      const completedBookingsCount = Number(
+        extractRows<{ count?: number | string }>(completedBookingsRows)[0]?.count || 0
+      );
       const eventsServedTotal = eventsServedBaseline + completedBookingsCount;
 
       const chatContexts = await listVendorBookingChatContexts(vendorId);
@@ -3033,6 +7612,7 @@ app.post(
       return res.json({
         vendor: {
           id: vendor.id,
+          profileId: selectedProfile.id,
           businessName: vendor.businessName,
           aboutBusiness: aboutBusiness || null,
           aboutOwner: aboutOwner || null,
@@ -3041,6 +7621,7 @@ app.post(
           coverImagePosition,
           tagline: tagline || null,
           serviceArea: serviceArea || null,
+          serviceRadius: selectedProfile.serviceRadius ?? null,
           inBusinessSinceYear: inBusinessSinceYear || null,
           yearsInBusiness: yearsInBusiness || null,
           hobbies: hobbies || null,
@@ -3073,11 +7654,40 @@ app.post(
   app.get("/api/listings/public", async (req, res) => {
     try {
       res.setHeader("Cache-Control", "no-store");
-      await deactivateActiveListingsWithoutValidPrice();
+      await deactivateActiveListingsViolatingPublishGate();
       const listings = await db
         .select({
           id: vendorListings.id,
+          status: vendorListings.status,
           title: vendorListings.title,
+          category: vendorListings.category,
+          subcategory: vendorListings.subcategory,
+          description: vendorListings.description,
+          whatsIncluded: vendorListings.whatsIncluded,
+          tags: vendorListings.tags,
+          popularFor: vendorListings.popularFor,
+          instantBookEnabled: vendorListings.instantBookEnabled,
+          pricingUnit: vendorListings.pricingUnit,
+          priceCents: vendorListings.priceCents,
+          quantity: vendorListings.quantity,
+          minimumHours: vendorListings.minimumHours,
+          serviceAreaMode: vendorListings.serviceAreaMode,
+          listingServiceCenterLabel: vendorListings.listingServiceCenterLabel,
+          listingServiceCenterLat: vendorListings.listingServiceCenterLat,
+          listingServiceCenterLng: vendorListings.listingServiceCenterLng,
+          serviceRadiusMiles: vendorListings.serviceRadiusMiles,
+          travelOffered: vendorListings.travelOffered,
+          travelFeeEnabled: vendorListings.travelFeeEnabled,
+          travelFeeType: vendorListings.travelFeeType,
+          travelFeeAmountCents: vendorListings.travelFeeAmountCents,
+          pickupOffered: vendorListings.pickupOffered,
+          deliveryOffered: vendorListings.deliveryOffered,
+          deliveryFeeEnabled: vendorListings.deliveryFeeEnabled,
+          deliveryFeeAmountCents: vendorListings.deliveryFeeAmountCents,
+          setupOffered: vendorListings.setupOffered,
+          setupFeeEnabled: vendorListings.setupFeeEnabled,
+          setupFeeAmountCents: vendorListings.setupFeeAmountCents,
+          photos: vendorListings.photos,
           listingData: vendorListings.listingData,
 
           serviceType: vendorProfiles.serviceType,
@@ -3089,9 +7699,23 @@ app.post(
         .from(vendorListings)
         .innerJoin(vendorProfiles, eq(vendorListings.profileId, vendorProfiles.id))
         .innerJoin(vendorAccounts, eq(vendorProfiles.accountId, vendorAccounts.id))
-        .where(eq(vendorListings.status, "active"));
-      const pricedListings = listings.filter((listing) => hasValidListingPrice((listing as any)?.listingData));
-      const listingsWithVendorMeta = pricedListings.map((listing: any) => {
+        .where(
+          and(
+            eq(vendorListings.status, "active"),
+            eq(vendorProfiles.active, true),
+            eq(vendorAccounts.active, true)
+          )
+        );
+      const compliantListings = listings.filter(
+        (listing) =>
+          isListingPubliclyCompliant({
+            listingDataRaw: (listing as any)?.listingData,
+            canonicalCategory: (listing as any)?.category,
+            canonicalPriceCents: (listing as any)?.priceCents,
+            canonicalPhotos: (listing as any)?.photos,
+          })
+      );
+      const listingsWithVendorMeta = compliantListings.map((listing: any) => {
         const onlineProfiles =
           listing.vendorOnlineProfiles &&
           typeof listing.vendorOnlineProfiles === "object" &&
@@ -3132,7 +7756,36 @@ app.post(
       const rows = await db
         .select({
           id: vendorListings.id,
+          status: vendorListings.status,
           title: vendorListings.title,
+          category: vendorListings.category,
+          subcategory: vendorListings.subcategory,
+          description: vendorListings.description,
+          whatsIncluded: vendorListings.whatsIncluded,
+          tags: vendorListings.tags,
+          popularFor: vendorListings.popularFor,
+          instantBookEnabled: vendorListings.instantBookEnabled,
+          pricingUnit: vendorListings.pricingUnit,
+          priceCents: vendorListings.priceCents,
+          quantity: vendorListings.quantity,
+          minimumHours: vendorListings.minimumHours,
+          serviceAreaMode: vendorListings.serviceAreaMode,
+          listingServiceCenterLabel: vendorListings.listingServiceCenterLabel,
+          listingServiceCenterLat: vendorListings.listingServiceCenterLat,
+          listingServiceCenterLng: vendorListings.listingServiceCenterLng,
+          serviceRadiusMiles: vendorListings.serviceRadiusMiles,
+          travelOffered: vendorListings.travelOffered,
+          travelFeeEnabled: vendorListings.travelFeeEnabled,
+          travelFeeType: vendorListings.travelFeeType,
+          travelFeeAmountCents: vendorListings.travelFeeAmountCents,
+          pickupOffered: vendorListings.pickupOffered,
+          deliveryOffered: vendorListings.deliveryOffered,
+          deliveryFeeEnabled: vendorListings.deliveryFeeEnabled,
+          deliveryFeeAmountCents: vendorListings.deliveryFeeAmountCents,
+          setupOffered: vendorListings.setupOffered,
+          setupFeeEnabled: vendorListings.setupFeeEnabled,
+          setupFeeAmountCents: vendorListings.setupFeeAmountCents,
+          photos: vendorListings.photos,
           listingData: vendorListings.listingData,
 
           serviceType: vendorProfiles.serviceType,
@@ -3144,10 +7797,28 @@ app.post(
         .from(vendorListings)
         .innerJoin(vendorProfiles, eq(vendorListings.profileId, vendorProfiles.id))
         .innerJoin(vendorAccounts, eq(vendorProfiles.accountId, vendorAccounts.id))
-        .where(and(eq(vendorListings.status, "active"), eq(vendorListings.id, id)))
+        .where(
+          and(
+            eq(vendorListings.status, "active"),
+            eq(vendorListings.id, id),
+            eq(vendorProfiles.active, true),
+            eq(vendorAccounts.active, true)
+          )
+        )
         .limit(1);
 
       const listingRaw = rows[0];
+      const isCompliantListing = listingRaw
+        ? isListingPubliclyCompliant({
+            listingDataRaw: (listingRaw as any).listingData,
+            canonicalCategory: (listingRaw as any).category,
+            canonicalPriceCents: (listingRaw as any).priceCents,
+            canonicalPhotos: (listingRaw as any).photos,
+          })
+        : false;
+      if (!isCompliantListing) {
+        return res.status(404).json({ error: "Not found" });
+      }
       const onlineProfiles =
         listingRaw?.vendorOnlineProfiles &&
         typeof listingRaw.vendorOnlineProfiles === "object" &&
@@ -3244,25 +7915,38 @@ app.post(
       if (!vendorAuth) {
         return res.status(403).json({ error: "Vendor account required" });
       }
-      await deactivateActiveListingsWithoutValidPrice(vendorAuth.id);
-      const { status } = req.query;
+      const profileContext = await resolveActiveVendorProfile(req);
+      const activeProfileId = profileContext?.activeProfileId;
+      if (!activeProfileId) {
+        return res.json([]);
+      }
+      await deactivateActiveListingsViolatingPublishGate(vendorAuth.id);
 
-      // Map UI bucket names to DB status values
-      const normalizedStatus =
-        status === "active" ? "active" :
-        status === "inactive" ? "inactive" :
-        status === "draft" ? "draft" :
-        undefined;
+      // Backfill legacy rows that predate profile ownership.
+      await db
+        .update(vendorListings)
+        .set({ profileId: activeProfileId })
+        .where(and(eq(vendorListings.accountId, vendorAuth.id), isNull(vendorListings.profileId)));
 
-      const whereClause = normalizedStatus
-        ? and(eq(vendorListings.accountId, vendorAuth.id), eq(vendorListings.status, normalizedStatus))
-        : eq(vendorListings.accountId, vendorAuth.id);
+      const requestedStatus = asTrimmedString(req.query?.status).toLowerCase();
+      if (requestedStatus && !["active", "draft", "inactive"].includes(requestedStatus)) {
+        return res.status(400).json({ error: "Invalid status filter" });
+      }
+
+      let whereClause = and(
+        eq(vendorListings.accountId, vendorAuth.id),
+        eq(vendorListings.profileId, activeProfileId),
+        ne(vendorListings.status, "deleted")
+      );
+      if (requestedStatus) {
+        whereClause = and(whereClause, eq(vendorListings.status, requestedStatus as any));
+      }
 
       const listings = await db
         .select()
         .from(vendorListings)
         .where(whereClause)
-        .orderBy(asc(vendorListings.createdAt), asc(vendorListings.id));
+        .orderBy(desc(vendorListings.updatedAt), desc(vendorListings.createdAt), asc(vendorListings.id));
 
       res.json(listings);
     } catch (error: any) {
@@ -3278,15 +7962,39 @@ app.post(
       if (!vendorAuth) {
         return res.status(403).json({ error: "Vendor account required" });
       }
+      const profileContext = await resolveActiveVendorProfile(req);
+      const activeProfileId = profileContext?.activeProfileId;
+      if (!activeProfileId) {
+        return res.status(404).json({ error: "Vendor profile not found" });
+      }
       const { id } = req.params;
 
       const listings = await db
         .select()
         .from(vendorListings)
-        .where(and(eq(vendorListings.id, id), eq(vendorListings.accountId, vendorAuth.id)));
+        .where(
+          and(
+            eq(vendorListings.id, id),
+            eq(vendorListings.accountId, vendorAuth.id)
+          )
+        );
 
       if (listings.length === 0) {
         return res.status(404).json({ error: "Listing not found" });
+      }
+      if ((listings[0]?.status || "").toLowerCase() === "deleted") {
+        return res.status(404).json({ error: "Listing not found" });
+      }
+      if (listings[0]?.profileId && listings[0].profileId !== activeProfileId) {
+        return res.status(404).json({ error: "Listing not found in active profile" });
+      }
+      if (!listings[0]?.profileId) {
+        const [backfilled] = await db
+          .update(vendorListings)
+          .set({ profileId: activeProfileId, updatedAt: new Date() })
+          .where(and(eq(vendorListings.id, id), eq(vendorListings.accountId, vendorAuth.id)))
+          .returning();
+        return res.json(backfilled);
       }
 
       res.json(listings[0]);
@@ -3303,6 +8011,11 @@ app.post(
       if (!vendorAuth) {
         return res.status(403).json({ error: "Vendor account required" });
       }
+      const profileContext = await resolveActiveVendorProfile(req);
+      const activeProfileId = profileContext?.activeProfileId;
+      if (!activeProfileId) {
+        return res.status(404).json({ error: "Vendor profile not found" });
+      }
       const { id } = req.params;
 
       const existing = await db
@@ -3313,15 +8026,49 @@ app.post(
       if (existing.length === 0) {
         return res.status(404).json({ error: "Listing not found" });
       }
+      if ((existing[0]?.status || "").toLowerCase() === "deleted") {
+        return res.status(404).json({ error: "Listing not found" });
+      }
+      if (existing[0]?.profileId && existing[0].profileId !== activeProfileId) {
+        return res.status(404).json({ error: "Listing not found in active profile" });
+      }
+      if (!existing[0]?.profileId) {
+        await db
+          .update(vendorListings)
+          .set({ profileId: activeProfileId, updatedAt: new Date() })
+          .where(and(eq(vendorListings.id, id), eq(vendorListings.accountId, vendorAuth.id)));
+      }
 
-      await db
-        .delete(vendorListings)
-        .where(and(eq(vendorListings.id, id), eq(vendorListings.accountId, vendorAuth.id)));
+      const bookingHistoryResult: any = await db.execute(drizzleSql`
+        select count(distinct b.id)::int as "count"
+        from bookings b
+        left join booking_items bi on bi.booking_id = b.id
+        where b.listing_id = ${id}
+           or (b.listing_id is null and bi.listing_id = ${id})
+      `);
+      const preservedBookingHistoryCount = Number(
+        extractRows<{ count?: number | string | null }>(bookingHistoryResult)[0]?.count || 0
+      );
 
-      return res.status(204).send();
+      const [inactivatedListing] = await db
+        .update(vendorListings)
+        .set({ status: "deleted", updatedAt: new Date() })
+        .where(and(eq(vendorListings.id, id), eq(vendorListings.accountId, vendorAuth.id)))
+        .returning({
+          id: vendorListings.id,
+          status: vendorListings.status,
+        });
+
+      return res.json({
+        listingId: inactivatedListing?.id ?? id,
+        status: inactivatedListing?.status ?? "deleted",
+        action: "deleted",
+        hiddenFromVendor: true,
+        preservedBookingHistoryCount,
+      });
     } catch (error: any) {
       logRouteError("/api/vendor/listings/:id DELETE", error);
-      return res.status(500).json({ error: "Unable to delete listing" });
+      return res.status(500).json({ error: "Unable to deactivate listing" });
     }
   });
 
@@ -3376,7 +8123,7 @@ app.post(
         return res.json({ connected: false });
       }
 
-      const { checkAccountOnboardingStatus } = await import("./stripe");
+      const { checkAccountOnboardingStatus, ensureManualPayoutSchedule } = await import("./stripe");
       const status = await checkAccountOnboardingStatus(account.stripeConnectId);
 
       if (status.complete && !account.stripeOnboardingComplete) {
@@ -3385,12 +8132,16 @@ app.post(
           .set({ stripeOnboardingComplete: true })
           .where(eq(vendorAccounts.id, account.id));
       }
+      if (status.complete && !status.manualPayoutSchedule) {
+        await ensureManualPayoutSchedule(account.stripeConnectId);
+      }
 
       res.json({
         connected: true,
         complete: status.complete,
         detailsSubmitted: status.detailsSubmitted,
         chargesEnabled: status.chargesEnabled,
+        manualPayoutSchedule: true,
       });
     } catch (error: any) {
       res.status(500).json({ error: error.message });
@@ -3449,7 +8200,12 @@ app.post(
         return res.json({ url: result.onboardingUrl });
       }
 
-      const { checkAccountOnboardingStatus, createDashboardLoginLink, createAccountOnboardingLink } = await import("./stripe");
+      const {
+        checkAccountOnboardingStatus,
+        createDashboardLoginLink,
+        createAccountOnboardingLink,
+        ensureManualPayoutSchedule,
+      } = await import("./stripe");
       const status = await checkAccountOnboardingStatus(account.stripeConnectId);
 
       if (status.complete) {
@@ -3462,6 +8218,10 @@ app.post(
 
         if (accountType === "standard") {
           return res.json({ url: "https://dashboard.stripe.com" });
+        }
+
+        if (!status.manualPayoutSchedule) {
+          await ensureManualPayoutSchedule(account.stripeConnectId);
         }
 
         const url = await createDashboardLoginLink(account.stripeConnectId);
@@ -3498,6 +8258,19 @@ app.post(
           recentBookings: [],
         });
       }
+      const profileContext = await resolveActiveVendorProfile(req);
+      const activeProfileId = profileContext?.activeProfileId;
+      if (!activeProfileId) {
+        return res.json({
+          totalBookings: 0,
+          bookingsThisMonth: 0,
+          revenue: 0,
+          revenueGrowth: 0,
+          profileViews: 0,
+          profileViewsGrowth: 0,
+          recentBookings: [],
+        });
+      }
 
       const normalizeAmountToCents = (value: unknown) => {
         const n = Number(value ?? 0);
@@ -3507,62 +8280,38 @@ app.post(
         return n;
       };
 
-      const vendorRefCol = await getBookingsVendorRefColumn();
-
       let bookingRows: Array<{
         id: string;
         status: string | null;
         totalAmount: number | null;
+        vendorProfileId?: string | null;
         createdAt: Date | string | null;
         eventDate: string | null;
         eventLocation: string | null;
       }> = [];
+      const rows: any = await db.execute(drizzleSql`
+        select
+          b.id,
+          b.status,
+          b.total_amount as "totalAmount",
+          b.listing_title_snapshot as "listingTitleSnapshot",
+          coalesce(b.vendor_profile_id, listing_owner.profile_id) as "vendorProfileId",
+          b.created_at as "createdAt",
+          coalesce(b.event_date, e.date) as "eventDate",
+          b.event_location as "eventLocation"
+        from bookings b
+        left join events e on e.id = b.event_id
+        left join vendor_listings listing_owner on listing_owner.id = b.listing_id
+        where coalesce(b.vendor_account_id, listing_owner.account_id) = ${vendorAccountId}
+        order by b.created_at desc
+      `);
+      bookingRows = extractRows(rows);
 
-      if (vendorRefCol === "vendor_account_id") {
-        const rows = await db
-          .select({
-            id: bookings.id,
-            status: bookings.status,
-            totalAmount: bookings.totalAmount,
-            createdAt: bookings.createdAt,
-            eventDate: bookings.eventDate,
-            eventLocation: bookings.eventLocation,
-          })
-          .from(bookings)
-          .where(eq(bookings.vendorAccountId, vendorAccountId))
-          .orderBy(desc(bookings.createdAt));
-        bookingRows = rows as typeof bookingRows;
-      } else if (vendorRefCol === "vendor_id") {
-        const rows: any = await db.execute(drizzleSql`
-          select
-            b.id,
-            b.status,
-            b.total_amount as "totalAmount",
-            b.created_at as "createdAt",
-            b.event_date as "eventDate",
-            b.event_location as "eventLocation"
-          from bookings b
-          where b.vendor_id = ${vendorAccountId}
-          order by b.created_at desc
-        `);
-        bookingRows = extractRows(rows);
-      } else {
-        const rows: any = await db.execute(drizzleSql`
-          select distinct on (b.id)
-            b.id,
-            b.status,
-            b.total_amount as "totalAmount",
-            b.created_at as "createdAt",
-            b.event_date as "eventDate",
-            b.event_location as "eventLocation"
-          from bookings b
-          inner join booking_items bi on bi.booking_id = b.id
-          inner join vendor_listings vl on vl.id = bi.listing_id
-          where vl.account_id = ${vendorAccountId}
-          order by b.id, b.created_at desc
-        `);
-        bookingRows = extractRows(rows);
-      }
+      const bookingRowsWithContext = await attachBookingItemContext(bookingRows as any);
+      const profileCount = Array.isArray(profileContext?.profiles) ? profileContext.profiles.length : 0;
+      const scopedBookingRows = bookingRowsWithContext.filter((row: any) =>
+        bookingRowMatchesActiveProfile(row, activeProfileId, profileCount)
+      ) as any[];
 
       const now = new Date();
       const monthStart = new Date(now.getFullYear(), now.getMonth(), 1);
@@ -3573,13 +8322,13 @@ app.post(
       const lastWeekStart = new Date(weekStart);
       lastWeekStart.setDate(weekStart.getDate() - 7);
 
-      const totalBookings = bookingRows.length;
-      const bookingsThisMonth = bookingRows.filter((r) => {
+      const totalBookings = scopedBookingRows.length;
+      const bookingsThisMonth = scopedBookingRows.filter((r: any) => {
         const created = r.createdAt ? new Date(r.createdAt) : null;
         return created instanceof Date && !isNaN(created.getTime()) && created >= monthStart;
       }).length;
 
-      const revenueRows = bookingRows.filter((r) => {
+      const revenueRows = scopedBookingRows.filter((r: any) => {
         const s = String(r.status || "").toLowerCase();
         return s === "confirmed" || s === "completed";
       });
@@ -3614,6 +8363,7 @@ app.post(
         from listing_traffic lt
         inner join vendor_listings vl on vl.id = lt.listing_id
         where vl.account_id = ${vendorAccountId}
+          and vl.profile_id = ${activeProfileId}
           and lt.event_type = 'view'
       `);
       const views = extractRows<{ occurredAt?: Date | string }>(viewsRows);
@@ -3633,7 +8383,7 @@ app.post(
             ? 100
             : 0;
 
-      const recentBookingRows = bookingRows
+      const recentBookingRows = scopedBookingRows
         .slice()
         .sort((a, b) => {
           const da = a.createdAt ? new Date(a.createdAt).getTime() : 0;
@@ -3668,12 +8418,38 @@ app.post(
     }
   });
 
-  async function attachBookingItemContext<T extends { id: string; specialRequests?: string | null; eventTitle?: string | null }>(rows: T[]) {
+  async function attachBookingItemContext<
+    T extends {
+      id: string;
+      specialRequests?: string | null;
+      eventTitle?: string | null;
+      listingTitleSnapshot?: string | null;
+      listingId?: string | null;
+      bookedQuantity?: number | null;
+      deliveryFeeAmountCents?: number | null;
+      setupFeeAmountCents?: number | null;
+      travelFeeAmountCents?: number | null;
+      logisticsTotalCents?: number | null;
+      baseSubtotalCents?: number | null;
+      subtotalAmountCents?: number | null;
+      customerFeeAmountCents?: number | null;
+    }
+  >(rows: T[]) {
     if (!Array.isArray(rows) || rows.length === 0) return rows as Array<T & {
       itemTitle?: string | null;
       customerNotes?: string | null;
       customerQuestions?: string | null;
       listingDescription?: string | null;
+      listingId?: string | null;
+      listingProfileId?: string | null;
+      bookedQuantity?: number;
+      deliveryFeeAmountCents?: number | null;
+      setupFeeAmountCents?: number | null;
+      travelFeeAmountCents?: number | null;
+      logisticsTotalCents?: number | null;
+      baseSubtotalCents?: number | null;
+      subtotalAmountCents?: number | null;
+      customerFeeAmountCents?: number | null;
       includedItems?: string[];
       deliveryIncluded?: boolean | null;
       setupIncluded?: boolean | null;
@@ -3687,7 +8463,11 @@ app.post(
             bi.listing_id as "listingId",
             bi.item_data as "itemData",
             vl.title as "listingTitle",
-            vl.listing_data as "listingData"
+            vl.description as "listingDescription",
+            vl.whats_included as "listingWhatsIncluded",
+            vl.delivery_offered as "deliveryOffered",
+            vl.setup_offered as "setupOffered",
+            vl.profile_id as "listingProfileId"
           from booking_items bi
           left join vendor_listings vl on vl.id = bi.listing_id
           where bi.booking_id = ${row.id}
@@ -3698,23 +8478,30 @@ app.post(
           listingId?: string | null;
           itemData?: any;
           listingTitle?: string | null;
-          listingData?: any;
+          listingDescription?: string | null;
+          listingWhatsIncluded?: string[] | null;
+          deliveryOffered?: boolean | null;
+          setupOffered?: boolean | null;
+          listingProfileId?: string | null;
         }>(itemRes);
         const itemData = item?.itemData && typeof item.itemData === "object" ? item.itemData : {};
-        const listingData = item?.listingData && typeof item.listingData === "object" ? item.listingData : {};
         const listingSnapshot =
           itemData?.listingSnapshot && typeof itemData.listingSnapshot === "object"
             ? itemData.listingSnapshot
             : {};
+        const itemLogisticsFees =
+          itemData?.logisticsFees && typeof itemData.logisticsFees === "object"
+            ? itemData.logisticsFees
+            : {};
 
+        const itemTitleFromBookingSnapshot = normalizeListingTitleCandidate((row as any)?.listingTitleSnapshot);
         const itemTitleFromItem = normalizeListingTitleCandidate(item?.title);
         const itemTitleFromItemData =
           normalizeListingTitleCandidate(itemData?.listingTitle) ??
           normalizeListingTitleCandidate(listingSnapshot?.title);
-        const itemTitleFromListing =
-          normalizeListingTitleCandidate(item?.listingTitle) ??
-          normalizeListingTitleCandidate(listingData?.listingTitle);
-        const resolvedItemTitle = itemTitleFromItem ?? itemTitleFromItemData ?? itemTitleFromListing;
+        const itemTitleFromListing = normalizeListingTitleCandidate(item?.listingTitle);
+        const resolvedItemTitle =
+          itemTitleFromBookingSnapshot ?? itemTitleFromItem ?? itemTitleFromItemData ?? itemTitleFromListing;
 
         const notesFromItem =
           typeof itemData?.customerNotes === "string" && itemData.customerNotes.trim().length > 0
@@ -3736,44 +8523,60 @@ app.post(
           typeof listingSnapshot?.listingDescription === "string" && listingSnapshot.listingDescription.trim().length > 0
             ? listingSnapshot.listingDescription.trim()
             : null;
-        const descriptionFromListing =
-          typeof listingData?.listingDescription === "string" && listingData.listingDescription.trim().length > 0
-            ? listingData.listingDescription.trim()
+        const descriptionFromTypedListing =
+          typeof item?.listingDescription === "string" && item.listingDescription.trim().length > 0
+            ? item.listingDescription.trim()
             : null;
         const normalizedIncluded = Array.from(
           new Set(
             [
+              ...(Array.isArray(item?.listingWhatsIncluded) ? item.listingWhatsIncluded : []),
               ...(Array.isArray(listingSnapshot?.included) ? listingSnapshot.included : []),
               ...(Array.isArray(listingSnapshot?.includedItems) ? listingSnapshot.includedItems : []),
-              ...(Array.isArray(listingData?.included) ? listingData.included : []),
-              ...(Array.isArray(listingData?.includedItems) ? listingData.includedItems : []),
             ]
               .map((entry) => (typeof entry === "string" ? entry.trim() : ""))
               .filter((entry) => entry.length > 0)
           )
         );
-        const logistics =
-          listingSnapshot?.deliverySetup && typeof listingSnapshot.deliverySetup === "object"
-            ? listingSnapshot.deliverySetup
-            : listingData?.deliverySetup && typeof listingData.deliverySetup === "object"
-              ? listingData.deliverySetup
-              : {};
         const deliveryIncluded =
-          typeof logistics?.deliveryIncluded === "boolean"
-            ? logistics.deliveryIncluded
+          typeof item?.deliveryOffered === "boolean"
+            ? item.deliveryOffered
             : typeof listingSnapshot?.deliveryIncluded === "boolean"
               ? listingSnapshot.deliveryIncluded
-              : typeof listingData?.deliveryIncluded === "boolean"
-                ? listingData.deliveryIncluded
-                : null;
+              : null;
         const setupIncluded =
-          typeof logistics?.setupIncluded === "boolean"
-            ? logistics.setupIncluded
+          typeof item?.setupOffered === "boolean"
+            ? item.setupOffered
             : typeof listingSnapshot?.setupIncluded === "boolean"
               ? listingSnapshot.setupIncluded
-              : typeof listingData?.setupIncluded === "boolean"
-                ? listingData.setupIncluded
-                : null;
+              : null;
+        const bookedQuantity =
+          parseIntegerValue((row as any)?.bookedQuantity) ??
+          parseIntegerValue(itemData?.quantity) ??
+          1;
+        const deliveryFeeAmountCents =
+          parseIntegerValue((row as any)?.deliveryFeeAmountCents) ??
+          parseIntegerValue(itemLogisticsFees?.deliveryFeeCents);
+        const setupFeeAmountCents =
+          parseIntegerValue((row as any)?.setupFeeAmountCents) ??
+          parseIntegerValue(itemLogisticsFees?.setupFeeCents);
+        const travelFeeAmountCents =
+          parseIntegerValue((row as any)?.travelFeeAmountCents) ??
+          parseIntegerValue(itemLogisticsFees?.travelFlatFeeCents) ??
+          parseIntegerValue(itemLogisticsFees?.travelFeeCents);
+        const logisticsTotalFromTyped = parseIntegerValue((row as any)?.logisticsTotalCents);
+        const logisticsTotalCents =
+          logisticsTotalFromTyped ??
+          (deliveryFeeAmountCents != null || setupFeeAmountCents != null || travelFeeAmountCents != null
+            ? Math.max(0, deliveryFeeAmountCents ?? 0) +
+              Math.max(0, setupFeeAmountCents ?? 0) +
+              Math.max(0, travelFeeAmountCents ?? 0)
+            : null);
+        const baseSubtotalCents = parseIntegerValue((row as any)?.baseSubtotalCents);
+        const subtotalAmountCents = parseIntegerValue((row as any)?.subtotalAmountCents);
+        const customerFeeAmountCents =
+          parseIntegerValue((row as any)?.customerFeeAmountCents) ??
+          parseIntegerValue(itemData?.feePolicy?.customerFeeCents);
 
         return {
           ...row,
@@ -3781,7 +8584,17 @@ app.post(
           customerEventTitle: customerEventTitleFromItem ?? row.eventTitle ?? null,
           customerNotes: notesFromItem ?? notesFallback,
           customerQuestions: questionsFromItem,
-          listingDescription: descriptionFromSnapshot ?? descriptionFromListing,
+          listingDescription: descriptionFromSnapshot ?? descriptionFromTypedListing,
+          listingId: (row as any)?.listingId ?? item?.listingId ?? null,
+          listingProfileId: item?.listingProfileId ?? null,
+          bookedQuantity: Math.max(1, bookedQuantity),
+          deliveryFeeAmountCents: deliveryFeeAmountCents != null ? Math.max(0, deliveryFeeAmountCents) : null,
+          setupFeeAmountCents: setupFeeAmountCents != null ? Math.max(0, setupFeeAmountCents) : null,
+          travelFeeAmountCents: travelFeeAmountCents != null ? Math.max(0, travelFeeAmountCents) : null,
+          logisticsTotalCents: logisticsTotalCents != null ? Math.max(0, logisticsTotalCents) : null,
+          baseSubtotalCents: baseSubtotalCents != null ? Math.max(0, baseSubtotalCents) : null,
+          subtotalAmountCents: subtotalAmountCents != null ? Math.max(0, subtotalAmountCents) : null,
+          customerFeeAmountCents: customerFeeAmountCents != null ? Math.max(0, customerFeeAmountCents) : null,
           includedItems: normalizedIncluded,
           deliveryIncluded,
           setupIncluded,
@@ -3797,71 +8610,33 @@ app.post(
       if (!vendorAccountId) {
         return res.json([]);
       }
-
-      const vendorRefCol = await getBookingsVendorRefColumn();
-
-      if (vendorRefCol === "vendor_account_id") {
-        const rows = await db
-          .select({
-            id: bookings.id,
-            status: bookings.status,
-            paymentStatus: bookings.paymentStatus,
-            totalAmount: bookings.totalAmount,
-            platformFee: bookings.platformFee,
-            vendorPayout: bookings.vendorPayout,
-            createdAt: bookings.createdAt,
-            updatedAt: bookings.updatedAt,
-            eventId: bookings.eventId,
-            eventTitle: events.path,
-            eventLocation: bookings.eventLocation,
-            guestCount: bookings.guestCount,
-            specialRequests: bookings.specialRequests,
-            eventDate: drizzleSql<string>`coalesce(${bookings.eventDate}, ${events.date})`.as("eventDate"),
-            eventStartTime: drizzleSql<string>`coalesce(${bookings.eventStartTime}, ${events.startTime})`.as("eventStartTime"),
-          })
-          .from(bookings)
-          .leftJoin(events, eq(events.id, bookings.eventId))
-          .where(eq(bookings.vendorAccountId, vendorAccountId))
-          .orderBy(desc(bookings.createdAt));
-
-        return res.json(await attachBookingItemContext(rows as any));
+      const profileContext = await resolveActiveVendorProfile(req);
+      const activeProfileId = profileContext?.activeProfileId;
+      if (!activeProfileId) {
+        return res.json([]);
       }
 
-      if (vendorRefCol === "vendor_id") {
-        const fallback: any = await db.execute(drizzleSql`
-          select
-            b.id,
-            b.status,
-            b.payment_status as "paymentStatus",
-            b.total_amount as "totalAmount",
-            b.platform_fee as "platformFee",
-            b.vendor_payout as "vendorPayout",
-            b.created_at as "createdAt",
-            b.updated_at as "updatedAt",
-            b.event_id as "eventId",
-            e.path as "eventTitle",
-            b.event_location as "eventLocation",
-            b.guest_count as "guestCount",
-            b.special_requests as "specialRequests",
-            coalesce(b.event_date, e.date) as "eventDate",
-            coalesce(b.event_start_time, e.start_time) as "eventStartTime"
-          from bookings b
-          left join events e on e.id = b.event_id
-          where b.vendor_id = ${vendorAccountId}
-          order by b.created_at desc
-        `);
-        return res.json(await attachBookingItemContext(extractRows(fallback) as any));
-      }
-
-      // Legacy schema without vendor reference on bookings: derive ownership through booking_items -> vendor_listings.
-      const legacyRows: any = await db.execute(drizzleSql`
-        select distinct on (b.id)
+      const rawRows: any = await db.execute(drizzleSql`
+        select
           b.id,
           b.status,
           b.payment_status as "paymentStatus",
           b.total_amount as "totalAmount",
+          b.listing_id as "listingId",
+          b.listing_title_snapshot as "listingTitleSnapshot",
+          b.pricing_unit_snapshot as "pricingUnitSnapshot",
+          b.unit_price_cents_snapshot as "unitPriceCentsSnapshot",
+          b.booked_quantity as "bookedQuantity",
+          b.delivery_fee_amount_cents as "deliveryFeeAmountCents",
+          b.setup_fee_amount_cents as "setupFeeAmountCents",
+          b.travel_fee_amount_cents as "travelFeeAmountCents",
+          b.logistics_total_cents as "logisticsTotalCents",
+          b.base_subtotal_cents as "baseSubtotalCents",
+          b.subtotal_amount_cents as "subtotalAmountCents",
+          b.customer_fee_amount_cents as "customerFeeAmountCents",
           b.platform_fee as "platformFee",
           b.vendor_payout as "vendorPayout",
+          coalesce(b.vendor_profile_id, listing_owner.profile_id) as "vendorProfileId",
           b.created_at as "createdAt",
           b.updated_at as "updatedAt",
           b.event_id as "eventId",
@@ -3869,16 +8644,24 @@ app.post(
           b.event_location as "eventLocation",
           b.guest_count as "guestCount",
           b.special_requests as "specialRequests",
+          b.google_sync_status as "googleSyncStatus",
+          b.google_event_id as "googleEventId",
+          b.google_calendar_id as "googleCalendarId",
           coalesce(b.event_date, e.date) as "eventDate",
           coalesce(b.event_start_time, e.start_time) as "eventStartTime"
         from bookings b
         left join events e on e.id = b.event_id
-        inner join booking_items bi on bi.booking_id = b.id
-        inner join vendor_listings vl on vl.id = bi.listing_id
-        where vl.account_id = ${vendorAccountId}
-        order by b.id, b.created_at desc
+        left join vendor_listings listing_owner on listing_owner.id = b.listing_id
+        where coalesce(b.vendor_account_id, listing_owner.account_id) = ${vendorAccountId}
+        order by b.created_at desc
       `);
-      return res.json(await attachBookingItemContext(extractRows(legacyRows) as any));
+
+      const withContext = await attachBookingItemContext(extractRows(rawRows) as any);
+      const profileCount = Array.isArray(profileContext?.profiles) ? profileContext.profiles.length : 0;
+      const scopedRows = withContext.filter((row: any) =>
+        bookingRowMatchesActiveProfile(row, activeProfileId, profileCount)
+      );
+      return res.json(scopedRows);
     } catch (error: any) {
       res.status(500).json({ error: error.message });
     }
@@ -3891,6 +8674,11 @@ app.post(
       if (!vendorAccountId) {
         return res.status(403).json({ error: "Vendor account required" });
       }
+      const profileContext = await resolveActiveVendorProfile(req);
+      const activeProfileId = profileContext?.activeProfileId;
+      if (!activeProfileId) {
+        return res.status(404).json({ error: "Vendor profile not found" });
+      }
 
       const bookingId = String(req.params.id || "").trim();
       if (!bookingId) {
@@ -3902,53 +8690,41 @@ app.post(
       });
       const { status: nextStatus } = updateVendorBookingSchema.parse(req.body ?? {});
 
-      const vendorRefCol = await getBookingsVendorRefColumn();
-
-      let ownedBookingRows: Array<{ id: string; status: string | null; eventDate: string | null }> = [];
-      if (vendorRefCol === "vendor_account_id") {
-        const rows = await db
-          .select({
-            id: bookings.id,
-            status: bookings.status,
-            eventDate: drizzleSql<string>`coalesce(${bookings.eventDate}, ${events.date})`.as("eventDate"),
-          })
-          .from(bookings)
-          .leftJoin(events, eq(events.id, bookings.eventId))
-          .where(and(eq(bookings.id, bookingId), eq(bookings.vendorAccountId, vendorAccountId)))
-          .limit(1);
-        ownedBookingRows = rows as Array<{ id: string; status: string | null; eventDate: string | null }>;
-      } else if (vendorRefCol === "vendor_id") {
-        const rows: any = await db.execute(drizzleSql`
-          select
-            b.id,
-            b.status,
-            coalesce(b.event_date, e.date) as "eventDate"
-          from bookings b
-          left join events e on e.id = b.event_id
-          where b.id = ${bookingId} and b.vendor_id = ${vendorAccountId}
-          limit 1
-        `);
-        ownedBookingRows = extractRows(rows);
-      } else {
-        const rows: any = await db.execute(drizzleSql`
-          select distinct
-            b.id,
-            b.status,
-            coalesce(b.event_date, e.date) as "eventDate"
-          from bookings b
-          left join events e on e.id = b.event_id
-          inner join booking_items bi on bi.booking_id = b.id
-          inner join vendor_listings vl on vl.id = bi.listing_id
-          where b.id = ${bookingId}
-            and vl.account_id = ${vendorAccountId}
-          limit 1
-        `);
-        ownedBookingRows = extractRows(rows);
-      }
+      let ownedBookingRows: Array<{
+        id: string;
+        status: string | null;
+        eventDate: string | null;
+        listingTitleSnapshot?: string | null;
+        vendorProfileId?: string | null;
+      }> = [];
+      const ownedRows: any = await db.execute(drizzleSql`
+        select
+          b.id,
+          b.status,
+          b.listing_id as "listingId",
+          b.listing_title_snapshot as "listingTitleSnapshot",
+          b.booked_quantity as "bookedQuantity",
+          coalesce(b.vendor_profile_id, listing_owner.profile_id) as "vendorProfileId",
+          coalesce(b.event_date, e.date) as "eventDate"
+        from bookings b
+        left join events e on e.id = b.event_id
+        left join vendor_listings listing_owner on listing_owner.id = b.listing_id
+        where b.id = ${bookingId}
+          and coalesce(b.vendor_account_id, listing_owner.account_id) = ${vendorAccountId}
+        limit 1
+      `);
+      ownedBookingRows = extractRows(ownedRows);
 
       const current = ownedBookingRows[0];
       if (!current?.id) {
         return res.status(404).json({ error: "Booking not found for this vendor" });
+      }
+      const [currentWithContext] = await attachBookingItemContext([current as any]);
+      const bookingProfileId =
+        asTrimmedString((currentWithContext as any)?.vendorProfileId) ||
+        asTrimmedString((currentWithContext as any)?.listingProfileId);
+      if (bookingProfileId && bookingProfileId !== activeProfileId) {
+        return res.status(404).json({ error: "Booking not found in active profile" });
       }
       const currentStatus = String(current.status || "").toLowerCase();
 
@@ -3976,62 +8752,36 @@ app.post(
       }
 
       const now = new Date();
-      let updatedRows: Array<{ id: string; status: string; updatedAt: string | Date }> = [];
-      if (vendorRefCol === "vendor_account_id") {
-        const rows = await db
-          .update(bookings)
-          .set({
-            status: nextStatus,
-            updatedAt: now,
-            confirmedAt: nextStatus === "confirmed" ? now : bookings.confirmedAt,
-            completedAt: nextStatus === "completed" ? now : bookings.completedAt,
-            cancelledAt: nextStatus === "cancelled" ? now : bookings.cancelledAt,
-          })
-          .where(and(eq(bookings.id, bookingId), eq(bookings.vendorAccountId, vendorAccountId)))
-          .returning({
-            id: bookings.id,
-            status: bookings.status,
-            updatedAt: bookings.updatedAt,
-          });
-        updatedRows = rows as Array<{ id: string; status: string; updatedAt: string | Date }>;
-      } else if (vendorRefCol === "vendor_id") {
-        const rows: any = await db.execute(drizzleSql`
-          update bookings b
-          set status = ${nextStatus},
-              updated_at = ${now},
-              confirmed_at = case when ${nextStatus} = 'confirmed' then ${now} else b.confirmed_at end,
-              completed_at = case when ${nextStatus} = 'completed' then ${now} else b.completed_at end,
-              cancelled_at = case when ${nextStatus} = 'cancelled' then ${now} else b.cancelled_at end
-          where b.id = ${bookingId}
-            and b.vendor_id = ${vendorAccountId}
-          returning b.id, b.status, b.updated_at as "updatedAt"
-        `);
-        updatedRows = extractRows(rows);
-      } else {
-        const rows: any = await db.execute(drizzleSql`
-          update bookings b
-          set status = ${nextStatus},
-              updated_at = ${now},
-              confirmed_at = case when ${nextStatus} = 'confirmed' then ${now} else b.confirmed_at end,
-              completed_at = case when ${nextStatus} = 'completed' then ${now} else b.completed_at end,
-              cancelled_at = case when ${nextStatus} = 'cancelled' then ${now} else b.cancelled_at end
-          where b.id = ${bookingId}
-            and exists (
-              select 1
-              from booking_items bi
-              inner join vendor_listings vl on vl.id = bi.listing_id
-              where bi.booking_id = b.id
-                and vl.account_id = ${vendorAccountId}
+      const updatedResult: any = await db.execute(drizzleSql`
+        update bookings b
+        set status = ${nextStatus},
+            updated_at = ${now},
+            confirmed_at = case when ${nextStatus} = 'confirmed' then ${now} else b.confirmed_at end,
+            completed_at = case when ${nextStatus} = 'completed' then ${now} else b.completed_at end,
+            cancelled_at = case when ${nextStatus} = 'cancelled' then ${now} else b.cancelled_at end
+        where b.id = ${bookingId}
+          and (
+            b.vendor_account_id = ${vendorAccountId}
+            or (
+              b.vendor_account_id is null
+              and exists (
+                select 1
+                from vendor_listings vl
+                where vl.id = b.listing_id
+                  and vl.account_id = ${vendorAccountId}
+              )
             )
-          returning b.id, b.status, b.updated_at as "updatedAt"
-        `);
-        updatedRows = extractRows(rows);
-      }
+          )
+        returning b.id, b.status, b.updated_at as "updatedAt"
+      `);
+      const updatedRows = extractRows<{ id?: string; status?: string; updatedAt?: string | Date }>(updatedResult);
 
       const updated = updatedRows[0];
       if (!updated?.id) {
         return res.status(500).json({ error: "Failed to update booking status" });
       }
+
+      await syncBookingToGoogleCalendarSafely(updated.id, "/api/vendor/bookings/:id google-sync");
 
       return res.json({
         id: updated.id,
@@ -4051,7 +8801,7 @@ app.post(
 
       const rows = await listVendorBookingChatContexts(vendorAccountId);
       const paidRows = rows.filter(
-        (row) => row.bookingId.length > 0 && hasPaymentMethodForChat(row.paymentMethodId)
+        (row) => row.bookingId.length > 0 && hasPaymentAccessForChat(row.paymentStatus)
       );
       const unread = await getStreamUnreadCountsForBookings({
         role: "vendor",
@@ -4075,7 +8825,7 @@ app.post(
 
       const rows = await listVendorBookingChatContexts(vendorAccountId);
       const paidRows = rows.filter(
-        (row) => row.bookingId.length > 0 && hasPaymentMethodForChat(row.paymentMethodId)
+        (row) => row.bookingId.length > 0 && hasPaymentAccessForChat(row.paymentStatus)
       );
       const unread = await getStreamUnreadCountsForBookings({
         role: "vendor",
@@ -4099,7 +8849,7 @@ app.post(
 
       const rows = await listVendorBookingChatContexts(vendorAccountId);
       const paidBookingIds = rows
-        .filter((row) => row.bookingId.length > 0 && hasPaymentMethodForChat(row.paymentMethodId))
+        .filter((row) => row.bookingId.length > 0 && hasPaymentAccessForChat(row.paymentStatus))
         .map((row) => row.bookingId);
       const unread = await getStreamUnreadCountsForBookings({
         role: "vendor",
@@ -4139,8 +8889,8 @@ app.post(
       if (!booking.customerId) {
         return res.status(400).json({ error: "Booking has no linked customer account" });
       }
-      if (!hasPaymentMethodForChat(booking.paymentMethodId)) {
-        return res.status(403).json({ error: "Chat becomes available after payment info is collected" });
+      if (!hasPaymentAccessForChat(booking.paymentStatus)) {
+        return res.status(403).json({ error: "Chat becomes available after payment succeeds" });
       }
       if (!booking.eventDate) {
         return res.status(400).json({ error: "Booking event date is required for chat retention policy" });
@@ -4203,7 +8953,7 @@ app.post(
 
       const rows = await listCustomerBookingChatContexts(customerAuth.id);
       const paidRows = rows.filter(
-        (row) => row.bookingId.length > 0 && hasPaymentMethodForChat(row.paymentMethodId)
+        (row) => row.bookingId.length > 0 && hasPaymentAccessForChat(row.paymentStatus)
       );
       const unread = await getStreamUnreadCountsForBookings({
         role: "customer",
@@ -4228,7 +8978,7 @@ app.post(
 
       const rows = await listCustomerBookingChatContexts(customerAuth.id);
       const paidBookingIds = rows
-        .filter((row) => row.bookingId.length > 0 && hasPaymentMethodForChat(row.paymentMethodId))
+        .filter((row) => row.bookingId.length > 0 && hasPaymentAccessForChat(row.paymentStatus))
         .map((row) => row.bookingId);
       const unread = await getStreamUnreadCountsForBookings({
         role: "customer",
@@ -4267,8 +9017,8 @@ app.post(
       if (!booking.vendorAccountId) {
         return res.status(400).json({ error: "Booking has no linked vendor account" });
       }
-      if (!hasPaymentMethodForChat(booking.paymentMethodId)) {
-        return res.status(403).json({ error: "Chat becomes available after payment info is collected" });
+      if (!hasPaymentAccessForChat(booking.paymentStatus)) {
+        return res.status(403).json({ error: "Chat becomes available after payment succeeds" });
       }
       if (!booking.eventDate) {
         return res.status(400).json({ error: "Booking event date is required for chat retention policy" });
@@ -4399,6 +9149,15 @@ app.post(
           history: [],
         });
       }
+      const profileContext = await resolveActiveVendorProfile(req);
+      const activeProfileId = profileContext?.activeProfileId;
+      if (!activeProfileId) {
+        return res.json({
+          totalNetEarned: 0,
+          upcomingNetPayout: 0,
+          history: [],
+        });
+      }
 
       const normalizeAmountToCents = (value: unknown) => {
         const n = Number(value ?? 0);
@@ -4409,88 +9168,68 @@ app.post(
         return Math.round(n * 100);
       };
 
-      const vendorRefCol = await getBookingsVendorRefColumn();
       let rows: Array<{
         id: string;
         status: string | null;
+        paymentStatus: string | null;
         totalAmount: number | null;
         vendorPayout: number | null;
+        listingTitleSnapshot?: string | null;
+        bookedQuantity?: number | null;
+        baseSubtotalCents?: number | null;
+        logisticsTotalCents?: number | null;
+        subtotalAmountCents?: number | null;
+        customerFeeAmountCents?: number | null;
+        vendorProfileId?: string | null;
         eventDate: string | null;
         createdAt: Date | string | null;
       }> = [];
+      const bookingRows: any = await db.execute(drizzleSql`
+        select
+          b.id,
+          b.status,
+          b.payment_status as "paymentStatus",
+          b.total_amount as "totalAmount",
+          b.vendor_payout as "vendorPayout",
+          b.listing_title_snapshot as "listingTitleSnapshot",
+          b.booked_quantity as "bookedQuantity",
+          b.base_subtotal_cents as "baseSubtotalCents",
+          b.logistics_total_cents as "logisticsTotalCents",
+          b.subtotal_amount_cents as "subtotalAmountCents",
+          b.customer_fee_amount_cents as "customerFeeAmountCents",
+          coalesce(b.vendor_profile_id, listing_owner.profile_id) as "vendorProfileId",
+          coalesce(b.event_date, e.date) as "eventDate",
+          b.created_at as "createdAt"
+        from bookings b
+        left join events e on e.id = b.event_id
+        left join vendor_listings listing_owner on listing_owner.id = b.listing_id
+        where coalesce(b.vendor_account_id, listing_owner.account_id) = ${vendorAccountId}
+        order by b.created_at desc
+      `);
+      rows = extractRows(bookingRows);
 
-      if (vendorRefCol === "vendor_account_id") {
-        const bookingRows = await db
-          .select({
-            id: bookings.id,
-            status: bookings.status,
-            totalAmount: bookings.totalAmount,
-            vendorPayout: bookings.vendorPayout,
-            eventDate: drizzleSql<string>`coalesce(${bookings.eventDate}, ${events.date})`.as("eventDate"),
-            createdAt: bookings.createdAt,
-          })
-          .from(bookings)
-          .leftJoin(events, eq(events.id, bookings.eventId))
-          .where(eq(bookings.vendorAccountId, vendorAccountId))
-          .orderBy(desc(bookings.createdAt));
-        rows = bookingRows as typeof rows;
-      } else if (vendorRefCol === "vendor_id") {
-        const bookingRows: any = await db.execute(drizzleSql`
-          select
-            b.id,
-            b.status,
-            b.total_amount as "totalAmount",
-            b.vendor_payout as "vendorPayout",
-            b.event_date as "eventDate",
-            b.created_at as "createdAt"
-          from bookings b
-          left join events e on e.id = b.event_id
-          where b.vendor_id = ${vendorAccountId}
-          order by b.created_at desc
-        `);
-        rows = extractRows(bookingRows);
-      } else {
-        const bookingRows: any = await db.execute(drizzleSql`
-          select distinct on (b.id)
-            b.id,
-            b.status,
-            b.total_amount as "totalAmount",
-            b.vendor_payout as "vendorPayout",
-            b.event_date as "eventDate",
-            b.created_at as "createdAt"
-          from bookings b
-          inner join booking_items bi on bi.booking_id = b.id
-          inner join vendor_listings vl on vl.id = bi.listing_id
-          where vl.account_id = ${vendorAccountId}
-          order by b.id, b.created_at desc
-        `);
-        rows = extractRows(bookingRows);
-      }
-
-      // Safety fallback: some environments have mixed/legacy booking ownership wiring.
-      // If primary ownership path yields no rows, try legacy booking_items -> vendor_listings join.
-      if (rows.length === 0) {
-        const legacyRows: any = await db.execute(drizzleSql`
-          select distinct on (b.id)
-            b.id,
-            b.status,
-            b.total_amount as "totalAmount",
-            b.vendor_payout as "vendorPayout",
-            coalesce(b.event_date, e.date) as "eventDate",
-            b.created_at as "createdAt"
-          from bookings b
-          left join events e on e.id = b.event_id
-          inner join booking_items bi on bi.booking_id = b.id
-          inner join vendor_listings vl on vl.id = bi.listing_id
-          where vl.account_id = ${vendorAccountId}
-          order by b.id, b.created_at desc
-        `);
-        rows = extractRows(legacyRows);
-      }
+      const rowsWithContext = await attachBookingItemContext(rows as any);
+      const profileCount = Array.isArray(profileContext?.profiles) ? profileContext.profiles.length : 0;
+      rows = rowsWithContext.filter((row: any) =>
+        bookingRowMatchesActiveProfile(row, activeProfileId, profileCount)
+      ) as typeof rows;
 
       const baseAmountByBookingId = new Map<string, number>();
       for (const row of rows) {
         const grossCents = normalizeAmountToCents(row.totalAmount);
+        const typedSubtotalCents = normalizeAmountToCents(row.subtotalAmountCents);
+        if (typedSubtotalCents > 0) {
+          baseAmountByBookingId.set(row.id, typedSubtotalCents);
+          continue;
+        }
+
+        const typedBaseCents = normalizeAmountToCents(row.baseSubtotalCents);
+        const typedLogisticsCents = normalizeAmountToCents(row.logisticsTotalCents);
+        if (typedBaseCents > 0 || typedLogisticsCents > 0) {
+          baseAmountByBookingId.set(row.id, typedBaseCents + typedLogisticsCents);
+          continue;
+        }
+
         const baseRows: any = await db.execute(drizzleSql`
           select coalesce(sum(bi.total_price_cents), 0)::bigint as "baseAmountCents"
           from booking_items bi
@@ -4522,7 +9261,10 @@ app.post(
 
       const now = new Date();
       const today = new Date(now.getFullYear(), now.getMonth(), now.getDate());
-      const toNetCents = (r: { id: string }) => {
+      const toNetCents = (r: { id: string; vendorPayout?: number | null }) => {
+        const typedVendorPayout = normalizeAmountToCents(r.vendorPayout);
+        if (typedVendorPayout > 0) return typedVendorPayout;
+
         const baseAmountCents = baseAmountByBookingId.get(r.id) ?? 0;
         if (!baseAmountCents) return 0;
         const vendorFee = Math.round(baseAmountCents * VENDOR_FEE_RATE);
@@ -4539,10 +9281,9 @@ app.post(
       const upcomingNetPayout = rows
         .filter((r) => {
           const s = String(r.status || "").toLowerCase();
-          if (s !== "confirmed") return false;
-          if (!r.eventDate) return false;
-          const d = new Date(`${r.eventDate}T00:00:00`);
-          return !isNaN(d.getTime()) && d >= today;
+          const paymentState = toCanonicalPaymentStatus((r as any).paymentStatus);
+          if (s !== "completed") return false;
+          return paymentState === "succeeded" || paymentState === "partially_refunded";
         })
         .reduce((sum, r) => sum + toNetCents(r), 0);
 
@@ -4550,13 +9291,19 @@ app.post(
         .filter((r) => String(r.status || "").toLowerCase() === "completed")
         .map((r) => {
         const baseAmountCents = baseAmountByBookingId.get(r.id) ?? normalizeAmountToCents(r.totalAmount);
-        const grossCents = baseAmountCents + Math.round(baseAmountCents * CUSTOMER_FEE_RATE);
+        const typedCustomerFeeCents = normalizeAmountToCents(r.customerFeeAmountCents);
+        const grossCentsFromTypedTotal = normalizeAmountToCents(r.totalAmount);
+        const grossCents =
+          grossCentsFromTypedTotal > 0
+            ? grossCentsFromTypedTotal
+            : baseAmountCents + (typedCustomerFeeCents > 0 ? typedCustomerFeeCents : Math.round(baseAmountCents * CUSTOMER_FEE_RATE));
         const netCents = toNetCents(r);
         return {
           id: r.id,
           status: String(r.status || "pending").toLowerCase(),
           eventDate: r.eventDate,
           createdAt: r.createdAt,
+          listingTitleSnapshot: r.listingTitleSnapshot ?? null,
           netAmount: netCents,
           grossAmount: grossCents,
         };
@@ -4567,6 +9314,9 @@ app.post(
       return res.json({
         totalNetEarned,
         upcomingNetPayout,
+        payoutReleaseMode: PAYOUT_RELEASE_MODE,
+        payoutPolicyNote:
+          "Funds are auto-released after a 24-hour post-event dispute window unless a dispute is filed.",
         history: historyWithContext.map((entry: any) => ({
           ...entry,
           itemTitle:
@@ -4695,12 +9445,21 @@ app.post(
         .select({
           id: vendorListings.id,
           title: vendorListings.title,
+          quantity: vendorListings.quantity,
           listingData: vendorListings.listingData,
           vendorProfileId: vendorListings.profileId,
           vendorAccountId: vendorListings.accountId,
         })
         .from(vendorListings)
-        .where(eq(vendorListings.status, "active"))
+        .innerJoin(vendorProfiles, eq(vendorListings.profileId, vendorProfiles.id))
+        .innerJoin(vendorAccounts, eq(vendorListings.accountId, vendorAccounts.id))
+        .where(
+          and(
+            eq(vendorListings.status, "active"),
+            eq(vendorProfiles.active, true),
+            eq(vendorAccounts.active, true)
+          )
+        )
         .limit(50);
 
       res.json(listings);
@@ -4771,6 +9530,18 @@ app.post(
       id: string;
       eventId?: string | null;
       eventTitle?: string | null;
+      listingId?: string | null;
+      listingTitleSnapshot?: string | null;
+      bookedQuantity?: number | null;
+      pricingUnitSnapshot?: string | null;
+      unitPriceCentsSnapshot?: number | null;
+      deliveryFeeAmountCents?: number | null;
+      setupFeeAmountCents?: number | null;
+      travelFeeAmountCents?: number | null;
+      logisticsTotalCents?: number | null;
+      baseSubtotalCents?: number | null;
+      subtotalAmountCents?: number | null;
+      customerFeeAmountCents?: number | null;
       vendorDisplayName?: string | null;
       vendorBusinessName?: string | null;
     }
@@ -4783,6 +9554,16 @@ app.post(
           listingId?: string | null;
           itemTitle?: string | null;
           displayTitle?: string | null;
+          bookedQuantity?: number;
+          pricingUnitSnapshot?: string | null;
+          unitPriceCentsSnapshot?: number | null;
+          deliveryFeeAmountCents?: number | null;
+          setupFeeAmountCents?: number | null;
+          travelFeeAmountCents?: number | null;
+          logisticsTotalCents?: number | null;
+          baseSubtotalCents?: number | null;
+          subtotalAmountCents?: number | null;
+          customerFeeAmountCents?: number | null;
           reviewSubmitted?: boolean;
           reviewRating?: number | null;
           reviewBody?: string | null;
@@ -4828,21 +9609,20 @@ app.post(
           typeof customerEvent?.title === "string" && customerEvent.title.trim().length > 0
             ? customerEvent.title.trim()
             : row.eventTitle ?? null;
+        const itemTitleFromSnapshot = normalizeListingTitleCandidate(row.listingTitleSnapshot);
         const itemTitleFromItem =
           typeof item?.title === "string" && item.title.trim().length > 0
             ? item.title.trim()
             : null;
         const itemTitleFromJson =
-          typeof itemData?.listingTitle === "string" && itemData.listingTitle.trim().length > 0
-            ? itemData.listingTitle.trim()
-            : typeof itemData?.listingSnapshot?.title === "string" && itemData.listingSnapshot.title.trim().length > 0
-              ? itemData.listingSnapshot.title.trim()
-              : null;
+          typeof itemData?.listingSnapshot?.title === "string" && itemData.listingSnapshot.title.trim().length > 0
+            ? itemData.listingSnapshot.title.trim()
+            : null;
         const itemTitleFromListing =
           typeof item?.listingTitle === "string" && item.listingTitle.trim().length > 0
             ? item.listingTitle.trim()
             : null;
-        const itemTitle = itemTitleFromItem ?? itemTitleFromJson ?? itemTitleFromListing ?? null;
+        const itemTitle = itemTitleFromSnapshot ?? itemTitleFromItem ?? itemTitleFromJson ?? itemTitleFromListing ?? null;
         const reviewRating =
           typeof reviewMeta?.rating === "number" && Number.isFinite(reviewMeta.rating)
             ? Math.max(1, Math.min(5, Math.round(reviewMeta.rating)))
@@ -4872,9 +9652,20 @@ app.post(
           ...row,
           customerEventId,
           customerEventTitle,
-          listingId: item?.listingId ?? null,
+          listingId: row.listingId ?? item?.listingId ?? null,
           itemTitle,
           displayTitle,
+          bookedQuantity: Math.max(1, parseIntegerValue(row.bookedQuantity) ?? parseIntegerValue(itemData?.quantity) ?? 1),
+          pricingUnitSnapshot: asTrimmedString(row.pricingUnitSnapshot) || null,
+          unitPriceCentsSnapshot: parseIntegerValue(row.unitPriceCentsSnapshot),
+          deliveryFeeAmountCents: parseIntegerValue(row.deliveryFeeAmountCents),
+          setupFeeAmountCents: parseIntegerValue(row.setupFeeAmountCents),
+          travelFeeAmountCents: parseIntegerValue(row.travelFeeAmountCents),
+          logisticsTotalCents: parseIntegerValue(row.logisticsTotalCents),
+          baseSubtotalCents: parseIntegerValue(row.baseSubtotalCents),
+          subtotalAmountCents: parseIntegerValue(row.subtotalAmountCents),
+          customerFeeAmountCents:
+            parseIntegerValue(row.customerFeeAmountCents) ?? parseIntegerValue(itemData?.feePolicy?.customerFeeCents),
           reviewSubmitted,
           reviewRating,
           reviewBody,
@@ -4890,83 +9681,42 @@ app.post(
       if (!customerAuth?.id) {
         return res.status(401).json({ error: "Customer authentication required" });
       }
-
-      const vendorRefCol = await getBookingsVendorRefColumn();
-
-      if (vendorRefCol === "vendor_account_id") {
-        const rows = await db
-          .select({
-            id: bookings.id,
-            status: bookings.status,
-            paymentStatus: bookings.paymentStatus,
-            totalAmount: bookings.totalAmount,
-            eventId: bookings.eventId,
-            eventTitle: events.path,
-            eventDate: bookings.eventDate,
-            eventStartTime: bookings.eventStartTime,
-            eventLocation: bookings.eventLocation,
-            createdAt: bookings.createdAt,
-            vendorDisplayName: drizzleSql<string | null>`coalesce(nullif(${users.displayName}, ''), nullif(${users.name}, ''))`,
-            vendorBusinessName: vendorAccounts.businessName,
-          })
-          .from(bookings)
-          .leftJoin(vendorAccounts, eq(vendorAccounts.id, bookings.vendorAccountId))
-          .leftJoin(users, eq(users.id, vendorAccounts.userId))
-          .leftJoin(events, eq(events.id, bookings.eventId))
-          .where(eq(bookings.customerId, customerAuth.id))
-          .orderBy(desc(bookings.createdAt));
-        return res.json(await attachCustomerBookingContext(rows as any));
-      }
-
-      if (vendorRefCol === "vendor_id") {
-        const fallback: any = await db.execute(drizzleSql`
-          select
-            b.id,
-            b.status,
-            b.payment_status as "paymentStatus",
-            b.total_amount as "totalAmount",
-            b.event_id as "eventId",
-            e.path as "eventTitle",
-            b.event_date as "eventDate",
-            b.event_start_time as "eventStartTime",
-            b.event_location as "eventLocation",
-            b.created_at as "createdAt",
-            coalesce(nullif(u.display_name, ''), nullif(u.name, '')) as "vendorDisplayName",
-            va.business_name as "vendorBusinessName"
-          from bookings b
-          left join vendor_accounts va on va.id = b.vendor_id
-          left join users u on u.id = va.user_id
-          left join events e on e.id = b.event_id
-          where b.customer_id = ${customerAuth.id}
-          order by b.created_at desc
-        `);
-        return res.json(await attachCustomerBookingContext(extractRows(fallback) as any));
-      }
-
-      const legacyRows: any = await db.execute(drizzleSql`
-        select distinct on (b.id)
+      const rows: any = await db.execute(drizzleSql`
+        select
           b.id,
           b.status,
           b.payment_status as "paymentStatus",
           b.total_amount as "totalAmount",
           b.event_id as "eventId",
+          b.listing_id as "listingId",
+          b.listing_title_snapshot as "listingTitleSnapshot",
+          b.booked_quantity as "bookedQuantity",
+          b.pricing_unit_snapshot as "pricingUnitSnapshot",
+          b.unit_price_cents_snapshot as "unitPriceCentsSnapshot",
+          b.delivery_fee_amount_cents as "deliveryFeeAmountCents",
+          b.setup_fee_amount_cents as "setupFeeAmountCents",
+          b.travel_fee_amount_cents as "travelFeeAmountCents",
+          b.logistics_total_cents as "logisticsTotalCents",
+          b.base_subtotal_cents as "baseSubtotalCents",
+          b.subtotal_amount_cents as "subtotalAmountCents",
+          b.customer_fee_amount_cents as "customerFeeAmountCents",
           e.path as "eventTitle",
           b.event_date as "eventDate",
           b.event_start_time as "eventStartTime",
           b.event_location as "eventLocation",
           b.created_at as "createdAt",
           coalesce(nullif(u.display_name, ''), nullif(u.name, '')) as "vendorDisplayName",
-          va.business_name as "vendorBusinessName"
+          coalesce(va.business_name, listing_owner_account.business_name) as "vendorBusinessName"
         from bookings b
-        left join booking_items bi on bi.booking_id = b.id
-        left join vendor_listings vl on vl.id = bi.listing_id
-        left join vendor_accounts va on va.id = vl.account_id
-        left join users u on u.id = va.user_id
         left join events e on e.id = b.event_id
+        left join vendor_accounts va on va.id = b.vendor_account_id
+        left join vendor_listings listing_owner on listing_owner.id = b.listing_id
+        left join vendor_accounts listing_owner_account on listing_owner_account.id = listing_owner.account_id
+        left join users u on u.id = coalesce(va.user_id, listing_owner_account.user_id)
         where b.customer_id = ${customerAuth.id}
-        order by b.id, b.created_at desc
+        order by b.created_at desc
       `);
-      return res.json(await attachCustomerBookingContext(extractRows(legacyRows) as any));
+      return res.json(await attachCustomerBookingContext(extractRows(rows) as any));
     } catch (error: any) {
       res.status(500).json({ error: error.message });
     }
@@ -5251,10 +10001,456 @@ app.post(
     }
   });
 
+  app.post("/api/customer/bookings/:id/dispute", requireCustomerAnyAuth, async (req, res) => {
+    try {
+      await ensureBookingDisputesTable();
+
+      const customerAuth = await resolveCustomerAuthFromRequest(req, { createIfMissing: true });
+      if (!customerAuth?.id) {
+        return res.status(401).json({ error: "Customer authentication required" });
+      }
+
+      const bookingId = asTrimmedString(req.params?.id);
+      if (!bookingId) {
+        return res.status(400).json({ error: "Booking id is required" });
+      }
+
+      const payload = z
+        .object({
+          reason: z.enum([
+            "item_not_as_described",
+            "late_or_no_show",
+            "damaged_or_missing",
+            "other",
+          ]),
+          details: z.string().trim().min(8).max(2000),
+        })
+        .parse(req.body ?? {});
+
+      const bookingRows: any = await db.execute(drizzleSql`
+        select
+          b.id as "bookingId",
+          b.customer_id as "customerId",
+          b.booking_end_at as "bookingEndAt",
+          coalesce(b.vendor_account_id, listing_owner.account_id) as "vendorAccountId"
+        from bookings b
+        left join vendor_listings listing_owner on listing_owner.id = b.listing_id
+        where b.id = ${bookingId}
+        limit 1
+      `);
+      const booking = extractRows<{
+        bookingId?: string | null;
+        customerId?: string | null;
+        bookingEndAt?: Date | string | null;
+        vendorAccountId?: string | null;
+      }>(bookingRows)[0];
+
+      if (!booking?.bookingId || booking.customerId !== customerAuth.id) {
+        return res.status(404).json({ error: "Booking not found for this customer" });
+      }
+
+      const bookingEndAt =
+        booking.bookingEndAt instanceof Date
+          ? booking.bookingEndAt
+          : booking.bookingEndAt
+            ? new Date(booking.bookingEndAt)
+            : null;
+      if (!(bookingEndAt instanceof Date) || Number.isNaN(bookingEndAt.getTime())) {
+        return res.status(400).json({ error: "Booking does not have a valid event completion time" });
+      }
+
+      const now = new Date();
+      if (now < bookingEndAt) {
+        return res.status(400).json({ error: "Disputes can only be filed after the event has ended" });
+      }
+
+      const disputeWindowCloseAt = deriveDisputeWindowCloseAt(bookingEndAt);
+      if (!disputeWindowCloseAt || !isDisputeWindowOpen(bookingEndAt, now)) {
+        return res.status(400).json({
+          error: `Dispute window closed. Disputes are only allowed within ${DISPUTE_WINDOW_HOURS} hours after event completion.`,
+        });
+      }
+
+      const existingRows = await db
+        .select({
+          id: bookingDisputes.id,
+        })
+        .from(bookingDisputes)
+        .where(eq(bookingDisputes.bookingId, bookingId))
+        .limit(1);
+      if (existingRows[0]?.id) {
+        return res.status(409).json({ error: "A dispute already exists for this booking" });
+      }
+
+      const [createdDispute] = await db
+        .insert(bookingDisputes)
+        .values({
+          bookingId,
+          customerId: customerAuth.id,
+          vendorAccountId: asTrimmedString(booking.vendorAccountId) || null,
+          reason: payload.reason,
+          details: payload.details,
+          status: "filed",
+          filedAt: now,
+          createdAt: now,
+          updatedAt: now,
+        })
+        .returning();
+
+      await db
+        .update(payments)
+        .set({
+          payoutStatus: "blocked",
+          payoutBlockedReason: "customer_dispute_open",
+        })
+        .where(eq(payments.bookingId, bookingId));
+
+      await db
+        .update(bookings)
+        .set({
+          payoutStatus: "blocked",
+          payoutBlockedReason: "customer_dispute_open",
+          updatedAt: now,
+        })
+        .where(eq(bookings.id, bookingId));
+
+      return res.status(201).json({
+        disputeId: createdDispute.id,
+        bookingId,
+        status: createdDispute.status,
+        reason: createdDispute.reason,
+        details: createdDispute.details,
+        filedAt: createdDispute.filedAt,
+        disputeWindowCloseAt,
+      });
+    } catch (error: any) {
+      if (error?.name === "ZodError") {
+        return res.status(400).json({ error: "Validation failed", details: error.errors });
+      }
+      return res.status(500).json({ error: "Unable to file dispute" });
+    }
+  });
+
+  app.post("/api/vendor/bookings/:id/dispute/respond", ...requireVendorAuth0, async (req, res) => {
+    try {
+      await ensureBookingDisputesTable();
+
+      const vendorAuth = (req as any).vendorAuth;
+      const vendorAccountId = asTrimmedString(vendorAuth?.id);
+      if (!vendorAccountId) {
+        return res.status(403).json({ error: "Vendor account required" });
+      }
+
+      const bookingId = asTrimmedString(req.params?.id);
+      if (!bookingId) {
+        return res.status(400).json({ error: "Booking id is required" });
+      }
+
+      const payload = z
+        .object({
+          response: z.string().trim().min(4).max(2000),
+        })
+        .parse(req.body ?? {});
+
+      const disputeRows: any = await db.execute(drizzleSql`
+        select
+          d.id as "disputeId",
+          d.status as "status",
+          d.booking_id as "bookingId",
+          coalesce(b.vendor_account_id, listing_owner.account_id) as "vendorAccountId"
+        from booking_disputes d
+        inner join bookings b on b.id = d.booking_id
+        left join vendor_listings listing_owner on listing_owner.id = b.listing_id
+        where d.booking_id = ${bookingId}
+        limit 1
+      `);
+      const dispute = extractRows<{
+        disputeId?: string | null;
+        status?: string | null;
+        bookingId?: string | null;
+        vendorAccountId?: string | null;
+      }>(disputeRows)[0];
+
+      if (!dispute?.disputeId) {
+        return res.status(404).json({ error: "Dispute not found for this booking" });
+      }
+      if (asTrimmedString(dispute.vendorAccountId) !== vendorAccountId) {
+        return res.status(403).json({ error: "You do not have access to this dispute" });
+      }
+      if (dispute.status === "resolved_refund" || dispute.status === "resolved_payout") {
+        return res.status(409).json({ error: "Dispute is already resolved" });
+      }
+
+      const now = new Date();
+      const [updatedDispute] = await db
+        .update(bookingDisputes)
+        .set({
+          status: "vendor_responded",
+          vendorResponse: payload.response,
+          vendorRespondedAt: now,
+          updatedAt: now,
+        })
+        .where(eq(bookingDisputes.id, dispute.disputeId))
+        .returning();
+
+      return res.json({
+        disputeId: updatedDispute.id,
+        bookingId: updatedDispute.bookingId,
+        status: updatedDispute.status,
+        vendorResponse: updatedDispute.vendorResponse,
+        vendorRespondedAt: updatedDispute.vendorRespondedAt,
+      });
+    } catch (error: any) {
+      if (error?.name === "ZodError") {
+        return res.status(400).json({ error: "Validation failed", details: error.errors });
+      }
+      return res.status(500).json({ error: "Unable to submit dispute response" });
+    }
+  });
+
+  app.get("/api/admin/disputes", requireAdminAuth, async (req, res) => {
+    try {
+      await ensureBookingDisputesTable();
+
+      const requestedStatus = asTrimmedString(req.query?.status).toLowerCase();
+      const allowed = new Set(["filed", "vendor_responded", "resolved_refund", "resolved_payout"]);
+      if (requestedStatus && !allowed.has(requestedStatus)) {
+        return res.status(400).json({ error: "Invalid dispute status filter" });
+      }
+
+      const whereClause = requestedStatus
+        ? eq(bookingDisputes.status, requestedStatus as any)
+        : undefined;
+
+      const baseQuery = db
+        .select({
+          id: bookingDisputes.id,
+          bookingId: bookingDisputes.bookingId,
+          status: bookingDisputes.status,
+          reason: bookingDisputes.reason,
+          details: bookingDisputes.details,
+          vendorResponse: bookingDisputes.vendorResponse,
+          adminDecision: bookingDisputes.adminDecision,
+          adminNotes: bookingDisputes.adminNotes,
+          filedAt: bookingDisputes.filedAt,
+          vendorRespondedAt: bookingDisputes.vendorRespondedAt,
+          resolvedAt: bookingDisputes.resolvedAt,
+          customerId: bookingDisputes.customerId,
+          customerName: users.name,
+          customerEmail: users.email,
+          vendorAccountId: bookingDisputes.vendorAccountId,
+          vendorBusinessName: vendorAccounts.businessName,
+          bookingStatus: bookings.status,
+          bookingEndAt: bookings.bookingEndAt,
+          payoutStatus: bookings.payoutStatus,
+          payoutBlockedReason: bookings.payoutBlockedReason,
+        })
+        .from(bookingDisputes)
+        .innerJoin(bookings, eq(bookings.id, bookingDisputes.bookingId))
+        .leftJoin(users, eq(users.id, bookingDisputes.customerId))
+        .leftJoin(vendorAccounts, eq(vendorAccounts.id, bookingDisputes.vendorAccountId));
+      const disputes = await (whereClause ? baseQuery.where(whereClause) : baseQuery).orderBy(
+        desc(bookingDisputes.filedAt)
+      );
+
+      return res.json(disputes);
+    } catch (error: any) {
+      return res.status(500).json({ error: "Unable to load disputes" });
+    }
+  });
+
+  app.post("/api/admin/disputes/:id/resolve", requireAdminAuth, async (req, res) => {
+    try {
+      await ensureBookingDisputesTable();
+
+      const disputeId = asTrimmedString(req.params?.id);
+      if (!disputeId) {
+        return res.status(400).json({ error: "Dispute id is required" });
+      }
+
+      const payload = z
+        .object({
+          decision: z.enum(["refund", "payout"]),
+          adminNotes: z.string().trim().max(2000).optional(),
+        })
+        .parse(req.body ?? {});
+
+      const disputeRows = await db
+        .select({
+          id: bookingDisputes.id,
+          bookingId: bookingDisputes.bookingId,
+          status: bookingDisputes.status,
+        })
+        .from(bookingDisputes)
+        .where(eq(bookingDisputes.id, disputeId))
+        .limit(1);
+      const dispute = disputeRows[0];
+      if (!dispute?.id) {
+        return res.status(404).json({ error: "Dispute not found" });
+      }
+      if (dispute.status === "resolved_refund" || dispute.status === "resolved_payout") {
+        return res.status(409).json({ error: "Dispute already resolved" });
+      }
+
+      const now = new Date();
+
+      if (payload.decision === "refund") {
+        const depositPaymentRows = await db
+          .select({
+            id: payments.id,
+            bookingId: payments.bookingId,
+            scheduleId: payments.scheduleId,
+            stripePaymentIntentId: payments.stripePaymentIntentId,
+            amount: payments.amount,
+            status: payments.status,
+          })
+          .from(payments)
+          .where(and(eq(payments.bookingId, dispute.bookingId), eq(payments.paymentType, "deposit")))
+          .orderBy(desc(payments.createdAt))
+          .limit(1);
+        const depositPayment = depositPaymentRows[0];
+
+        if (!depositPayment?.id) {
+          return res.status(400).json({ error: "No deposit payment found for this dispute" });
+        }
+        if (!isPaymentSucceededStatus(depositPayment.status)) {
+          return res.status(400).json({ error: "Deposit payment is not in a refundable state" });
+        }
+
+        const { refundBookingPayment } = await import("./stripe");
+        const refund = await refundBookingPayment({
+          paymentIntentId: depositPayment.stripePaymentIntentId,
+          reason: "requested_by_customer",
+          idempotencyKey: `admin-dispute-refund:${dispute.id}:${depositPayment.id}`,
+        });
+
+        await db.transaction(async (tx) => {
+          await tx
+            .update(payments)
+            .set({
+              status: "refunded",
+              refundAmount: depositPayment.amount,
+              refundedAmount: depositPayment.amount,
+              refundReason: "admin_dispute_refund",
+              refundedAt: now,
+              payoutStatus: "cancelled",
+              payoutEligibleAt: null,
+              payoutBlockedReason: "dispute_refund_approved",
+              payoutAdjustedAmount: 0,
+            })
+            .where(eq(payments.id, depositPayment.id));
+
+          if (depositPayment.scheduleId) {
+            await tx
+              .update(paymentSchedules)
+              .set({ status: "refunded" })
+              .where(eq(paymentSchedules.id, depositPayment.scheduleId));
+          }
+
+          await tx
+            .update(bookings)
+            .set({
+              paymentStatus: "refunded",
+              payoutStatus: "cancelled",
+              payoutEligibleAt: null,
+              payoutBlockedReason: "dispute_refund_approved",
+              cancellationReason: "admin_dispute_refund",
+              updatedAt: now,
+            })
+            .where(eq(bookings.id, dispute.bookingId));
+
+          await tx
+            .update(bookingDisputes)
+            .set({
+              status: "resolved_refund",
+              adminDecision: "refund",
+              adminNotes: payload.adminNotes ?? null,
+              resolvedAt: now,
+              updatedAt: now,
+            })
+            .where(eq(bookingDisputes.id, dispute.id));
+        });
+
+        return res.json({
+          disputeId: dispute.id,
+          bookingId: dispute.bookingId,
+          decision: "refund",
+          refund,
+          resolvedAt: now,
+        });
+      }
+
+      await db.transaction(async (tx) => {
+        await tx
+          .update(bookingDisputes)
+          .set({
+            status: "resolved_payout",
+            adminDecision: "payout",
+            adminNotes: payload.adminNotes ?? null,
+            resolvedAt: now,
+            updatedAt: now,
+          })
+          .where(eq(bookingDisputes.id, dispute.id));
+
+        await tx
+          .update(payments)
+          .set({
+            payoutStatus: "eligible",
+            payoutEligibleAt: now,
+            payoutBlockedReason: null,
+          })
+          .where(and(eq(payments.bookingId, dispute.bookingId), eq(payments.paymentType, "deposit")));
+
+        await tx
+          .update(bookings)
+          .set({
+            payoutStatus: "eligible",
+            payoutEligibleAt: now,
+            payoutBlockedReason: null,
+            updatedAt: now,
+          })
+          .where(eq(bookings.id, dispute.bookingId));
+      });
+
+      const depositRows = await db
+        .select({
+          id: payments.id,
+          bookingId: payments.bookingId,
+        })
+        .from(payments)
+        .where(and(eq(payments.bookingId, dispute.bookingId), eq(payments.paymentType, "deposit")))
+        .orderBy(desc(payments.createdAt))
+        .limit(1);
+      const deposit = depositRows[0];
+      const payoutResult = deposit
+        ? await processSinglePayoutCandidate({
+            paymentId: deposit.id,
+            bookingId: deposit.bookingId,
+            dryRun: false,
+          })
+        : null;
+
+      return res.json({
+        disputeId: dispute.id,
+        bookingId: dispute.bookingId,
+        decision: "payout",
+        payoutResult,
+        resolvedAt: now,
+      });
+    } catch (error: any) {
+      if (error?.name === "ZodError") {
+        return res.status(400).json({ error: "Validation failed", details: error.errors });
+      }
+      return res.status(500).json({ error: "Unable to resolve dispute" });
+    }
+  });
+
   const createBookingSchema = z.object({
     vendorId: z.string().optional(),
     listingId: z.string(),
-    paymentMethodId: z.string().regex(/^pm_/, "Invalid Stripe payment method"),
+    quantity: z.number().int().min(1).max(99).optional(),
+    paymentMethodId: z.string().regex(/^pm_/, "Invalid Stripe payment method").optional(),
+    idempotencyKey: z.string().min(16).max(128).optional(),
     customerEventId: z.string().optional(),
     customerEventTitle: z.string().max(160).optional(),
     eventId: z.string().optional(),
@@ -5262,6 +10458,10 @@ app.post(
     addOnIds: z.array(z.string()).optional(),
     eventDate: z.string(),
     eventStartTime: z.string().optional(),
+    eventEndDate: z.string().optional(),
+    eventEndTime: z.string().optional(),
+    itemNeededByTime: z.string().optional(),
+    itemDoneByTime: z.string().optional(),
     eventLocation: z.string().optional(),
     guestCount: z.number().optional(),
     specialRequests: z.string().optional(),
@@ -5272,6 +10472,21 @@ app.post(
 
   app.post("/api/bookings", requireCustomerAnyAuth, async (req, res) => {
     let stage = "start";
+    const fail = (
+      status: number,
+      message: string,
+      details?: Record<string, unknown>
+    ): never => {
+      const error = new Error(message) as Error & {
+        status?: number;
+        details?: Record<string, unknown>;
+      };
+      error.status = status;
+      if (details) {
+        error.details = details;
+      }
+      throw error;
+    };
     try {
       stage = "resolve-customer";
       const customerAuth = await resolveCustomerAuthFromRequest(req, { createIfMissing: true });
@@ -5279,8 +10494,67 @@ app.post(
         return res.status(401).json({ error: "Customer authentication required" });
       }
 
+      await expireStalePendingBookings();
+
       stage = "validate-payload";
       const data = createBookingSchema.parse(req.body);
+      const idempotencyKey =
+        typeof data.idempotencyKey === "string" && data.idempotencyKey.trim().length > 0
+          ? data.idempotencyKey.trim()
+          : null;
+
+      if (idempotencyKey) {
+        const existingRows: any = await db.execute(drizzleSql`
+          select
+            b.id as "bookingId"
+          from bookings b
+          where b.customer_id = ${customerAuth.id}
+            and exists (
+              select 1
+              from booking_items bi
+              where bi.booking_id = b.id
+                and coalesce(bi.item_data->>'idempotencyKey', '') = ${idempotencyKey}
+            )
+          order by b.created_at desc
+          limit 1
+        `);
+        const existingBookingId = asTrimmedString(
+          extractRows<{ bookingId?: string | null }>(existingRows)[0]?.bookingId
+        );
+        if (existingBookingId) {
+          const [existingBooking] = await db
+            .select()
+            .from(bookings)
+            .where(eq(bookings.id, existingBookingId))
+            .limit(1);
+          const [existingDepositSchedule] = await db
+            .select({
+              id: paymentSchedules.id,
+              status: paymentSchedules.status,
+            })
+            .from(paymentSchedules)
+            .where(
+              and(
+                eq(paymentSchedules.bookingId, existingBookingId),
+                eq(paymentSchedules.paymentType, "deposit")
+              )
+            )
+            .limit(1);
+
+          if (existingBooking?.id) {
+            return res.json({
+              ...existingBooking,
+              payment: {
+                depositScheduleId: existingDepositSchedule?.id ?? null,
+                depositScheduleStatus: existingDepositSchedule?.status ?? null,
+              },
+              payoutReleaseMode: PAYOUT_RELEASE_MODE,
+              idempotencyReused: true,
+            });
+          }
+        }
+      }
+
       const requestedCustomerEventId =
         typeof data.customerEventId === "string" && data.customerEventId.trim().length > 0
           ? data.customerEventId.trim()
@@ -5289,16 +10563,49 @@ app.post(
         typeof data.customerEventTitle === "string" && data.customerEventTitle.trim().length > 0
           ? data.customerEventTitle.trim().slice(0, 160)
           : null;
+
       stage = "load-listing";
       const [listingRow] = await db
         .select({
           id: vendorListings.id,
           accountId: vendorListings.accountId,
+          profileId: vendorListings.profileId,
+          category: vendorListings.category,
           title: vendorListings.title,
+          instantBookEnabled: vendorListings.instantBookEnabled,
+          pricingUnit: vendorListings.pricingUnit,
+          minimumHours: vendorListings.minimumHours,
+          priceCents: vendorListings.priceCents,
+          quantity: vendorListings.quantity,
+          serviceAreaMode: vendorListings.serviceAreaMode,
+          listingServiceCenterLabel: vendorListings.listingServiceCenterLabel,
+          listingServiceCenterLat: vendorListings.listingServiceCenterLat,
+          listingServiceCenterLng: vendorListings.listingServiceCenterLng,
+          serviceRadiusMiles: vendorListings.serviceRadiusMiles,
+          travelOffered: vendorListings.travelOffered,
+          travelFeeEnabled: vendorListings.travelFeeEnabled,
+          travelFeeType: vendorListings.travelFeeType,
+          travelFeeAmountCents: vendorListings.travelFeeAmountCents,
+          pickupOffered: vendorListings.pickupOffered,
+          deliveryOffered: vendorListings.deliveryOffered,
+          deliveryFeeEnabled: vendorListings.deliveryFeeEnabled,
+          deliveryFeeAmountCents: vendorListings.deliveryFeeAmountCents,
+          setupOffered: vendorListings.setupOffered,
+          setupFeeEnabled: vendorListings.setupFeeEnabled,
+          setupFeeAmountCents: vendorListings.setupFeeAmountCents,
           listingData: vendorListings.listingData,
+          profileServiceType: vendorProfiles.serviceType,
+          profileOperatingTimezone: vendorProfiles.operatingTimezone,
         })
         .from(vendorListings)
-        .where(eq(vendorListings.id, data.listingId))
+        .leftJoin(vendorProfiles, eq(vendorProfiles.id, vendorListings.profileId))
+        .where(
+          and(
+            eq(vendorListings.id, data.listingId),
+            eq(vendorListings.status, "active"),
+            eq(vendorProfiles.active, true)
+          )
+        )
         .limit(1);
 
       if (!listingRow) {
@@ -5313,9 +10620,11 @@ app.post(
           businessName: vendorAccounts.businessName,
           stripeConnectId: vendorAccounts.stripeConnectId,
           stripeOnboardingComplete: vendorAccounts.stripeOnboardingComplete,
+          googleConnectionStatus: vendorAccounts.googleConnectionStatus,
+          googleCalendarId: vendorAccounts.googleCalendarId,
         })
         .from(vendorAccounts)
-        .where(eq(vendorAccounts.id, listingRow.accountId))
+        .where(and(eq(vendorAccounts.id, listingRow.accountId), eq(vendorAccounts.active, true)))
         .limit(1);
 
       if (!vendorAccount) {
@@ -5324,38 +10633,68 @@ app.post(
       if (data.vendorId && data.vendorId !== vendorAccount.id) {
         return res.status(400).json({ error: "Listing/vendor mismatch" });
       }
+      if (!vendorAccount.stripeConnectId || !vendorAccount.stripeOnboardingComplete) {
+        return res.status(400).json({
+          error: "This vendor cannot accept payments yet. Please choose another listing.",
+          code: "vendor_payment_not_ready",
+        });
+      }
+
+      const listingDataAny = (listingRow.listingData ?? {}) as any;
+      const itemTitle =
+        (typeof listingRow.title === "string" && listingRow.title.trim()) ||
+        (typeof listingDataAny?.listingTitle === "string" && listingDataAny.listingTitle.trim()) ||
+        "Listing";
+      const requestedQuantity =
+        typeof data.quantity === "number" && Number.isFinite(data.quantity) && data.quantity > 0
+          ? Math.max(1, Math.floor(data.quantity))
+          : 1;
+      const listingAvailableQuantity = getListingAvailableQuantity(listingDataAny, listingRow.quantity);
+      if (requestedQuantity > listingAvailableQuantity) {
+        return res.status(400).json({
+          error: `Only ${listingAvailableQuantity} identical unit${listingAvailableQuantity === 1 ? "" : "s"} available for this listing.`,
+          code: "listing_quantity_exceeded",
+        });
+      }
+
+      let resolvedVendorProfileId =
+        listingRow.profileId && typeof listingRow.profileId === "string" ? listingRow.profileId : null;
+      let resolvedVendorServiceType =
+        typeof listingRow.profileServiceType === "string" && listingRow.profileServiceType.trim().length > 0
+          ? listingRow.profileServiceType.trim()
+          : null;
+      let resolvedVendorTimeZone = normalizeIanaTimeZone(listingRow.profileOperatingTimezone);
+      if (!resolvedVendorProfileId) {
+        const profileRows = await db
+          .select({
+            id: vendorProfiles.id,
+            serviceType: vendorProfiles.serviceType,
+            operatingTimezone: vendorProfiles.operatingTimezone,
+          })
+          .from(vendorProfiles)
+          .where(and(eq(vendorProfiles.accountId, vendorAccount.id), eq(vendorProfiles.active, true)))
+          .orderBy(asc(vendorProfiles.createdAt), asc(vendorProfiles.id))
+          .limit(1);
+        if (profileRows[0]?.id) {
+          resolvedVendorProfileId = profileRows[0].id;
+          resolvedVendorServiceType =
+            typeof profileRows[0].serviceType === "string" && profileRows[0].serviceType.trim().length > 0
+              ? profileRows[0].serviceType.trim()
+              : resolvedVendorServiceType;
+          resolvedVendorTimeZone = normalizeIanaTimeZone(
+            profileRows[0].operatingTimezone,
+            resolvedVendorTimeZone
+          );
+          await db
+            .update(vendorListings)
+            .set({ profileId: resolvedVendorProfileId, updatedAt: new Date() })
+            .where(eq(vendorListings.id, listingRow.id));
+        }
+      }
 
       let resolvedBookingEventId: string | null = data.eventId ?? null;
       let resolvedCustomerEvent: { id: string; title: string } | null = null;
-      if (requestedCustomerEventTitle) {
-        stage = "create-customer-event";
-        const [createdEvent] = await db
-          .insert(events)
-          .values({
-            eventType: "custom",
-            location: data.eventLocation ?? "TBD",
-            date: data.eventDate,
-            startTime: data.eventStartTime ?? "00:00",
-            guestCount: data.guestCount ?? 1,
-            vendorsNeeded: ["rentals"],
-            path: requestedCustomerEventTitle,
-            photographerDetails: null,
-            videographerDetails: null,
-            floristDetails: null,
-            cateringDetails: null,
-            djDetails: null,
-            propDecorDetails: null,
-          })
-          .returning({ id: events.id, path: events.path });
-
-        if (createdEvent?.id) {
-          resolvedBookingEventId = createdEvent.id;
-          resolvedCustomerEvent = {
-            id: createdEvent.id,
-            title: createdEvent.path || requestedCustomerEventTitle,
-          };
-        }
-      } else if (requestedCustomerEventId) {
+      if (requestedCustomerEventId) {
         stage = "resolve-customer-event";
         const [eventRow] = await db
           .select({
@@ -5383,137 +10722,110 @@ app.post(
         }
       }
 
-      const basePriceCents = extractListingBasePriceCents((listingRow.listingData ?? {}) as any);
+      const basePriceCents = extractListingBasePriceCents(
+        (listingRow.listingData ?? {}) as any,
+        listingRow.priceCents
+      );
       if (!basePriceCents || basePriceCents <= 0) {
         return res.status(400).json({ error: "Listing price is not configured" });
       }
-      const customerFee = Math.round(basePriceCents * CUSTOMER_FEE_RATE);
-      const enforcedTotalAmount = basePriceCents + customerFee;
-      const platformFee = Math.round(basePriceCents * VENDOR_FEE_RATE);
-      const vendorPayout = basePriceCents - platformFee;
-      const enforcedDepositAmount = Math.max(1, Math.round(enforcedTotalAmount * 0.25));
-      stage = "detect-bookings-vendor-column";
-      const vendorRefCol = await getBookingsVendorRefColumn();
-      let booking: any = null;
+      stage = "validate-booking-time-range";
+      const canonicalBookingTimeRange = computeCanonicalBookingTimeRange({
+        listingData: listingRow.listingData ?? {},
+        listingPricingUnit: listingRow.pricingUnit,
+        listingMinimumHours: listingRow.minimumHours,
+        vendorTimeZone: resolvedVendorTimeZone,
+        eventDate: data.eventDate,
+        eventStartTime: data.eventStartTime ?? null,
+        eventEndDate: data.eventEndDate ?? null,
+        eventEndTime: data.eventEndTime ?? null,
+        itemNeededByTime: data.itemNeededByTime ?? null,
+        itemDoneByTime: data.itemDoneByTime ?? null,
+      });
 
-      if (vendorRefCol === "vendor_account_id") {
-        stage = "insert-booking-vendor-account-id";
-        const rows = await db
-          .insert(bookings)
-          .values({
-            customerId: customerAuth.id,
-            vendorAccountId: vendorAccount.id,
-            eventId: resolvedBookingEventId,
-            packageId: data.packageId ?? null,
-            addOnIds: data.addOnIds ?? [],
-            eventDate: data.eventDate,
-            eventStartTime: data.eventStartTime ?? null,
-            eventLocation: data.eventLocation ?? null,
-            guestCount: data.guestCount ?? null,
-            specialRequests: data.specialRequests ?? null,
-            totalAmount: enforcedTotalAmount,
-            platformFee,
-            vendorPayout,
-            depositAmount: enforcedDepositAmount,
-            finalPaymentStrategy: data.finalPaymentStrategy,
-            status: "pending",
-            paymentStatus: "pending",
-            createdAt: new Date(),
-            updatedAt: new Date(),
-          })
-          .returning();
-        booking = rows[0];
-      } else if (vendorRefCol === "vendor_id") {
-        stage = "insert-booking-vendor-id";
-        const inserted = await db.execute(drizzleSql`
-          insert into bookings (
-            customer_id,
-            vendor_id,
-            event_id,
-            package_id,
-            event_date,
-            event_start_time,
-            event_location,
-            guest_count,
-            special_requests,
-            total_amount,
-            platform_fee,
-            vendor_payout,
-            deposit_amount,
-            final_payment_strategy,
-            status,
-            payment_status
-          ) values (
-            ${customerAuth.id},
-            ${vendorAccount.id},
-            ${resolvedBookingEventId},
-            ${data.packageId ?? null},
-            ${data.eventDate},
-            ${data.eventStartTime ?? null},
-            ${data.eventLocation ?? null},
-            ${data.guestCount ?? null},
-            ${data.specialRequests ?? null},
-            ${enforcedTotalAmount},
-            ${platformFee},
-            ${vendorPayout},
-            ${enforcedDepositAmount},
-            ${data.finalPaymentStrategy},
-            ${"pending"},
-            ${"pending"}
-          )
-          returning *
-        `);
-        booking = extractRows(inserted)[0];
-      } else {
-        stage = "insert-booking-no-vendor-column";
-        const inserted = await db.execute(drizzleSql`
-          insert into bookings (
-            customer_id,
-            event_id,
-            package_id,
-            event_date,
-            event_start_time,
-            event_location,
-            guest_count,
-            special_requests,
-            total_amount,
-            platform_fee,
-            vendor_payout,
-            deposit_amount,
-            final_payment_strategy,
-            status,
-            payment_status
-          ) values (
-            ${customerAuth.id},
-            ${resolvedBookingEventId},
-            ${data.packageId ?? null},
-            ${data.eventDate},
-            ${data.eventStartTime ?? null},
-            ${data.eventLocation ?? null},
-            ${data.guestCount ?? null},
-            ${data.specialRequests ?? null},
-            ${enforcedTotalAmount},
-            ${platformFee},
-            ${vendorPayout},
-            ${enforcedDepositAmount},
-            ${data.finalPaymentStrategy},
-            ${"pending"},
-            ${"pending"}
-          )
-          returning id
-        `);
-        booking = extractRows(inserted)[0];
+      stage = "check-listing-conflicts";
+      const availabilityCheck = await checkListingAvailabilityForBookingRequest({
+        vendorAccountId: vendorAccount.id,
+        vendorGoogleConnectionStatus: vendorAccount.googleConnectionStatus,
+        vendorGoogleCalendarId: vendorAccount.googleCalendarId,
+        vendorTimeZone: canonicalBookingTimeRange.vendorTimeZone,
+        listingId: listingRow.id,
+        listingTitle: itemTitle,
+        bookingStartAt: canonicalBookingTimeRange.bookingStartAt,
+        bookingEndAt: canonicalBookingTimeRange.bookingEndAt,
+        requestedQuantity,
+        listingAvailableQuantity,
+      });
+
+      if (availabilityCheck.eventHub.conflict) {
+        return res.status(409).json({
+          error: "Not enough listing quantity is available for the requested time range.",
+          code: "listing_time_conflict",
+          source: "eventhub",
+          conflictBookingId: availabilityCheck.eventHub.conflict.id,
+          reservedUnits: availabilityCheck.eventHub.conflict.reservedUnits,
+          requestedQuantity: availabilityCheck.eventHub.conflict.requestedQuantity,
+          availableQuantity: availabilityCheck.eventHub.conflict.availableQuantity,
+        });
       }
 
-      if (!booking?.id) {
-        return res.status(500).json({ error: "Failed to create booking record" });
+      if (availabilityCheck.google.status === "failed") {
+        return res.status(503).json({
+          error: "Availability could not be verified against the vendor's Google Calendar. Please try again.",
+          code: "google_availability_unverifiable",
+          source: "google",
+          googleAvailabilityStatus: availabilityCheck.google.status,
+          googleAvailabilityReason: availabilityCheck.google.reason,
+        });
       }
 
-      const listingDataAny = (listingRow.listingData ?? {}) as any;
-      const itemTitle =
-        (typeof listingRow.title === "string" && listingRow.title.trim()) ||
-        (typeof listingDataAny?.listingTitle === "string" && listingDataAny.listingTitle.trim()) ||
-        "Listing";
+      if (availabilityCheck.google.conflict?.event?.id) {
+        return res.status(409).json({
+          error: "This listing conflicts with an existing Google Calendar event for the same item.",
+          code: "listing_time_conflict",
+          source: "google",
+          matchedBy: availabilityCheck.google.conflict.matchedBy,
+          conflictEventId: availabilityCheck.google.conflict.event.id,
+          googleAvailabilityStatus: availabilityCheck.google.status,
+        });
+      }
+
+      const unitPriceCentsTotal = basePriceCents * requestedQuantity;
+      const logisticsFees = getListingLogisticsFeeSummaryCents({
+        listingData: listingDataAny,
+        canonical: {
+          pickupOffered: listingRow.pickupOffered,
+          deliveryOffered: listingRow.deliveryOffered,
+          deliveryFeeEnabled: listingRow.deliveryFeeEnabled,
+          deliveryFeeAmountCents: listingRow.deliveryFeeAmountCents,
+          setupOffered: listingRow.setupOffered,
+          setupFeeEnabled: listingRow.setupFeeEnabled,
+          setupFeeAmountCents: listingRow.setupFeeAmountCents,
+          travelOffered: listingRow.travelOffered,
+          travelFeeEnabled: listingRow.travelFeeEnabled,
+          travelFeeType: listingRow.travelFeeType,
+          travelFeeAmountCents: listingRow.travelFeeAmountCents,
+        },
+      });
+      const subtotalAmount =
+        unitPriceCentsTotal +
+        logisticsFees.deliveryFeeCents +
+        logisticsFees.setupFeeCents +
+        logisticsFees.travelFlatFeeCents;
+      const customerFee = Math.round(subtotalAmount * CUSTOMER_FEE_RATE);
+      const enforcedTotalAmount = subtotalAmount + customerFee;
+      const platformFee = Math.round(subtotalAmount * VENDOR_FEE_RATE);
+      const vendorPayout = subtotalAmount - platformFee;
+      // MVP checkout policy: collect the full amount up-front at booking time.
+      const enforcedDepositAmount = enforcedTotalAmount;
+      const bookingLifecycle = resolveBookingLifecycleMode({
+        listingCategory: listingRow.category,
+        listingInstantBookEnabled: listingRow.instantBookEnabled,
+        fallbackServiceType: resolvedVendorServiceType,
+      });
+      const bookingStatus = bookingLifecycle.initialStatus;
+      const bookingConfirmedAt = bookingStatus === "confirmed" ? new Date() : null;
+      const bookingVendorProfileId = resolvedVendorProfileId ?? null;
       const customerNotes =
         typeof data.customerNotes === "string" && data.customerNotes.trim().length > 0
           ? data.customerNotes.trim()
@@ -5523,38 +10835,209 @@ app.post(
           ? data.customerQuestions.trim()
           : null;
 
-      stage = "insert-booking-item";
-      await db.execute(drizzleSql`
-        insert into booking_items (
-          booking_id,
-          listing_id,
-          title,
-          quantity,
-          unit_price_cents,
-          total_price_cents,
-          item_data
-        ) values (
-          ${booking.id},
-          ${listingRow.id},
-          ${itemTitle},
-          1,
-          ${basePriceCents},
-          ${basePriceCents},
-          ${JSON.stringify({
-            listingId: listingRow.id,
+      stage = "insert-booking";
+      const bookingInsertResult = await db.transaction(async (tx) => {
+        await tx.execute(drizzleSql`select pg_advisory_xact_lock(hashtext(${listingRow.id}))`);
+
+        const overlapRows: any = await tx.execute(drizzleSql`
+          select
+            b.id,
+            coalesce(b.booked_quantity, booking_item_totals.quantity, 1) as "quantity"
+          from bookings b
+          left join lateral (
+            select sum(coalesce(bi.quantity, 1))::int as quantity
+            from booking_items bi
+            where bi.booking_id = b.id
+              and bi.listing_id = ${listingRow.id}
+          ) booking_item_totals on true
+          where (
+            b.listing_id = ${listingRow.id}
+            or (
+              b.listing_id is null
+              and exists (
+                select 1
+                from booking_items bi
+                where bi.booking_id = b.id
+                  and bi.listing_id = ${listingRow.id}
+              )
+            )
+          )
+            and b.status in ('pending', 'confirmed', 'completed')
+            and b.booking_start_at is not null
+            and b.booking_end_at is not null
+            and b.booking_start_at < ${canonicalBookingTimeRange.bookingEndAt}
+            and b.booking_end_at > ${canonicalBookingTimeRange.bookingStartAt}
+          order by b.booking_start_at asc
+        `);
+
+        const overlappingRows = extractRows<{ id?: string | null; quantity?: number | null }>(overlapRows);
+        const totalReservedUnits = overlappingRows.reduce((sum, row) => {
+          const quantity = parseIntegerValue(row.quantity);
+          return sum + (quantity && quantity > 0 ? quantity : 1);
+        }, 0);
+        if (totalReservedUnits + requestedQuantity > listingAvailableQuantity) {
+          fail(409, "Not enough listing quantity is available for the requested time range.", {
+            code: "listing_time_conflict",
+            source: "eventhub",
+            conflictBookingId: overlappingRows[0]?.id ?? null,
+            reservedUnits: totalReservedUnits,
+            requestedQuantity,
+            availableQuantity: listingAvailableQuantity,
+          });
+        }
+
+        let txBookingEventId = resolvedBookingEventId;
+        let txCustomerEvent = resolvedCustomerEvent;
+        if (requestedCustomerEventTitle) {
+          const [createdEvent] = await tx
+            .insert(events)
+            .values({
+              eventType: "custom",
+              location: data.eventLocation ?? "TBD",
+              date: data.eventDate,
+              startTime: data.eventStartTime ?? "00:00",
+              guestCount: data.guestCount ?? 1,
+              vendorsNeeded: ["rentals"],
+              path: requestedCustomerEventTitle,
+              photographerDetails: null,
+              videographerDetails: null,
+              floristDetails: null,
+              cateringDetails: null,
+              djDetails: null,
+              propDecorDetails: null,
+            })
+            .returning({ id: events.id, path: events.path });
+          if (createdEvent?.id) {
+            txBookingEventId = createdEvent.id;
+            txCustomerEvent = {
+              id: createdEvent.id,
+              title: createdEvent.path || requestedCustomerEventTitle,
+            };
+          }
+        }
+
+        const bookingRows = await tx
+          .insert(bookings)
+          .values({
+            customerId: customerAuth.id,
             vendorAccountId: vendorAccount.id,
-            paymentMethodId: data.paymentMethodId,
-            customerEvent: resolvedCustomerEvent,
-            customerNotes,
-            customerQuestions,
-            feePolicy: {
-              vendorFeeRate: VENDOR_FEE_RATE,
-              customerFeeRate: CUSTOMER_FEE_RATE,
-              customerFeeCents: customerFee,
-            },
-          })}::jsonb
-        )
-      `);
+            vendorProfileId: bookingVendorProfileId,
+            listingId: listingRow.id,
+            eventId: txBookingEventId,
+            packageId: data.packageId ?? null,
+            addOnIds: data.addOnIds ?? [],
+            eventDate: data.eventDate,
+            eventStartTime: data.eventStartTime ?? null,
+            eventEndTime: data.eventEndTime ?? null,
+            itemNeededByTime: data.itemNeededByTime ?? null,
+            itemDoneByTime: data.itemDoneByTime ?? null,
+            eventLocation: data.eventLocation ?? null,
+            guestCount: data.guestCount ?? null,
+            specialRequests: data.specialRequests ?? null,
+            bookingStartAt: canonicalBookingTimeRange.bookingStartAt,
+            bookingEndAt: canonicalBookingTimeRange.bookingEndAt,
+            vendorTimezoneSnapshot: canonicalBookingTimeRange.vendorTimeZone,
+            listingTitleSnapshot: itemTitle,
+            pricingUnitSnapshot: canonicalBookingTimeRange.pricingUnit,
+            unitPriceCentsSnapshot: basePriceCents,
+            bookedQuantity: requestedQuantity,
+            deliveryFeeAmountCents: logisticsFees.deliveryFeeCents,
+            setupFeeAmountCents: logisticsFees.setupFeeCents,
+            travelFeeAmountCents: logisticsFees.travelFlatFeeCents,
+            logisticsTotalCents:
+              logisticsFees.deliveryFeeCents +
+              logisticsFees.setupFeeCents +
+              logisticsFees.travelFlatFeeCents,
+            baseSubtotalCents: unitPriceCentsTotal,
+            subtotalAmountCents: subtotalAmount,
+            customerFeeAmountCents: customerFee,
+            instantBookSnapshot: bookingLifecycle.isInstantBooking,
+            totalAmount: enforcedTotalAmount,
+            platformFee,
+            vendorPayout,
+            depositAmount: enforcedDepositAmount,
+            finalPaymentStrategy: data.finalPaymentStrategy,
+            status: bookingStatus,
+            paymentStatus: "pending",
+            payoutStatus: "not_ready",
+            confirmedAt: bookingConfirmedAt,
+            createdAt: new Date(),
+            updatedAt: new Date(),
+          })
+          .returning();
+        const booking = bookingRows[0];
+        if (!booking?.id) {
+          fail(500, "Failed to create booking record");
+        }
+
+        await tx.execute(drizzleSql`
+          insert into booking_items (
+            booking_id,
+            listing_id,
+            title,
+            quantity,
+            unit_price_cents,
+            total_price_cents,
+            item_data
+          ) values (
+            ${booking.id},
+            ${listingRow.id},
+            ${itemTitle},
+            ${requestedQuantity},
+            ${basePriceCents},
+            ${subtotalAmount},
+            ${JSON.stringify({
+              listingId: listingRow.id,
+              vendorAccountId: vendorAccount.id,
+              vendorProfileId: resolvedVendorProfileId,
+              paymentMethodId: data.paymentMethodId ?? null,
+              quantity: requestedQuantity,
+              idempotencyKey,
+              customerEvent: txCustomerEvent,
+              customerNotes,
+              customerQuestions,
+              feePolicy: {
+                vendorFeeRate: VENDOR_FEE_RATE,
+                customerFeeRate: CUSTOMER_FEE_RATE,
+                customerFeeCents: customerFee,
+              },
+              logisticsFees: {
+                deliveryFeeCents: logisticsFees.deliveryFeeCents,
+                setupFeeCents: logisticsFees.setupFeeCents,
+                travelFlatFeeCents: logisticsFees.travelFlatFeeCents,
+                variableTravelFeePending: logisticsFees.variableTravelFeePending,
+              },
+            })}::jsonb
+          )
+        `);
+
+        const [depositSchedule] = await tx
+          .insert(paymentSchedules)
+          .values({
+            bookingId: booking.id,
+            installmentNumber: 1,
+            amount: enforcedDepositAmount,
+            dueDate: new Date().toISOString().split("T")[0],
+            paymentType: "deposit",
+            status: "pending",
+          })
+          .returning({
+            id: paymentSchedules.id,
+            status: paymentSchedules.status,
+          });
+
+        return {
+          booking,
+          depositScheduleId: depositSchedule?.id ?? null,
+          depositScheduleStatus: depositSchedule?.status ?? null,
+          finalScheduleId: null,
+        };
+      });
+
+      const booking = bookingInsertResult.booking;
+      if (!booking?.id) {
+        return res.status(500).json({ error: "Failed to create booking record" });
+      }
 
       stage = "create-notifications";
       await Promise.allSettled([
@@ -5563,7 +11046,10 @@ app.post(
           recipientType: "vendor",
           type: "new_booking",
           title: `New booking for ${itemTitle}`,
-          message: `You received a new booking request for ${data.eventDate}.`,
+          message:
+            bookingStatus === "confirmed"
+              ? `You received an instant booking for ${data.eventDate}.`
+              : `You received a new booking request for ${data.eventDate}.`,
           link: `/vendor/bookings?bookingId=${encodeURIComponent(booking.id)}`,
           read: false,
         }),
@@ -5571,46 +11057,15 @@ app.post(
           recipientId: customerAuth.id,
           recipientType: "customer",
           type: "booking_confirmed",
-          title: "Booking request sent",
-          message: `Your booking request for ${data.eventDate} was sent.`,
+          title: bookingStatus === "confirmed" ? "Booking confirmed" : "Booking request sent",
+          message:
+            bookingStatus === "confirmed"
+              ? `Your booking for ${data.eventDate} is confirmed.`
+              : `Your booking request for ${data.eventDate} was sent.`,
           link: "/dashboard/events",
           read: false,
         }),
       ]);
-
-      stage = "insert-payment-schedule-deposit";
-      await db.insert(paymentSchedules).values({
-        bookingId: booking.id,
-        installmentNumber: 1,
-        amount: enforcedDepositAmount,
-        dueDate: new Date().toISOString().split("T")[0],
-        paymentType: "deposit",
-        status: "pending",
-      });
-
-      const finalAmount = enforcedTotalAmount - enforcedDepositAmount;
-      let finalDueDate: string;
-
-      if (data.finalPaymentStrategy === "immediately") {
-        finalDueDate = new Date().toISOString().split("T")[0];
-      } else if (data.finalPaymentStrategy === "2_weeks_prior") {
-        const eventDate = new Date(data.eventDate);
-        const twoWeeksPrior = new Date(eventDate);
-        twoWeeksPrior.setDate(twoWeeksPrior.getDate() - 14);
-        finalDueDate = twoWeeksPrior.toISOString().split("T")[0];
-      } else {
-        finalDueDate = data.eventDate;
-      }
-
-      stage = "insert-payment-schedule-final";
-      await db.insert(paymentSchedules).values({
-        bookingId: booking.id,
-        installmentNumber: 2,
-        amount: finalAmount,
-        dueDate: finalDueDate,
-        paymentType: "final",
-        status: "pending",
-      });
 
       stage = "load-customer-email";
       const [customerRow] = await db
@@ -5650,9 +11105,32 @@ app.post(
       }
       await Promise.allSettled(emailTasks);
 
-      res.json(booking);
+      await syncBookingToGoogleCalendarSafely(booking.id, "/api/bookings google-sync");
+
+      return res.status(201).json({
+        ...booking,
+        payment: {
+          depositScheduleId: bookingInsertResult.depositScheduleId,
+          depositScheduleStatus: bookingInsertResult.depositScheduleStatus,
+          finalScheduleId: bookingInsertResult.finalScheduleId,
+        },
+        payoutReleaseMode: PAYOUT_RELEASE_MODE,
+      });
     } catch (error: any) {
-      if (stage === "validate-payload") {
+      const errorStatus = typeof error?.status === "number" ? error.status : null;
+      const errorDetails =
+        error?.details && typeof error.details === "object" ? error.details : {};
+      if (errorStatus) {
+        return res.status(errorStatus).json({
+          error: error?.message || "Booking request failed",
+          ...errorDetails,
+        });
+      }
+      if (
+        stage === "validate-payload" ||
+        stage === "validate-booking-time-range" ||
+        stage === "check-listing-conflicts"
+      ) {
         return res.status(400).json({ error: error?.message || "Invalid booking payload" });
       }
       return res.status(500).json({ error: "Failed to create booking" });
@@ -5670,160 +11148,43 @@ app.post(
         if (!customerAuth?.id) {
           return res.status(401).json({ error: "Customer authentication required" });
         }
-
-        const [booking] = await db
-          .select({
-            id: bookings.id,
-            customerId: bookings.customerId,
-            vendorAccountId: bookings.vendorAccountId,
-          })
-          .from(bookings)
-          .where(eq(bookings.id, bookingId))
-          .limit(1);
-
-        if (!booking) {
-          return res.status(404).json({ error: "Booking not found" });
-        }
-        if (!booking.customerId || booking.customerId !== customerAuth.id) {
-          return res.status(403).json({ error: "You do not have access to this booking" });
-        }
-        if (!booking.vendorAccountId) {
-          return res.status(400).json({ error: "Booking is missing vendor account" });
-        }
-
-        const [schedule] = await db
-          .select({
-            id: paymentSchedules.id,
-            bookingId: paymentSchedules.bookingId,
-            amount: paymentSchedules.amount,
-            paymentType: paymentSchedules.paymentType,
-            status: paymentSchedules.status,
-            stripePaymentIntentId: paymentSchedules.stripePaymentIntentId,
-          })
-          .from(paymentSchedules)
-          .where(
-            and(
-              eq(paymentSchedules.id, scheduleId),
-              eq(paymentSchedules.bookingId, bookingId)
-            )
-          )
-          .limit(1);
-
-        if (!schedule) {
-          return res.status(404).json({ error: "Payment schedule not found" });
-        }
-        if (schedule.status === "paid") {
-          return res.status(409).json({ error: "This payment has already been completed" });
-        }
-        if (schedule.status === "refunded") {
-          return res.status(409).json({ error: "This payment has already been refunded" });
-        }
-
-        const [vendorAccount] = await db
-          .select({
-            id: vendorAccounts.id,
-            stripeConnectId: vendorAccounts.stripeConnectId,
-            stripeOnboardingComplete: vendorAccounts.stripeOnboardingComplete,
-          })
-          .from(vendorAccounts)
-          .where(eq(vendorAccounts.id, booking.vendorAccountId))
-          .limit(1);
-
-        if (!vendorAccount?.stripeConnectId || !vendorAccount.stripeOnboardingComplete) {
-          return res.status(400).json({ error: "Vendor payment processing not set up" });
-        }
-
-        const { stripe, createBookingPaymentIntent } = await import("./stripe");
-        if (schedule.stripePaymentIntentId) {
-          const existingIntent = await stripe.paymentIntents.retrieve(schedule.stripePaymentIntentId);
-          if (existingIntent.status === "succeeded") {
-            return res.status(409).json({ error: "This payment has already been completed" });
-          }
-          if (existingIntent.client_secret) {
-            return res.json({
-              clientSecret: existingIntent.client_secret,
-              paymentIntentId: existingIntent.id,
-            });
-          }
-        }
-
-        const paymentIntent = await createBookingPaymentIntent({
-          amount: schedule.amount,
-          platformFeePercent: VENDOR_FEE_RATE * 100,
-          vendorStripeAccountId: vendorAccount.stripeConnectId,
-          description: `Booking ${booking.id} - ${schedule.paymentType}`,
-          idempotencyKey: `booking-payment:${booking.id}:${schedule.id}`,
+        const initialized = await initializeBookingPaymentIntentForSchedule({
+          bookingId,
+          scheduleId,
+          customerId: customerAuth.id,
         });
-
-        const platformFee = Math.round(schedule.amount * VENDOR_FEE_RATE);
-        await db.transaction(async (tx) => {
-          const lockedRows: any = await tx.execute(drizzleSql`
-            select id, status, stripe_payment_intent_id as "stripePaymentIntentId"
-            from payment_schedules
-            where id = ${schedule.id}
-              and booking_id = ${booking.id}
-            for update
-          `);
-          const lockedSchedule = extractRows<{ id?: string; status?: string; stripePaymentIntentId?: string | null }>(lockedRows)[0];
-          if (!lockedSchedule?.id) {
-            throw new Error("Payment schedule not found");
-          }
-          if (lockedSchedule.status === "paid") {
-            throw new Error("This payment has already been completed");
-          }
-          if (lockedSchedule.status === "refunded") {
-            throw new Error("This payment has already been refunded");
-          }
-
-          await tx
-            .update(paymentSchedules)
-            .set({
-              stripePaymentIntentId: paymentIntent.id,
-            })
-            .where(eq(paymentSchedules.id, schedule.id));
-
-          const existingPayments = await tx
-            .select({
-              id: payments.id,
-            })
-            .from(payments)
-            .where(eq(payments.scheduleId, schedule.id))
-            .limit(1);
-
-          if (existingPayments.length > 0) {
-            await tx
-              .update(payments)
-              .set({
-                stripePaymentIntentId: paymentIntent.id,
-              })
-              .where(eq(payments.id, existingPayments[0]!.id));
-          } else {
-            await tx.insert(payments).values({
-              bookingId: booking.id,
-              scheduleId: schedule.id,
-              customerId: booking.customerId,
-              vendorAccountId: booking.vendorAccountId,
-              stripePaymentIntentId: paymentIntent.id,
-              amount: schedule.amount,
-              platformFee,
-              vendorPayout: schedule.amount - platformFee,
-              paymentType: schedule.paymentType,
-              status: "pending",
-            });
-          }
-        });
-
         return res.json({
-          clientSecret: paymentIntent.client_secret,
-          paymentIntentId: paymentIntent.id,
+          bookingId: initialized.booking.id,
+          scheduleId: initialized.schedule.id,
+          paymentType: initialized.schedule.paymentType,
+          clientSecret: initialized.clientSecret,
+          paymentIntentId: initialized.paymentIntentId,
+          payoutReleaseMode: PAYOUT_RELEASE_MODE,
         });
       } catch (error: any) {
         const message = String(error?.message || "");
-        if (message.includes("already been completed") || message.includes("already been refunded")) {
+        if (
+          message.includes("already been completed") ||
+          message.includes("already been refunded") ||
+          message.includes("currently disputed") ||
+          message.includes("no longer payable")
+        ) {
           return res.status(409).json({ error: message });
         }
         if (message.includes("Payment schedule not found")) {
           return res.status(404).json({ error: "Payment schedule not found" });
+        }
+        if (message.includes("Booking not found")) {
+          return res.status(404).json({ error: "Booking not found" });
+        }
+        if (message.includes("do not have access")) {
+          return res.status(403).json({ error: "You do not have access to this booking" });
+        }
+        if (message.includes("Invalid payment initialization payload")) {
+          return res.status(400).json({ error: "Invalid payment initialization payload" });
+        }
+        if (message.includes("Vendor payment processing not set up")) {
+          return res.status(400).json({ error: "Vendor payment processing not set up" });
         }
         return res.status(500).json({ error: "Unable to initialize payment" });
       }
@@ -5873,31 +11234,221 @@ app.post(
         return res.json({ received: true, duplicate: true });
       }
 
-      if (event.type === "payment_intent.succeeded") {
-        const paymentIntentId = String(event?.data?.object?.id || "").trim();
+      const eventType = asTrimmedString(event?.type);
+      if (
+        eventType === "payment_intent.succeeded" ||
+        eventType === "payment_intent.payment_failed"
+      ) {
+        const paymentIntent = event?.data?.object ?? {};
+        const paymentIntentId = asTrimmedString(paymentIntent?.id);
         if (paymentIntentId) {
-          await db.transaction(async (tx) => {
-            const paymentRows = await tx
-              .select({
-                id: payments.id,
-                bookingId: payments.bookingId,
-                scheduleId: payments.scheduleId,
-                paymentType: payments.paymentType,
-                status: payments.status,
-              })
-              .from(payments)
-              .where(eq(payments.stripePaymentIntentId, paymentIntentId))
-              .limit(1);
+          const metadata = paymentIntent?.metadata && typeof paymentIntent.metadata === "object"
+            ? paymentIntent.metadata
+            : {};
+          const fallbackBookingId = asTrimmedString((metadata as any)?.bookingId);
+          const fallbackScheduleId = asTrimmedString((metadata as any)?.scheduleId);
+          const fallbackPaymentType = asTrimmedString((metadata as any)?.paymentType);
+          const fallbackAmount = parseIntegerValue(paymentIntent?.amount);
+          const fallbackTotalAmount =
+            parseIntegerValue((metadata as any)?.totalAmount) ??
+            fallbackAmount;
+          const fallbackPlatformFeeAmount = parseIntegerValue((metadata as any)?.platformFee);
+          const fallbackVendorGrossAmount = parseIntegerValue((metadata as any)?.vendorGross);
+          const fallbackVendorNetPayoutAmount =
+            parseIntegerValue((metadata as any)?.vendorNetPayout) ??
+            parseIntegerValue((metadata as any)?.vendorPayout);
+          const fallbackStripeProcessingFeeEstimate = parseIntegerValue(
+            (metadata as any)?.stripeProcessingFeeEstimate
+          );
+          const fallbackStripeConnectedAccountId =
+            asTrimmedString((metadata as any)?.stripeConnectedAccountId) ||
+            asTrimmedString((metadata as any)?.vendorStripeAccountId) ||
+            null;
 
-            const payment = paymentRows[0];
-            if (!payment || payment.status === "paid") return;
+          let latestChargeId = "";
+          let actualStripeFeeAmount: number | null = null;
+          if (eventType === "payment_intent.succeeded") {
+            latestChargeId =
+              typeof paymentIntent?.latest_charge === "string"
+                ? paymentIntent.latest_charge.trim()
+                : asTrimmedString(paymentIntent?.latest_charge?.id);
+            if (latestChargeId) {
+              try {
+                const charge = await stripe.charges.retrieve(latestChargeId, {
+                  expand: ["balance_transaction"],
+                });
+                if (
+                  charge.balance_transaction &&
+                  typeof charge.balance_transaction !== "string" &&
+                  Number.isFinite((charge.balance_transaction as any).fee)
+                ) {
+                  actualStripeFeeAmount = Math.max(
+                    0,
+                    Math.round((charge.balance_transaction as any).fee)
+                  );
+                }
+              } catch {
+                // Non-fatal; payout calculations can fall back to estimates.
+              }
+            }
+          }
+
+          await db.transaction(async (tx) => {
+            const payment = await ensurePaymentRecordForIntentInTx(tx, {
+              paymentIntentId,
+              fallbackBookingId,
+              fallbackScheduleId,
+              fallbackPaymentType,
+              fallbackAmount,
+              fallbackTotalAmount,
+              fallbackPlatformFeeAmount,
+              fallbackVendorGrossAmount,
+              fallbackVendorNetPayoutAmount,
+              fallbackStripeProcessingFeeEstimate,
+              fallbackStripeConnectedAccountId,
+            });
+            if (!payment?.id || !payment.bookingId) return;
 
             const now = new Date();
+            const [bookingRow] = await tx
+              .select({
+                id: bookings.id,
+                status: bookings.status,
+                cancellationReason: bookings.cancellationReason,
+                bookingEndAt: bookings.bookingEndAt,
+              })
+              .from(bookings)
+              .where(eq(bookings.id, payment.bookingId))
+              .limit(1);
+            if (!bookingRow?.id) return;
+            const bookingDisputeStatus = await getBookingDisputeStatusInTx(tx, payment.bookingId);
+
+            const payoutEligibility = computePayoutEligibility({
+              bookingStatus: bookingRow.status,
+              paymentStatus: eventType === "payment_intent.payment_failed" ? "failed" : "succeeded",
+              payoutStatus: payment.payoutStatus,
+              payoutBlockedReason: payment.payoutBlockedReason,
+              disputeStatus: payment.disputeStatus,
+              bookingDisputeStatus,
+              paidOutAt: payment.paidOutAt,
+              payoutEligibleAt: payment.payoutEligibleAt,
+              bookingEndAt: bookingRow.bookingEndAt,
+              totalAmount: payment.totalAmount ?? fallbackTotalAmount ?? payment.amount,
+              refundedAmount: payment.refundedAmount ?? payment.refundAmount,
+              vendorNetPayoutAmount: payment.vendorNetPayoutAmount ?? payment.vendorPayout,
+              actualStripeFeeAmount: actualStripeFeeAmount ?? payment.actualStripeFeeAmount,
+              stripeConnectedAccountId:
+                payment.stripeConnectedAccountId ?? fallbackStripeConnectedAccountId,
+              stripeChargeId: payment.stripeChargeId ?? latestChargeId,
+              stripeTransferId: payment.stripeTransferId,
+              vendorAbsorbsStripeFees: VENDOR_ABSORBS_STRIPE_FEES,
+            }, now);
+
+            if (eventType === "payment_intent.succeeded") {
+              if (isPaymentSucceededStatus(payment.status)) return;
+
+              await tx
+                .update(payments)
+                .set({
+                  status: "succeeded",
+                  paidAt: now,
+                  stripeChargeId: latestChargeId || payment.stripeChargeId || null,
+                  actualStripeFeeAmount:
+                    actualStripeFeeAmount ??
+                    parseIntegerValue(payment.actualStripeFeeAmount) ??
+                    parseIntegerValue(fallbackStripeProcessingFeeEstimate),
+                  totalAmount:
+                    parseIntegerValue(payment.totalAmount) ??
+                    parseIntegerValue(fallbackTotalAmount) ??
+                    parseIntegerValue(payment.amount) ??
+                    null,
+                  platformFeeAmount:
+                    parseIntegerValue(payment.platformFeeAmount) ??
+                    parseIntegerValue(fallbackPlatformFeeAmount) ??
+                    parseIntegerValue(payment.platformFee) ??
+                    null,
+                  vendorGrossAmount:
+                    parseIntegerValue(payment.vendorGrossAmount) ??
+                    parseIntegerValue(fallbackVendorGrossAmount),
+                  vendorNetPayoutAmount:
+                    parseIntegerValue(payment.vendorNetPayoutAmount) ??
+                    parseIntegerValue(fallbackVendorNetPayoutAmount) ??
+                    parseIntegerValue(payment.vendorPayout) ??
+                    null,
+                  stripeProcessingFeeEstimate:
+                    parseIntegerValue(payment.stripeProcessingFeeEstimate) ??
+                    parseIntegerValue(fallbackStripeProcessingFeeEstimate),
+                  stripeConnectedAccountId:
+                    payment.stripeConnectedAccountId ?? fallbackStripeConnectedAccountId,
+                  payoutStatus: payoutEligibility.payoutStatus,
+                  payoutEligibleAt: payoutEligibility.payoutEligibleAt,
+                  payoutBlockedReason: payoutEligibility.payoutBlockedReason,
+                  payoutAdjustedAmount: payoutEligibility.adjustedPayoutAmount,
+                  disputeStatus: null,
+                })
+                .where(eq(payments.id, payment.id));
+
+              if (payment.scheduleId) {
+                await tx
+                  .update(paymentSchedules)
+                  .set({
+                    status: "succeeded",
+                    paidAt: now,
+                  })
+                  .where(eq(paymentSchedules.id, payment.scheduleId));
+              }
+
+              const nextBookingPaymentStatus = await recomputeBookingPaymentStatusInTx(
+                tx,
+                payment.bookingId
+              );
+              const bookingStatus = normalizePaymentStateValue(bookingRow.status);
+              if (
+                bookingStatus === "cancelled" ||
+                bookingStatus === "expired" ||
+                bookingStatus === "failed"
+              ) {
+                await tx
+                  .update(bookings)
+                  .set({
+                    cancellationReason:
+                      bookingRow.cancellationReason ||
+                      `payment_succeeded_after_${bookingStatus || "closure"}`,
+                    paymentStatus: nextBookingPaymentStatus as any,
+                    payoutStatus: payoutEligibility.payoutStatus,
+                    payoutEligibleAt: payoutEligibility.payoutEligibleAt,
+                    payoutBlockedReason: payoutEligibility.payoutBlockedReason,
+                    updatedAt: now,
+                  })
+                  .where(eq(bookings.id, bookingRow.id));
+              } else {
+                await tx
+                  .update(bookings)
+                  .set({
+                    status: "confirmed",
+                    paymentStatus: nextBookingPaymentStatus as any,
+                    payoutStatus: payoutEligibility.payoutStatus,
+                    payoutEligibleAt: payoutEligibility.payoutEligibleAt,
+                    payoutBlockedReason: payoutEligibility.payoutBlockedReason,
+                    confirmedAt: now,
+                    updatedAt: now,
+                  })
+                  .where(eq(bookings.id, bookingRow.id));
+              }
+              return;
+            }
+
+            if (isPaymentSucceededStatus(payment.status) || isPaymentRefundedOrPartiallyRefundedStatus(payment.status)) {
+              return;
+            }
+
             await tx
               .update(payments)
               .set({
-                status: "paid",
-                paidAt: now,
+                status: "failed",
+                payoutStatus: "cancelled",
+                payoutBlockedReason: "payment_failed",
+                payoutAdjustedAmount: 0,
               })
               .where(eq(payments.id, payment.id));
 
@@ -5905,35 +11456,335 @@ app.post(
               await tx
                 .update(paymentSchedules)
                 .set({
-                  status: "paid",
-                  paidAt: now,
+                  status: "failed",
                 })
                 .where(eq(paymentSchedules.id, payment.scheduleId));
             }
 
-            const scheduleRows = await tx
-              .select({
-                status: paymentSchedules.status,
+            const nextBookingPaymentStatus = await recomputeBookingPaymentStatusInTx(
+              tx,
+              payment.bookingId
+            );
+            if (nextBookingPaymentStatus === "failed") {
+              await markBookingAsPaymentFailedInTx(tx, payment.bookingId, "stripe_payment_failed");
+            }
+            await tx
+              .update(bookings)
+              .set({
+                payoutStatus: "cancelled",
+                payoutBlockedReason: "payment_failed",
+                updatedAt: now,
               })
-              .from(paymentSchedules)
-              .where(eq(paymentSchedules.bookingId, payment.bookingId));
+              .where(eq(bookings.id, payment.bookingId));
+          });
+        }
+      } else if (eventType === "charge.dispute.created" || eventType === "charge.dispute.closed") {
+        const dispute = event?.data?.object ?? {};
+        const paymentIntentId =
+          typeof dispute?.payment_intent === "string" ? dispute.payment_intent.trim() : "";
+        const chargeId =
+          typeof dispute?.charge === "string" ? dispute.charge.trim() : "";
+        const disputeStatus = asTrimmedString(dispute?.status).toLowerCase() || "needs_response";
 
-            const statuses = scheduleRows.map((row) => row.status);
-            const allPaid = statuses.length > 0 && statuses.every((status) => status === "paid");
-            const anyPaid = statuses.some((status) => status === "paid");
-            const paymentStatus = allPaid ? "paid" : anyPaid ? "partial" : "pending";
+        await db.transaction(async (tx) => {
+          let payment: any = null;
+          if (paymentIntentId) {
+            payment = await ensurePaymentRecordForIntentInTx(tx, {
+              paymentIntentId,
+            });
+          } else if (chargeId) {
+            const [byCharge] = await tx
+              .select({
+                id: payments.id,
+                bookingId: payments.bookingId,
+                scheduleId: payments.scheduleId,
+                status: payments.status,
+                payoutStatus: payments.payoutStatus,
+                payoutBlockedReason: payments.payoutBlockedReason,
+                payoutAdjustedAmount: payments.payoutAdjustedAmount,
+                disputeStatus: payments.disputeStatus,
+                paidOutAt: payments.paidOutAt,
+                payoutEligibleAt: payments.payoutEligibleAt,
+                totalAmount: payments.totalAmount,
+                amount: payments.amount,
+                refundedAmount: payments.refundedAmount,
+                refundAmount: payments.refundAmount,
+                vendorNetPayoutAmount: payments.vendorNetPayoutAmount,
+                vendorPayout: payments.vendorPayout,
+                actualStripeFeeAmount: payments.actualStripeFeeAmount,
+                stripeConnectedAccountId: payments.stripeConnectedAccountId,
+                stripeChargeId: payments.stripeChargeId,
+                stripeTransferId: payments.stripeTransferId,
+              })
+              .from(payments)
+              .where(eq(payments.stripeChargeId, chargeId))
+              .limit(1);
+            payment = byCharge ?? null;
+          }
+          if (!payment?.id || !payment.bookingId) return;
+
+          const now = new Date();
+          const [bookingRow] = await tx
+            .select({
+              id: bookings.id,
+              status: bookings.status,
+              bookingEndAt: bookings.bookingEndAt,
+            })
+            .from(bookings)
+            .where(eq(bookings.id, payment.bookingId))
+            .limit(1);
+          if (!bookingRow?.id) return;
+
+          if (eventType === "charge.dispute.created") {
+            await tx
+              .update(payments)
+              .set({
+                status: "disputed",
+                disputeStatus,
+                stripeChargeId: (payment.stripeChargeId ?? chargeId) || null,
+                payoutStatus: "blocked",
+                payoutBlockedReason: "active_dispute",
+                payoutAdjustedAmount: parseIntegerValue(payment.payoutAdjustedAmount) ?? null,
+              })
+              .where(eq(payments.id, payment.id));
+
+            if (payment.scheduleId) {
+              await tx
+                .update(paymentSchedules)
+                .set({
+                  status: "disputed",
+                })
+                .where(eq(paymentSchedules.id, payment.scheduleId));
+            }
+
+            await recomputeBookingPaymentStatusInTx(tx, payment.bookingId);
+            await tx
+              .update(bookings)
+              .set({
+                payoutStatus: "blocked",
+                payoutBlockedReason: "active_dispute",
+                updatedAt: now,
+              })
+              .where(eq(bookings.id, payment.bookingId));
+            return;
+          }
+
+          const disputeClosedAsWon =
+            disputeStatus === "won" || disputeStatus === "warning_closed";
+          if (!disputeClosedAsWon) {
+            await tx
+              .update(payments)
+              .set({
+                disputeStatus,
+                payoutStatus: "cancelled",
+                payoutBlockedReason: "dispute_lost",
+                payoutAdjustedAmount: 0,
+              })
+              .where(eq(payments.id, payment.id));
 
             await tx
               .update(bookings)
               .set({
-                paymentStatus,
-                depositPaidAt:
-                  payment.paymentType === "deposit"
-                    ? now
-                    : bookings.depositPaidAt,
+                payoutStatus: "cancelled",
+                payoutBlockedReason: "dispute_lost",
                 updatedAt: now,
               })
               .where(eq(bookings.id, payment.bookingId));
+            return;
+          }
+
+          const refundedAmount = Math.max(
+            0,
+            parseIntegerValue(payment.refundedAmount) ??
+              parseIntegerValue(payment.refundAmount) ??
+              0
+          );
+          const totalAmount = Math.max(
+            0,
+            parseIntegerValue(payment.totalAmount) ??
+              parseIntegerValue(payment.amount) ??
+              0
+          );
+          const nextPaymentStatus =
+            refundedAmount >= totalAmount && totalAmount > 0
+              ? "refunded"
+              : refundedAmount > 0
+                ? "partially_refunded"
+                : "succeeded";
+          const bookingDisputeStatus = await getBookingDisputeStatusInTx(tx, payment.bookingId);
+          const payoutEligibility = computePayoutEligibility({
+            bookingStatus: bookingRow.status,
+            paymentStatus: nextPaymentStatus,
+            payoutStatus: payment.payoutStatus,
+            payoutBlockedReason: null,
+            disputeStatus,
+            bookingDisputeStatus,
+            paidOutAt: payment.paidOutAt,
+            payoutEligibleAt: payment.payoutEligibleAt,
+            bookingEndAt: bookingRow.bookingEndAt,
+            totalAmount,
+            refundedAmount,
+            vendorNetPayoutAmount: payment.vendorNetPayoutAmount ?? payment.vendorPayout,
+            actualStripeFeeAmount: payment.actualStripeFeeAmount,
+            stripeConnectedAccountId: payment.stripeConnectedAccountId,
+            stripeChargeId: payment.stripeChargeId ?? chargeId,
+            stripeTransferId: payment.stripeTransferId,
+            vendorAbsorbsStripeFees: VENDOR_ABSORBS_STRIPE_FEES,
+          }, now);
+
+          await tx
+            .update(payments)
+            .set({
+              status: nextPaymentStatus as any,
+              disputeStatus,
+              payoutStatus: payoutEligibility.payoutStatus,
+              payoutEligibleAt: payoutEligibility.payoutEligibleAt,
+              payoutBlockedReason: payoutEligibility.payoutBlockedReason,
+              payoutAdjustedAmount: payoutEligibility.adjustedPayoutAmount,
+            })
+            .where(eq(payments.id, payment.id));
+          if (payment.scheduleId) {
+            await tx
+              .update(paymentSchedules)
+              .set({
+                status: nextPaymentStatus as any,
+              })
+              .where(eq(paymentSchedules.id, payment.scheduleId));
+          }
+
+          const nextBookingPaymentStatus = await recomputeBookingPaymentStatusInTx(
+            tx,
+            payment.bookingId
+          );
+          await tx
+            .update(bookings)
+            .set({
+              paymentStatus: nextBookingPaymentStatus as any,
+              payoutStatus: payoutEligibility.payoutStatus,
+              payoutEligibleAt: payoutEligibility.payoutEligibleAt,
+              payoutBlockedReason: payoutEligibility.payoutBlockedReason,
+              updatedAt: now,
+            })
+            .where(eq(bookings.id, payment.bookingId));
+        });
+      } else if (eventType === "charge.refunded") {
+        const charge = event?.data?.object ?? {};
+        const paymentIntentId =
+          typeof charge?.payment_intent === "string" ? charge.payment_intent.trim() : "";
+        const chargeId = typeof charge?.id === "string" ? charge.id.trim() : "";
+        if (paymentIntentId) {
+          const amountRefunded = parseIntegerValue(charge?.amount_refunded) ?? 0;
+          await db.transaction(async (tx) => {
+            const payment = await ensurePaymentRecordForIntentInTx(tx, {
+              paymentIntentId,
+            });
+            if (!payment?.id || !payment.bookingId) return;
+
+            const totalAmount = Math.max(
+              0,
+              parseIntegerValue(payment.totalAmount) ??
+                parseIntegerValue(payment.amount) ??
+                0
+            );
+            const fullRefund = amountRefunded >= totalAmount && totalAmount > 0;
+            const nextStatus = fullRefund ? "refunded" : "partially_refunded";
+            const now = new Date();
+
+            const [bookingRow] = await tx
+              .select({
+                id: bookings.id,
+                status: bookings.status,
+                bookingEndAt: bookings.bookingEndAt,
+              })
+              .from(bookings)
+              .where(eq(bookings.id, payment.bookingId))
+              .limit(1);
+            if (!bookingRow?.id) return;
+            const bookingDisputeStatus = await getBookingDisputeStatusInTx(tx, payment.bookingId);
+
+            const payoutEligibility = computePayoutEligibility({
+              bookingStatus: bookingRow.status,
+              paymentStatus: nextStatus,
+              payoutStatus: payment.payoutStatus,
+              payoutBlockedReason:
+                asTrimmedString(payment.stripeTransferId) && !fullRefund
+                  ? "refund_after_payout_manual_recovery"
+                  : null,
+              disputeStatus: payment.disputeStatus,
+              bookingDisputeStatus,
+              paidOutAt: payment.paidOutAt,
+              payoutEligibleAt: payment.payoutEligibleAt,
+              bookingEndAt: bookingRow.bookingEndAt,
+              totalAmount,
+              refundedAmount: amountRefunded,
+              vendorNetPayoutAmount: payment.vendorNetPayoutAmount ?? payment.vendorPayout,
+              actualStripeFeeAmount: payment.actualStripeFeeAmount,
+              stripeConnectedAccountId: payment.stripeConnectedAccountId,
+              stripeChargeId: payment.stripeChargeId ?? chargeId,
+              stripeTransferId: payment.stripeTransferId,
+              vendorAbsorbsStripeFees: VENDOR_ABSORBS_STRIPE_FEES,
+            }, now);
+
+            await tx
+              .update(payments)
+              .set({
+                status: nextStatus as any,
+                stripeChargeId: (payment.stripeChargeId ?? chargeId) || null,
+                refundAmount: amountRefunded > 0 ? amountRefunded : parseIntegerValue(payment.amount),
+                refundedAmount: amountRefunded > 0 ? amountRefunded : parseIntegerValue(payment.amount),
+                refundReason: "stripe_charge_refunded",
+                refundedAt: now,
+                payoutStatus: payoutEligibility.payoutStatus,
+                payoutEligibleAt: payoutEligibility.payoutEligibleAt,
+                payoutBlockedReason: payoutEligibility.payoutBlockedReason,
+                payoutAdjustedAmount: payoutEligibility.adjustedPayoutAmount,
+              })
+              .where(eq(payments.id, payment.id));
+
+            if (payment.scheduleId) {
+              await tx
+                .update(paymentSchedules)
+                .set({
+                  status: nextStatus as any,
+                })
+                .where(eq(paymentSchedules.id, payment.scheduleId));
+            }
+
+            const nextBookingPaymentStatus = await recomputeBookingPaymentStatusInTx(
+              tx,
+              payment.bookingId
+            );
+            if (
+              fullRefund &&
+              nextBookingPaymentStatus === "refunded" &&
+              !asTrimmedString(payment.stripeTransferId)
+            ) {
+              await tx.execute(drizzleSql`
+                update bookings
+                set
+                  status = case
+                    when status in ('pending', 'confirmed', 'failed', 'expired') then 'cancelled'
+                    else status
+                  end,
+                  payout_status = 'cancelled',
+                  payout_blocked_reason = 'fully_refunded',
+                  cancellation_reason = coalesce(nullif(trim(cancellation_reason), ''), 'payment_refunded'),
+                  cancelled_at = coalesce(cancelled_at, ${now}),
+                  updated_at = ${now}
+                where id = ${payment.bookingId}
+              `);
+            } else {
+              await tx
+                .update(bookings)
+                .set({
+                  paymentStatus: nextBookingPaymentStatus as any,
+                  payoutStatus: payoutEligibility.payoutStatus,
+                  payoutEligibleAt: payoutEligibility.payoutEligibleAt,
+                  payoutBlockedReason: payoutEligibility.payoutBlockedReason,
+                  updatedAt: now,
+                })
+                .where(eq(bookings.id, payment.bookingId));
+            }
           });
         }
       }
@@ -5941,6 +11792,333 @@ app.post(
       return res.json({ received: true });
     } catch {
       return res.status(500).json({ error: "Webhook processing failed" });
+    }
+  });
+
+  const processPayoutsSchema = z.object({
+    bookingIds: z.array(z.string().min(1)).max(200).optional(),
+    paymentIds: z.array(z.string().min(1)).max(200).optional(),
+    limit: z.number().int().min(1).max(200).optional(),
+    dryRun: z.boolean().optional(),
+  });
+
+  app.post("/api/admin/payouts/process", requireAdminAuth, async (req, res) => {
+    try {
+      const payload = processPayoutsSchema.parse(req.body ?? {});
+      const dryRun = payload.dryRun === true;
+      const limit = payload.limit ?? 50;
+      const bookingIds = Array.from(
+        new Set((payload.bookingIds ?? []).map((id) => asTrimmedString(id)).filter(Boolean))
+      );
+      const paymentIds = Array.from(
+        new Set((payload.paymentIds ?? []).map((id) => asTrimmedString(id)).filter(Boolean))
+      );
+
+      const whereClauses: any[] = [eq(payments.paymentType, "deposit")];
+      if (bookingIds.length > 0) {
+        whereClauses.push(inArray(payments.bookingId, bookingIds));
+      }
+      if (paymentIds.length > 0) {
+        whereClauses.push(inArray(payments.id, paymentIds));
+      }
+      if (bookingIds.length === 0 && paymentIds.length === 0) {
+        whereClauses.push(isNull(payments.stripeTransferId));
+        whereClauses.push(
+          drizzleSql`${payments.payoutStatus} in ('not_ready', 'eligible', 'scheduled', 'blocked')`
+        );
+      }
+
+      const payoutCandidates = await db
+        .select({
+          paymentId: payments.id,
+          bookingId: payments.bookingId,
+        })
+        .from(payments)
+        .where(and(...whereClauses))
+        .orderBy(asc(payments.payoutEligibleAt), asc(payments.createdAt))
+        .limit(limit);
+
+      const results: Array<{
+        paymentId: string;
+        bookingId: string;
+        outcome: "paid" | "eligible" | "skipped" | "blocked" | "duplicate";
+        reason: string | null;
+        payoutAmount: number;
+        transferId: string | null;
+      }> = [];
+
+      const { transferToVendor } = await import("./stripe");
+
+      for (const candidate of payoutCandidates) {
+        const paymentId = asTrimmedString(candidate.paymentId);
+        const bookingId = asTrimmedString(candidate.bookingId);
+        if (!paymentId || !bookingId) continue;
+
+        const now = new Date();
+        const refreshed = await db.transaction(async (tx) =>
+          refreshPaymentPayoutStateInTx(tx, paymentId, now)
+        );
+
+        if (!refreshed?.paymentContext) {
+          results.push({
+            paymentId,
+            bookingId,
+            outcome: "skipped",
+            reason: "payment_not_found",
+            payoutAmount: 0,
+            transferId: null,
+          });
+          continue;
+        }
+
+        const eligibility = refreshed.payoutEligibility;
+        const payoutAmount = Math.max(0, Math.round(eligibility.adjustedPayoutAmount || 0));
+
+        if (!eligibility.eligible) {
+          results.push({
+            paymentId,
+            bookingId,
+            outcome: eligibility.payoutStatus === "blocked" ? "blocked" : "skipped",
+            reason: eligibility.payoutBlockedReason || "not_eligible",
+            payoutAmount,
+            transferId: null,
+          });
+          continue;
+        }
+
+        if (dryRun) {
+          results.push({
+            paymentId,
+            bookingId,
+            outcome: "eligible",
+            reason: null,
+            payoutAmount,
+            transferId: null,
+          });
+          continue;
+        }
+
+        const connectedAccountId = asTrimmedString(
+          refreshed.paymentContext.stripeConnectedAccountId
+        );
+        const chargeId = asTrimmedString(refreshed.paymentContext.stripeChargeId);
+
+        if (!connectedAccountId || !chargeId || payoutAmount <= 0) {
+          await db.transaction(async (tx) => {
+            await tx
+              .update(payments)
+              .set({
+                payoutStatus: "blocked",
+                payoutBlockedReason: "missing_transfer_requirements",
+                payoutAdjustedAmount: payoutAmount,
+              })
+              .where(eq(payments.id, paymentId));
+            await tx
+              .update(bookings)
+              .set({
+                payoutStatus: "blocked",
+                payoutBlockedReason: "missing_transfer_requirements",
+                updatedAt: new Date(),
+              })
+              .where(eq(bookings.id, bookingId));
+          });
+          results.push({
+            paymentId,
+            bookingId,
+            outcome: "blocked",
+            reason: "missing_transfer_requirements",
+            payoutAmount,
+            transferId: null,
+          });
+          continue;
+        }
+
+        try {
+          const transfer = await transferToVendor({
+            amount: payoutAmount,
+            vendorStripeAccountId: connectedAccountId,
+            description: `EventHub payout for booking ${bookingId}`,
+            sourceTransaction: chargeId,
+            transferGroup: `booking_${bookingId}`,
+            metadata: {
+              bookingId,
+              paymentId,
+              payoutAmount: String(payoutAmount),
+              sourceChargeId: chargeId,
+            },
+            idempotencyKey: `eventhub-payout:${paymentId}:${payoutAmount}`,
+          });
+
+          const persisted = await db.transaction(async (tx) => {
+            const locked = await loadPaymentPayoutContextForUpdateInTx(tx, paymentId);
+            if (!locked?.paymentId || !locked.bookingId) {
+              return {
+                outcome: "skipped" as const,
+                reason: "payment_not_found",
+                transferId: null as string | null,
+              };
+            }
+
+            const existingTransferId = asTrimmedString(locked.stripeTransferId);
+            if (existingTransferId) {
+              return {
+                outcome: "duplicate" as const,
+                reason: "already_paid",
+                transferId: existingTransferId,
+              };
+            }
+
+            const nowLocked = new Date();
+            const eligibilityLocked = computePayoutEligibility(
+              {
+                bookingStatus: locked.bookingStatus,
+                paymentStatus: locked.paymentStatus,
+                payoutStatus: locked.payoutStatus,
+                payoutBlockedReason: locked.payoutBlockedReason,
+                disputeStatus: locked.disputeStatus,
+                bookingDisputeStatus: locked.bookingDisputeStatus,
+                paidOutAt: locked.paidOutAt,
+                payoutEligibleAt: locked.payoutEligibleAt,
+                bookingEndAt: locked.bookingEndAt,
+                totalAmount:
+                  parseIntegerValue(locked.totalAmount) ??
+                  parseIntegerValue(locked.amount) ??
+                  0,
+                refundedAmount:
+                  parseIntegerValue(locked.refundedAmount) ??
+                  parseIntegerValue(locked.refundAmount) ??
+                  0,
+                vendorNetPayoutAmount:
+                  parseIntegerValue(locked.vendorNetPayoutAmount) ??
+                  parseIntegerValue(locked.vendorPayout) ??
+                  0,
+                actualStripeFeeAmount: locked.actualStripeFeeAmount,
+                stripeConnectedAccountId: locked.stripeConnectedAccountId,
+                stripeChargeId: locked.stripeChargeId,
+                stripeTransferId: locked.stripeTransferId,
+                vendorAbsorbsStripeFees: VENDOR_ABSORBS_STRIPE_FEES,
+              },
+              nowLocked
+            );
+
+            if (!eligibilityLocked.eligible) {
+              await tx
+                .update(payments)
+                .set({
+                  payoutStatus: eligibilityLocked.payoutStatus,
+                  payoutEligibleAt: eligibilityLocked.payoutEligibleAt,
+                  payoutBlockedReason: eligibilityLocked.payoutBlockedReason,
+                  payoutAdjustedAmount: eligibilityLocked.adjustedPayoutAmount,
+                })
+                .where(eq(payments.id, paymentId));
+              await tx
+                .update(bookings)
+                .set({
+                  payoutStatus: eligibilityLocked.payoutStatus,
+                  payoutEligibleAt: eligibilityLocked.payoutEligibleAt,
+                  payoutBlockedReason: eligibilityLocked.payoutBlockedReason,
+                  updatedAt: nowLocked,
+                })
+                .where(eq(bookings.id, locked.bookingId));
+              return {
+                outcome: eligibilityLocked.payoutStatus === "blocked" ? "blocked" : "skipped",
+                reason: eligibilityLocked.payoutBlockedReason || "not_eligible",
+                transferId: null as string | null,
+              };
+            }
+
+            await tx
+              .update(payments)
+              .set({
+                stripeTransferId: transfer.id,
+                payoutStatus: "paid",
+                payoutScheduledAt: nowLocked,
+                paidOutAt: nowLocked,
+                payoutBlockedReason: null,
+                payoutAdjustedAmount: payoutAmount,
+              })
+              .where(eq(payments.id, paymentId));
+            await tx
+              .update(bookings)
+              .set({
+                payoutStatus: "paid",
+                payoutEligibleAt: eligibilityLocked.payoutEligibleAt,
+                paidOutAt: nowLocked,
+                payoutBlockedReason: null,
+                updatedAt: nowLocked,
+              })
+              .where(eq(bookings.id, locked.bookingId));
+
+            return {
+              outcome: "paid" as const,
+              reason: null as string | null,
+              transferId: transfer.id,
+            };
+          });
+
+          results.push({
+            paymentId,
+            bookingId,
+            outcome: persisted.outcome as "paid" | "eligible" | "blocked" | "skipped" | "duplicate",
+            reason: persisted.reason,
+            payoutAmount,
+            transferId: persisted.transferId,
+          });
+        } catch (error: any) {
+          const errorMessage =
+            typeof error?.message === "string" && error.message.trim().length > 0
+              ? error.message.trim().slice(0, 200)
+              : "transfer_failed";
+          await db.transaction(async (tx) => {
+            await tx
+              .update(payments)
+              .set({
+                payoutStatus: "blocked",
+                payoutBlockedReason: "transfer_failed",
+                payoutAdjustedAmount: payoutAmount,
+              })
+              .where(eq(payments.id, paymentId));
+            await tx
+              .update(bookings)
+              .set({
+                payoutStatus: "blocked",
+                payoutBlockedReason: "transfer_failed",
+                updatedAt: new Date(),
+              })
+              .where(eq(bookings.id, bookingId));
+          });
+          results.push({
+            paymentId,
+            bookingId,
+            outcome: "blocked",
+            reason: errorMessage,
+            payoutAmount,
+            transferId: null,
+          });
+        }
+      }
+
+      const summary = {
+        checked: results.length,
+        paid: results.filter((row) => row.outcome === "paid").length,
+        eligible: results.filter((row) => row.outcome === "eligible").length,
+        blocked: results.filter((row) => row.outcome === "blocked").length,
+        skipped: results.filter((row) => row.outcome === "skipped").length,
+        duplicate: results.filter((row) => row.outcome === "duplicate").length,
+      };
+
+      return res.json({
+        dryRun,
+        limit,
+        candidates: payoutCandidates.length,
+        summary,
+        results,
+      });
+    } catch (error: any) {
+      if (error?.name === "ZodError") {
+        return res.status(400).json({ error: "Invalid payout processing payload" });
+      }
+      return res.status(500).json({ error: "Unable to process payouts" });
     }
   });
 
@@ -6003,7 +12181,7 @@ app.post(
         if (depositPayment.status === "refunded") {
           return res.json({ message: "Booking refund already processed" });
         }
-        if (depositPayment.status !== "paid") {
+        if (!isPaymentSucceededStatus(depositPayment.status)) {
           return res.status(400).json({ error: "Deposit payment is not in a refundable state" });
         }
 
@@ -6028,8 +12206,13 @@ app.post(
             .set({
               status: "refunded",
               refundAmount: depositPayment.amount,
+              refundedAmount: depositPayment.amount,
               refundReason: requestedReason || stripeReason,
               refundedAt: now,
+              payoutStatus: "cancelled",
+              payoutEligibleAt: null,
+              payoutBlockedReason: "fully_refunded",
+              payoutAdjustedAmount: 0,
             })
             .where(eq(payments.id, depositPayment.id));
 
@@ -6043,16 +12226,54 @@ app.post(
           }
 
           await tx
+            .update(paymentSchedules)
+            .set({
+              status: "refunded",
+            })
+            .where(
+              and(
+                eq(paymentSchedules.bookingId, bookingId),
+                eq(paymentSchedules.status, "pending")
+              )
+            );
+
+          await tx
+            .update(payments)
+            .set({
+              status: "refunded",
+              refundedAmount: depositPayment.amount,
+              refundReason: requestedReason || stripeReason,
+              refundedAt: now,
+              payoutStatus: "cancelled",
+              payoutEligibleAt: null,
+              payoutBlockedReason: "fully_refunded",
+              payoutAdjustedAmount: 0,
+            })
+            .where(
+              and(
+                eq(payments.bookingId, bookingId),
+                eq(payments.status, "pending")
+              )
+            );
+
+          await tx
             .update(bookings)
             .set({
               status: "cancelled",
               paymentStatus: "refunded",
+              payoutStatus: "cancelled",
+              payoutEligibleAt: null,
+              payoutBlockedReason: "fully_refunded",
               cancellationReason: requestedReason || stripeReason,
               cancelledAt: now,
               updatedAt: now,
             })
             .where(eq(bookings.id, bookingId));
+
+          await recomputeBookingPaymentStatusInTx(tx, bookingId);
         });
+
+        await syncBookingToGoogleCalendarSafely(bookingId, "/api/bookings/:bookingId/refund google-sync");
 
         return res.json({ refund, message: "Booking cancelled and refund processed" });
       } catch {
@@ -6083,6 +12304,27 @@ app.post(
         if (payload) {
           userId = payload.id;
           userType = payload.type;
+        } else {
+          try {
+            const auth0 = await verifyAuth0Token(token);
+            const email = typeof auth0?.email === "string" ? auth0.email.trim().toLowerCase() : "";
+            if (email) {
+              const [user] = await db
+                .select({
+                  id: users.id,
+                  role: users.role,
+                })
+                .from(users)
+                .where(drizzleSql`lower(${users.email}) = ${email}`)
+                .limit(1);
+              if (user?.id) {
+                userId = user.id;
+                userType = user.role;
+              }
+            }
+          } catch {
+            // Ignore auth0 lookup failures; keep analytics ingestion best-effort.
+          }
         }
       }
 
@@ -6331,6 +12573,9 @@ app.post(
       res.status(500).json({ error: error.message });
     }
   });
+
+  await ensureBookingDisputesTable();
+  startAutoPayoutWorker();
 
   const httpServer = createServer(app);
   return httpServer;

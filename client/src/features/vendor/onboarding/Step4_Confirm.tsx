@@ -1,4 +1,5 @@
 import { Button } from "@/components/ui/button";
+import OnboardingStepHeader from "@/features/vendor/onboarding/OnboardingStepHeader";
 
 interface Step4ConfirmProps {
   formData: {
@@ -9,11 +10,34 @@ interface Step4ConfirmProps {
     state: string;
     zipCode: string;
     businessPhone: string;
-    serviceRadiusMiles: number;
-    chargesTravelFee: boolean;
+    businessEmail: string;
+    showBusinessPhoneToCustomers: boolean;
+    showBusinessEmailToCustomers: boolean;
+    showBusinessAddressToCustomers: boolean;
+    aboutVendor: string;
+    aboutBusiness: string;
+    shopTagline: string;
+    inBusinessSinceYear: string;
+    specialties: string;
+    eventsServedBaseline: string;
+    hobbies: string;
+    homeState: string;
+    funFacts: string;
+    shopProfilePhotoDataUrl?: string;
+    shopCoverPhotoDataUrl?: string;
   };
   onBack: () => void;
-  onComplete: (createListing: boolean) => void;
+  onComplete: (createListing: boolean, destination?: "dashboard" | "myHub") => void;
+}
+
+type ConfirmField = {
+  label: string;
+  value: string;
+};
+
+function formatValue(value: string | null | undefined) {
+  const trimmed = (value || "").trim();
+  return trimmed || "—";
 }
 
 export default function Step4_Confirm({
@@ -21,38 +45,153 @@ export default function Step4_Confirm({
   onBack,
   onComplete,
 }: Step4ConfirmProps) {
-  return (
-    <div className="space-y-6">
-      <h1 className="text-2xl font-semibold">Confirm</h1>
+  const businessFields: ConfirmField[] = [
+    {
+      label: "Business name",
+      value: formatValue(formData.businessName),
+    },
+    {
+      label: "Business address",
+      value: formatValue(
+        [formData.streetAddress, formData.city, formData.state, formData.zipCode].filter(Boolean).join(", ")
+      ),
+    },
+    {
+      label: "Street address",
+      value: formatValue(formData.streetAddress),
+    },
+    {
+      label: "City",
+      value: formatValue(formData.city),
+    },
+    {
+      label: "State",
+      value: formatValue(formData.state),
+    },
+    {
+      label: "Zip",
+      value: formatValue(formData.zipCode),
+    },
+    {
+      label: "Business phone",
+      value: formatValue(formData.businessPhone),
+    },
+    {
+      label: "Business email",
+      value: formatValue(formData.businessEmail),
+    },
+    {
+      label: "About the business",
+      value: formatValue(formData.aboutBusiness),
+    },
+    {
+      label: "Tagline",
+      value: formatValue(formData.shopTagline),
+    },
+    {
+      label: "In Business Since (Year)",
+      value: formatValue(formData.inBusinessSinceYear),
+    },
+    {
+      label: "Specialties",
+      value: formatValue(formData.specialties),
+    },
+    {
+      label: "Events Served To Date",
+      value: formatValue(formData.eventsServedBaseline),
+    },
+  ];
 
-      {/* Temporary summary */}
-      <div className="rounded-xl border p-4 space-y-2 text-sm">
-        <div><span className="font-medium">Vendor type:</span> {formData.vendorType || "—"}</div>
-        <div><span className="font-medium">Business:</span> {formData.businessName || "—"}</div>
-        <div>
-          <span className="font-medium">Address:</span>{" "}
-          {[formData.streetAddress, formData.city, formData.state, formData.zipCode]
-            .filter(Boolean)
-            .join(", ") || "—"}
+  const ownerFields: ConfirmField[] = [
+    {
+      label: "Your Introduction",
+      value: formatValue(formData.aboutVendor),
+    },
+    {
+      label: "Hobbies",
+      value: formatValue(formData.hobbies),
+    },
+    {
+      label: "From",
+      value: formatValue(formData.homeState),
+    },
+    {
+      label: "Fun Facts",
+      value: formatValue(formData.funFacts),
+    },
+    {
+      label: "Profile photo",
+      value: formData.shopProfilePhotoDataUrl?.trim() ? "Added" : "Not added",
+    },
+    {
+      label: "Cover photo",
+      value: formData.shopCoverPhotoDataUrl?.trim() ? "Added" : "Not added",
+    },
+  ];
+
+  return (
+    <div className="space-y-6 pb-28">
+      <div className="space-y-2">
+        <OnboardingStepHeader currentStep={3} />
+        <h1 className="text-[3rem] font-semibold">Confirm</h1>
+      </div>
+
+      <div className="grid w-full max-w-[1400px] gap-6 md:grid-cols-2">
+        <div className="rounded-xl border p-4 space-y-6">
+          <section className="space-y-3">
+            <h2 className="!text-[25px] leading-tight font-semibold">Business Details</h2>
+            <div className="space-y-2">
+              {businessFields.map((field) => (
+                <div key={field.label} className="space-y-2">
+                  <div className="text-[14.5px] leading-normal">
+                    <span className="text-[14.5px] font-semibold">{field.label}:</span>{" "}
+                    <span>{field.value}</span>
+                  </div>
+                </div>
+              ))}
+            </div>
+          </section>
         </div>
-        <div><span className="font-medium">Phone:</span> {formData.businessPhone || "—"}</div>
-        <div><span className="font-medium">Radius:</span> {formData.serviceRadiusMiles ?? 0} miles</div>
-        <div>
-          <span className="font-medium">Travel fees:</span>{" "}
-          {formData.chargesTravelFee ? "Yes" : "None"}
+
+        <div className="rounded-xl border p-4 space-y-6">
+          <section className="space-y-3">
+            <h2 className="!text-[25px] leading-tight font-semibold">About the Owner</h2>
+            <div className="space-y-2">
+              {ownerFields.map((field) => (
+                <div key={field.label} className="space-y-2">
+                  <div className="text-[14.5px] leading-normal">
+                    <span className="text-[14.5px] font-semibold">{field.label}:</span>{" "}
+                    <span>{field.value}</span>
+                  </div>
+                </div>
+              ))}
+            </div>
+          </section>
         </div>
       </div>
 
-      <div className="flex gap-3">
-        <Button variant="outline" onClick={onBack}>
-          Back
-        </Button>
-
-        <div className="ml-auto flex gap-3">
-          <Button variant="outline" onClick={() => onComplete(false)}>
-            Continue to dashboard
+      <div className="fixed bottom-0 left-24 right-0 z-30 bg-[#ffffff]/96 backdrop-blur-sm">
+        <div className="mx-auto flex w-full max-w-[1400px] items-center justify-between px-6 pt-4 pb-8 sm:px-12 lg:px-16">
+          <Button
+            variant="outline"
+            onClick={onBack}
+            className="min-h-[2.7rem] px-6 font-sans text-[1.2rem] font-medium"
+          >
+            Back
           </Button>
-          <Button onClick={() => onComplete(true)}>Create first listing</Button>
+
+          <div className="flex items-center gap-3">
+            <Button
+              variant="outline"
+              onClick={() => onComplete(false, "myHub")}
+              className="min-h-[2.7rem] px-6 font-sans text-[1.2rem] font-medium"
+            >
+              Go To My Hub
+            </Button>
+            <Button onClick={() => onComplete(true)} className="min-h-[2.7rem] px-6 font-sans text-[1.2rem] font-medium">
+              Create first listing
+            </Button>
+          </div>
         </div>
       </div>
     </div>

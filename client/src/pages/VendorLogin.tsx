@@ -104,8 +104,16 @@ export default function VendorLogin() {
         const loginResult = await loginWithPopupFirst({
           loginWithPopup,
           loginWithRedirect,
+          popupOptions: {
+            authorizationParams: {
+              prompt: "login",
+            },
+          },
           redirectOptions: {
             appState: { returnTo },
+            authorizationParams: {
+              prompt: "login",
+            },
           },
         });
 
@@ -142,8 +150,16 @@ export default function VendorLogin() {
       const loginResult = await loginWithPopupFirst({
         loginWithPopup,
         loginWithRedirect,
+        popupOptions: {
+          authorizationParams: {
+            prompt: "login",
+          },
+        },
         redirectOptions: {
           appState: { returnTo },
+          authorizationParams: {
+            prompt: "login",
+          },
         },
       });
 

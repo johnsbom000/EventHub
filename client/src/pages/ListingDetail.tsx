@@ -4,7 +4,6 @@ import { useQuery } from "@tanstack/react-query";
 import { ChevronLeft, MapPin, Star, CheckCircle, Truck, Wrench, X } from "lucide-react";
 import { useAuth0 } from "@auth0/auth0-react";
 import { format } from "date-fns";
-import { getFirstListingRentalType } from "@/lib/rentalTypes";
 import {
   coverRatioToAspectRatio,
   getCoverPhotoIndex,
@@ -13,6 +12,7 @@ import {
 } from "@/lib/listingPhotos";
 
 type RouteParams = { id: string };
+const LISTING_DETAIL_GALLERY_HEIGHT_CLASS = "h-[60vh] min-h-[320px] max-h-[520px]";
 
 // --- Small helpers ---
 function isNonEmptyString(v: unknown): v is string {
@@ -45,6 +45,41 @@ function formatPricingUnit(unit: string | undefined) {
 function money(n: number | null | undefined) {
   if (typeof n !== "number" || !Number.isFinite(n)) return null;
   return `$${Math.round(n).toLocaleString()}`;
+}
+
+function toFiniteNumber(value: unknown): number | null {
+  if (typeof value === "number") return Number.isFinite(value) ? value : null;
+  if (typeof value === "string") {
+    const trimmed = value.trim();
+    if (!trimmed) return null;
+    const parsed = Number(trimmed);
+    return Number.isFinite(parsed) ? parsed : null;
+  }
+  return null;
+}
+
+function normalizeListingCategory(value: unknown): "Rentals" | "Services" | "Venues" | "Catering" | null {
+  if (typeof value !== "string") return null;
+  const normalized = value.trim().toLowerCase().replace(/[_\s]+/g, "-");
+  if (!normalized) return null;
+  if (normalized === "rentals" || normalized === "rental" || normalized === "prop-decor" || normalized === "prop-rental") {
+    return "Rentals";
+  }
+  if (normalized === "venues" || normalized === "venue") return "Venues";
+  if (normalized === "catering") return "Catering";
+  if (normalized === "services" || normalized === "service") return "Services";
+  return null;
+}
+
+function parseBooleanLike(value: unknown): boolean | null {
+  if (typeof value === "boolean") return value;
+  if (typeof value === "number") return value === 1 ? true : value === 0 ? false : null;
+  if (typeof value === "string") {
+    const normalized = value.trim().toLowerCase();
+    if (["true", "1", "yes"].includes(normalized)) return true;
+    if (["false", "0", "no"].includes(normalized)) return false;
+  }
+  return null;
 }
 
 function toUniqueStringList(value: unknown): string[] {
@@ -157,6 +192,7 @@ export default function ListingDetailPage() {
 
       const raw = await res.json();
       const ld = (raw?.listingData ?? {}) as any;
+      // Compatibility-only fallback object. Canonical contract comes from typed listing fields on `raw`.
 
       // Photos: support raw.photos objects and listingData photos names/urls
       const photosFromObjects: string[] = Array.isArray(raw?.photos)
@@ -181,27 +217,42 @@ export default function ListingDetailPage() {
         ld?.photos?.cropsByName && typeof ld.photos.cropsByName === "object" ? (ld.photos.cropsByName as Record<string, unknown>) : {};
       const photoRenderMetaByUrl = getPhotoRenderMetaByUrl(allPhotos, cropsByName);
 
-      // Pricing: single-item rental only (listing-level)
-      const firstRentalType = getFirstListingRentalType(ld);
-      const pricingRateRaw =
-        ld?.pricing?.rate ?? (firstRentalType ? ld?.pricing?.pricingByPropType?.[firstRentalType]?.rate : null);
-
+      // Pricing: canonical typed fields first, compatibility fallback only to direct mirrored keys.
+      const canonicalPriceCents = toFiniteNumber(raw?.priceCents);
+      const mirroredPriceCents = toFiniteNumber(ld?.priceCents);
+      const mirroredPriceDollars = toFiniteNumber(ld?.price ?? ld?.rate);
       const pricingRate =
-        typeof pricingRateRaw === "number"
-          ? pricingRateRaw
-          : typeof pricingRateRaw === "string"
-            ? Number(pricingRateRaw)
-            : null;
+        canonicalPriceCents != null && canonicalPriceCents > 0
+          ? canonicalPriceCents / 100
+          : mirroredPriceCents != null && mirroredPriceCents > 0
+            ? mirroredPriceCents / 100
+            : mirroredPriceDollars;
 
-      const pricingUnit = ld?.pricing?.unit ?? ld?.pricingUnit ?? ld?.pricing?.pricingUnit ?? "per_day";
+      const pricingUnitRaw = `${raw?.pricingUnit ?? ld?.pricingUnit ?? ""}`
+        .trim()
+        .toLowerCase();
+      const pricingUnit = pricingUnitRaw === "per_hour" || pricingUnitRaw === "per_day" ? pricingUnitRaw : "per_day";
+      const listingCategory =
+        normalizeListingCategory(raw?.category) ??
+        normalizeListingCategory(ld?.category) ??
+        normalizeListingCategory(raw?.serviceType);
+      const quantityCandidates = [raw?.quantity, ld?.quantity];
+      const availableQuantity =
+        quantityCandidates
+          .map((value) => toFiniteNumber(value))
+          .find((value) => typeof value === "number" && Number.isFinite(value) && value > 0) ?? 1;
+      const instantBookEnabled =
+        parseBooleanLike(raw?.instantBookEnabled) ??
+        parseBooleanLike(ld?.instantBookEnabled) ??
+        (listingCategory === "Rentals");
 
-      // Title/category/location: prefer listingData fields first
-      const title = ld?.listingTitle ?? raw?.title ?? "Listing";
-      const description = ld?.listingDescription ?? "";
+      const title = raw?.title ?? ld?.listingTitle ?? "Listing";
+      const description = raw?.description ?? ld?.listingDescription ?? "";
       const vendorName = raw?.vendorName ?? raw?.vendor?.businessName ?? "Vendor";
 
       const city =
         raw?.city ??
+        raw?.listingServiceCenterLabel ??
         ld?.serviceLocation?.city ??
         (typeof ld?.serviceLocation?.label === "string" ? ld.serviceLocation.label : "") ??
         "";
@@ -220,7 +271,8 @@ export default function ListingDetailPage() {
             .filter((review: any) => review.id.length > 0 && review.rating > 0)
         : [];
 
-      const tags = Array.isArray(ld?.tagsByPropType?.__listing__)
+      const tagsFromCanonical = toUniqueStringList(raw?.tags);
+      const tagsFromLegacy = Array.isArray(ld?.tagsByPropType?.__listing__)
         ? Array.from(
             new Set(
               ld.tagsByPropType.__listing__
@@ -229,22 +281,53 @@ export default function ListingDetailPage() {
             ),
           )
         : [];
+      const tags = tagsFromCanonical.length > 0 ? tagsFromCanonical : tagsFromLegacy;
 
       const included = Array.from(
         new Set([
+          ...toUniqueStringList(raw?.whatsIncluded),
           ...toUniqueStringList(ld?.whatsIncluded),
-          ...toUniqueStringList(ld?.whatIsIncluded),
           ...toUniqueStringList(ld?.included),
-          ...toUniqueStringList(ld?.includedItems),
-          ...toUniqueStringList(ld?.inclusions),
         ]),
       );
 
-      // Logistics (best-effort)
-      const delivery = ld?.deliverySetup ?? {};
-      const deliveryIncluded = Boolean(delivery?.deliveryIncluded ?? ld?.deliveryIncluded);
-      const setupIncluded = Boolean(delivery?.setupIncluded ?? ld?.setupIncluded);
-      const radiusMiles = Number(ld?.serviceRadiusMiles ?? ld?.deliverySetup?.serviceRadiusMiles ?? 0) || null;
+      const deliveryIncluded =
+        parseBooleanLike(raw?.deliveryOffered) ??
+        parseBooleanLike(ld?.deliveryOffered ?? ld?.deliveryIncluded) ??
+        false;
+      const setupIncluded =
+        parseBooleanLike(raw?.setupOffered) ??
+        parseBooleanLike(ld?.setupOffered ?? ld?.setupIncluded) ??
+        false;
+      const deliveryFeeCents = toFiniteNumber(raw?.deliveryFeeAmountCents);
+      const setupFeeCents = toFiniteNumber(raw?.setupFeeAmountCents);
+      const deliveryFeeEnabled =
+        parseBooleanLike(raw?.deliveryFeeEnabled) ??
+        parseBooleanLike(ld?.deliveryFeeEnabled) ??
+        false;
+      const setupFeeEnabled =
+        parseBooleanLike(raw?.setupFeeEnabled) ??
+        parseBooleanLike(ld?.setupFeeEnabled) ??
+        false;
+      const deliveryFeeAmountRaw = ld?.deliveryFeeAmount;
+      const setupFeeAmountRaw = ld?.setupFeeAmount;
+      const deliveryFeeAmount = typeof deliveryFeeCents === "number" ? deliveryFeeCents / 100 : toFiniteNumber(deliveryFeeAmountRaw);
+      const setupFeeAmount = typeof setupFeeCents === "number" ? setupFeeCents / 100 : toFiniteNumber(setupFeeAmountRaw);
+      const radiusMiles = Number(raw?.serviceRadiusMiles ?? ld?.serviceRadiusMiles ?? 0) || null;
+
+      const deliveryLabel =
+        deliveryFeeEnabled
+          ? `Delivery fee: ${money(deliveryFeeAmount) ?? "Applies"}`
+          : deliveryIncluded
+            ? "Delivery included"
+            : "Not configured yet";
+
+      const setupLabel =
+        setupFeeEnabled
+          ? `Setup fee: ${money(setupFeeAmount) ?? "Applies"}`
+          : setupIncluded
+            ? "Setup included"
+            : "Not configured yet";
 
       return {
         id: raw?.id ?? listingId,
@@ -261,11 +344,15 @@ export default function ListingDetailPage() {
         coverPhotoRatio,
         price: pricingRate,
         pricingUnit,
+        instantBookEnabled,
+        availableQuantity,
         included,
         tags,
         logistics: {
           deliveryIncluded,
           setupIncluded,
+          deliveryLabel,
+          setupLabel,
           radiusMiles,
         },
       };
@@ -289,11 +376,10 @@ export default function ListingDetailPage() {
   const photos = Array.isArray(data.photos) ? data.photos : [];
   const hasPhotos = photos.length > 0;
   const previewPhotos = photos.slice(0, 5);
-  const rightPreviewCount =
-    previewPhotos.length >= 5 ? 4 : Math.min(2, Math.max(0, previewPhotos.length - 1));
-  const rightPreviewPhotos = previewPhotos.slice(1, 1 + rightPreviewCount);
-  const showFourPhotoStack = rightPreviewCount === 4;
+  const splitGalleryPhotos = photos.slice(1, Math.min(photos.length, 4));
+  const marketplaceGridPhotos = previewPhotos.slice(1, 5);
   const coverAspectRatio = coverRatioToAspectRatio(data.coverPhotoRatio);
+  const usesSavedCoverAspectRatio = photos.length === 1;
   const photoRenderMetaByUrl = (data.photoRenderMetaByUrl ?? {}) as Record<string, PhotoRenderMeta>;
 
   const getPhotoObjectPositionStyle = (src: string): React.CSSProperties | undefined => {
@@ -322,86 +408,113 @@ export default function ListingDetailPage() {
       {/* Photo collage (Airbnb-style) */}
       <div className="relative">
         {hasPhotos ? (
-          <div className="relative rounded-2xl overflow-hidden bg-muted">
-            {/* 1 photo */}
-            {photos.length === 1 && (
+          <div className={`relative overflow-hidden rounded-2xl ${LISTING_DETAIL_GALLERY_HEIGHT_CLASS}`}>
+            {/* Mobile: stable hero-first preview */}
+            <div className="md:hidden h-full">
               <button
-                className="relative w-full overflow-hidden bg-muted"
-                style={{ aspectRatio: coverAspectRatio }}
+                className="relative block h-full w-full overflow-hidden bg-transparent"
+                style={usesSavedCoverAspectRatio ? { aspectRatio: coverAspectRatio } : undefined}
                 onClick={() => setGalleryOpen(true)}
                 title="Show all photos"
               >
                 <img
                   src={photos[0]}
                   alt={data.title}
-                  className="absolute inset-0 w-full h-full object-cover"
+                  className="absolute inset-0 h-full w-full object-cover"
                   style={getPhotoObjectPositionStyle(photos[0])}
                 />
               </button>
-            )}
+            </div>
 
-            {/* 2+ photos: large cover on left, 2 or 4 non-cover photos on right */}
-            {photos.length > 1 && (
-              <>
-                <div className="md:hidden">
+            {/* Desktop/tablet: adaptive layouts by photo count */}
+            <div className="hidden h-full md:block">
+              {/* 1 photo: full-width hero */}
+              {photos.length === 1 && (
+                <button
+                  className="relative block h-full w-full overflow-hidden bg-transparent"
+                  style={usesSavedCoverAspectRatio ? { aspectRatio: coverAspectRatio } : undefined}
+                  onClick={() => setGalleryOpen(true)}
+                  title="Show all photos"
+                >
+                  <img
+                    src={photos[0]}
+                    alt={data.title}
+                    className="absolute inset-0 h-full w-full object-cover"
+                    style={getPhotoObjectPositionStyle(photos[0])}
+                  />
+                </button>
+              )}
+
+              {/* 2-4 photos: split hero + right stack */}
+              {photos.length >= 2 && photos.length <= 4 && (
+                <div className="grid h-full grid-cols-[2fr_1fr] gap-2">
                   <button
-                    className="relative w-full overflow-hidden bg-muted"
-                    style={{ aspectRatio: coverAspectRatio }}
+                    className="relative block h-full w-full overflow-hidden bg-transparent"
                     onClick={() => setGalleryOpen(true)}
                     title="Show all photos"
                   >
                     <img
                       src={photos[0]}
                       alt={data.title}
-                      className="absolute inset-0 w-full h-full object-cover"
-                      style={getPhotoObjectPositionStyle(photos[0])}
-                    />
-                  </button>
-                </div>
-
-                <div className="hidden md:grid md:grid-cols-[2fr_1fr] gap-2 items-stretch">
-                  <button
-                    className="relative w-full overflow-hidden bg-muted"
-                    style={{ aspectRatio: coverAspectRatio }}
-                    onClick={() => setGalleryOpen(true)}
-                    title="Show all photos"
-                  >
-                    <img
-                      src={photos[0]}
-                      alt={data.title}
-                      className="absolute inset-0 w-full h-full object-cover"
+                      className="absolute inset-0 h-full w-full object-cover"
                       style={getPhotoObjectPositionStyle(photos[0])}
                     />
                   </button>
 
-                  <div
-                    className={[
-                      showFourPhotoStack ? "grid grid-cols-2 grid-rows-2 gap-2 h-full" : "grid grid-rows-2 gap-2 h-full",
-                      "self-stretch",
-                    ].join(" ")}
-                  >
-                    {rightPreviewPhotos.map((src: string, i: number) => (
+                  <div className={`grid h-full gap-2 ${photos.length === 2 ? "grid-rows-1" : photos.length === 3 ? "grid-rows-2" : "grid-rows-3"}`}>
+                    {splitGalleryPhotos.map((src: string, i: number) => (
                       <button
                         key={`${src}-${i}`}
-                        className={[
-                          "relative h-full overflow-hidden bg-muted",
-                          !showFourPhotoStack && rightPreviewPhotos.length === 1 ? "row-span-2" : "",
-                        ].join(" ")}
+                        className="relative block h-full w-full overflow-hidden bg-transparent"
                         onClick={() => setGalleryOpen(true)}
                         title="Show all photos"
                       >
                         <img
                           src={src}
                           alt={`${data.title} photo ${i + 2}`}
-                          className="absolute inset-0 w-full h-full object-cover"
+                          className="absolute inset-0 h-full w-full object-cover"
                           style={getPhotoObjectPositionStyle(src)}
                         />
                       </button>
                     ))}
                   </div>
                 </div>
-              </>
-            )}
+              )}
+
+              {/* 5+ photos: marketplace grid */}
+              {photos.length >= 5 && (
+                <div className="grid h-full grid-cols-4 grid-rows-2 gap-2">
+                  <button
+                    className="relative col-span-2 row-span-2 block h-full w-full overflow-hidden bg-transparent"
+                    onClick={() => setGalleryOpen(true)}
+                    title="Show all photos"
+                  >
+                    <img
+                      src={photos[0]}
+                      alt={data.title}
+                      className="absolute inset-0 h-full w-full object-cover"
+                      style={getPhotoObjectPositionStyle(photos[0])}
+                    />
+                  </button>
+
+                  {marketplaceGridPhotos.map((src: string, i: number) => (
+                    <button
+                      key={`${src}-${i}`}
+                      className="relative block h-full w-full overflow-hidden bg-transparent"
+                      onClick={() => setGalleryOpen(true)}
+                      title="Show all photos"
+                    >
+                      <img
+                        src={src}
+                        alt={`${data.title} photo ${i + 2}`}
+                        className="absolute inset-0 h-full w-full object-cover"
+                        style={getPhotoObjectPositionStyle(src)}
+                      />
+                    </button>
+                  ))}
+                </div>
+              )}
+            </div>
 
             {/* Show all photos button */}
             <div className="absolute bottom-4 right-4">
@@ -492,7 +605,7 @@ export default function ListingDetailPage() {
                   Delivery
                 </div>
                 <p className="mt-2 text-sm text-muted-foreground">
-                  {data.logistics?.deliveryIncluded ? "Delivery included" : "Not configured yet"}
+                  {data.logistics?.deliveryLabel ?? "Not configured yet"}
                 </p>
               </div>
 
@@ -502,7 +615,7 @@ export default function ListingDetailPage() {
                   Setup
                 </div>
                 <p className="mt-2 text-sm text-muted-foreground">
-                  {data.logistics?.setupIncluded ? "Setup included" : "Not configured yet"}
+                  {data.logistics?.setupLabel ?? "Not configured yet"}
                 </p>
               </div>
             </div>
@@ -594,8 +707,12 @@ export default function ListingDetailPage() {
             vendorId={data.vendorId}
             price={data.price}
             pricingUnit={data.pricingUnit}
-            onStartCheckout={({ listingId, eventDate }) => {
-              setLocation(`/checkout/${listingId}?date=${encodeURIComponent(eventDate)}`);
+            instantBookEnabled={Boolean(data.instantBookEnabled)}
+            availableQuantity={Number(data.availableQuantity) || 1}
+            onStartCheckout={({ listingId, eventDate, quantity }) => {
+              setLocation(
+                `/checkout/${listingId}?date=${encodeURIComponent(eventDate)}&quantity=${encodeURIComponent(String(quantity))}`,
+              );
             }}
           />
         </aside>
@@ -635,13 +752,13 @@ export default function ListingDetailPage() {
                     return (
                       <figure
                         key={`${src}-${i}`}
-                        className={`mb-3 break-inside-avoid overflow-hidden rounded-xl bg-muted ${savedAspect ? "relative" : ""}`}
+                        className={`mb-3 break-inside-avoid overflow-hidden rounded-xl bg-background ${savedAspect ? "relative" : ""}`}
                         style={savedAspect ? { aspectRatio: String(savedAspect) } : undefined}
                       >
                         <img
                           src={src}
                           alt={`${data.title} photo ${i + 1}`}
-                          className={savedAspect ? "absolute inset-0 block w-full h-full object-cover" : "block w-full h-auto object-cover"}
+                          className={savedAspect ? "absolute inset-0 block w-full h-full object-contain" : "block w-full h-auto object-contain"}
                           style={getPhotoObjectPositionStyle(src)}
                           loading="lazy"
                         />
@@ -665,15 +782,20 @@ function ReservationCard({
   vendorId,
   price,
   pricingUnit,
+  instantBookEnabled,
+  availableQuantity,
   onStartCheckout,
 }: {
   listingId: string;
   vendorId: string | null;
   price: number | null;
   pricingUnit: string;
-  onStartCheckout: (params: { listingId: string; vendorId: string; eventDate: string }) => void;
+  instantBookEnabled: boolean;
+  availableQuantity: number;
+  onStartCheckout: (params: { listingId: string; vendorId: string; eventDate: string; quantity: number }) => void;
 }) {
   const [date, setDate] = useState("");
+  const [quantity, setQuantity] = useState(1);
   const [isRouting, setIsRouting] = useState(false);
   const [bookingError, setBookingError] = useState<string | null>(null);
 
@@ -681,8 +803,18 @@ function ReservationCard({
 
   const priceText = money(price);
   const unitText = formatPricingUnit(pricingUnit);
+  const normalizedAvailableQuantity =
+    Number.isFinite(availableQuantity) && availableQuantity > 0 ? Math.floor(availableQuantity) : 1;
+  const quantityTotalText =
+    typeof price === "number" && Number.isFinite(price) ? money(price * quantity) : null;
 
-  const canBook = Boolean(date) && Boolean(priceText) && Boolean(vendorId) && !isRouting;
+  const canBook =
+    Boolean(date) &&
+    Boolean(priceText) &&
+    Boolean(vendorId) &&
+    quantity >= 1 &&
+    quantity <= normalizedAvailableQuantity &&
+    !isRouting;
 
   async function handleBookNow() {
     setBookingError(null);
@@ -692,6 +824,9 @@ function ReservationCard({
       try {
         await loginWithRedirect({
           appState: { returnTo },
+          authorizationParams: {
+            prompt: "login",
+          },
         });
       } catch (error: any) {
         setBookingError(error?.message || "Unable to start login. Please try again.");
@@ -718,6 +853,7 @@ function ReservationCard({
         listingId,
         vendorId,
         eventDate: date,
+        quantity,
       });
     } catch (e: any) {
       setBookingError(e?.message || "Failed to continue to checkout");
@@ -747,10 +883,30 @@ function ReservationCard({
           />
         </div>
 
+        {normalizedAvailableQuantity > 1 ? (
+          <div className="space-y-1">
+            <div className="text-sm font-medium">Quantity</div>
+            <select
+              value={String(quantity)}
+              onChange={(event) => setQuantity(Number(event.target.value))}
+              className="w-full rounded-md border border-border bg-background px-3 py-2 text-sm"
+            >
+              {Array.from({ length: normalizedAvailableQuantity }, (_, index) => index + 1).map((value) => (
+                <option key={value} value={value}>
+                  {value}
+                </option>
+              ))}
+            </select>
+            <div className="text-xs text-muted-foreground">
+              {normalizedAvailableQuantity} identical unit{normalizedAvailableQuantity === 1 ? "" : "s"} available
+            </div>
+          </div>
+        ) : null}
+
         <div className="border-t border-border pt-3">
           <div className="flex items-center justify-between text-sm">
             <span className="text-muted-foreground">Total</span>
-            <span className="font-medium">{priceText ?? "Not configured yet"}</span>
+            <span className="font-medium">{quantityTotalText ?? "Not configured yet"}</span>
           </div>
           <div className="text-xs text-muted-foreground mt-1">Taxes/fees/deposit: Not configured yet</div>
         </div>
@@ -763,7 +919,7 @@ function ReservationCard({
             !canBook ? "bg-muted text-muted-foreground cursor-not-allowed" : "bg-rose-600 hover:bg-rose-700 text-white",
           ].join(" ")}
         >
-          {isRouting ? "Loading..." : "Book Now"}
+          {isRouting ? "Loading..." : instantBookEnabled ? "Book Now" : "Request to Book"}
         </button>
 
         {bookingError ? <p className="text-xs text-red-600 text-center">{bookingError}</p> : null}

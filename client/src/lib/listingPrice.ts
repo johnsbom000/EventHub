@@ -13,17 +13,6 @@ const normalizeUnit = (value: unknown): string | null => {
   return trimmed ? trimmed : null;
 };
 
-const collectRatesFromRecord = (source: unknown): number[] => {
-  if (!source || typeof source !== "object") return [];
-  const rates: number[] = [];
-  for (const value of Object.values(source as Record<string, unknown>)) {
-    if (!value || typeof value !== "object") continue;
-    const rate = toOptionalNumber((value as any).rate);
-    if (rate != null) rates.push(rate);
-  }
-  return rates;
-};
-
 export function getListingDisplayPrice(listing: unknown): number | null {
   const listingAny = (listing && typeof listing === "object" ? listing : {}) as Record<string, any>;
   const listingData =
@@ -33,17 +22,23 @@ export function getListingDisplayPrice(listing: unknown): number | null {
 
   const candidates: number[] = [];
 
+  const canonicalPriceCents = toOptionalNumber(listingAny.priceCents);
+  if (canonicalPriceCents != null && canonicalPriceCents > 0) {
+    candidates.push(canonicalPriceCents / 100);
+  }
+
+  const canonicalPrice = toOptionalNumber(listingAny.price);
+  if (canonicalPrice != null) candidates.push(canonicalPrice);
+
   const startingPrice = toOptionalNumber(listingAny.startingPrice);
   if (startingPrice != null) candidates.push(startingPrice);
 
-  const pricingRate = toOptionalNumber(listingData?.pricing?.rate);
-  if (pricingRate != null) candidates.push(pricingRate);
-
+  const mirroredPriceCents = toOptionalNumber(listingData?.priceCents);
+  if (mirroredPriceCents != null && mirroredPriceCents > 0) candidates.push(mirroredPriceCents / 100);
+  const mirroredPrice = toOptionalNumber(listingData?.price);
+  if (mirroredPrice != null) candidates.push(mirroredPrice);
   const legacyRate = toOptionalNumber(listingData?.rate);
   if (legacyRate != null) candidates.push(legacyRate);
-
-  candidates.push(...collectRatesFromRecord(listingData?.pricing?.pricingByPropType));
-  candidates.push(...collectRatesFromRecord(listingData?.pricingByPropType));
 
   const topLevelOfferings = Array.isArray(listingAny.offerings) ? listingAny.offerings : [];
   for (const offering of topLevelOfferings) {
@@ -70,11 +65,9 @@ export function getListingDisplayPricingUnit(listing: unknown): string | null {
       : {};
 
   return (
-    normalizeUnit(listingData?.pricing?.unit) ??
-    normalizeUnit(listingData?.pricingUnit) ??
-    normalizeUnit(listingData?.pricing?.pricingUnit) ??
-    normalizeUnit(listingAny?.pricing?.unit) ??
     normalizeUnit(listingAny?.pricingUnit) ??
+    normalizeUnit(listingAny?.pricing?.unit) ??
+    normalizeUnit(listingData?.pricingUnit) ??
     null
   );
 }

@@ -1,9 +1,10 @@
 import React, { useEffect } from "react";
-import { SidebarProvider, SidebarTrigger } from "@/components/ui/sidebar";
+import { SidebarProvider } from "@/components/ui/sidebar";
 import { Button } from "@/components/ui/button";
 import {
   ArrowLeft,
   Calendar,
+  Check,
   Globe,
   HelpCircle,
   Home,
@@ -12,8 +13,9 @@ import {
   Settings,
   User,
 } from "lucide-react";
-import { useLocation } from "wouter";
+import { Link, useLocation } from "wouter";
 import { VendorSidebar } from "@/components/vendor-sidebar";
+import BrandWordmark from "@/components/BrandWordmark";
 import {
   DropdownMenu,
   DropdownMenuContent,
@@ -24,15 +26,27 @@ import {
 } from "@/components/ui/dropdown-menu";
 import { Avatar, AvatarFallback } from "@/components/ui/avatar";
 import { useAuth0 } from "@auth0/auth0-react";
-import { useQuery } from "@tanstack/react-query";
+import { useQuery, useQueryClient } from "@tanstack/react-query";
 
 type VendorShellProps = {
   children: React.ReactNode;
+  onOpenAccountSettings?: () => void;
 };
 
 type VendorHeaderAccount = {
   businessName?: string | null;
   email?: string | null;
+};
+
+type VendorProfileSummary = {
+  id: string;
+  profileName: string;
+  isActive: boolean;
+};
+
+type VendorProfilesResponse = {
+  activeProfileId?: string | null;
+  profiles?: VendorProfileSummary[];
 };
 
 function getInitialsFromName(nameOrEmail: string) {
@@ -48,9 +62,10 @@ function getInitialsFromName(nameOrEmail: string) {
   return `${words[0][0] || ""}${words[1][0] || ""}`.toUpperCase();
 }
 
-export default function VendorShell({ children }: VendorShellProps) {
+export default function VendorShell({ children, onOpenAccountSettings }: VendorShellProps) {
   const [location, setLocation] = useLocation();
   const { isAuthenticated, isLoading: isAuthLoading, getAccessTokenSilently, logout } = useAuth0();
+  const queryClient = useQueryClient();
 
   const { data: vendorAccount } = useQuery<VendorHeaderAccount>({
     queryKey: ["/api/vendor/me", "shell-header"],
@@ -68,12 +83,65 @@ export default function VendorShell({ children }: VendorShellProps) {
     },
   });
 
-  const displayName = vendorAccount?.businessName || vendorAccount?.email || "Vendor";
+  const { data: vendorProfilesData } = useQuery<VendorProfilesResponse>({
+    queryKey: ["/api/vendor/profiles", "shell-header"],
+    enabled: isAuthenticated,
+    retry: false,
+    queryFn: async () => {
+      const token = await getAccessTokenSilently({
+        authorizationParams: { audience: "https://eventhub-api" },
+      });
+      const res = await fetch("/api/vendor/profiles", {
+        headers: { Authorization: `Bearer ${token}` },
+      });
+      if (!res.ok) {
+        return { profiles: [] };
+      }
+      return res.json();
+    },
+  });
+
+  const vendorProfiles = Array.isArray(vendorProfilesData?.profiles) ? vendorProfilesData!.profiles! : [];
+  const activeProfileId =
+    (typeof vendorProfilesData?.activeProfileId === "string" && vendorProfilesData.activeProfileId.trim()) ||
+    vendorProfiles.find((profile) => profile.isActive)?.id ||
+    "";
+  const activeProfileName =
+    vendorProfiles.find((profile) => profile.id === activeProfileId)?.profileName ||
+    vendorAccount?.businessName ||
+    "Vendor Profile";
+
+  const switchVendorProfile = async (profileId: string) => {
+    const token = await getAccessTokenSilently({
+      authorizationParams: { audience: "https://eventhub-api" },
+    });
+    const res = await fetch("/api/vendor/profiles/switch", {
+      method: "POST",
+      headers: {
+        "Content-Type": "application/json",
+        Authorization: `Bearer ${token}`,
+      },
+      body: JSON.stringify({ profileId }),
+    });
+    if (!res.ok) return;
+
+    await Promise.all([
+      queryClient.invalidateQueries({ queryKey: ["/api/vendor/me"] }),
+      queryClient.invalidateQueries({ queryKey: ["/api/vendor/profile"] }),
+      queryClient.invalidateQueries({ queryKey: ["/api/vendor/profiles"] }),
+      queryClient.invalidateQueries({ queryKey: ["/api/vendor/listings"] }),
+      queryClient.invalidateQueries({ queryKey: ["/api/vendor/stats"] }),
+      queryClient.invalidateQueries({ queryKey: ["/api/vendor/bookings"] }),
+      queryClient.invalidateQueries({ queryKey: ["/api/vendor/payments"] }),
+    ]);
+  };
+
+  const displayName = activeProfileName || vendorAccount?.email || "Vendor";
   const initials = getInitialsFromName(displayName);
 
   const sidebarStyle = {
-    "--sidebar-width": "16rem",
-    "--sidebar-width-icon": "3rem",
+    "--sidebar-width": "6rem",
+    "--sidebar-width-icon": "6rem",
   } as React.CSSProperties;
 
   useEffect(() => {
@@ -100,101 +168,145 @@ export default function VendorShell({ children }: VendorShellProps) {
 
   return (
     <SidebarProvider style={sidebarStyle}>
-      <div className="swap-dashboard-whites flex h-screen w-full">
-        <VendorSidebar />
-        <div className="flex flex-col flex-1">
-          <header className="flex items-center justify-between p-4 border-b">
-            <SidebarTrigger data-testid="button-sidebar-toggle" />
-            <div className="flex items-center gap-3">
-              <Button
-                variant="default"
-                className="no-global-scale editorial-login-btn h-[54px] min-w-[232px] px-7 text-[1.15rem] leading-none"
-                onClick={() => setLocation("/")}
-                data-testid="button-back-marketplace"
-              >
-                <ArrowLeft className="w-4 h-4 mr-2" />
-                Back to Marketplace
-              </Button>
+      <div className="swap-dashboard-whites flex h-screen w-full flex-col">
+        <header className="flex items-center justify-between border-b border-[rgba(74,106,125,0.22)] bg-[#ffffff] p-4">
+          <Link
+            href="/"
+            className="flex items-center rounded-md px-1 py-1"
+            data-testid="link-vendor-shell-home"
+          >
+            <BrandWordmark
+              className="text-[2.32rem]"
+              eventClassName="text-[#e07a6a] font-normal"
+              hubClassName="text-[#4a6a7d] font-normal"
+            />
+          </Link>
 
-              <DropdownMenu>
-                <DropdownMenuTrigger asChild>
-                  <Button
-                    variant="ghost"
-                    size="icon"
-                    className="h-10 w-10 rounded-full p-0"
-                    data-testid="button-vendor-shell-profile"
-                  >
-                    <Avatar className="h-10 w-10">
-                      <AvatarFallback className="bg-primary text-primary-foreground">
-                        {initials}
-                      </AvatarFallback>
-                    </Avatar>
-                  </Button>
-                </DropdownMenuTrigger>
+          <div className="flex items-center gap-3">
+            <Button
+              variant="default"
+              className="no-global-scale editorial-login-btn min-h-0 h-[27px] min-w-[136px] rounded-[7px] px-3.5 py-0 text-[12.5px] leading-none gap-1 [&_svg]:!size-2"
+              onClick={() => setLocation("/")}
+              data-testid="button-back-marketplace"
+            >
+              <ArrowLeft />
+              Back to Marketplace
+            </Button>
 
-                <DropdownMenuContent
-                  align="end"
-                  className="w-64"
-                  data-testid="dropdown-vendor-shell-menu"
+            <DropdownMenu>
+              <DropdownMenuTrigger asChild>
+                <Button
+                  variant="ghost"
+                  size="icon"
+                  className="h-10 w-10 rounded-full p-0"
+                  data-testid="button-vendor-shell-profile"
                 >
-                  <DropdownMenuLabel>Vendor Account</DropdownMenuLabel>
-                  <DropdownMenuSeparator />
+                  <Avatar className="h-10 w-10">
+                    <AvatarFallback className="bg-primary text-primary-foreground">
+                      {initials}
+                    </AvatarFallback>
+                  </Avatar>
+                </Button>
+              </DropdownMenuTrigger>
 
-                  <DropdownMenuItem
-                    onClick={() => setLocation("/vendor/dashboard")}
-                    data-testid="menu-item-vendor-shell-profile"
-                  >
-                    <User className="mr-2 h-4 w-4" />
-                    <span>Profile</span>
-                  </DropdownMenuItem>
-                  <DropdownMenuItem
-                    onClick={() => setLocation("/dashboard/events")}
-                    data-testid="menu-item-vendor-shell-my-events"
-                  >
-                    <Calendar className="mr-2 h-4 w-4" />
-                    <span>My Events</span>
-                  </DropdownMenuItem>
-                  <DropdownMenuItem
-                    onClick={() => setLocation("/vendor/dashboard")}
-                    data-testid="menu-item-vendor-shell-dashboard"
-                  >
-                    <Home className="mr-2 h-4 w-4" />
-                    <span>Vendor Dashboard</span>
-                  </DropdownMenuItem>
-                  <DropdownMenuSeparator />
+              <DropdownMenuContent
+                align="end"
+                className="w-64"
+                data-testid="dropdown-vendor-shell-menu"
+              >
+                <DropdownMenuLabel>Vendor Account</DropdownMenuLabel>
+                <DropdownMenuLabel className="pt-0 text-xs font-normal text-muted-foreground">
+                  Active: {activeProfileName}
+                </DropdownMenuLabel>
+                {vendorProfiles.length > 0 ? (
+                  <>
+                    {vendorProfiles.map((profile) => (
+                      <DropdownMenuItem
+                        key={profile.id}
+                        onClick={() => {
+                          void switchVendorProfile(profile.id);
+                        }}
+                        data-testid={`menu-item-vendor-profile-${profile.id}`}
+                      >
+                        <span className="truncate">{profile.profileName}</span>
+                        {profile.id === activeProfileId ? <Check className="ml-auto h-4 w-4" /> : null}
+                      </DropdownMenuItem>
+                    ))}
+                    <DropdownMenuSeparator />
+                  </>
+                ) : null}
 
-                  <DropdownMenuItem
-                    onClick={() => setLocation("/vendor/dashboard")}
-                    data-testid="menu-item-vendor-shell-account-settings"
-                  >
-                    <Settings className="mr-2 h-4 w-4" />
-                    <span>Account settings</span>
-                  </DropdownMenuItem>
-                  <DropdownMenuItem data-testid="menu-item-vendor-shell-languages">
-                    <Globe className="mr-2 h-4 w-4" />
-                    <span>Languages & currency</span>
-                  </DropdownMenuItem>
+                <DropdownMenuItem
+                  onClick={() => setLocation("/vendor/onboarding?createProfile=1")}
+                  data-testid="menu-item-vendor-create-profile"
+                >
+                  <span>Create another profile</span>
+                </DropdownMenuItem>
+                <DropdownMenuSeparator />
 
-                  <DropdownMenuSeparator />
+                <DropdownMenuItem
+                  onClick={() => setLocation("/vendor/dashboard")}
+                  data-testid="menu-item-vendor-shell-profile"
+                >
+                  <User className="mr-2 h-4 w-4" />
+                  <span>Profile</span>
+                </DropdownMenuItem>
+                <DropdownMenuItem
+                  onClick={() => setLocation("/dashboard/events")}
+                  data-testid="menu-item-vendor-shell-my-events"
+                >
+                  <Calendar className="mr-2 h-4 w-4" />
+                  <span>My Events</span>
+                </DropdownMenuItem>
+                <DropdownMenuItem
+                  onClick={() => setLocation("/vendor/dashboard")}
+                  data-testid="menu-item-vendor-shell-dashboard"
+                >
+                  <Home className="mr-2 h-4 w-4" />
+                  <span>Vendor Dashboard</span>
+                </DropdownMenuItem>
+                <DropdownMenuSeparator />
 
-                  <DropdownMenuItem data-testid="menu-item-vendor-shell-help">
-                    <HelpCircle className="mr-2 h-4 w-4" />
-                    <span>Help Center</span>
-                  </DropdownMenuItem>
-                  <DropdownMenuItem
-                    onClick={() => {
-                      logout({ logoutParams: { returnTo: window.location.origin } });
-                    }}
-                    data-testid="menu-item-vendor-shell-sign-out"
-                  >
-                    <LogOut className="mr-2 h-4 w-4" />
-                    <span>Sign out</span>
-                  </DropdownMenuItem>
-                </DropdownMenuContent>
-              </DropdownMenu>
-            </div>
-          </header>
+                <DropdownMenuItem
+                  onClick={() => {
+                    if (onOpenAccountSettings) {
+                      onOpenAccountSettings();
+                      return;
+                    }
+                    setLocation("/vendor/dashboard");
+                  }}
+                  data-testid="menu-item-vendor-shell-account-settings"
+                >
+                  <Settings className="mr-2 h-4 w-4" />
+                  <span>Account settings</span>
+                </DropdownMenuItem>
+                <DropdownMenuItem data-testid="menu-item-vendor-shell-languages">
+                  <Globe className="mr-2 h-4 w-4" />
+                  <span>Languages & currency</span>
+                </DropdownMenuItem>
 
+                <DropdownMenuSeparator />
+
+                <DropdownMenuItem data-testid="menu-item-vendor-shell-help">
+                  <HelpCircle className="mr-2 h-4 w-4" />
+                  <span>Help Center</span>
+                </DropdownMenuItem>
+                <DropdownMenuItem
+                  onClick={() => {
+                    logout({ logoutParams: { returnTo: window.location.origin } });
+                  }}
+                  data-testid="menu-item-vendor-shell-sign-out"
+                >
+                  <LogOut className="mr-2 h-4 w-4" />
+                  <span>Sign out</span>
+                </DropdownMenuItem>
+              </DropdownMenuContent>
+            </DropdownMenu>
+          </div>
+        </header>
+
+        <div className="flex min-h-0 flex-1">
+          <VendorSidebar className="shrink-0" />
           <main className="flex-1 overflow-auto p-6">{children}</main>
         </div>
       </div>

@@ -106,6 +106,51 @@ POST /api/bookings
 }
 ```
 
+### File Booking Dispute (Customer)
+```
+POST /api/customer/bookings/:id/dispute
+```
+Rules:
+- Allowed only after event end time.
+- Allowed only within 24 hours after event end.
+- One dispute per booking.
+
+**Request Body**
+```json
+{
+  "reason": "item_not_as_described",
+  "details": "Centerpieces arrived damaged and incomplete."
+}
+```
+
+### Respond to Dispute (Vendor)
+```
+POST /api/vendor/bookings/:id/dispute/respond
+```
+**Request Body**
+```json
+{
+  "response": "We can provide replacement items and partial credit."
+}
+```
+
+### List Disputes (Admin)
+```
+GET /api/admin/disputes?status=filed
+```
+
+### Resolve Dispute (Admin)
+```
+POST /api/admin/disputes/:id/resolve
+```
+**Request Body**
+```json
+{
+  "decision": "refund",
+  "adminNotes": "Refund approved due documented damages."
+}
+```
+
 ## CRM Endpoints
 
 ### Get Contacts

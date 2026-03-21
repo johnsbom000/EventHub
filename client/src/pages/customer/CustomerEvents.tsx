@@ -24,12 +24,12 @@ interface CustomerEventsProps {
   };
 }
 
-type BookingStatus = "pending" | "confirmed" | "completed" | "cancelled";
+type BookingStatus = "pending" | "confirmed" | "completed" | "cancelled" | "failed" | "expired";
 
 type CustomerBooking = {
   id: string;
   status: BookingStatus;
-  paymentStatus: "pending" | "partial" | "paid" | "refunded";
+  paymentStatus: "pending" | "partial" | "paid" | "refunded" | "failed" | "disputed";
   totalAmount: number;
   eventId?: string | null;
   eventTitle?: string | null;
@@ -58,7 +58,7 @@ type CustomerEventOption = {
 
 type EventScope = "upcoming" | "completed";
 
-const UPCOMING_STATUSES: BookingStatus[] = ["confirmed", "pending", "cancelled"];
+const UPCOMING_STATUSES: BookingStatus[] = ["confirmed", "pending", "cancelled", "failed", "expired"];
 const COMPLETED_STATUSES: BookingStatus[] = ["completed"];
 
 function normalizeAmountToCents(value: number) {
@@ -275,12 +275,14 @@ export default function CustomerEvents({ customer }: CustomerEventsProps) {
         </div>
       </div>
 
+      <div className="h-px w-full bg-[var(--dashboard-divider-blue)]" aria-hidden />
+
       {isLoading ? (
-        <Card className="rounded-xl shadow-sm">
+        <Card className="rounded-xl border-0 bg-transparent shadow-none">
           <CardContent className="py-10 text-center text-muted-foreground">Loading bookings...</CardContent>
         </Card>
       ) : groupedEvents.length === 0 ? (
-        <Card className="rounded-xl shadow-sm">
+        <Card className="rounded-xl border-0 bg-transparent shadow-none">
           <CardContent className="py-12 text-center">
             <Calendar className="h-12 w-12 mx-auto text-muted-foreground mb-4" />
             <h3 className="text-lg font-medium mb-2">
@@ -295,7 +297,7 @@ export default function CustomerEvents({ customer }: CustomerEventsProps) {
         </Card>
       ) : (
         <div className="space-y-6">
-          {groupedEvents.map((group) => (
+          {groupedEvents.map((group, groupIndex) => (
             <div key={`${group.id}-${group.title}`} className="space-y-3">
               <h2 className="text-2xl font-semibold">{group.title}</h2>
 
@@ -307,7 +309,7 @@ export default function CustomerEvents({ customer }: CustomerEventsProps) {
 
                 return (
                   <div key={`${group.id}-${group.title}-bookings`} className="space-y-3">
-                    <div className="grid gap-4">
+                    <div className="divide-y divide-[var(--dashboard-divider-blue)]">
                       {orderedBookings.map((booking) => {
                         const selectedExistingEventId =
                           targetEventByBooking[booking.id] ||
@@ -318,7 +320,11 @@ export default function CustomerEvents({ customer }: CustomerEventsProps) {
                               : "");
 
                         return (
-                          <Card key={booking.id} className="rounded-xl shadow-sm" data-testid={`booking-card-${booking.id}`}>
+                          <Card
+                            key={booking.id}
+                            className="rounded-none border-0 bg-transparent py-3 shadow-none"
+                            data-testid={`booking-card-${booking.id}`}
+                          >
                             <CardHeader className="pb-2">
                               <div className="flex items-center justify-between gap-3">
                                 <CardTitle className="text-[20px]">{getBookingTitle(booking)}</CardTitle>
@@ -561,6 +567,10 @@ export default function CustomerEvents({ customer }: CustomerEventsProps) {
                   </div>
                 );
               })()}
+
+              {groupIndex < groupedEvents.length - 1 ? (
+                <div className="h-px w-full bg-[var(--dashboard-divider-blue)]" aria-hidden />
+              ) : null}
             </div>
           ))}
         </div>

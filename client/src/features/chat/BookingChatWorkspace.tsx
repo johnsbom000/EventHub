@@ -243,6 +243,9 @@ export function BookingChatWorkspace({ role }: { role: Role }) {
       if (!nextClient) {
         nextClient = new StreamChat(bootstrap.streamApiKey);
       } else if (nextClient.userID && nextClient.userID !== bootstrap.streamUser.id) {
+        // Drop stale channel/client state before disconnecting old client.
+        setChatChannelId("");
+        setChatClient(null);
         await nextClient.disconnectUser();
         nextClient = new StreamChat(bootstrap.streamApiKey);
       }
@@ -366,7 +369,13 @@ export function BookingChatWorkspace({ role }: { role: Role }) {
 
   const activeChannel = useMemo(() => {
     if (!chatClient || !chatChannelId) return null;
-    return chatClient.channel("messaging", chatChannelId);
+    try {
+      return chatClient.channel("messaging", chatChannelId);
+    } catch (error) {
+      // Guard against race conditions where a channel is requested after disconnect.
+      console.warn("Skipping stale Stream channel after disconnect", error);
+      return null;
+    }
   }, [chatClient, chatChannelId]);
 
   useEffect(() => {
@@ -380,10 +389,22 @@ export function BookingChatWorkspace({ role }: { role: Role }) {
     void queryClient.invalidateQueries({ queryKey: [unreadKey] });
   }, [activeChannel, listPath, queryClient, role, selectedConversation?.bookingId]);
 
+  const useCustomerSeparatorLayout = role === "customer";
+
   return (
-    <div className="grid gap-6 md:grid-cols-[320px_1fr]">
-      <Card className="flex h-[72vh] min-h-[560px] flex-col overflow-hidden md:h-[76vh]">
-        <CardHeader className="shrink-0 border-b">
+    <div
+      className={cn(
+        "grid gap-6",
+        useCustomerSeparatorLayout ? "md:grid-cols-[320px_auto_1fr] md:gap-0" : "md:grid-cols-[320px_1fr]"
+      )}
+    >
+      <Card
+        className={cn(
+          "flex h-[72vh] min-h-[560px] flex-col overflow-hidden md:h-[76vh]",
+          useCustomerSeparatorLayout && "border-0 bg-transparent shadow-none"
+        )}
+      >
+        <CardHeader className="shrink-0">
           <CardTitle className="text-[20px]">
             {role === "customer" ? (showEventList ? "Events" : "Vendors") : "Conversations"}
           </CardTitle>
@@ -405,7 +426,7 @@ export function BookingChatWorkspace({ role }: { role: Role }) {
                   setSelectedEventKey(group.key);
                   setSelectedBookingId(group.conversations[0]?.bookingId || "");
                 }}
-                className="w-full rounded-lg border p-3 text-left transition-colors hover:bg-muted/50"
+                className="w-full rounded-lg border border-[rgba(74,106,125,0.22)] p-3 text-left transition-colors hover:bg-muted/50"
                 data-testid={`chat-event-${group.key}`}
               >
                 <div className="mb-1 flex items-center justify-between gap-2">
@@ -453,11 +474,11 @@ export function BookingChatWorkspace({ role }: { role: Role }) {
                   type="button"
                   onClick={() => setSelectedBookingId(conversation.bookingId)}
                   className={cn(
-                    "w-full rounded-lg border p-3 text-left transition-colors",
+                    "w-full rounded-lg border border-[rgba(74,106,125,0.22)] p-3 text-left transition-colors",
                     active
-                      ? "border-primary bg-primary/5"
+                      ? "border-[rgba(74,106,125,0.22)] bg-primary/5"
                       : conversation.hasUnread
-                        ? "border-cyan-200 bg-cyan-50/70 hover:bg-cyan-50"
+                        ? "border-[rgba(74,106,125,0.22)] bg-cyan-50/70 hover:bg-cyan-50"
                         : "hover:bg-muted/50"
                   )}
                   data-testid={`chat-conversation-${conversation.bookingId}`}
@@ -492,7 +513,16 @@ export function BookingChatWorkspace({ role }: { role: Role }) {
         </CardContent>
       </Card>
 
-      <Card className="flex h-[72vh] min-h-[560px] flex-col overflow-hidden md:h-[76vh]">
+      {useCustomerSeparatorLayout ? (
+        <div className="hidden w-px bg-[var(--dashboard-divider-blue)] md:block" aria-hidden />
+      ) : null}
+
+      <Card
+        className={cn(
+          "flex h-[72vh] min-h-[560px] flex-col overflow-hidden md:h-[76vh]",
+          useCustomerSeparatorLayout && "border-0 bg-transparent shadow-none"
+        )}
+      >
         {role === "customer" && showEventList ? (
           <CardContent className="flex min-h-0 flex-1 items-center justify-center text-muted-foreground">
             Select an event to see vendor chats

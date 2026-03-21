@@ -619,28 +619,16 @@ export default function CustomerProfile({ customer }: CustomerProfileProps) {
 
   return (
     <div className="space-y-6">
-      <div className="flex items-center justify-between">
-        <div>
-          <h1 className="text-3xl font-bold" data-testid="text-profile-title">
-            My profile
-          </h1>
-          <p className="text-muted-foreground mt-1">
-            Complete your profile to help vendors understand your needs better
-          </p>
-        </div>
-        {!isEditing && (
-          <Button
-            variant="outline"
-            onClick={() => setIsEditing(true)}
-            data-testid="button-edit-profile"
-          >
-            <Edit className="h-4 w-4 mr-2" />
-            Edit
-          </Button>
-        )}
+      <div>
+        <h1 className="text-3xl font-bold" data-testid="text-profile-title">
+          My profile
+        </h1>
+        <p className="text-muted-foreground mt-1">
+          Complete your profile to help vendors understand your needs better
+        </p>
       </div>
 
-      <Card className="rounded-xl shadow-sm">
+      <Card className="rounded-xl border-0 bg-transparent shadow-none">
         <CardContent className="p-6">
           <div className="flex items-center gap-6">
             {renderProfilePhotoCircle({
@@ -661,12 +649,26 @@ export default function CustomerProfile({ customer }: CustomerProfileProps) {
         </CardContent>
       </Card>
 
-      <Card className="rounded-xl shadow-sm">
-        <CardHeader>
-          <CardTitle>Profile details</CardTitle>
-          <CardDescription>
-            This information will be visible to vendors you contact
-          </CardDescription>
+      <div className="h-px w-full bg-[var(--dashboard-divider-blue)]" aria-hidden />
+
+      <Card className="rounded-xl border-0 bg-transparent shadow-none">
+        <CardHeader className="flex flex-row items-start justify-between gap-3">
+          <div className="space-y-1">
+            <CardTitle>Profile details</CardTitle>
+            <CardDescription>
+              This information will be visible to vendors you contact
+            </CardDescription>
+          </div>
+          {!isEditing && (
+            <Button
+              variant="outline"
+              onClick={() => setIsEditing(true)}
+              data-testid="button-edit-profile"
+            >
+              <Edit className="h-4 w-4 mr-2" />
+              Edit
+            </Button>
+          )}
         </CardHeader>
         <CardContent className="space-y-4">
           <div>

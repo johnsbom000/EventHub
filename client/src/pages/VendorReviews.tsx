@@ -2,7 +2,6 @@ import { useQuery } from "@tanstack/react-query";
 import { useAuth0 } from "@auth0/auth0-react";
 
 import VendorShell from "@/components/VendorShell";
-import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card";
 import { Star } from "lucide-react";
 
 type VendorReviewItem = {
@@ -19,11 +18,6 @@ export default function VendorReviews() {
     enabled: isAuthenticated,
   });
 
-  const sidebarStyle = {
-    "--sidebar-width": "16rem",
-    "--sidebar-width-icon": "3rem",
-  } as React.CSSProperties;
-
   return (
     <VendorShell>
       <div className="max-w-7xl mx-auto space-y-6">
@@ -34,66 +28,67 @@ export default function VendorReviews() {
           <p className="text-muted-foreground">View and respond to customer reviews</p>
         </div>
 
-        <div className="grid grid-cols-1 md:grid-cols-3 gap-6">
-          <Card>
-            <CardHeader className="flex flex-row items-center justify-between gap-1 space-y-0 pb-2">
-              <CardTitle className="text-[20px]">Average Rating</CardTitle>
+        <div className="grid grid-cols-1 gap-4 md:grid-cols-[minmax(0,1fr)_auto_minmax(0,1fr)_auto_minmax(0,1fr)] md:gap-0">
+          <section className="px-4 py-2">
+            <div className="flex items-center justify-between gap-3">
+              <h2 className="font-heading text-[20px] leading-none tracking-tight">Average Rating</h2>
               <Star className="h-4 w-4 text-muted-foreground" />
-            </CardHeader>
-            <CardContent>
-              <div className="text-2xl font-bold" data-testid="stat-avg-rating">
-                0.0
-              </div>
-              <p className="text-xs text-muted-foreground">Out of 5.0</p>
-            </CardContent>
-          </Card>
+            </div>
+            <div className="mt-4 text-2xl font-bold" data-testid="stat-avg-rating">
+              0.0
+            </div>
+            <p className="text-xs text-muted-foreground">Out of 5.0</p>
+          </section>
 
-          <Card>
-            <CardHeader className="flex flex-row items-center justify-between gap-1 space-y-0 pb-2">
-              <CardTitle className="text-[20px]">Total Reviews</CardTitle>
-              <Star className="h-4 w-4 text-muted-foreground" />
-            </CardHeader>
-            <CardContent>
-              <div className="text-2xl font-bold" data-testid="stat-total-reviews">
-                0
-              </div>
-              <p className="text-xs text-muted-foreground">All time</p>
-            </CardContent>
-          </Card>
+          <div className="hidden px-2 md:flex md:items-center md:justify-center" aria-hidden>
+            <div className="h-16 w-px bg-[var(--dashboard-divider-blue)]" />
+          </div>
 
-          <Card>
-            <CardHeader className="flex flex-row items-center justify-between gap-1 space-y-0 pb-2">
-              <CardTitle className="text-[20px]">Response Rate</CardTitle>
+          <section className="px-4 py-2">
+            <div className="flex items-center justify-between gap-3">
+              <h2 className="font-heading text-[20px] leading-none tracking-tight">Total Reviews</h2>
               <Star className="h-4 w-4 text-muted-foreground" />
-            </CardHeader>
-            <CardContent>
-              <div className="text-2xl font-bold" data-testid="stat-response-rate">
-                0%
-              </div>
-              <p className="text-xs text-muted-foreground">Replied to reviews</p>
-            </CardContent>
-          </Card>
+            </div>
+            <div className="mt-4 text-2xl font-bold" data-testid="stat-total-reviews">
+              0
+            </div>
+            <p className="text-xs text-muted-foreground">All time</p>
+          </section>
+
+          <div className="hidden px-2 md:flex md:items-center md:justify-center" aria-hidden>
+            <div className="h-16 w-px bg-[var(--dashboard-divider-blue)]" />
+          </div>
+
+          <section className="px-4 py-2">
+            <div className="flex items-center justify-between gap-3">
+              <h2 className="font-heading text-[20px] leading-none tracking-tight">Response Rate</h2>
+              <Star className="h-4 w-4 text-muted-foreground" />
+            </div>
+            <div className="mt-4 text-2xl font-bold" data-testid="stat-response-rate">
+              0%
+            </div>
+            <p className="text-xs text-muted-foreground">Replied to reviews</p>
+          </section>
         </div>
 
-        <Card>
-          <CardHeader>
-            <CardTitle>Customer Reviews</CardTitle>
-            <CardDescription>Read and reply to customer feedback</CardDescription>
-          </CardHeader>
-          <CardContent>
-            {reviews.length === 0 ? (
-              <div className="text-center py-12">
-                <Star className="h-12 w-12 mx-auto text-muted-foreground mb-4" />
-                <h3 className="text-lg font-semibold mb-2">No reviews yet</h3>
-                <p className="text-muted-foreground">
-                  Customer reviews will appear here after completed events.
-                </p>
-              </div>
-            ) : (
-              <div>{/* Reviews list will be rendered here later */}</div>
-            )}
-          </CardContent>
-        </Card>
+        <div className="h-px w-full bg-[var(--dashboard-divider-blue)]" aria-hidden />
+
+        <section className="px-4 py-2">
+          <h2 className="font-heading text-[32px] leading-none tracking-tight">Customer Reviews</h2>
+          <p className="mt-3 text-sm text-muted-foreground">Read and reply to customer feedback</p>
+
+          {reviews.length === 0 ? (
+            <div className="py-12 text-center">
+              <Star className="mx-auto mb-4 h-12 w-12 text-muted-foreground" />
+              <h3 className="mb-2 text-lg font-semibold">No reviews yet</h3>
+              <p className="text-muted-foreground">
+                Customer reviews will appear here after completed events.
+              </p>
+            </div>
+          ) : (
+            <div>{/* Reviews list will be rendered here later */}</div>
+          )}
+        </section>
       </div>
     </VendorShell>
   );

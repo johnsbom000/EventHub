@@ -8,16 +8,13 @@ import {
   SidebarContent,
   SidebarGroup,
   SidebarGroupContent,
-  SidebarGroupLabel,
   SidebarMenu,
   SidebarMenuButton,
   SidebarMenuItem,
-  SidebarHeader,
   SidebarFooter,
 } from "@/components/ui/sidebar";
 import { Avatar, AvatarFallback } from "@/components/ui/avatar";
 import { Badge } from "@/components/ui/badge";
-import BrandWordmark from "@/components/BrandWordmark";
 import { cn } from "@/lib/utils";
 
 interface CustomerMe {
@@ -89,26 +86,49 @@ export function CustomerSidebar({ className }: { className?: string } = {}) {
   const displayName = customer?.displayName?.trim() || customer?.name || "Customer";
 
   return (
-    <Sidebar className={cn(className)}>
-      <SidebarHeader className="p-4">
-        <Link href="/" className="flex w-fit flex-col" data-testid="link-customer-home">
-          <BrandWordmark className="text-[1.9rem]" />
-          <span className="text-xs text-muted-foreground">Customer Portal</span>
-        </Link>
-      </SidebarHeader>
-      <SidebarContent>
-        <SidebarGroup>
-          <SidebarGroupLabel>Navigation</SidebarGroupLabel>
+    <Sidebar
+      collapsible="none"
+      className={cn(
+        "relative z-20 border-r border-[rgba(74,106,125,0.22)] bg-[#ffffff] dark:bg-[#ffffff]",
+        className
+      )}
+    >
+      <SidebarContent className="items-center overflow-y-auto overflow-x-visible px-0 pt-6">
+        <SidebarGroup className="px-0">
           <SidebarGroupContent>
-            <SidebarMenu>
+            <SidebarMenu className="items-center gap-3">
               {menuItems.map((item) => (
-                <SidebarMenuItem key={item.title}>
-                  <SidebarMenuButton asChild isActive={isMenuItemActive(location, item.url)}>
-                    <Link href={item.url} data-testid={`link-customer-${item.title.toLowerCase().replace(/\s+/g, "-")}`}>
-                      <item.icon className="w-4 h-4" />
-                      <span>{item.title}</span>
+                <SidebarMenuItem key={item.title} className="group/menu-item relative overflow-visible">
+                  <SidebarMenuButton
+                    asChild
+                    isActive={isMenuItemActive(location, item.url)}
+                    tooltip={{
+                      children: item.title,
+                      hidden: false,
+                      side: "right",
+                      align: "center",
+                      className:
+                        "border border-[rgba(74,106,125,0.22)] bg-[#ffffff] text-[#2a3a42]",
+                    }}
+                    className={cn(
+                      "h-14 w-14 justify-center rounded-2xl p-0",
+                      isMenuItemActive(location, item.url)
+                        ? "bg-[#4a6a7d] text-[#f5f0e8] hover:bg-[#4a6a7d] hover:text-[#f5f0e8]"
+                        : "text-[#2a3a42] hover:bg-[#e6e1d6] hover:text-[#2a3a42]"
+                    )}
+                  >
+                    <Link
+                      href={item.url}
+                      className="relative flex h-14 w-14 items-center justify-center"
+                      data-testid={`link-customer-${item.title.toLowerCase().replace(/\s+/g, "-")}`}
+                    >
+                      <item.icon className="!h-8 !w-8" />
+                      <span className="sr-only">{item.title}</span>
                       {item.title === "Messages" && unreadCount > 0 ? (
-                        <Badge variant="secondary" className="ml-auto h-5 min-w-5 justify-center rounded-full px-1 text-[10px]">
+                        <Badge
+                          variant="secondary"
+                          className="absolute -right-1 -top-1 h-5 min-w-5 justify-center rounded-full px-1 text-[10px]"
+                        >
                           {unreadCount}
                         </Badge>
                       ) : null}
@@ -120,17 +140,16 @@ export function CustomerSidebar({ className }: { className?: string } = {}) {
           </SidebarGroupContent>
         </SidebarGroup>
       </SidebarContent>
-      <SidebarFooter className="p-4">
-        <div className="flex items-center gap-3">
-          <Avatar className="h-8 w-8">
-            <AvatarFallback className="bg-primary text-primary-foreground text-xs">
+      <SidebarFooter className="mt-auto px-2 pb-4 pt-2">
+        <div className="group/footer relative mx-auto">
+          <Avatar className="h-11 w-11 border border-[rgba(74,106,125,0.22)]">
+            <AvatarFallback className="bg-[#4a6a7d] text-[#f5f0e8] text-xs">
               {getInitials(displayName)}
             </AvatarFallback>
           </Avatar>
-          <div className="flex-1 overflow-hidden">
-            <p className="text-sm font-medium truncate">{displayName}</p>
-            <p className="text-xs text-muted-foreground truncate">{customer?.email || ""}</p>
-          </div>
+          <span className="pointer-events-none absolute left-[calc(100%+12px)] top-1/2 z-50 -translate-y-1/2 rounded-md border border-[rgba(74,106,125,0.22)] bg-[#ffffff] px-2.5 py-1 text-sm font-medium whitespace-nowrap text-[#2a3a42] opacity-0 shadow-sm transition-opacity duration-150 group-hover/footer:opacity-100">
+            {displayName}
+          </span>
         </div>
       </SidebarFooter>
     </Sidebar>

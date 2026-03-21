@@ -1,6 +1,7 @@
 import type { ReactNode } from "react";
 
 type PublishMissingFlags = {
+  category?: boolean;
   serviceAreaMode?: boolean;
   serviceLocation?: boolean;
   listingTitle?: boolean;
@@ -20,9 +21,10 @@ type PublishErrorPayload = {
 const GENERIC_PUBLISH_ERROR = "Listing can't be published right now. Please complete required fields and try again.";
 
 const MISSING_REASON_ORDER: Array<[keyof PublishMissingFlags, string]> = [
+  ["category", "Select category."],
   ["listingTitle", "Add listing title."],
   ["listingDescription", "Add listing description (at least 10 characters)."],
-  ["photos", "Add at least 1 photo."],
+  ["photos", "Add at least 3 photos."],
   ["price", "Add a valid price."],
   ["serviceAreaMode", "Select service area mode."],
   ["serviceLocation", "Select service location."],
@@ -132,4 +134,3 @@ export function getPublishFailureToastContent(error: unknown): {
     ),
   };
 }
-

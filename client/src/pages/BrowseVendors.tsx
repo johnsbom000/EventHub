@@ -1,4 +1,5 @@
 import MasonryListingGrid from "@/components/MasonryListingGrid";
+import ListingCard from "@/components/ListingCard";
 import type { ListingPublic } from "@/types/listing";
 import { useState, useEffect, useMemo, useRef } from "react";
 import { useSearch, useLocation } from "wouter";
@@ -9,8 +10,6 @@ import Footer from "@/components/Footer";
 import { Input } from "@/components/ui/input";
 import { Button } from "@/components/ui/button";
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
-import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
-import { Checkbox } from "@/components/ui/checkbox";
 import { Label } from "@/components/ui/label";
 import { Switch } from "@/components/ui/switch";
 import { Search, SlidersHorizontal } from "lucide-react";
@@ -18,6 +17,7 @@ import { POPULAR_FOR_OPTIONS } from "@/constants/eventTypes";
 import { getListingDisplayPrice } from "@/lib/listingPrice";
 
 type SortBy = "recommended" | "price-asc" | "price-desc";
+type BrowseCategoryKey = "rentals" | "services" | "venues" | "catering";
 
 type ListingBusinessHour = {
   day?: string;
@@ -26,6 +26,29 @@ type ListingBusinessHour = {
 };
 
 const normalizeText = (value: unknown) => String(value ?? "").trim().toLowerCase();
+
+const TAG_PILL_GRADIENT_THEMES = [
+  "border-[rgba(74,106,125,0.24)] bg-gradient-to-r from-[#f5f0e8] to-[#e8f2ef] text-[#2a3a42]",
+  "border-[rgba(74,106,125,0.24)] bg-gradient-to-r from-[#f2eee6] to-[#e4edf2] text-[#2a3a42]",
+  "border-[rgba(74,106,125,0.24)] bg-gradient-to-r from-[#f5eee3] to-[#eadbc4] text-[#2a3a42]",
+  "border-[rgba(74,106,125,0.24)] bg-gradient-to-r from-[#ece5da] to-[#f5f0e8] text-[#2a3a42]",
+] as const;
+
+const TAG_PILL_ACTIVE_GRADIENT_THEMES = [
+  "border-[#c98872] bg-gradient-to-r from-[#e07a6a] to-[#c9a06a] text-[#f5f0e8]",
+  "border-[#4a6a7d] bg-gradient-to-r from-[#4a6a7d] to-[#88bdb4] text-[#f5f0e8]",
+  "border-[#5d8999] bg-gradient-to-r from-[#9dd4cc] to-[#4a6a7d] text-[#f5f0e8]",
+  "border-[#b98956] bg-gradient-to-r from-[#c9a06a] to-[#e07a6a] text-[#f5f0e8]",
+] as const;
+
+const parseCategoryParam = (value: string | null): BrowseCategoryKey | "" => {
+  const normalized = normalizeText(value).replace(/[^a-z]/g, "");
+  if (normalized.includes("rental")) return "rentals";
+  if (normalized.includes("service")) return "services";
+  if (normalized.includes("venue")) return "venues";
+  if (normalized.includes("cater")) return "catering";
+  return "";
+};
 
 const parseCsvParam = (value: string | null): string[] => {
   if (!value) return [];
@@ -46,6 +69,17 @@ const parseBooleanParam = (value: string | null) => {
   return raw === "1" || raw === "true" || raw === "yes";
 };
 
+const parseBooleanLike = (value: unknown): boolean | null => {
+  if (typeof value === "boolean") return value;
+  if (typeof value === "number") return value === 1 ? true : value === 0 ? false : null;
+  if (typeof value === "string") {
+    const normalized = value.trim().toLowerCase();
+    if (["true", "1", "yes"].includes(normalized)) return true;
+    if (["false", "0", "no"].includes(normalized)) return false;
+  }
+  return null;
+};
+
 const uniqueSorted = (values: string[]) =>
   Array.from(new Set(values.map((value) => value.trim()).filter((value) => value.length > 0))).sort((a, b) =>
     a.localeCompare(b)
@@ -56,11 +90,23 @@ const toIdToken = (value: string) => normalizeText(value).replace(/[^a-z0-9]+/g,
 const getListingTitle = (listing: ListingPublic) => {
   const listingAny = listing as any;
   return (
-    listingAny?.listingData?.listingTitle ??
     listingAny?.title ??
+    listingAny?.listingData?.listingTitle ??
     listing.serviceType ??
     ""
   );
+};
+
+const getListingCategoryKey = (listing: ListingPublic): BrowseCategoryKey | "" => {
+  const listingAny = listing as any;
+  const rawCategory =
+    listingAny?.category ??
+    listingAny?.listingData?.category ??
+    listingAny?.listingData?.serviceType ??
+    listing.serviceType ??
+    "";
+
+  return parseCategoryParam(String(rawCategory));
 };
 
 const getListingPrice = (listing: ListingPublic): number | null => getListingDisplayPrice(listing);
@@ -73,6 +119,7 @@ const getMinOfferingPrice = (listing: ListingPublic) => {
 const getListingLocation = (listing: ListingPublic) => {
   const listingAny = listing as any;
   return (
+    listingAny?.listingServiceCenterLabel ??
     listingAny?.listingData?.serviceLocation?.label ??
     listingAny?.listingData?.serviceAddress ??
     listing.city ??
@@ -83,20 +130,28 @@ const getListingLocation = (listing: ListingPublic) => {
 const getListingDeliveryIncluded = (listing: ListingPublic) => {
   const listingAny = listing as any;
   const listingData = listingAny?.listingData ?? {};
-  return Boolean(
-    listingData?.deliverySetup?.deliveryIncluded ??
+  return (
+    parseBooleanLike(listingAny?.deliveryOffered) ??
+    parseBooleanLike(
+      listingData?.deliverySetup?.deliveryIncluded ??
       listingData?.deliveryIncluded ??
       listingData?.logistics?.deliveryIncluded
+    ) ??
+    false
   );
 };
 
 const getListingSetupIncluded = (listing: ListingPublic) => {
   const listingAny = listing as any;
   const listingData = listingAny?.listingData ?? {};
-  return Boolean(
-    listingData?.deliverySetup?.setupIncluded ??
+  return (
+    parseBooleanLike(listingAny?.setupOffered) ??
+    parseBooleanLike(
+      listingData?.deliverySetup?.setupIncluded ??
       listingData?.setupIncluded ??
       listingData?.logistics?.setupIncluded
+    ) ??
+    false
   );
 };
 
@@ -104,6 +159,12 @@ const getListingTags = (listing: ListingPublic): string[] => {
   const listingAny = listing as any;
   const listingData = listingAny?.listingData ?? {};
   const next: string[] = [];
+
+  if (Array.isArray(listingAny?.tags)) {
+    for (const tag of listingAny.tags) {
+      if (typeof tag === "string" && tag.trim().length > 0) next.push(tag.trim());
+    }
+  }
 
   if (Array.isArray(listingData?.tags)) {
     for (const tag of listingData.tags) {
@@ -133,8 +194,10 @@ const getListingTags = (listing: ListingPublic): string[] => {
 const getListingBestFor = (listing: ListingPublic): string[] => {
   const listingAny = listing as any;
   const listingData = listingAny?.listingData ?? {};
-  const source = Array.isArray(listingData?.popularFor)
-    ? listingData.popularFor
+  const source = Array.isArray(listingAny?.popularFor)
+    ? listingAny.popularFor
+    : Array.isArray(listingData?.popularFor)
+      ? listingData.popularFor
     : Array.isArray(listingData?.bestFor)
       ? listingData.bestFor
       : [];
@@ -197,13 +260,14 @@ export default function BrowseVendors() {
   const [, setLocation] = useLocation();
   const searchString = useSearch();
   const hydratedFromUrlRef = useRef(false);
-  const browseSurfaceClass = "bg-[#F0EEE9] dark:bg-background";
+  const browseSurfaceClass = "bg-[#ffffff] dark:bg-background";
   const browseInputClass =
     "bg-[#efefef] text-[#2a3a42] placeholder:text-[#8fa2ad] border-[rgba(74,106,125,0.24)] dark:bg-[hsl(var(--card))] dark:text-[#f5f0e8] dark:placeholder:text-[#9aacb4] dark:border-[hsl(var(--card-border))]";
 
   const [showFilters, setShowFilters] = useState(false);
 
   const [searchQuery, setSearchQuery] = useState("");
+  const [selectedCategory, setSelectedCategory] = useState<BrowseCategoryKey | "">("");
   const [sortBy, setSortBy] = useState<SortBy>("recommended");
   const [locationQuery, setLocationQuery] = useState("");
   const [minPrice, setMinPrice] = useState("");
@@ -235,7 +299,15 @@ export default function BrowseVendors() {
   );
 
   const availableBestFor = useMemo(
-    () => uniqueSorted([...POPULAR_FOR_OPTIONS, ...publicListings.flatMap((listing) => getListingBestFor(listing))]),
+    () => {
+      const ordered = uniqueSorted([
+        ...POPULAR_FOR_OPTIONS,
+        ...publicListings.flatMap((listing) => getListingBestFor(listing)),
+      ]);
+      return ordered
+        .filter((eventType) => normalizeText(eventType) !== "other")
+        .concat(ordered.filter((eventType) => normalizeText(eventType) === "other"));
+    },
     [publicListings]
   );
 
@@ -249,12 +321,14 @@ export default function BrowseVendors() {
 
     const locationParam = (params.get("location") ?? "").trim();
     const eventTypeParam = (params.get("eventType") ?? "").trim();
+    const categoryParam = parseCategoryParam(params.get("category"));
     const bestForParam = parseCsvParam(params.get("bestFor"));
     const mergedBestFor = uniqueSorted(
       bestForParam.length > 0 ? bestForParam : eventTypeParam ? [eventTypeParam] : []
     );
 
     setSearchQuery((params.get("q") ?? "").trim());
+    setSelectedCategory(categoryParam);
     setSortBy(parsedSort);
     setLocationQuery(locationParam);
     setMinPrice((params.get("minPrice") ?? "").trim());
@@ -281,6 +355,7 @@ export default function BrowseVendors() {
 
     const params = new URLSearchParams();
     if (searchQuery.trim()) params.set("q", searchQuery.trim());
+    if (selectedCategory) params.set("category", selectedCategory);
     if (sortBy !== "recommended") params.set("sort", sortBy);
     if (locationQuery.trim()) params.set("location", locationQuery.trim());
     if (minPrice.trim()) params.set("minPrice", minPrice.trim());
@@ -305,6 +380,7 @@ export default function BrowseVendors() {
     setLocation(nextQuery ? `/browse?${nextQuery}` : "/browse", { replace: true });
   }, [
     searchQuery,
+    selectedCategory,
     sortBy,
     locationQuery,
     minPrice,
@@ -325,6 +401,7 @@ export default function BrowseVendors() {
     () =>
       Boolean(
         searchQuery.trim() ||
+          selectedCategory ||
           sortBy !== "recommended" ||
           locationQuery.trim() ||
           minPrice.trim() ||
@@ -339,6 +416,7 @@ export default function BrowseVendors() {
       ),
     [
       searchQuery,
+      selectedCategory,
       sortBy,
       locationQuery,
       minPrice,
@@ -355,6 +433,7 @@ export default function BrowseVendors() {
 
   const clearFilters = () => {
     setSearchQuery("");
+    setSelectedCategory("");
     setSortBy("recommended");
     setLocationQuery("");
     setMinPrice("");
@@ -371,6 +450,12 @@ export default function BrowseVendors() {
     setLocation("/browse", { replace: true });
   };
 
+  const toggleTagSelection = (tag: string) => {
+    setSelectedTags((prev) =>
+      prev.includes(tag) ? prev.filter((value) => value !== tag) : uniqueSorted([...prev, tag])
+    );
+  };
+
   const filteredListings = useMemo(() => {
     let filtered = [...publicListings];
     const normalizedQuery = normalizeText(searchQuery);
@@ -381,6 +466,10 @@ export default function BrowseVendors() {
     const normalizedSelectedBestFor = selectedBestFor.map((eventType) => normalizeText(eventType));
 
     filtered = filtered.filter((listing) => getListingPrice(listing) != null);
+
+    if (selectedCategory) {
+      filtered = filtered.filter((listing) => getListingCategoryKey(listing) === selectedCategory);
+    }
 
     if (normalizedQuery) {
       filtered = filtered.filter((listing) => normalizeText(getListingTitle(listing)).includes(normalizedQuery));
@@ -433,7 +522,10 @@ export default function BrowseVendors() {
       filtered = filtered.filter((listing) => {
         const listingAny = listing as any;
         const listingData = listingAny?.listingData || {};
-        const mode = listingData?.deliverySetup?.serviceAreaMode ?? listingData?.serviceAreaMode;
+        const mode =
+          listingAny?.serviceAreaMode ??
+          listingData?.deliverySetup?.serviceAreaMode ??
+          listingData?.serviceAreaMode;
 
         // Global listings always visible if country matches.
         if (mode === "nationwide") {
@@ -452,9 +544,21 @@ export default function BrowseVendors() {
         }
 
         if (mode === "radius") {
-          const center = listingData?.deliverySetup?.serviceCenter ?? listingData?.serviceCenter;
+          const center = {
+            lat:
+              listingAny?.listingServiceCenterLat ??
+              listingData?.deliverySetup?.serviceCenter?.lat ??
+              listingData?.serviceCenter?.lat,
+            lng:
+              listingAny?.listingServiceCenterLng ??
+              listingData?.deliverySetup?.serviceCenter?.lng ??
+              listingData?.serviceCenter?.lng,
+          };
           const listingRadius = Number(
-            listingData?.deliverySetup?.serviceRadiusMiles ?? listingData?.serviceRadiusMiles ?? 0
+            listingAny?.serviceRadiusMiles ??
+            listingData?.deliverySetup?.serviceRadiusMiles ??
+            listingData?.serviceRadiusMiles ??
+            0
           );
           if (center?.lat == null || center?.lng == null || !Number.isFinite(listingRadius)) return false;
 
@@ -478,6 +582,7 @@ export default function BrowseVendors() {
   }, [
     publicListings,
     searchQuery,
+    selectedCategory,
     locationQuery,
     minPrice,
     maxPrice,
@@ -493,77 +598,109 @@ export default function BrowseVendors() {
     sortBy,
   ]);
 
-  return (
-    <div className={`min-h-screen flex flex-col ${browseSurfaceClass}`}>
-      <Navigation />
+  const browseSearchBarContent = (
+    <div className="relative">
+      <Input
+        placeholder="Search listings..."
+        value={searchQuery}
+        onChange={(e) => setSearchQuery(e.target.value)}
+        className={`${browseInputClass} h-[56px] pr-12 text-[1.725rem] leading-none placeholder:text-[1.725rem]`}
+        data-testid="input-search"
+      />
+      <Search className="absolute right-4 top-1/2 -translate-y-1/2 h-5 w-5 text-muted-foreground" />
+    </div>
+  );
 
-      <main className={`flex-1 ${browseSurfaceClass}`}>
-        <div className={`${browseSurfaceClass} border-b border-border py-8`}>
-          <div className="w-full px-8 lg:px-12">
-            <h1 className="text-3xl md:text-4xl font-bold mb-4 text-foreground" data-testid="text-page-title">
-              Rentals
-            </h1>
-            <p className="text-muted-foreground mb-6">
-              Browse curated rentals. Delivery and setup options vary by vendor.
-            </p>
+  const browseHeaderContent = (
+    <div className={`${browseSurfaceClass} pt-4 pb-8`}>
+      <div className="w-full px-8 lg:px-12">
+        {availableTags.length > 0 && (
+          <div className="flex items-center gap-2.5">
+            <button
+              type="button"
+              onClick={() => setShowFilters((prev) => !prev)}
+              className={[
+                "flex h-[58px] w-[58px] shrink-0 items-center justify-center rounded-full border transition-colors",
+                showFilters
+                  ? "border-primary bg-primary text-primary-foreground hover:bg-primary/90"
+                  : "border-[rgba(74,106,125,0.24)] bg-[#f5f0e8] text-[#2a3a42] hover:bg-white dark:border-[hsl(var(--card-border))] dark:bg-[hsl(var(--card))] dark:text-[#f5f0e8] dark:hover:bg-[hsl(var(--card)/0.9)]",
+              ].join(" ")}
+              data-testid="pill-filter-toggle"
+              aria-label="Toggle filters panel"
+              aria-pressed={showFilters}
+            >
+              <SlidersHorizontal className="h-8 w-8" />
+            </button>
 
-            <div className="flex gap-3">
-              <div className="flex-1 relative">
-                <Input
-                  placeholder="Search listings..."
-                  value={searchQuery}
-                  onChange={(e) => setSearchQuery(e.target.value)}
-                  className={`${browseInputClass} pr-10`}
-                  data-testid="input-search"
-                />
-                <Search className="absolute right-3 top-1/2 -translate-y-1/2 h-5 w-5 text-muted-foreground" />
+            <div className="flex-1 overflow-x-auto">
+              <div className="flex gap-2.5">
+                {availableTags.map((tag, index) => {
+                  const selected = selectedTags.includes(tag);
+                  const gradientClass = selected
+                    ? TAG_PILL_ACTIVE_GRADIENT_THEMES[index % TAG_PILL_ACTIVE_GRADIENT_THEMES.length]
+                    : TAG_PILL_GRADIENT_THEMES[index % TAG_PILL_GRADIENT_THEMES.length];
+                  return (
+                    <button
+                      key={tag}
+                      type="button"
+                      onClick={() => toggleTagSelection(tag)}
+                      className={[
+                        "inline-flex h-[58px] shrink-0 items-center rounded-full border px-9 text-[1.575rem] font-medium leading-none transition-colors",
+                        gradientClass,
+                        selected ? "shadow-[0_3px_10px_rgba(74,106,125,0.18)]" : "hover:brightness-[1.02]",
+                      ].join(" ")}
+                      data-testid={`pill-tag-${toIdToken(tag)}`}
+                      aria-pressed={selected}
+                    >
+                      {tag}
+                    </button>
+                  );
+                })}
               </div>
-
-              <Button
-                variant="outline"
-                className="md:hidden"
-                onClick={() => setShowFilters(!showFilters)}
-                data-testid="button-toggle-filters"
-              >
-                <SlidersHorizontal className="h-5 w-5" />
-              </Button>
-
-              {hasActiveFilters && (
-                <Button variant="outline" onClick={clearFilters} data-testid="button-clear-filters">
-                  Clear
-                </Button>
-              )}
             </div>
           </div>
-        </div>
+        )}
+      </div>
+    </div>
+  );
 
+  return (
+    <div className={`min-h-screen flex flex-col ${browseSurfaceClass}`}>
+      <Navigation
+        showBottomBorder={false}
+        middleContent={browseSearchBarContent}
+        headerContent={browseHeaderContent}
+        surfaceClassName={browseSurfaceClass}
+      />
+
+      <main className={`flex-1 ${browseSurfaceClass}`}>
         <div className="w-full px-8 lg:px-12 py-8">
-          <div className="flex gap-6 lg:gap-8">
-            <aside className={`${showFilters ? "block" : "hidden"} md:block w-full md:w-80 shrink-0`}>
-              <div className="sticky top-24 space-y-4">
-                <Card className="border-[#D2BD93] bg-[#F5F0E8] text-[#2a3a42] dark:border-[hsl(var(--card-border))] dark:bg-[hsl(var(--card))] dark:text-[#f5f0e8]">
-                  <CardHeader>
-                    <CardTitle className="text-[20px]">Sort</CardTitle>
-                  </CardHeader>
-                  <CardContent>
-                    <Select value={sortBy} onValueChange={(value) => setSortBy(value as SortBy)}>
-                      <SelectTrigger className={`w-full ${browseInputClass}`} data-testid="select-sort">
-                        <SelectValue placeholder="Sort by" />
-                      </SelectTrigger>
-                      <SelectContent>
-                        <SelectItem value="recommended">Recommended</SelectItem>
-                        <SelectItem value="price-asc">Price: Low to High</SelectItem>
-                        <SelectItem value="price-desc">Price: High to Low</SelectItem>
-                      </SelectContent>
-                    </Select>
-                  </CardContent>
-                </Card>
+          <div className={`flex flex-col gap-6 lg:flex-row ${showFilters ? "lg:gap-8" : "lg:gap-0"}`}>
+            <aside
+              className={[
+                "overflow-hidden transition-all duration-300 ease-out",
+                showFilters
+                  ? "max-h-[2400px] opacity-100 lg:w-[320px] lg:shrink-0"
+                  : "max-h-0 opacity-0 lg:w-0 lg:opacity-0",
+              ].join(" ")}
+            >
+              <div className="space-y-8 lg:sticky lg:top-0 text-[#2a3a42] dark:text-[#f5f0e8]">
+                <section className="space-y-3">
+                  <h2 className="text-[20px] font-heading">Sort</h2>
+                  <Select value={sortBy} onValueChange={(value) => setSortBy(value as SortBy)}>
+                    <SelectTrigger className={`w-full ${browseInputClass}`} data-testid="select-sort">
+                      <SelectValue placeholder="Sort by" />
+                    </SelectTrigger>
+                    <SelectContent>
+                      <SelectItem value="recommended">Recommended</SelectItem>
+                      <SelectItem value="price-asc">Price: Low to High</SelectItem>
+                      <SelectItem value="price-desc">Price: High to Low</SelectItem>
+                    </SelectContent>
+                  </Select>
+                </section>
 
-                <Card className="border-[#D2BD93] bg-[#F5F0E8] text-[#2a3a42] dark:border-[hsl(var(--card-border))] dark:bg-[hsl(var(--card))] dark:text-[#f5f0e8]">
-                  <CardHeader>
-                    <CardTitle className="text-[20px]">Filters</CardTitle>
-                  </CardHeader>
-                  <CardContent className="space-y-6">
+                <section className="space-y-6">
+                  <h2 className="text-[20px] font-heading">Filters</h2>
                     <div className="space-y-2">
                       <Label htmlFor="filter-location">Location</Label>
                       <Input
@@ -605,22 +742,28 @@ export default function BrowseVendors() {
 
                     <div className="space-y-3">
                       <div className="flex items-center justify-between">
-                        <Label htmlFor="filter-delivery">Delivery included</Label>
-                        <Switch
-                          id="filter-delivery"
-                          checked={deliveryIncludedOnly}
-                          onCheckedChange={setDeliveryIncludedOnly}
-                          data-testid="switch-filter-delivery"
-                        />
+                        <Label htmlFor="filter-delivery">Delivery included?</Label>
+                        <div className="flex items-center gap-2">
+                          <span className="text-xs font-medium">{deliveryIncludedOnly ? "Yes" : "No"}</span>
+                          <Switch
+                            id="filter-delivery"
+                            checked={deliveryIncludedOnly}
+                            onCheckedChange={setDeliveryIncludedOnly}
+                            data-testid="switch-filter-delivery"
+                          />
+                        </div>
                       </div>
                       <div className="flex items-center justify-between">
-                        <Label htmlFor="filter-setup">Setup included</Label>
-                        <Switch
-                          id="filter-setup"
-                          checked={setupIncludedOnly}
-                          onCheckedChange={setSetupIncludedOnly}
-                          data-testid="switch-filter-setup"
-                        />
+                        <Label htmlFor="filter-setup">Setup included?</Label>
+                        <div className="flex items-center gap-2">
+                          <span className="text-xs font-medium">{setupIncludedOnly ? "Yes" : "No"}</span>
+                          <Switch
+                            id="filter-setup"
+                            checked={setupIncludedOnly}
+                            onCheckedChange={setSetupIncludedOnly}
+                            data-testid="switch-filter-setup"
+                          />
+                        </div>
                       </div>
                     </div>
 
@@ -637,76 +780,60 @@ export default function BrowseVendors() {
                     </div>
 
                     <div className="space-y-2">
-                      <Label>Tags</Label>
-                      {availableTags.length === 0 ? (
-                        <p className="text-xs text-[#8fa2ad]">No tags available yet.</p>
-                      ) : (
-                        <div className="max-h-36 overflow-auto space-y-2 pr-1">
-                          {availableTags.map((tag) => {
-                            const token = toIdToken(tag);
-                            return (
-                            <div key={tag} className="flex items-center gap-2">
-                              <Checkbox
-                                id={`filter-tag-${token}`}
-                                checked={selectedTags.includes(tag)}
-                                onCheckedChange={(checked) => {
-                                  const isChecked = checked === true;
-                                  setSelectedTags((prev) =>
-                                    isChecked ? uniqueSorted([...prev, tag]) : prev.filter((value) => value !== tag)
-                                  );
-                                }}
-                                data-testid={`checkbox-filter-tag-${token}`}
-                              />
-                              <Label htmlFor={`filter-tag-${token}`} className="text-sm font-normal">
-                                {tag}
-                              </Label>
-                            </div>
-                            );
-                          })}
-                        </div>
-                      )}
-                    </div>
-
-                    <div className="space-y-2">
                       <Label>Best for event types</Label>
-                      <div className="max-h-44 overflow-auto space-y-2 pr-1">
+                      <div className="flex flex-wrap gap-2">
                         {availableBestFor.map((eventType) => {
                           const token = toIdToken(eventType);
+                          const selected = selectedBestFor.includes(eventType);
                           return (
-                          <div key={eventType} className="flex items-center gap-2">
-                            <Checkbox
+                            <button
+                              key={eventType}
                               id={`filter-bestfor-${token}`}
-                              checked={selectedBestFor.includes(eventType)}
-                              onCheckedChange={(checked) => {
-                                const isChecked = checked === true;
+                              type="button"
+                              onClick={() =>
                                 setSelectedBestFor((prev) =>
-                                  isChecked
-                                    ? uniqueSorted([...prev, eventType])
-                                    : prev.filter((value) => value !== eventType)
-                                );
-                              }}
-                              data-testid={`checkbox-filter-bestfor-${token}`}
-                            />
-                            <Label htmlFor={`filter-bestfor-${token}`} className="text-sm font-normal">
+                                  selected
+                                    ? prev.filter((value) => value !== eventType)
+                                    : uniqueSorted([...prev, eventType])
+                                )
+                              }
+                              className={[
+                                "rounded-full border px-4 py-1.5 text-sm font-medium transition-colors",
+                                selected
+                                  ? "border-[#4a6a7d] bg-[#4a6a7d] text-[#f5f0e8]"
+                                  : "border-[rgba(74,106,125,0.24)] bg-[#f5f0e8] text-[#2a3a42] hover:bg-white",
+                                "dark:border-[hsl(var(--card-border))] dark:bg-[hsl(var(--card))] dark:text-[#f5f0e8] dark:hover:bg-[hsl(var(--card)/0.9)]",
+                              ].join(" ")}
+                              data-testid={`pill-filter-bestfor-${token}`}
+                              aria-pressed={selected}
+                            >
                               {eventType}
-                            </Label>
-                          </div>
+                            </button>
                           );
                         })}
                       </div>
                     </div>
 
-                    {hasActiveFilters && (
-                      <Button variant="outline" className="w-full" onClick={clearFilters} data-testid="button-clear-all-filters">
-                        Clear all filters
+                    <div className="grid grid-cols-2 gap-2 pt-2">
+                      <Button
+                        variant="outline"
+                        onClick={clearFilters}
+                        data-testid="button-clear-all-filters"
+                      >
+                        Clear filters
                       </Button>
-                    )}
-                  </CardContent>
-                </Card>
+                      <Button
+                        onClick={() => setShowFilters(false)}
+                        data-testid="button-apply-filters"
+                      >
+                        Apply filters
+                      </Button>
+                    </div>
+                </section>
               </div>
             </aside>
 
-            <div className="flex-1 min-w-0">
+            <div className="min-w-0 flex-1">
               <div className="flex items-center mb-4">
                 <p className="text-sm text-muted-foreground" data-testid="text-results-count">
                   {isLoading ? "Loading..." : `${filteredListings.length} listings found`}
@@ -725,7 +852,20 @@ export default function BrowseVendors() {
                   <p className="text-muted-foreground">No listings found matching your criteria.</p>
                 </div>
               ) : (
-                <MasonryListingGrid listings={filteredListings} />
+                <MasonryListingGrid
+                  listings={filteredListings}
+                  maxColumns={showFilters ? 4 : 5}
+                  minCardWidthPx={240}
+                  cardMaxWidthPx={290}
+                  renderCard={(listing) => (
+                    <ListingCard
+                      listing={listing}
+                      priceScale="double"
+                      titleScale="oneAndHalf"
+                      titleFont="heading"
+                    />
+                  )}
+                />
               )}
             </div>
           </div>

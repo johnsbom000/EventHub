@@ -434,7 +434,10 @@ export async function up() {
         is_available BOOLEAN DEFAULT true,
         created_at TIMESTAMP WITH TIME ZONE DEFAULT NOW(),
         updated_at TIMESTAMP WITH TIME ZONE DEFAULT NOW()
-      );    // Generate and insert dummy data (only in non-production or when explicitly enabled)
+      );
+    `);
+
+    // Generate and insert dummy data (only in non-production or when explicitly enabled)
     const shouldSeed =
       process.env.SEED_DATA === 'true' ||
       (process.env.NODE_ENV && process.env.NODE_ENV !== 'production');

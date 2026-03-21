@@ -3,7 +3,7 @@ import { Link, useLocation, useParams } from "wouter";
 import { useMutation, useQuery } from "@tanstack/react-query";
 import { apiRequest, queryClient } from "@/lib/queryClient";
 
-import { SidebarProvider, SidebarTrigger } from "@/components/ui/sidebar";
+import { SidebarProvider } from "@/components/ui/sidebar";
 import { VendorSidebar } from "@/components/vendor-sidebar";
 import { Card } from "@/components/ui/card";
 import { Button } from "@/components/ui/button";
@@ -52,6 +52,26 @@ type AnyListing = {
 
 type PricingMode = "single_service" | "package" | "a_la_carte";
 type ServiceAreaMode = "radius" | "nationwide" | "global";
+const MIN_LISTING_PHOTO_COUNT = 3;
+const LISTING_DESCRIPTION_MAX_CHARS = 1000;
+const LISTING_CATEGORY_OPTIONS = ["Rental", "Service", "Venue", "Catering"] as const;
+type ListingCategory = (typeof LISTING_CATEGORY_OPTIONS)[number];
+const SUBCATEGORY_MAX_CHARS = 120;
+const SUBCATEGORY_PLACEHOLDERS: Record<ListingCategory, string> = {
+  Rental: "e.g. Wood Chairs, Backdrop, Table Linens",
+  Service: "e.g. DJ, Day-of Coordinator, Makeup Artist",
+  Venue: "e.g. Barn Venue, Garden Venue, Industrial Venue",
+  Catering: "e.g. Taco Cart, Buffet Catering, Dessert Table",
+};
+
+function normalizeCategoryForEdit(value: unknown): ListingCategory | "" {
+  const normalized = String(value ?? "").trim().toLowerCase();
+  if (normalized === "rental" || normalized === "rentals") return "Rental";
+  if (normalized === "service" || normalized === "services") return "Service";
+  if (normalized === "venue" || normalized === "venues") return "Venue";
+  if (normalized === "catering") return "Catering";
+  return "";
+}
 
 // ---- Helpers ----
 function toFiniteNumber(value: unknown): number | null {
@@ -110,6 +130,29 @@ function normalizeIncludedBullet(raw: string): string {
 
   if (!cleaned) return "";
   return cleaned.charAt(0).toUpperCase() + cleaned.slice(1);
+}
+
+function normalizeListingTitle(raw: string): string {
+  const cleaned = (raw ?? "")
+    .replace(/[^a-zA-Z0-9\s-]/g, "")
+    .replace(/\s+/g, " ")
+    .trim()
+    .slice(0, 60);
+
+  if (!cleaned) return "";
+
+  return cleaned
+    .split(" ")
+    .filter(Boolean)
+    .map((word) => word.charAt(0).toUpperCase() + word.slice(1).toLowerCase())
+    .join(" ");
+}
+
+function normalizeListingTitleInput(raw: string): string {
+  const cleaned = (raw ?? "").replace(/[^a-zA-Z0-9\s-]/g, "").slice(0, 60);
+  return cleaned.replace(/\b([a-zA-Z0-9])([a-zA-Z0-9]*)/g, (_match, first: string, rest: string) => {
+    return `${first.toUpperCase()}${rest.toLowerCase()}`;
+  });
 }
 
 function normalizePhotoCoverRatio(raw: unknown): CoverRatio {
@@ -230,15 +273,15 @@ export default function VendorListingEdit() {
   const sidebarStyle = useMemo(
     () =>
       ({
-        "--sidebar-width": "16rem",
-        "--sidebar-width-icon": "3rem",
+        "--sidebar-width": "6rem",
+        "--sidebar-width-icon": "6rem",
       }) as React.CSSProperties,
     []
   );
   const mintActionButtonClass = "border-[#88bdb4] bg-[#9dd4cc] text-[#4a6a7d] hover:bg-[#8ec9c0]";
   const activeFillButtonClass = "bg-primary text-primary-foreground hover:bg-primary/90";
-  const creamSectionCardClass = "p-6 bg-[#F0EEE9]";
-  const fieldSurfaceClass = "bg-[#F0EEE9]";
+  const creamSectionCardClass = "p-6 bg-[#ffffff]";
+  const fieldSurfaceClass = "bg-[#ffffff]";
 
   // Listing fetch
   const { data, isLoading, error } = useQuery({
@@ -286,15 +329,19 @@ export default function VendorListingEdit() {
       const crop = rawCropsByName?.[name];
       if (crop && typeof crop === "object") orderedCropsByName[name] = crop as ListingPhotoCrop;
     });
+    const initialCategory = normalizeCategoryForEdit(ld?.category ?? ld?.listingCategory);
 
     // Normalize shape into what we need on this screen
     const initial = {
+      category: initialCategory,
+      subcategory: String(ld?.subcategory ?? ld?.listingSubcategory ?? "").trim().slice(0, SUBCATEGORY_MAX_CHARS),
+
       // Listing Type
       pricingMode: (ld.pricingMode || "single_service") as PricingMode,
 
       // Title / Description
-      listingTitle: String(ld.listingTitle || listing.title || ""),
-      listingDescription: String(ld.listingDescription || ""),
+      listingTitle: normalizeListingTitle(String(ld.listingTitle || listing.title || "")),
+      listingDescription: String(ld.listingDescription || "").slice(0, LISTING_DESCRIPTION_MAX_CHARS),
       whatsIncluded: Array.isArray(ld.whatsIncluded)
         ? ld.whatsIncluded.filter((item: unknown): item is string => typeof item === "string")
         : [],
@@ -758,21 +805,27 @@ export default function VendorListingEdit() {
   const title = String(draft?.listingTitle ?? "");
   const description = String(draft?.listingDescription ?? "");
   const pricingRate = draft?.pricing?.rate;
+  const hasCategory = LISTING_CATEGORY_OPTIONS.includes((draft?.category ?? "") as ListingCategory);
   const hasTitle = title.trim() !== "";
   const hasDescription = description.trim() !== "";
 
   const hasPricing =
     pricingRate !== null && pricingRate !== undefined && `${pricingRate}`.trim() !== "";
-
-  const canPublish = hasTitle && hasDescription && hasPricing;
+  const photoCount = Array.isArray(draft?.photos?.names) ? draft.photos.names.length : 0;
+  const hasMinimumPhotos = photoCount >= MIN_LISTING_PHOTO_COUNT;
+  const canPublish = hasCategory && hasTitle && hasDescription && hasPricing && hasMinimumPhotos;
 
   const buildPersistPayload = () => {
     if (!draft) return null;
 
     const nextListingData = {
       ...(listing?.listingData || {}),
+      category: hasCategory ? draft.category : undefined,
+      subcategory: typeof draft?.subcategory === "string"
+        ? draft.subcategory.trim().slice(0, SUBCATEGORY_MAX_CHARS) || undefined
+        : undefined,
       pricingMode: draft.pricingMode,
-      listingTitle: draft.listingTitle,
+      listingTitle: normalizeListingTitle(String(draft.listingTitle ?? "")),
       listingDescription: draft.listingDescription,
       whatsIncluded: Array.isArray(draft.whatsIncluded) ? draft.whatsIncluded : [],
       rentalTypes: draft.rentalTypes,
@@ -819,7 +872,7 @@ export default function VendorListingEdit() {
 
     return {
       listingData: nextListingData,
-      title: draft.listingTitle?.trim() || listing?.title || "Untitled Listing",
+      title: normalizeListingTitle(String(draft.listingTitle ?? "")) || listing?.title || "Untitled Listing",
     };
   };
 
@@ -859,7 +912,10 @@ export default function VendorListingEdit() {
       if (!payload) throw new Error("Nothing to publish");
 
       const res = await apiRequest("PATCH", `/api/vendor/listings/${listingId}/publish`, payload);
-      if (!res.ok) throw new Error("Failed to publish listing");
+      if (!res.ok) {
+        const errorBody = await res.text().catch(() => "");
+        throw new Error(errorBody || "Failed to publish listing");
+      }
       return res.json();
     },
     onSuccess: () => {
@@ -1197,13 +1253,12 @@ export default function VendorListingEdit() {
   };
 
   return (
-    <SidebarProvider style={sidebarStyle} className="bg-[#F0EEE9]">
-      <div className="flex h-screen w-full bg-[#F0EEE9]">
-        <VendorSidebar className="!bg-[#F0EEE9] [&_[data-slot=sidebar-header]]:bg-[#F0EEE9] [&_[data-slot=sidebar-content]]:bg-[#F0EEE9] [&_[data-slot=sidebar-footer]]:bg-[#F0EEE9]" />
+    <SidebarProvider style={sidebarStyle} className="bg-[#ffffff]">
+      <div className="flex h-screen w-full bg-[#ffffff]">
+        <VendorSidebar className="!bg-[#ffffff] [&_[data-slot=sidebar-header]]:bg-[#ffffff] [&_[data-slot=sidebar-content]]:bg-[#ffffff] [&_[data-slot=sidebar-footer]]:bg-[#ffffff]" />
 
         <div className="flex flex-col flex-1">
-          <header className="flex items-center justify-between p-4 border-b bg-[#F0EEE9]">
-            <SidebarTrigger />
+          <header className="flex items-center justify-end border-b border-[rgba(74,106,125,0.22)] bg-[#ffffff] p-4">
             <div className="flex items-center gap-2">
               <Button
                 className={activeFillButtonClass}
@@ -1229,7 +1284,7 @@ export default function VendorListingEdit() {
             </div>
           </header>
 
-          <main className="flex-1 overflow-auto bg-[#F0EEE9]">
+          <main className="flex-1 overflow-auto bg-[#ffffff]">
             <div className="max-w-5xl mx-auto px-6 py-8">
               <div className="mb-6">
                 <h1 className="text-3xl font-bold">Edit listing</h1>
@@ -1258,6 +1313,66 @@ export default function VendorListingEdit() {
                 </Card>
               ) : (
                 <div className="space-y-6">
+                  {/* 0) Listing Classification */}
+                  <Card className={creamSectionCardClass}>
+                    <div className="space-y-4">
+                      <div>
+                        <div className="text-xl font-semibold">Listing Classification</div>
+                        <div className="text-sm text-muted-foreground">Category is required to publish. Subcategory is optional.</div>
+                      </div>
+
+                      <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
+                        <div className="space-y-2">
+                          <Label>Category</Label>
+                          <Select
+                            value={draft.category || undefined}
+                            onValueChange={(value) =>
+                              setDraft((d: any) => ({
+                                ...d,
+                                category: LISTING_CATEGORY_OPTIONS.includes(value as ListingCategory)
+                                  ? (value as ListingCategory)
+                                  : "",
+                              }))
+                            }
+                          >
+                            <SelectTrigger className={fieldSurfaceClass}>
+                              <SelectValue placeholder="Select category" />
+                            </SelectTrigger>
+                            <SelectContent>
+                              {LISTING_CATEGORY_OPTIONS.map((category) => (
+                                <SelectItem key={category} value={category}>
+                                  {category}
+                                </SelectItem>
+                              ))}
+                            </SelectContent>
+                          </Select>
+                          {!hasCategory && (
+                            <div className="text-sm text-destructive">Category is required.</div>
+                          )}
+                        </div>
+
+                        <div className="space-y-2">
+                          <Label>Subcategory (optional)</Label>
+                          <Input
+                            value={draft.subcategory ?? ""}
+                            onChange={(e) =>
+                              setDraft((d: any) => ({
+                                ...d,
+                                subcategory: e.target.value.slice(0, SUBCATEGORY_MAX_CHARS),
+                              }))
+                            }
+                            placeholder={
+                              hasCategory
+                                ? SUBCATEGORY_PLACEHOLDERS[draft.category as ListingCategory]
+                                : "e.g. Wood Chairs, Wedding DJ, Industrial Venue"
+                            }
+                            className={fieldSurfaceClass}
+                          />
+                        </div>
+                      </div>
+                    </div>
+                  </Card>
+
                   {/* 1) Title & Description */}
                   <Card className={creamSectionCardClass}>
                     <div className="space-y-4">
@@ -1270,7 +1385,12 @@ export default function VendorListingEdit() {
                         <Label>Title</Label>
                         <Input
                           value={draft.listingTitle}
-                          onChange={(e) => setDraft((d: any) => ({ ...d, listingTitle: e.target.value }))}
+                          onChange={(e) =>
+                            setDraft((d: any) => ({
+                              ...d,
+                              listingTitle: normalizeListingTitleInput(e.target.value),
+                            }))
+                          }
                           placeholder="Listing title"
                           className={fieldSurfaceClass}
                         />
@@ -1280,11 +1400,18 @@ export default function VendorListingEdit() {
                         <Label>Description</Label>
                         <Textarea
                           value={draft.listingDescription}
-                          onChange={(e) => setDraft((d: any) => ({ ...d, listingDescription: e.target.value }))}
+                          maxLength={LISTING_DESCRIPTION_MAX_CHARS}
+                          onChange={(e) =>
+                            setDraft((d: any) => ({
+                              ...d,
+                              listingDescription: e.target.value.slice(0, LISTING_DESCRIPTION_MAX_CHARS),
+                            }))
+                          }
                           rows={6}
                           placeholder="Describe this listing…"
                           className={fieldSurfaceClass}
                         />
+                        <div className="text-xs text-muted-foreground">Max 1000 chars.</div>
                       </div>
 
                       <div className="space-y-3">
@@ -1373,7 +1500,7 @@ export default function VendorListingEdit() {
                               key={opt}
                               className={[
                                 "flex items-center gap-3 rounded-lg border px-4 py-3 cursor-pointer",
-                                checked ? "border-primary bg-[#F0EEE9]" : "border-border bg-[#F0EEE9] hover:bg-[#F0EEE9]",
+                                checked ? "border-primary bg-[#ffffff]" : "border-border bg-[#ffffff] hover:bg-[#ffffff]",
                               ].join(" ")}
                             >
                               <input
@@ -1470,7 +1597,7 @@ export default function VendorListingEdit() {
                       <div>
                         <div className="text-xl font-semibold">Photos</div>
                         <div className="text-sm text-muted-foreground">
-                          Add at least 1 photo before publish (we’ll enforce this rule in the publish gate once your photo system is finalized).
+                          Add at least {MIN_LISTING_PHOTO_COUNT} photos before publish.
                         </div>
                       </div>
 
@@ -1552,7 +1679,7 @@ export default function VendorListingEdit() {
                             }));
                           }}
                           placeholder="Search the center point for this listing..."
-                          className="[&_input]:bg-[#F0EEE9]"
+                          className="[&_input]:bg-[#ffffff]"
                         />
                       </div>
 
@@ -1787,9 +1914,11 @@ export default function VendorListingEdit() {
                     {!canPublish ? (
                       <div className="mt-4 text-sm text-muted-foreground">
                         Missing:
+                        {!hasCategory ? " category," : ""}
                         {!hasTitle ? " title," : ""}
                         {!hasDescription ? " description," : ""}
-                        {!hasPricing ? " pricing rate," : ""}{" "}
+                        {!hasPricing ? " pricing rate," : ""}
+                        {!hasMinimumPhotos ? ` at least ${MIN_LISTING_PHOTO_COUNT} photos,` : ""}{" "}
                         <span className="text-xs">(same gate everywhere)</span>
                       </div>
                     ) : null}

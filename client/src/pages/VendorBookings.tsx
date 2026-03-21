@@ -8,6 +8,7 @@ import { Button } from "@/components/ui/button";
 import { Calendar, ChevronLeft, ChevronRight } from "lucide-react";
 import VendorShell from "@/components/VendorShell";
 import { apiRequest } from "@/lib/queryClient";
+import { useToast } from "@/hooks/use-toast";
 
 type VendorBooking = {
   id: string;
@@ -22,10 +23,15 @@ type VendorBooking = {
   customerEventTitle?: string | null;
   customerNotes?: string | null;
   customerQuestions?: string | null;
+  googleSyncStatus?: string | null;
+  googleEventId?: string | null;
+  googleCalendarId?: string | null;
 };
 
 type TabKey = "all" | "upcoming" | "pending" | "completed" | "cancelled";
 type ViewMode = "calendar" | "list";
+const STATUS_TAB_TRIGGER_ACTIVE_CLASSNAME =
+  "data-[state=active]:bg-primary data-[state=active]:text-primary-foreground data-[state=active]:shadow-sm data-[state=active]:hover:bg-primary";
 
 function normalizeAmountToCents(value: unknown) {
   const n = Number(value ?? 0);
@@ -78,18 +84,27 @@ function deriveBookingAmounts(booking: VendorBooking) {
 }
 
 export default function VendorBookings() {
-  const { isAuthenticated } = useAuth0();
+  const { isAuthenticated, getAccessTokenSilently } = useAuth0();
   const queryClient = useQueryClient();
+  const { toast } = useToast();
 
-  const { data: bookings = [], isLoading } = useQuery<VendorBooking[]>({
+  const {
+    data: bookings = [],
+    error,
+    isError,
+    isLoading,
+  } = useQuery<VendorBooking[]>({
     queryKey: ["/api/vendor/bookings"],
     enabled: isAuthenticated,
+    staleTime: 0,
+    refetchOnMount: "always",
   });
 
   const [activeTab, setActiveTab] = useState<TabKey>("all");
-  const [viewMode, setViewMode] = useState<ViewMode>("calendar");
+  const [viewMode, setViewMode] = useState<ViewMode>("list");
   const [actionBookingId, setActionBookingId] = useState<string | null>(null);
   const [expandedBookingId, setExpandedBookingId] = useState<string | null>(null);
+  const [isGoogleCalendarConnectLoading, setIsGoogleCalendarConnectLoading] = useState(false);
 
   const bookingActionMutation = useMutation({
     mutationFn: async (payload: { id: string; status: "confirmed" | "completed" | "cancelled" }) => {
@@ -112,6 +127,11 @@ export default function VendorBookings() {
     return (bookings || [])
       .map((b) => {
         let d: Date | null = null;
+        const normalizedGoogleSyncStatus = String(b?.googleSyncStatus || "").toLowerCase();
+        const isGoogleSynced =
+          normalizedGoogleSyncStatus === "synced" ||
+          normalizedGoogleSyncStatus === "cancelled" ||
+          Boolean(b?.googleEventId);
 
         if (b?.eventDate) {
           if (b.eventStartTime) d = new Date(`${b.eventDate}T${b.eventStartTime}`);
@@ -127,6 +147,7 @@ export default function VendorBookings() {
           date: d,
           amount: normalizeAmountToCents(b.totalAmount ?? 0),
           ...deriveBookingAmounts(b),
+          googleSyncLabel: isGoogleSynced ? "synced" : "unsynced",
           status: normalizeStatus(b.status),
           raw: b,
         };
@@ -140,6 +161,7 @@ export default function VendorBookings() {
         customerFeeCents: number;
         vendorFeeCents: number;
         estimatedPayoutCents: number;
+        googleSyncLabel: "synced" | "unsynced";
         status: string;
         raw: VendorBooking;
       }>;
@@ -310,6 +332,46 @@ export default function VendorBookings() {
     setMonthCursor(d);
   };
 
+  const handleConnectGoogleCalendar = async () => {
+    try {
+      setIsGoogleCalendarConnectLoading(true);
+
+      const token = await getAccessTokenSilently({
+        authorizationParams: {
+          audience: "https://eventhub-api",
+          scope: "openid profile email",
+        },
+      });
+
+      const response = await fetch("/api/google/oauth/start", {
+        method: "GET",
+        headers: {
+          Authorization: `Bearer ${token}`,
+        },
+        credentials: "include",
+      });
+
+      const data = (await response.json()) as { url?: string | null; error?: string };
+      if (!response.ok) {
+        throw new Error(data?.error || "Unable to start Google Calendar connection");
+      }
+
+      const url = typeof data?.url === "string" ? data.url.trim() : "";
+      if (!url) {
+        throw new Error("Google OAuth start URL was not returned");
+      }
+
+      window.location.assign(url);
+    } catch (error: any) {
+      setIsGoogleCalendarConnectLoading(false);
+      toast({
+        title: "Unable to connect Google Calendar",
+        description: error?.message || "Please try again.",
+        variant: "destructive",
+      });
+    }
+  };
+
   return (
     <VendorShell>
       <div className="max-w-7xl mx-auto space-y-6">
@@ -322,36 +384,72 @@ export default function VendorBookings() {
           </p>
         </div>
 
-        <Tabs value={activeTab} onValueChange={(v) => setActiveTab(v as TabKey)}>
-          <TabsList>
-            <TabsTrigger value="all" data-testid="tab-all">
-              All
-            </TabsTrigger>
-            <TabsTrigger value="upcoming" data-testid="tab-upcoming">
-              Upcoming
-            </TabsTrigger>
-            <TabsTrigger value="pending" data-testid="tab-pending">
-              Pending
-            </TabsTrigger>
-            <TabsTrigger value="completed" data-testid="tab-completed">
-              Completed
-            </TabsTrigger>
-            <TabsTrigger value="cancelled" data-testid="tab-cancelled">
-              Cancelled
-            </TabsTrigger>
-          </TabsList>
-        </Tabs>
+        <div className="grid grid-cols-1 items-start gap-4 xl:grid-cols-[minmax(0,1fr)_320px]">
+          <Tabs value={activeTab} onValueChange={(v) => setActiveTab(v as TabKey)}>
+            <TabsList>
+              <TabsTrigger
+                value="all"
+                className={STATUS_TAB_TRIGGER_ACTIVE_CLASSNAME}
+                data-testid="tab-all"
+              >
+                All
+              </TabsTrigger>
+              <TabsTrigger
+                value="upcoming"
+                className={STATUS_TAB_TRIGGER_ACTIVE_CLASSNAME}
+                data-testid="tab-upcoming"
+              >
+                Upcoming
+              </TabsTrigger>
+              <TabsTrigger
+                value="pending"
+                className={STATUS_TAB_TRIGGER_ACTIVE_CLASSNAME}
+                data-testid="tab-pending"
+              >
+                Pending
+              </TabsTrigger>
+              <TabsTrigger
+                value="completed"
+                className={STATUS_TAB_TRIGGER_ACTIVE_CLASSNAME}
+                data-testid="tab-completed"
+              >
+                Completed
+              </TabsTrigger>
+              <TabsTrigger
+                value="cancelled"
+                className={STATUS_TAB_TRIGGER_ACTIVE_CLASSNAME}
+                data-testid="tab-cancelled"
+              >
+                Cancelled
+              </TabsTrigger>
+            </TabsList>
+          </Tabs>
 
-        <Card>
-          <CardHeader>
-            <CardTitle>{summary.title}</CardTitle>
-            <CardDescription>{summary.subtitle}</CardDescription>
-          </CardHeader>
+          <div className="rounded-xl border border-[hsl(var(--secondary-accent)/0.45)] bg-[hsl(var(--secondary-accent)/0.12)] p-5">
+            <h2 className="font-heading text-[20px] leading-none tracking-tight">Connect Google Calendar</h2>
+            <p className="mt-3 text-sm text-muted-foreground">
+              Add your calendar here so booking availability stays aligned.
+            </p>
+            <div className="mt-5">
+              <Button
+                onClick={handleConnectGoogleCalendar}
+                disabled={isGoogleCalendarConnectLoading}
+                data-testid="button-connect-google-calendar-bookings"
+              >
+                {isGoogleCalendarConnectLoading ? "Opening Google..." : "Connect Google Calendar"}
+              </Button>
+            </div>
+          </div>
+        </div>
 
-          <CardContent className="grid gap-4 sm:grid-cols-3">
-            <div className="rounded-lg border p-4">
+        <section className="px-5 py-4">
+          <h2 className="font-heading text-[20px] leading-none tracking-tight">{summary.title}</h2>
+          <p className="mt-3 text-sm text-muted-foreground">{summary.subtitle}</p>
+
+          <div className="mt-5 grid grid-cols-1 gap-4 md:grid-cols-[minmax(0,1fr)_auto_minmax(0,1fr)_auto_minmax(0,1fr)] md:gap-0">
+            <div className="px-4 py-2">
               <div className="text-sm text-muted-foreground">{summary.label1}</div>
-              <div className="mt-1 text-lg font-semibold">
+              <div className="mt-1 text-[2rem] font-semibold leading-none">
                 {summary.value1 instanceof Date
                   ? summary.value1.toLocaleString(undefined, {
                       month: "short",
@@ -362,22 +460,30 @@ export default function VendorBookings() {
               </div>
             </div>
 
-            <div className="rounded-lg border p-4">
-              <div className="text-sm text-muted-foreground">{summary.label2}</div>
-              <div className="mt-1 text-lg font-semibold">{summary.value2}</div>
+            <div className="hidden px-2 md:flex md:items-center md:justify-center">
+              <div className="h-14 w-px bg-[rgba(74,106,125,0.22)]" />
             </div>
 
-            <div className="rounded-lg border p-4">
+            <div className="px-4 py-2">
+              <div className="text-sm text-muted-foreground">{summary.label2}</div>
+              <div className="mt-1 text-[2rem] font-semibold leading-none">{summary.value2}</div>
+            </div>
+
+            <div className="hidden px-2 md:flex md:items-center md:justify-center">
+              <div className="h-14 w-px bg-[rgba(74,106,125,0.22)]" />
+            </div>
+
+            <div className="px-4 py-2">
               <div className="text-sm text-muted-foreground">{summary.label3}</div>
-              <div className="mt-1 text-lg font-semibold">
+              <div className="mt-1 text-[2rem] font-semibold leading-none">
                 {new Intl.NumberFormat(undefined, {
                   style: "currency",
                   currency: "USD",
                 }).format((summary.value3 || 0) / 100)}
               </div>
             </div>
-          </CardContent>
-        </Card>
+          </div>
+        </section>
 
         <Card>
           <CardHeader className="flex flex-row items-center justify-between gap-4">
@@ -422,6 +528,11 @@ export default function VendorBookings() {
           <CardContent>
             {isLoading ? (
               <div className="text-center py-12 text-muted-foreground">Loading...</div>
+            ) : isError ? (
+              <div className="text-center py-10 text-muted-foreground">
+                <Calendar className="h-10 w-10 mx-auto mb-3 opacity-70" />
+                {error instanceof Error ? error.message : "Unable to load bookings right now."}
+              </div>
             ) : viewMode === "calendar" ? (
               <>
                 {/* Day-of-week header */}
@@ -460,6 +571,7 @@ export default function VendorBookings() {
                             {items.slice(0, 3).map((it) => (
                               <div key={it.id} className="text-xs truncate">
                                 • {it.status || "booking"}
+                                {` · ${it.googleSyncLabel}`}
                                 {it.estimatedPayoutCents != null
                                   ? ` — ${formatUsd(it.estimatedPayoutCents)}`
                                   : ""}
@@ -496,7 +608,19 @@ export default function VendorBookings() {
                   <div key={item.id} className="rounded-lg border p-4">
                     <div className="flex items-center justify-between gap-3">
                       <div className="font-medium">{item.raw.itemTitle || `Booking #${item.id.slice(0, 8)}`}</div>
-                      <div className="text-sm capitalize text-muted-foreground">{item.status || "unknown"}</div>
+                      <div className="flex items-center gap-2 text-sm">
+                        <span className="capitalize text-muted-foreground">{item.status || "unknown"}</span>
+                        <span
+                          className={[
+                            "rounded-full border px-2 py-0.5 text-xs font-medium uppercase tracking-wide",
+                            item.googleSyncLabel === "synced"
+                              ? "border-emerald-200 bg-emerald-50 text-emerald-700"
+                              : "border-amber-200 bg-amber-50 text-amber-700",
+                          ].join(" ")}
+                        >
+                          {item.googleSyncLabel === "synced" ? "Synced" : "Unsynced"}
+                        </span>
+                      </div>
                     </div>
                     <div className="mt-2 text-sm text-muted-foreground">
                       {item.date.toLocaleString(undefined, {
@@ -525,6 +649,10 @@ export default function VendorBookings() {
                         <div className="mt-3 rounded-md border bg-muted/30 p-3 space-y-3">
                           <div className="space-y-1">
                             <div className="text-xs uppercase tracking-wide text-muted-foreground">Fee Breakdown</div>
+                            <div className="text-sm flex items-center justify-between gap-3">
+                              <span className="text-muted-foreground">Google Calendar</span>
+                              <span>{item.googleSyncLabel === "synced" ? "Synced" : "Unsynced"}</span>
+                            </div>
                             <div className="text-sm flex items-center justify-between gap-3">
                               <span className="text-muted-foreground">Listing price</span>
                               <span>{formatUsd(item.listingPriceCents)}</span>

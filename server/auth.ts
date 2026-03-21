@@ -124,12 +124,47 @@ export function requireAdminAuth(req: Request, res: Response, next: NextFunction
   const token = authHeader.substring(7);
   const payload = verifyToken(token);
 
-  if (!payload || payload.type !== "admin") {
-    return res.status(403).json({ message: "Admin access required" });
+  if (payload && payload.type === "admin") {
+    (req as any).adminAuth = payload;
+    return next();
   }
 
-  (req as any).adminAuth = payload;
-  next();
+  // Fallback for Auth0 access tokens during migration.
+  return requireDualAuthAuth0(req, res, () => {
+    const customerAuth = (req as any).customerAuth as { id?: string; type?: string } | undefined;
+    if (customerAuth?.type === "admin" && customerAuth.id) {
+      (req as any).adminAuth = customerAuth;
+      return next();
+    }
+
+    const customerId = typeof customerAuth?.id === "string" ? customerAuth.id.trim() : "";
+    if (!customerId) {
+      return res.status(403).json({ message: "Admin access required" });
+    }
+
+    void db
+      .select({ id: users.id, role: users.role, email: users.email })
+      .from(users)
+      .where(eq(users.id, customerId))
+      .limit(1)
+      .then((rows) => {
+        const user = rows[0];
+        if (!user || user.role !== "admin") {
+          return res.status(403).json({ message: "Admin access required" });
+        }
+
+        (req as any).adminAuth = {
+          id: user.id,
+          email: user.email,
+          type: "admin",
+        };
+        return next();
+      })
+      .catch((error: any) => {
+        console.error("Admin role lookup failed:", error?.message || error);
+        return res.status(500).json({ message: "Unable to verify admin access" });
+      });
+  });
 }
 
 /* ======================================================
@@ -175,12 +210,19 @@ export async function requireDualAuthAuth0(
     }
 
     if (vendorsFound.length > 0) {
-      (req as any).vendorAuth = {
-        id: vendorsFound[0].id,
-        email: vendorsFound[0].email,
-        type: "vendor",
-      };
-      return next();
+      const matchedVendor = vendorsFound[0];
+      const vendorIsDeleted = Boolean((matchedVendor as any)?.deletedAt);
+      const vendorIsActive = matchedVendor?.active !== false && !vendorIsDeleted;
+      if (vendorIsActive) {
+        (req as any).vendorAuth = {
+          id: matchedVendor.id,
+          email: matchedVendor.email,
+          type: "vendor",
+        };
+        return next();
+      }
+      (req as any).vendorAuthBlocked = true;
+      (req as any).vendorAuthBlockedReason = vendorIsDeleted ? "deleted" : "inactive";
     }
 
     // 3) Customer match by email
@@ -192,6 +234,14 @@ export async function requireDualAuthAuth0(
       : [];
 
     if (usersFound.length > 0) {
+      if ((req as any).vendorAuthBlocked && req.path.startsWith("/api/vendor")) {
+        return res.status(403).json({
+          message:
+            (req as any).vendorAuthBlockedReason === "deleted"
+              ? "Vendor account is deleted"
+              : "Vendor account is not active",
+        });
+      }
       const u = usersFound[0];
       (req as any).customerAuth = {
         id: u.id,
@@ -199,6 +249,15 @@ export async function requireDualAuthAuth0(
         type: u.role === "admin" ? "admin" : "customer",
       };
       return next();
+    }
+
+    if ((req as any).vendorAuthBlocked) {
+      return res.status(403).json({
+        message:
+          (req as any).vendorAuthBlockedReason === "deleted"
+            ? "Vendor account is deleted"
+            : "Vendor account is not active",
+      });
     }
 
     // No local account yet – allow request through with raw Auth0 identity

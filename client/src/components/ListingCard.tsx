@@ -34,8 +34,10 @@ function ShareSquareIcon() {
 
 interface ListingCardProps {
   listing: ListingPublic;
-  priceScale?: "default" | "double";
-  titleScale?: "default" | "oneAndHalf";
+  priceScale?: "default" | "oneAndHalf" | "double";
+  titleScale?: "default" | "oneAndQuarter" | "oneAndHalf";
+  titleSizeClassName?: string;
+  priceSizeClassName?: string;
   titleFont?: "sans" | "heading";
   showVendorShopButton?: boolean;
   disableCardNavigation?: boolean;
@@ -48,6 +50,8 @@ export default function ListingCard({
   listing,
   priceScale = "default",
   titleScale = "default",
+  titleSizeClassName,
+  priceSizeClassName,
   titleFont = "sans",
   showVendorShopButton = false,
   disableCardNavigation = false,
@@ -61,7 +65,7 @@ export default function ListingCard({
   const [coverLoadFailed, setCoverLoadFailed] = useState(false);
   const listingAny = listing as any;
 
-  const title = listingAny.listingData?.listingTitle ?? listingAny.title ?? listing.serviceType ?? "Service";
+  const title = listingAny.title ?? listingAny.listingData?.listingTitle ?? listing.serviceType ?? "Service";
   const priceValue = getListingDisplayPrice(listingAny);
   const pricingUnit = getListingDisplayPricingUnit(listingAny);
   const showPerHourSuffix = pricingUnit === "per_hour";
@@ -127,6 +131,20 @@ export default function ListingCard({
   const emailHref = `mailto:?subject=${encodeURIComponent(
     "Check out this EventHub listing"
   )}&body=${encodeURIComponent(`I found this on EventHub:\n${shareUrl}`)}`;
+  const resolvedTitleSizeClass =
+    titleSizeClassName ??
+    (titleScale === "oneAndHalf"
+      ? "text-[2.6875rem]"
+      : titleScale === "oneAndQuarter"
+        ? "text-[1.386rem]"
+        : "text-[1.05rem]");
+  const resolvedPriceSizeClass =
+    priceSizeClassName ??
+    (priceScale === "double"
+      ? "text-[3.0625rem] leading-none"
+      : priceScale === "oneAndHalf"
+        ? "text-[1.92rem] leading-none"
+        : "text-[1.28rem]");
 
   return (
     <>
@@ -196,22 +214,16 @@ export default function ListingCard({
 
         <div
           className={`flex items-start justify-between gap-3 px-1 ${
-            priceScale === "double" ? "mt-1" : "mt-2"
+            priceScale === "double" || priceScale === "oneAndHalf" ? "mt-1" : "mt-2"
           }`}
         >
           <h3
-            className={`line-clamp-2 ${titleFont === "heading" ? "font-heading" : "font-sans"} font-semibold leading-tight text-[#2a3a42] dark:text-[#f5f0e8] ${
-              titleScale === "oneAndHalf" ? "text-[1.575rem]" : "text-[1.05rem]"
-            }`}
+            className={`line-clamp-2 ${titleFont === "heading" ? "font-heading" : "font-sans"} font-semibold leading-tight text-[#2a3a42] dark:text-[#f5f0e8] ${resolvedTitleSizeClass}`}
           >
             {title}
           </h3>
           <p
-            className={`shrink-0 font-heading font-bold text-[#e07a6a] ${
-              priceScale === "double"
-                ? "text-[2.176rem] leading-none"
-                : "text-[1.28rem]"
-            }`}
+            className={`shrink-0 font-heading font-bold text-[#e07a6a] ${resolvedPriceSizeClass}`}
           >
             {typeof priceValue === "number" ? (
               <>

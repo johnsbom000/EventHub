@@ -28,7 +28,7 @@ export default function Login() {
   };
 
   return (
-    <div className="min-h-screen flex items-center justify-center bg-card/50 px-4">
+    <div className="min-h-screen flex items-center justify-center bg-[#ffffff] px-4">
       <div className="w-full max-w-md">
         <Link href="/" className="flex items-center justify-center gap-2 mb-8">
           <BrandWordmark className="text-[2.4rem]" />

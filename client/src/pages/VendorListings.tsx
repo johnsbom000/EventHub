@@ -1,5 +1,5 @@
 import { apiRequest } from "@/lib/queryClient";
-import React, { useMemo, useState } from "react";
+import React, { useState } from "react";
 import { Card } from "@/components/ui/card";
 import { Button } from "@/components/ui/button";
 import { Badge } from "@/components/ui/badge";
@@ -10,8 +10,6 @@ import { queryClient } from "@/lib/queryClient";
 import { useToast } from "@/hooks/use-toast";
 import { useLocation } from "wouter";
 import VendorShell from "@/components/VendorShell";
-import { getListingRentalTypes } from "@/lib/rentalTypes";
-import { getPublishFailureToastContent } from "@/lib/publishFailureToast";
 import {
   coverRatioToAspectRatio,
   getCoverPhotoIndex,
@@ -24,168 +22,57 @@ type AnyListing = any;
 
 export default function VendorListings() {
   const [showCreateWizard, setShowCreateWizard] = useState(false);
-  const [editingListing, setEditingListing] = useState<any | null>(null);
   const [, setLocation] = useLocation();
   const { toast } = useToast();
 
-  // Draft listings
-  const { data: draftListings = [], isLoading: loadingDrafts } = useQuery({
-    queryKey: ["/api/vendor/listings", "draft"],
+  const { data: listings = [], isLoading: loadingListings } = useQuery({
+    queryKey: ["/api/vendor/listings"],
     queryFn: async () => {
-      const res = await apiRequest("GET", "/api/vendor/listings?status=draft");
+      const res = await apiRequest("GET", "/api/vendor/listings");
       const json = await res.json();
       if (!res.ok) {
-        throw new Error(json?.error || "Failed to load draft listings");
+        throw new Error(json?.error || "Failed to load listings");
       }
       return json;
     },
   });
 
-  // Active listings
-  const { data: activeListings = [], isLoading: loadingActive } = useQuery({
-    queryKey: ["/api/vendor/listings", "active"],
-    queryFn: async () => {
-      const res = await apiRequest("GET", "/api/vendor/listings?status=active");
-      const json = await res.json();
-      if (!res.ok) {
-        throw new Error(json?.error || "Failed to load active listings");
-      }
-      return json;
-    },
-  });
-
-  // Inactive listings
-  const { data: inactiveListings = [], isLoading: loadingInactive } = useQuery({
-    queryKey: ["/api/vendor/listings", "inactive"],
-    queryFn: async () => {
-      const res = await apiRequest("GET", "/api/vendor/listings?status=inactive");
-      const json = await res.json();
-      if (!res.ok) {
-        throw new Error(json?.error || "Failed to load inactive listings");
-      }
-      return json;
-    },
-  });
-
-  const draftListingRows: AnyListing[] = Array.isArray(draftListings) ? draftListings : [];
-  const activeListingRows: AnyListing[] = Array.isArray(activeListings) ? activeListings : [];
-  const inactiveListingRows: AnyListing[] = Array.isArray(inactiveListings) ? inactiveListings : [];
-
-  // Hide empty shell drafts (default title + no meaningful data)
-  const visibleDraftListings = useMemo(() => {
-    return draftListingRows.filter((l: AnyListing) => {
-      const title = String(l?.title || "").trim();
-      const data = l?.listingData || {};
-
-      const photosCount =
-        data?.photos?.count ??
-        (Array.isArray(data?.photos?.names) ? data.photos.names.length : 0) ??
-        (Array.isArray(data?.photos) ? data.photos.length : 0);
-
-      const rentalTypesCount = getListingRentalTypes(data).length;
-
-      const rate = data?.pricing?.rate;
-      const hasRate = rate !== null && rate !== undefined && `${rate}`.trim() !== "";
-
-      const desc = String(data?.listingDescription || "").trim();
-      const hasAnyContent = photosCount > 0 || rentalTypesCount > 0 || hasRate || desc.length > 0;
-
-      const isDefaultDraftTitle = /^new\s+.+\s+listing$/i.test(title);
-      const isEmptyShell = isDefaultDraftTitle && !hasAnyContent;
-      return !isEmptyShell;
-    });
-  }, [draftListingRows]);
+  const allListingRows: AnyListing[] = Array.isArray(listings) ? listings : [];
+  const activeListingRows = allListingRows.filter(
+    (listing) => String(listing?.status || "").toLowerCase() === "active"
+  );
+  const draftListingRows = allListingRows.filter(
+    (listing) => String(listing?.status || "").toLowerCase() === "draft"
+  );
+  const inactiveListingRows = allListingRows.filter(
+    (listing) => {
+      const status = String(listing?.status || "").toLowerCase();
+      return status === "inactive" || (status !== "active" && status !== "draft");
+    }
+  );
 
   const handleEditListing = (listingId: string) => {
     setLocation(`/vendor/listings/${listingId}`);
   };
 
-  const handleCloseWizard = () => {
-    setShowCreateWizard(false);
-    setEditingListing(null);
-  };
-
-  // Publish mutation
-  const publishMutation = useMutation({
-    mutationFn: async (listingId: string) => {
-      const response = await apiRequest("PATCH", `/api/vendor/listings/${listingId}/publish`);
-      if (!response.ok) throw new Error("Failed to publish listing");
-      return response.json();
-    },
-    onSuccess: () => {
-      queryClient.invalidateQueries({ queryKey: ["/api/vendor/listings", "draft"] });
-      queryClient.invalidateQueries({ queryKey: ["/api/vendor/listings", "active"] });
-      queryClient.invalidateQueries({ queryKey: ["/api/vendor/listings", "inactive"] });
-
-      toast({
-        title: "Listing published!",
-        description: "Your listing is now live and visible to customers.",
-      });
-    },
-    onError: (error: unknown) => {
-      const publishError = getPublishFailureToastContent(error);
-      toast({
-        title: publishError.title,
-        description: publishError.description,
-        variant: "destructive",
-      });
-    },
-  });
-
-  const handlePublishListing = (listingId: string) => {
-    publishMutation.mutate(listingId);
-  };
-
-    // Unpublish mutation (active -> inactive)
-  const unpublishMutation = useMutation({
-    mutationFn: async (listingId: string) => {
-      const response = await apiRequest("PATCH", `/api/vendor/listings/${listingId}/unpublish`);
-      if (!response.ok) throw new Error("Failed to unpublish listing");
-      return response.json();
-    },
-    onSuccess: () => {
-      queryClient.invalidateQueries({ queryKey: ["/api/vendor/listings", "draft"] });
-      queryClient.invalidateQueries({ queryKey: ["/api/vendor/listings", "active"] });
-      queryClient.invalidateQueries({ queryKey: ["/api/vendor/listings", "inactive"] });
-
-      toast({
-        title: "Listing unpublished",
-        description: "Your listing is now inactive and hidden from customers.",
-      });
-    },
-    onError: (error: any) => {
-      toast({
-        title: "Failed to unpublish",
-        description: error?.message || "Unknown error",
-        variant: "destructive",
-      });
-    },
-  });
-
-  const handleUnpublishListing = (listingId: string) => {
-    unpublishMutation.mutate(listingId);
-  };
-
-  // Delete mutation (any listing)
+  // Delete listing from vendor UX (soft-delete internally via deleted status).
   const deleteMutation = useMutation({
     mutationFn: async (listingId: string) => {
       const response = await apiRequest("DELETE", `/api/vendor/listings/${listingId}`);
-      if (!response.ok && response.status !== 204) throw new Error("Failed to delete listing");
-      return true;
+      const payload = await response.json().catch(() => null);
+      if (!response.ok) throw new Error(payload?.error || "Failed to deactivate listing");
+      return payload;
     },
     onSuccess: () => {
-      queryClient.invalidateQueries({ queryKey: ["/api/vendor/listings", "draft"] });
-      queryClient.invalidateQueries({ queryKey: ["/api/vendor/listings", "active"] });
-      queryClient.invalidateQueries({ queryKey: ["/api/vendor/listings", "inactive"] });
-
+      queryClient.invalidateQueries({ queryKey: ["/api/vendor/listings"] });
       toast({
-        title: "Listing deleted",
-        description: "This listing was permanently removed.",
+        title: "Listing Deleted",
+        description: "This listing was removed from your dashboard and customer discovery.",
       });
     },
     onError: (error: any) => {
       toast({
-        title: "Failed to delete",
+        title: "Failed to deactivate",
         description: error?.message || "Unknown error",
         variant: "destructive",
       });
@@ -193,25 +80,25 @@ export default function VendorListings() {
   });
 
   const handleDeleteListing = (listingId: string) => {
-    const ok = window.confirm("Delete this listing? This cannot be undone.");
+    const ok = window.confirm("Delete this listing? It will no longer appear in your dashboard or to customers.");
     if (!ok) return;
     deleteMutation.mutate(listingId);
   };
 
-  const ListingCardRow = ({ listing, status }: { listing: AnyListing; status: string }) => {
-    const isDraft = status === "draft";
-    const isActive = status === "active";
-    const isInactive = status === "inactive";
-
+  const ListingCardRow = ({ listing }: { listing: AnyListing }) => {
     const title =
-      listing?.listingData?.listingTitle ??
       listing?.title ??
+      listing?.listingData?.listingTitle ??
       listing?.listingData?.serviceType ??
       "Untitled Listing";
 
-    const category = listing?.category || listing?.listingData?.serviceType || "";
+    const category = String(listing?.category || listing?.listingData?.category || "").trim();
+    const hasCategory = category.length > 0;
 
     const sl =
+      (listing?.listingServiceCenterLabel
+        ? { label: listing.listingServiceCenterLabel }
+        : null) ??
       listing?.listingData?.serviceLocation ??
       listing?.listingData?.location ??
       listing?.serviceLocation ??
@@ -240,23 +127,36 @@ export default function VendorListings() {
       return "Location not set";
     })();
 
+    const canonicalPriceCents =
+      typeof listing?.priceCents === "number" && Number.isFinite(listing.priceCents) ? Math.round(listing.priceCents) : null;
+    const legacyPrice =
+      typeof listing?.price === "number" && Number.isFinite(listing.price)
+        ? listing.price
+        : listing?.listingData?.pricing?.rate
+          ? Number(listing.listingData.pricing.rate)
+          : listing?.listingData?.offerings?.[0]?.price
+            ? Number(listing.listingData.offerings[0].price)
+            : null;
     const price =
-      listing?.price ||
-      (listing?.listingData?.pricing?.rate ? `$${listing.listingData.pricing.rate}` : null) ||
-      (listing?.listingData?.offerings?.[0]?.price ? `$${listing.listingData.offerings[0].price}` : "Price not set");
+      canonicalPriceCents != null && canonicalPriceCents > 0
+        ? `$${(canonicalPriceCents / 100).toLocaleString()}`
+        : typeof legacyPrice === "number" && Number.isFinite(legacyPrice)
+          ? `$${Number(legacyPrice).toLocaleString()}`
+          : "Price not set";
 
     const photoUrls = getListingPhotoUrls(listing);
     const coverIndex = getCoverPhotoIndex(listing, photoUrls);
     const orderedPhotos = moveCoverToFront(photoUrls, coverIndex);
     const image = orderedPhotos[0] ?? null;
     const coverAspectRatio = coverRatioToAspectRatio(getCoverPhotoRatio(listing));
-
-
-    const statusLabel = isDraft ? "Draft" : isActive ? "Active" : "Inactive";
+    const statusValue = String(listing?.status || "draft").trim();
+    const statusLabel = statusValue.length > 0
+      ? `${statusValue.charAt(0).toUpperCase()}${statusValue.slice(1)}`
+      : "Draft";
 
     return (
       <Card
-        className="w-[320px] shrink-0 overflow-hidden border-0 hover-elevate cursor-pointer group"
+        className="listing-card-scale-down w-[320px] shrink-0 overflow-hidden border-0 hover-elevate cursor-pointer group"
         onClick={() => handleEditListing(listing.id)}
         data-testid={`card-listing-${listing.id}`}
       >
@@ -274,29 +174,19 @@ export default function VendorListings() {
           )}
 
           <div className="absolute top-3 left-3 z-10">
-            {isDraft || isActive ? (
-              <Badge variant="secondary">
-                {statusLabel}
-              </Badge>
-            ) : (
-              <Badge
-                variant="outline"
-                className="border-[hsl(var(--secondary-accent)/0.6)] bg-[hsl(var(--secondary-accent)/0.12)] text-[hsl(var(--secondary-accent))]"
-              >
-                <Edit className="w-3 h-3 mr-1" />
-                <span>{statusLabel}</span>
-              </Badge>
-            )}
+            <Badge variant="secondary">
+              {statusLabel}
+            </Badge>
           </div>
         </div>
 
         <div className="p-4">
           <div className="flex items-start justify-between mb-2">
             <div className="flex-1">
-              <h3 className="font-semibold text-base mb-1 line-clamp-1" data-testid={`text-title-${listing.id}`}>
+              <h3 className="font-semibold text-[1.8rem] leading-tight mb-1 line-clamp-1" data-testid={`text-title-${listing.id}`}>
                 {title}
               </h3>
-              <p className="text-sm text-muted-foreground">{category}</p>
+              <p className="text-sm text-muted-foreground">{hasCategory ? category : "Category not set"}</p>
             </div>
             <button
               type="button"
@@ -325,52 +215,23 @@ export default function VendorListings() {
               </span>
             </div>
 
-            {!isDraft && (
-              <div className="flex items-center gap-3 text-sm text-muted-foreground">
-                <div className="flex items-center gap-1">
-                  <Eye className="w-4 h-4" />
-                  <span>{listing?.views || 0}</span>
-                </div>
-                <div className="flex items-center gap-1">
-                  <span className="font-medium">{listing?.bookings || 0}</span>
-                  <span>bookings</span>
-                </div>
+            <div className="flex items-center gap-3 text-sm text-muted-foreground">
+              <div className="flex items-center gap-1">
+                <Eye className="w-4 h-4" />
+                <span>{listing?.views || 0}</span>
               </div>
-            )}
+              <div className="flex items-center gap-1">
+                <span className="font-medium">{listing?.bookings || 0}</span>
+                <span>bookings</span>
+              </div>
+            </div>
           </div>
 
-          <div className="grid grid-cols-2 gap-2 mt-4 pt-4 border-t">
-            {(isDraft || isInactive) && (
-              <Button
-                className="w-full min-w-0 border border-[hsl(var(--secondary-accent)/0.55)] bg-[hsl(var(--secondary-accent))] px-2 text-[hsl(var(--secondary-accent-foreground))] hover:bg-[hsl(var(--secondary-accent)/0.9)]"
-                onClick={(e) => {
-                  e.stopPropagation();
-                  handlePublishListing(listing.id);
-                }}
-                data-testid={`button-publish-${listing.id}`}
-                disabled={publishMutation.isPending}
-              >
-                {publishMutation.isPending ? "Publishing..." : "Publish"}
-              </Button>
-            )}
-
-            {isActive && (
-              <Button
-                variant="outline"
-                className="w-full min-w-0 px-2"
-                onClick={(e) => {
-                  e.stopPropagation();
-                  handleUnpublishListing(listing.id);
-                }}
-                data-testid={`button-unpublish-${listing.id}`}
-                disabled={unpublishMutation.isPending}
-              >
-                Unpublish
-              </Button>
-            )}
+          <div className="grid grid-cols-2 gap-2 mt-4 pt-4 border-t border-t-[var(--dashboard-divider-blue)]">
+            <div />
 
             <Button
-              variant="destructive"
+              variant="outline"
               className="w-full min-w-0 px-2"
               onClick={(e) => {
                 e.stopPropagation();
@@ -379,7 +240,7 @@ export default function VendorListings() {
               data-testid={`button-delete-${listing.id}`}
               disabled={deleteMutation.isPending}
             >
-              {deleteMutation.isPending ? "Deleting..." : "Delete"}
+              {deleteMutation.isPending ? "Deleting..." : "Delete listing"}
             </Button>
           </div>
         </div>
@@ -397,7 +258,7 @@ export default function VendorListings() {
   }: {
     title: string;
     listings: AnyListing[];
-    status: "active" | "inactive" | "draft";
+      status: string;
     emptyMessage: string;
     isLoading?: boolean;
     showSectionDivider?: boolean;
@@ -418,7 +279,7 @@ export default function VendorListings() {
         <div className="overflow-x-auto -mx-6 px-6">
           <div className="flex items-start gap-4 pb-4 pr-4">
             {listings.map((listing: AnyListing) => (
-              <ListingCardRow key={listing.id} listing={listing} status={status} />
+              <ListingCardRow key={listing.id} listing={listing} />
             ))}
           </div>
         </div>
@@ -430,7 +291,7 @@ export default function VendorListings() {
 
       {showSectionDivider && listings.length > 0 && !isLoading && (
         <div className="-mx-6 px-6 pt-1" aria-hidden>
-          <div className="h-px w-full bg-border/80" />
+          <div className="h-px w-full bg-[var(--dashboard-divider-blue)]" />
         </div>
       )}
     </div>
@@ -463,9 +324,9 @@ export default function VendorListings() {
             title="Active Listings"
             listings={activeListingRows}
             status="active"
-            emptyMessage="No active listings. Publish a draft to make it active."
-            isLoading={loadingActive}
-            showSectionDivider={true}
+            emptyMessage="No active listings. Create a listing to get started."
+            isLoading={loadingListings}
+            showSectionDivider={draftListingRows.length > 0 || inactiveListingRows.length > 0}
           />
 
           <ListingSection
@@ -473,16 +334,16 @@ export default function VendorListings() {
             listings={inactiveListingRows}
             status="inactive"
             emptyMessage="No inactive listings."
-            isLoading={loadingInactive}
-            showSectionDivider={true}
+            isLoading={loadingListings}
+            showSectionDivider={draftListingRows.length > 0}
           />
 
           <ListingSection
             title="Draft Listings"
-            listings={visibleDraftListings}
+            listings={draftListingRows}
             status="draft"
-            emptyMessage="No draft listings. Start creating a new listing to save it as a draft."
-            isLoading={loadingDrafts}
+            emptyMessage="No draft listings."
+            isLoading={loadingListings}
           />
         </div>
 

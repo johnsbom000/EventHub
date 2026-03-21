@@ -1,11 +1,11 @@
 import { useAuth0 } from "@auth0/auth0-react";
 import { Link, useLocation } from "wouter";
 import { Button } from "@/components/ui/button";
-import { useState, useEffect } from "react";
+import { useState, useEffect, type ReactNode } from "react";
 import { useQuery } from "@tanstack/react-query";
 import BrandWordmark from "@/components/BrandWordmark";
 import AuthModal from "@/components/AuthModal";
-import { Switch } from "@/components/ui/switch";
+import { cn } from "@/lib/utils";
 import {
   DropdownMenu,
   DropdownMenuContent,
@@ -27,8 +27,6 @@ import {
   Calendar,
   Briefcase,
   Store,
-  Sun,
-  Moon,
 } from "lucide-react";
 
 type UserRole = "customer" | "vendor" | null;
@@ -47,16 +45,26 @@ interface Customer {
   email: string;
 }
 
-const THEME_STORAGE_KEY = "eventhub-theme";
+type NavigationProps = {
+  showBottomBorder?: boolean;
+  headerContent?: ReactNode;
+  middleContent?: ReactNode;
+  surfaceClassName?: string;
+  vendorDashboardAligned?: boolean;
+};
 
-export default function Navigation() {
+export default function Navigation({
+  showBottomBorder = true,
+  headerContent,
+  middleContent,
+  surfaceClassName,
+  vendorDashboardAligned = false,
+}: NavigationProps) {
   const [location, setLocation] = useLocation();
   const hideAvatarNotifications = location === "/";
+  const isVendorOnboardingRoute = location.startsWith("/vendor/onboarding");
   const [userRole, setUserRole] = useState<UserRole>(null);
   const [authModalOpen, setAuthModalOpen] = useState(false);
-  const [themeMode, setThemeMode] = useState<"light" | "dark">(() =>
-    typeof document !== "undefined" && document.documentElement.classList.contains("dark") ? "dark" : "light"
-  );
   const { isAuthenticated, user, logout: auth0Logout } = useAuth0();
   useEffect(() => {
     if (user) console.log("AUTH0 USER OBJECT:", user);
@@ -144,48 +152,43 @@ export default function Navigation() {
   };
 
   const isLoggedIn = isAuthenticated || !!userRole;
-  const navActionButtonClass = "rounded-md px-3 font-sans text-[1.01rem] font-medium text-[#4a6a7d] dark:text-[#f5f0e8]";
-  const applyTheme = (mode: "light" | "dark") => {
-    setThemeMode(mode);
-    if (typeof document !== "undefined") {
-      document.documentElement.classList.toggle("dark", mode === "dark");
-    }
-    if (typeof window !== "undefined") {
-      window.localStorage.setItem(THEME_STORAGE_KEY, mode);
-    }
-  };
+  const navActionButtonClass = "rounded-md px-3 font-sans text-[1.11rem] font-bold text-[#4a6a7d] dark:text-[#f5f0e8]";
+  const backToMarketplaceNavButtonClass =
+    "no-global-scale min-h-0 h-5 rounded-[4px] px-2 py-0 font-sans text-[12.5px] leading-none font-medium text-[#4a6a7d] dark:text-[#f5f0e8] gap-1 [&_svg]:!size-2";
+  const navContainerClass = vendorDashboardAligned ? "w-full" : "w-full px-6 lg:px-10";
+  const navRowClass = vendorDashboardAligned ? "flex items-center p-4" : "flex min-h-16 items-center py-2";
+  const homeLinkClass = vendorDashboardAligned
+    ? "flex items-center rounded-md px-1 py-1"
+    : "flex items-center gap-2 px-3 py-2 rounded-md -ml-3";
+  const brandWordmarkClass = vendorDashboardAligned ? "text-[2.32rem]" : "text-[2.72rem]";
+  const navPositionClass = vendorDashboardAligned ? "" : "sticky top-0";
 
   return (
-    <nav className="sticky top-0 z-50 bg-[#f5f0e8] dark:bg-[#16222d] border-b border-[rgba(74,106,125,0.15)]">
-      <div className="w-full px-6 lg:px-10">
-        <div className="flex justify-between items-center h-16">
+    <nav
+      className={cn(
+        navPositionClass,
+        "z-50 bg-[#ffffff] dark:bg-[#16222d]",
+        showBottomBorder ? "border-b border-[rgba(74,106,125,0.15)]" : "",
+        surfaceClassName
+      )}
+    >
+      <div className={navContainerClass}>
+        <div className={navRowClass}>
           <Link
             href="/"
-            className="flex items-center gap-2 px-3 py-2 rounded-md -ml-3"
+            className={homeLinkClass}
             data-testid="link-home"
           >
             <BrandWordmark
-              className="text-[2.72rem]"
+              className={brandWordmarkClass}
               eventClassName="text-[#e07a6a] font-normal"
               hubClassName="text-[#4a6a7d] font-normal"
             />
           </Link>
 
-          <div className="flex items-center gap-4">
-            <div className="flex items-center gap-3">
-              <span className="text-[0.84rem] font-sans font-medium uppercase tracking-[0.12em] text-[#9aacb4]">
-                {themeMode === "dark" ? "Dark" : "Light"}
-              </span>
-              <Sun className="h-4 w-4 text-[#9aacb4]" />
-              <Switch
-                checked={themeMode === "dark"}
-                onCheckedChange={(checked) => applyTheme(checked ? "dark" : "light")}
-                aria-label="Toggle light and dark mode"
-                data-testid="switch-theme-mode"
-              />
-              <Moon className="h-4 w-4 text-[#9aacb4]" />
-            </div>
+          {middleContent ? <div className="mx-6 min-w-0 flex-1">{middleContent}</div> : null}
 
+          <div className="ml-auto flex items-center gap-4">
             {/* Auth Modal */}
             <AuthModal open={authModalOpen} onOpenChange={setAuthModalOpen} />
 
@@ -194,7 +197,7 @@ export default function Navigation() {
               <Button
                 variant="default"
                 size="default"
-                className="editorial-login-btn h-[54px] min-w-[232px] px-7 text-[1.15rem] leading-none"
+                className="editorial-login-btn min-h-0 h-[27px] min-w-[116px] rounded-[7px] px-3.5 py-0 text-[1.15rem] leading-none"
                 onClick={() => setAuthModalOpen(true)}
                 data-testid="button-login-signup"
               >
@@ -221,10 +224,10 @@ export default function Navigation() {
                     <Button
                       variant="ghost"
                       size="default"
-                      className={`${navActionButtonClass} no-global-scale`}
+                      className={backToMarketplaceNavButtonClass}
                       data-testid="link-vendor-back-to-marketplace"
                     >
-                      <Store className="h-4 w-4 mr-2" />
+                      <Store />
                       Back to Marketplace
                     </Button>
                   </Link>
@@ -325,15 +328,27 @@ export default function Navigation() {
             {/* Customer Logged In State */}
             {isLoggedIn && userRole !== "vendor" && (
               <>
+                {userRole === "customer" && !isVendorOnboardingRoute ? (
+                  <Button
+                    variant="ghost"
+                    size="default"
+                    className={navActionButtonClass}
+                    onClick={() => setLocation("/vendor/onboarding")}
+                    data-testid="button-become-vendor-nav"
+                  >
+                    Become a Vendor
+                  </Button>
+                ) : null}
+
                 {location.startsWith("/dashboard") ? (
                   <Link href="/">
                     <Button
                       variant="ghost"
                       size="default"
-                      className={`${navActionButtonClass} no-global-scale`}
+                      className={backToMarketplaceNavButtonClass}
                       data-testid="link-back-to-marketplace"
                     >
-                      <Store className="h-4 w-4 mr-2" />
+                      <Store />
                       Back to Marketplace
                     </Button>
                   </Link>
@@ -441,6 +456,7 @@ export default function Navigation() {
           </div>
         </div>
       </div>
+      {headerContent}
     </nav>
   );
 }

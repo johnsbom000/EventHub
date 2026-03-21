@@ -139,6 +139,71 @@ function dispatch(action: Action) {
 
 type Toast = Omit<ToasterToast, "id">
 
+const GENERIC_NON_ACTIONABLE_MESSAGES = new Set([
+  "something went wrong",
+  "something went wrong. please try again.",
+  "unknown error",
+  "unknown error.",
+  "error",
+]);
+
+const ACTIONABLE_ERROR_PATTERNS: RegExp[] = [
+  /\b(required|must|required field|invalid|too large|too small|too long|too short|unsupported)\b/i,
+  /\b(enter|select|choose|pick|provide|add|upload|attach|fix|correct)\b/i,
+  /\b(sign in|log in|login|session expired|permission|unauthorized|forbidden)\b/i,
+  /\b(payment|card|billing|checkout|address|zip|cvv)\b/i,
+  /\b(date|time|quantity|availability|conflict)\b/i,
+  /\b(couldn'?t|cannot|can't|failed to)\s+(save|submit|publish|create|update|delete|book|request|upload|process|connect|send|remove)\b/i,
+  /\b(check your connection|internet connection|refresh the page|try again)\b/i,
+];
+
+const NON_ACTIONABLE_ERROR_PATTERNS: RegExp[] = [
+  /please check (the )?console/i,
+  /\b(typeerror|referenceerror|syntaxerror|exception|stack|trace)\b/i,
+  /\b(internal server error|server error|unexpected error)\b/i,
+  /\bfailed to fetch\b/i,
+  /\bstatus\b.*\b\d{3}\b/i,
+  /\/api\//i,
+];
+
+function getToastText(value: React.ReactNode): string {
+  if (typeof value === "string") return value;
+  if (typeof value === "number") return String(value);
+  if (Array.isArray(value)) {
+    return value.map((item) => getToastText(item)).filter(Boolean).join(" ").trim();
+  }
+  return "";
+}
+
+function isActionableDestructiveToast(input: {
+  title?: React.ReactNode;
+  description?: React.ReactNode;
+  action?: ToastActionElement;
+}): boolean {
+  if (input.action) return true;
+
+  const title = getToastText(input.title).trim();
+  const description = getToastText(input.description).trim();
+  const combined = `${title} ${description}`.trim();
+  if (!combined) return false;
+
+  const lowerTitle = title.toLowerCase();
+  const lowerDescription = description.toLowerCase();
+  const lowerCombined = combined.toLowerCase();
+
+  const genericOnly =
+    (title && GENERIC_NON_ACTIONABLE_MESSAGES.has(lowerTitle)) ||
+    (description && GENERIC_NON_ACTIONABLE_MESSAGES.has(lowerDescription)) ||
+    GENERIC_NON_ACTIONABLE_MESSAGES.has(lowerCombined);
+
+  const hasActionableLanguage = ACTIONABLE_ERROR_PATTERNS.some((pattern) => pattern.test(combined));
+  const hasNonActionableLanguage = NON_ACTIONABLE_ERROR_PATTERNS.some((pattern) => pattern.test(combined));
+
+  if (genericOnly && !hasActionableLanguage) return false;
+  if (hasNonActionableLanguage && !hasActionableLanguage) return false;
+  return hasActionableLanguage;
+}
+
 function toFriendlyErrorText(text: string): string {
   let cleaned = text.trim();
   if (!cleaned) return "Something went wrong. Please try again.";
@@ -226,6 +291,7 @@ function sanitizeToastContent<T extends { title?: React.ReactNode; description?:
 function toast({ ...props }: Toast) {
   const id = genId()
   const sanitizedProps = sanitizeToastContent(props)
+  const shouldSuppress = sanitizedProps.variant === "destructive" && !isActionableDestructiveToast(sanitizedProps)
 
   const update = (props: ToasterToast) =>
     dispatch({
@@ -233,6 +299,15 @@ function toast({ ...props }: Toast) {
       toast: { ...sanitizeToastContent(props), id },
     })
   const dismiss = () => dispatch({ type: "DISMISS_TOAST", toastId: id })
+
+  if (shouldSuppress) {
+    const suppressedUpdate = (_props: ToasterToast) => undefined
+    return {
+      id: `suppressed-${id}`,
+      dismiss: () => undefined,
+      update: suppressedUpdate,
+    }
+  }
 
   dispatch({
     type: "ADD_TOAST",

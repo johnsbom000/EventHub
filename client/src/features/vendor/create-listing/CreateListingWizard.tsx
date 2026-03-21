@@ -1,353 +1,265 @@
-
 import { useEffect, useMemo, useRef, useState } from "react";
 import { useMutation, useQuery } from "@tanstack/react-query";
-import { X, Save, Upload } from "lucide-react";
+import {
+  Check,
+  ClipboardList,
+  DollarSign,
+  ImageIcon,
+  MapPin,
+  Sparkles,
+  Truck,
+  Upload,
+} from "lucide-react";
 
 import mapboxgl from "mapbox-gl";
 import "mapbox-gl/dist/mapbox-gl.css";
-import { Slider } from "@/components/ui/slider";
-import { LocationPicker } from "@/components/LocationPicker";
-import type { LocationResult } from "@/types/location";
 
+import Navigation from "@/components/Navigation";
+import { LocationPicker } from "@/components/LocationPicker";
+import { InlinePhotoEditor, type ListingPhotoCrop } from "@/components/listings/InlinePhotoEditor";
 import { Button } from "@/components/ui/button";
 import { Card } from "@/components/ui/card";
 import { Input } from "@/components/ui/input";
-import { Textarea } from "@/components/ui/textarea";
 import { Label } from "@/components/ui/label";
-
+import { Slider } from "@/components/ui/slider";
+import { Textarea } from "@/components/ui/textarea";
 import { useToast } from "@/hooks/use-toast";
+import { getFreshAccessToken } from "@/lib/authToken";
+import { DEFAULT_COVER_RATIO, type CoverRatio } from "@/lib/listingPhotos";
+import { getPublishFailureToastContent } from "@/lib/publishFailureToast";
 import { apiRequest } from "@/lib/queryClient";
+import { cn } from "@/lib/utils";
+import type { LocationResult } from "@/types/location";
 import { POPULAR_FOR_OPTIONS } from "@/constants/eventTypes";
 
-import {
-  Select,
-  SelectContent,
-  SelectItem,
-  SelectTrigger,
-  SelectValue,
-} from "@/components/ui/select";
+const MAPBOX_TOKEN =
+  (import.meta.env.VITE_MAPBOX_TOKEN as string | undefined) ??
+  (import.meta.env.VITE_MAPBOX_ACCESS_TOKEN as string | undefined) ??
+  "";
 
-import { getFreshAccessToken } from "@/lib/authToken";
-import {
-  DEFAULT_COVER_RATIO,
-  type CoverRatio,
-} from "@/lib/listingPhotos";
-import { InlinePhotoEditor, type ListingPhotoCrop } from "@/components/listings/InlinePhotoEditor";
+const LISTING_TAG_KEY = "__listing__";
+const MIN_PHOTOS_FOR_PUBLISH = 3;
+const DESCRIPTION_MAX_CHARS = 1000;
 
+const CATEGORY_OPTIONS = [
+  { value: "Rental", label: "Rental" },
+  { value: "Venue", label: "Venue" },
+  { value: "Service", label: "Service" },
+  { value: "Catering", label: "Caterer" },
+] as const;
 
-const MAPBOX_TOKEN = (import.meta.env.VITE_MAPBOX_TOKEN as string | undefined) ?? "";
-
-function boundsFromCircleFeature(feature: any) {
-  const ring: [number, number][] | undefined =
-    feature?.geometry?.type === "Polygon"
-      ? feature.geometry.coordinates?.[0]
-      : undefined;
-
-  if (!ring || ring.length === 0) return null;
-
-  let minLng = ring[0][0],
-    maxLng = ring[0][0];
-  let minLat = ring[0][1],
-    maxLat = ring[0][1];
-
-  for (const [lng, lat] of ring) {
-    if (lng < minLng) minLng = lng;
-    if (lng > maxLng) maxLng = lng;
-    if (lat < minLat) minLat = lat;
-    if (lat > maxLat) maxLat = lat;
-  }
-
-  return new mapboxgl.LngLatBounds([minLng, minLat], [maxLng, maxLat]);
-}
-
-// Provider-agnostic circle polygon generator (GeoJSON)
-function makeCircleGeoJSON(
-  center: { lat: number; lng: number },
-  radiusMiles: number,
-  points = 64
-) {
-  const radiusKm = radiusMiles * 1.60934;
-  const earthRadiusKm = 6371;
-
-  const coords: [number, number][] = [];
-  const lat = (center.lat * Math.PI) / 180;
-  const lng = (center.lng * Math.PI) / 180;
-
-  for (let i = 0; i <= points; i++) {
-    const bearing = (2 * Math.PI * i) / points;
-    const lat2 = Math.asin(
-      Math.sin(lat) * Math.cos(radiusKm / earthRadiusKm) +
-        Math.cos(lat) *
-          Math.sin(radiusKm / earthRadiusKm) *
-          Math.cos(bearing)
-    );
-    const lng2 =
-      lng +
-      Math.atan2(
-        Math.sin(bearing) *
-          Math.sin(radiusKm / earthRadiusKm) *
-          Math.cos(lat),
-        Math.cos(radiusKm / earthRadiusKm) - Math.sin(lat) * Math.sin(lat2)
-      );
-
-    coords.push([lng2 * (180 / Math.PI), lat2 * (180 / Math.PI)]);
-  }
-
-  return {
-    type: "Feature" as const,
-    properties: { radiusMiles },
-    geometry: {
-      type: "Polygon" as const,
-      coordinates: [coords],
-    },
-  };
-}
-
-function YesNoButtons({
-  value,
-  onChange,
-}: {
-  value: boolean;
-  onChange: (next: boolean) => void;
-}) {
-  return (
-    <div className="inline-flex overflow-hidden rounded-lg border">
-      <button
-        type="button"
-        onClick={() => onChange(true)}
-        className={[
-          "px-3 py-1.5 text-sm font-medium transition",
-          value ? "bg-emerald-100 text-emerald-900" : "bg-white text-muted-foreground hover:bg-muted",
-        ].join(" ")}
-        aria-pressed={value}
-      >
-        Yes
-      </button>
-      <button
-        type="button"
-        onClick={() => onChange(false)}
-        className={[
-          "px-3 py-1.5 text-sm font-medium transition border-l",
-          !value ? "bg-emerald-100 text-emerald-900" : "bg-white text-muted-foreground hover:bg-muted",
-        ].join(" ")}
-        aria-pressed={!value}
-      >
-        No
-      </button>
-    </div>
-  );
-}
-
-type PricingMode = "single_service" | "package" | "a_la_carte";
-
-type StepId =
-  | "tags" // Title & Description
-  | "popularFor"
-  | "pricing"
-  | "photos"
-  | "deliverySetup";
-
-const STEPS: { id: StepId; title: string }[] = [
-  { id: "tags", title: "Title & Description" },
-  { id: "popularFor", title: "Popular For" },
-  { id: "pricing", title: "Pricing" },
-  { id: "photos", title: "Photos" },
-  { id: "deliverySetup", title: "Delivery / Setup" },
-];
-
+type ListingCategory = (typeof CATEGORY_OPTIONS)[number]["value"];
+type ListingHelperCategory = "rental" | "venue" | "service" | "caterer";
+type StepId = "basics" | "perfectFor" | "bookingPricing" | "serviceArea" | "logistics" | "media";
 type PricingUnit = "per_day" | "per_hour";
+type BookingType = "instant" | "request";
+type TravelFeeType = "flat" | "per_mile" | "per_hour";
 
-type PerPropPricing = {
-  rate: string;
-  minimumHours: string; // only used for per_hour
-};
+type ListingTag = { label: string; slug: string };
 
 type ListingDraft = {
-  pricingMode: PricingMode | null;
-
-  // Rental-specific
-  rentalTypes: string[];
-
-  // Quantities (only meaningful for a_la_carte)
-  quantitiesByPropType: Record<string, string>; // numeric string
-
-  // Title/Description rules:
-  // - single_service/package: one title+description (shared)
-  // - a_la_carte: title+description per rental type
+  category: ListingCategory | "";
   listingTitle: string;
   listingDescription: string;
   whatsIncluded: string[];
-  perPropDetails: Record<string, { title: string; description: string }>;
-
-  // Tags:
-  // - single_service/package: stored under LISTING_TAG_KEY
-  // - a_la_carte: stored per rental type key
-  tagsByPropType: Record<string, { label: string; slug: string }[]>;
-
+  tagsByPropType: Record<string, ListingTag[]>;
   popularFor: string[];
 
-  // Pricing rules:
-  // - single_service/package: one price (listing-level)
-  // - a_la_carte: price per rental type
+  bookingType: BookingType;
   pricingUnit: PricingUnit;
-  rate: string; // listing-level
-  minimumHours: string; // listing-level, only used for per_hour
-  pricingByPropType: Record<string, PerPropPricing>;
+  rate: string;
+  quantity: string;
 
-  // Delivery / Setup
-  serviceAreaMode: "radius" | "nationwide" | "global";
+  serviceAreaMode: "radius";
   serviceRadiusMiles: number;
+  serviceLocation: LocationResult | null;
+  serviceCenter: { lat: number; lng: number } | null;
 
-  serviceCenter?: { lat: number; lng: number };
-  serviceLocation?: LocationResult | null;
+  travelOffered: boolean;
+  travelFeeEnabled: boolean;
+  travelFeeType: TravelFeeType;
+  travelFeeAmount: string;
 
-  // Delivery
   deliveryIncluded: boolean;
   deliveryFeeEnabled: boolean;
-  deliveryPerMile: string; // (used as amount input in UI)
-  
-  // Setup
+  deliveryFeeAmount: string;
+
   setupIncluded: boolean;
   setupFeeEnabled: boolean;
-  setupFlatFee: string;
+  setupFeeAmount: string;
 
-  // Photos (listing-level)
   photoPreviews: string[];
   photoNames: string[];
-  coverPhotoIndex: number;
   coverPhotoRatio: CoverRatio;
   photoCropsByName: Record<string, ListingPhotoCrop>;
 
-  // Photos (a_la_carte per rental type)
-  photosByPropType: Record<string, { previews: string[]; names: string[] }>;
+  videoNames: string[];
 };
 
 const DEFAULT_DRAFT: ListingDraft = {
-  pricingMode: "single_service",
-
-  rentalTypes: [],
-  quantitiesByPropType: {},
-
+  category: "",
   listingTitle: "",
   listingDescription: "",
   whatsIncluded: [],
-  perPropDetails: {},
-
   tagsByPropType: {},
-
   popularFor: [],
 
+  bookingType: "instant",
   pricingUnit: "per_day",
   rate: "",
-  minimumHours: "",
-  pricingByPropType: {},
+  quantity: "1",
 
   serviceAreaMode: "radius",
   serviceRadiusMiles: 30,
+  serviceLocation: null,
+  serviceCenter: null,
+
+  travelOffered: false,
+  travelFeeEnabled: false,
+  travelFeeType: "flat",
+  travelFeeAmount: "",
 
   deliveryIncluded: false,
   deliveryFeeEnabled: false,
-  deliveryPerMile: "",
+  deliveryFeeAmount: "",
 
   setupIncluded: false,
   setupFeeEnabled: false,
-  setupFlatFee: "",
+  setupFeeAmount: "",
 
   photoPreviews: [],
   photoNames: [],
-  coverPhotoIndex: 0,
   coverPhotoRatio: DEFAULT_COVER_RATIO,
   photoCropsByName: {},
-  photosByPropType: {},
+
+  videoNames: [],
 };
 
-// come back here
-const RENTAL_TYPES_FALLBACK = [
-  "Arches",
-  "Backdrops",
-  "Signage",
-  "Tabletop Rentals",
-  "Linens",
-  "Lighting",
-  "Photo Booths",
-  "Furniture & Lounges",
-  "Floral & Greenery",
-  "Food Displays",
-  "Carts & Stations",
-  "Games & Activities",
-  "Staging & Structures",
-  "Apparel & Accessories",
-  "Other",
-] as const;
+const STEPS: Array<{ id: StepId; title: string }> = [
+  { id: "basics", title: "Listing Basics" },
+  { id: "perfectFor", title: "Perfect For" },
+  { id: "bookingPricing", title: "Booking & Pricing" },
+  { id: "serviceArea", title: "Service Area" },
+  { id: "logistics", title: "Logistics" },
+  { id: "media", title: "Photos & Videos" },
+];
 
-const LISTING_TAG_KEY = "__listing__";
-
-// Popular tags suggestions per rental type
-const TAG_SUGGESTIONS: Record<string, string[]> = {
-  Arches: ["Hex Arch", "Round Arch", "Boho", "Gold", "White", "Modern"],
-  Backdrops: ["Draped", "Neutral", "Black", "White", "Vintage", "Modern"],
-  Signage: ["Welcome", "Seating Chart", "Bar Menu", "Neon", "Acrylic", "Wood"],
-  "Tabletop Rentals": ["Candles", "Neutral", "Modern", "Gold", "Silver", "Vintage"],
-  Linens: ["Ivory", "White", "Black", "Sage", "Dusty Rose", "Velvet"],
-  Lighting: ["Bistro Lights", "Uplighting", "Neon", "Warm", "Cool", "LED"],
-  "Photo Booths": ["Vintage Booth", "Backdrop", "Accessories", "Modern", "Neon", "Prints"],
-  "Furniture & Lounges": ["Lounge", "Rattan", "Modern", "Vintage", "Neutral", "White"],
-  "Floral & Greenery": ["Neutral", "Modern", "Boho", "Green", "White", "Garden"],
-  "Food Displays": ["Donut Wall", "Champagne Wall", "Dessert", "Modern", "Rustic"],
-  "Carts & Stations": ["Coffee Cart", "Bar Cart", "Modern", "Vintage", "White"],
-  "Games & Activities": ["Lawn Games", "Cornhole", "Giant Jenga", "Kids", "Outdoor"],
-  "Staging & Structures": ["Stage", "Platform", "Pipe & Drape", "Modern", "Black"],
-  "Apparel & Accessories": ["Hats", "Robes", "Accessories", "Modern", "Neutral"],
-  Other: ["Custom", "Handmade", "Modern", "Neutral"],
+const STEP_META: Record<
+  StepId,
+  {
+    icon: typeof ClipboardList;
+    description: string;
+  }
+> = {
+  basics: {
+    icon: ClipboardList,
+    description: "Core listing info.",
+  },
+  perfectFor: {
+    icon: Sparkles,
+    description: "Optional event fit.",
+  },
+  bookingPricing: {
+    icon: DollarSign,
+    description: "Booking behavior and rates.",
+  },
+  serviceArea: {
+    icon: MapPin,
+    description: "Coverage center and radius.",
+  },
+  logistics: {
+    icon: Truck,
+    description: "Travel, delivery, setup.",
+  },
+  media: {
+    icon: ImageIcon,
+    description: "Publish-ready photos.",
+  },
 };
 
-/** Normalize tags:
- * - strip special symbols
- * - collapse whitespace
- * - Title Case display label
- * - slug lowercase with hyphens
- * - max 30 chars (label)
- */
-function normalizeTag(raw: string): { label: string; slug: string } | null {
+const PERFECT_FOR_EMOJI: Record<string, string> = {
+  Weddings: "💍",
+  Corporate: "🏢",
+  "Baby Showers": "🍼",
+  Photoshoots: "📸",
+  Birthdays: "🎂",
+  "Bridal Showers": "👰",
+  Graduations: "🎓",
+  "Holiday Parties": "🎉",
+  Concert: "🎵",
+  Proposal: "💐",
+  "Bachelor Party": "🍻",
+  "Bachelorette Party": "💃",
+  Anniversary: "❤️",
+  "Gender Reveal": "🎈",
+  Quinceañera: "👑",
+  Baptism: "🙏",
+  Funeral: "🕊️",
+  Reunion: "🤝",
+  Conference: "🗂️",
+  Sporting: "🏅",
+  "School Dance": "🪩",
+  Other: "✨",
+};
+
+const CATEGORY_HELPER_TEXT: Record<
+  ListingHelperCategory,
+  { description: string; included: string; tags: string }
+> = {
+  rental: {
+    description:
+      "Describe the style, condition, materials, dimensions, and how this rental is typically used.",
+    included:
+      "Clarify exactly what the customer gets: pieces, quantities, color/style notes, and exclusions.",
+    tags: "Examples: material, color, decor style, event type.",
+  },
+  venue: {
+    description:
+      "Describe the space, atmosphere, capacity, layout, and types of events hosted.",
+    included:
+      "Clarify what comes with the venue: tables, chairs, prep areas, parking, and restrictions.",
+    tags: "Examples: indoor, outdoor, capacity, wedding venue.",
+  },
+  service: {
+    description:
+      "Describe what you do, your experience, and what customers should expect.",
+    included:
+      "Clarify what is included: hours, setup time, travel radius, and equipment.",
+    tags: "Examples: DJ, photography, coordination, lighting.",
+  },
+  caterer: {
+    description:
+      "Describe your food style, specialties, and service style (buffet, plated, drop-off).",
+    included:
+      "Clarify what is included: food quantity, staff, utensils, setup, cleanup.",
+    tags: "Examples: cuisine type, buffet, desserts, dietary options.",
+  },
+};
+
+function toHelperCategory(category: ListingCategory | ""): ListingHelperCategory {
+  if (category === "Venue") return "venue";
+  if (category === "Service") return "service";
+  if (category === "Catering") return "caterer";
+  return "rental";
+}
+
+function normalizeTag(raw: string): ListingTag | null {
   const trimmed = (raw ?? "").trim();
   if (!trimmed) return null;
 
-  // allow letters/numbers/spaces/hyphens only
   const cleaned = trimmed.replace(/[^a-zA-Z0-9\s-]/g, "").replace(/\s+/g, " ").trim();
   if (!cleaned) return null;
 
   const capped = cleaned.slice(0, 30);
-
   const label = capped
     .split(" ")
     .filter(Boolean)
-    .map((w) => w.charAt(0).toUpperCase() + w.slice(1).toLowerCase())
+    .map((word) => `${word.charAt(0).toUpperCase()}${word.slice(1).toLowerCase()}`)
     .join(" ");
 
-  const slug = label
-    .toLowerCase()
-    .replace(/\s+/g, "-")
-    .replace(/-+/g, "-")
-    .trim();
-
+  const slug = label.toLowerCase().replace(/\s+/g, "-").replace(/-+/g, "-").trim();
   if (!slug) return null;
   return { label, slug };
-}
-
-function titleCaseNoSymbols(raw: string, maxLen: number) {
-  const cleaned = (raw ?? "")
-    .replace(/[^a-zA-Z0-9\s-]/g, "")
-    .replace(/\s+/g, " ")
-    .trim()
-    .slice(0, maxLen);
-
-  if (!cleaned) return "";
-
-  return cleaned
-    .split(" ")
-    .filter(Boolean)
-    .map((w) => w.charAt(0).toUpperCase() + w.slice(1).toLowerCase())
-    .join(" ");
 }
 
 function normalizeIncludedBullet(raw: string): string {
@@ -357,11 +269,142 @@ function normalizeIncludedBullet(raw: string): string {
     .trim()
     .replace(/[.]+$/g, "")
     .trim()
-    .slice(0, 80);
+    .slice(0, 100);
 
   if (!cleaned) return "";
-  return cleaned.charAt(0).toUpperCase() + cleaned.slice(1);
+
+  return cleaned
+    .split(" ")
+    .filter(Boolean)
+    .map((word) => `${word.charAt(0).toUpperCase()}${word.slice(1)}`)
+    .join(" ");
 }
+
+function normalizeTitleInput(raw: string, maxLen: number): string {
+  const cleaned = (raw ?? "")
+    .replace(/\s+/g, " ")
+    .slice(0, maxLen);
+
+  // Force first letter of each word segment to uppercase.
+  return cleaned.replace(/(^|[\s/-])([a-z])/g, (_, prefix: string, char: string) => `${prefix}${char.toUpperCase()}`);
+}
+
+function toMoneyCents(raw: string): number | null {
+  const value = Number(raw);
+  if (!Number.isFinite(value) || value < 0) return null;
+  return Math.round(value * 100);
+}
+
+function parsePositiveInt(raw: string): number {
+  const value = Math.floor(Number(raw));
+  if (!Number.isFinite(value) || value < 1) return 1;
+  return value;
+}
+
+function makeCircleGeoJSON(
+  center: { lat: number; lng: number },
+  radiusMiles: number,
+  points = 64,
+) {
+  const radiusKm = radiusMiles * 1.60934;
+  const earthRadiusKm = 6371;
+
+  const lat = (center.lat * Math.PI) / 180;
+  const lng = (center.lng * Math.PI) / 180;
+  const coordinates: [number, number][] = [];
+
+  for (let i = 0; i <= points; i += 1) {
+    const bearing = (2 * Math.PI * i) / points;
+    const lat2 = Math.asin(
+      Math.sin(lat) * Math.cos(radiusKm / earthRadiusKm) +
+        Math.cos(lat) * Math.sin(radiusKm / earthRadiusKm) * Math.cos(bearing),
+    );
+    const lng2 =
+      lng +
+      Math.atan2(
+        Math.sin(bearing) * Math.sin(radiusKm / earthRadiusKm) * Math.cos(lat),
+        Math.cos(radiusKm / earthRadiusKm) - Math.sin(lat) * Math.sin(lat2),
+      );
+
+    coordinates.push([lng2 * (180 / Math.PI), lat2 * (180 / Math.PI)]);
+  }
+
+  return {
+    type: "Feature" as const,
+    properties: { radiusMiles },
+    geometry: {
+      type: "Polygon" as const,
+      coordinates: [coordinates],
+    },
+  };
+}
+
+function boundsFromCircleFeature(feature: any) {
+  const ring: [number, number][] | undefined =
+    feature?.geometry?.type === "Polygon" ? feature.geometry.coordinates?.[0] : undefined;
+  if (!ring || ring.length === 0) return null;
+
+  let minLng = ring[0][0];
+  let maxLng = ring[0][0];
+  let minLat = ring[0][1];
+  let maxLat = ring[0][1];
+
+  ring.forEach(([lng, lat]) => {
+    if (lng < minLng) minLng = lng;
+    if (lng > maxLng) maxLng = lng;
+    if (lat < minLat) minLat = lat;
+    if (lat > maxLat) maxLat = lat;
+  });
+
+  return new mapboxgl.LngLatBounds([minLng, minLat], [maxLng, maxLat]);
+}
+
+function isCategory(value: string): value is ListingCategory {
+  return CATEGORY_OPTIONS.some((option) => option.value === value);
+}
+
+function ToggleGroup({
+  value,
+  onChange,
+  trueLabel,
+  falseLabel,
+}: {
+  value: boolean;
+  onChange: (next: boolean) => void;
+  trueLabel: string;
+  falseLabel: string;
+}) {
+  return (
+    <div className="inline-flex overflow-hidden rounded-lg border border-border">
+      <button
+        type="button"
+        onClick={() => onChange(true)}
+        className={[
+          "px-4 py-2 text-sm font-medium transition",
+          value
+            ? "bg-primary text-primary-foreground"
+            : "bg-background text-muted-foreground hover:bg-muted",
+        ].join(" ")}
+      >
+        {trueLabel}
+      </button>
+      <button
+        type="button"
+        onClick={() => onChange(false)}
+        className={[
+          "border-l border-border px-4 py-2 text-sm font-medium transition",
+          !value
+            ? "bg-primary text-primary-foreground"
+            : "bg-background text-muted-foreground hover:bg-muted",
+        ].join(" ")}
+      >
+        {falseLabel}
+      </button>
+    </div>
+  );
+}
+
+type UploadedListingPhoto = { filename: string; url: string };
 
 export type CreateListingWizardProps = {
   onClose: () => void;
@@ -369,178 +412,348 @@ export type CreateListingWizardProps = {
   initialData?: any;
 };
 
-export function CreateListingWizard({ onClose, editMode, initialData }: CreateListingWizardProps) {
+export function CreateListingWizard({ onClose }: CreateListingWizardProps) {
   const { toast } = useToast();
 
-  const { data: rentalTypes = [] } = useQuery<{ slug: string; label: string }[]>({
-    queryKey: ["rental-types"],
-    queryFn: async () => {
-      const res = await fetch("/api/rental-types");
-      if (!res.ok) throw new Error("Failed to load rental types");
-      return res.json();
-    },
-  });
+  const { data: me } = useQuery({ queryKey: ["/api/vendor/me"] });
+  const { data: vendorProfile } = useQuery({ queryKey: ["/api/vendor/profile"] });
 
-  const rentalSlugToLabel = useMemo(() => {
-    const m = new Map<string, string>();
-    for (const r of rentalTypes) m.set(r.slug, r.label);
-    return m;
-  }, [rentalTypes]);
+  const vendorType = ((me as any)?.vendorType || "unspecified") as string;
 
-  const rentalLabelToSlug = useMemo(() => {
-    const m = new Map<string, string>();
-    for (const r of rentalTypes) m.set(r.label, r.slug);
-    return m;
-  }, [rentalTypes]);
+  const [currentStep, setCurrentStep] = useState<StepId>("basics");
+  const [maxStepReached, setMaxStepReached] = useState(0);
+  const [draft, setDraft] = useState<ListingDraft>(DEFAULT_DRAFT);
+  const [listingId, setListingId] = useState<string | null>(null);
 
-    const rentalTypeLabels: string[] =
-    rentalTypes.length > 0
-      ? rentalTypes.map((r: { slug: string; label: string }) => r.label)
-      : [...RENTAL_TYPES_FALLBACK];
+  const [tagInput, setTagInput] = useState("");
+  const [includedInput, setIncludedInput] = useState("");
 
-// Vendor profile (Auth0 Bearer automatically attached by queryClient default queryFn)
-const { data: me } = useQuery({
-  queryKey: ["/api/vendor/me"],
-});
+  const [isPublishing, setIsPublishing] = useState(false);
+  const [isSavingDraft, setIsSavingDraft] = useState(false);
+  const [attemptedStepAdvance, setAttemptedStepAdvance] = useState<Partial<Record<StepId, boolean>>>({});
 
-const { data: vendorProfile } = useQuery({
-  queryKey: ["/api/vendor/profile"],
-});
+  const createRequestedRef = useRef(false);
+  const pendingPayloadRef = useRef<any | null>(null);
 
-// Wizard state
-const vendorType = ((me as any)?.vendorType || "unspecified") as string;
-const [currentStep, setCurrentStep] = useState<StepId>("tags");
-const [draft, setDraft] = useState<ListingDraft>(DEFAULT_DRAFT);
+  const fileInputRef = useRef<HTMLInputElement | null>(null);
 
-  // Default listing service center from vendor onboarding address (one-time per listing)
-  useEffect(() => {
-    if (!vendorProfile) return;
+  const mapContainerRef = useRef<HTMLDivElement | null>(null);
+  const mapRef = useRef<mapboxgl.Map | null>(null);
+  const [isMapReady, setIsMapReady] = useState(false);
+  const [mapError, setMapError] = useState<string | null>(null);
 
-    // Don’t overwrite if listing already has a center/location
-    if (draft.serviceCenter || draft.serviceLocation) return;
-
-    const addr = (vendorProfile as any)?.address || "";
-    const city = (vendorProfile as any)?.city || "";
-    const state = (vendorProfile as any)?.state || "";
-    const zip =
-      (vendorProfile as any)?.zipCode || (vendorProfile as any)?.postalCode || "";
-
-    const q = [addr, city, state, zip].filter(Boolean).join(", ").trim();
-    if (!q) return;
-
-    (async () => {
-      try {
-        const res = await fetch(`/api/locations/search?q=${encodeURIComponent(q)}`);
-        if (!res.ok) return;
-
-        const results: LocationResult[] = await res.json();
-        const top = results?.[0];
-        if (!top) return;
-
-        // Ensure required fields exist for the shared LocationResult type
-        const normalizedTop: LocationResult = {
-          ...top,
-          id: (top as any).id ?? `loc_${top.lat}_${top.lng}`,
-          label: (top as any).label ?? [addr, city, state, zip].filter(Boolean).join(", "),
-        };
-
-        setDraft((d) => {
-          if (d.serviceCenter || d.serviceLocation) return d;
-          return {
-            ...d,
-            serviceLocation: normalizedTop,
-            serviceCenter: { lat: normalizedTop.lat, lng: normalizedTop.lng },
-          };
-        });
-        if (!top) return;
-
-        setDraft((d) => {
-          if (d.serviceCenter || d.serviceLocation) return d; // async safety
-          return {
-            ...d,
-            serviceLocation: top,                 // <- makes LocationPicker show text
-            serviceCenter: { lat: top.lat, lng: top.lng },
-          };
-        });
-      } catch {
-        // ignore
-      }
-    })();
-  }, [vendorProfile, draft.serviceCenter, draft.serviceLocation]);
-
-
-
-  useEffect(() => {
-    console.log("[CreateListingWizard] vendorProfile =", vendorProfile);
-  }, [vendorProfile]);
-
-
-  // Track the furthest step the user reached using Next (prevents “jumping forward” via sidebar)
-  // -------- Step 5: Service area map state (listing-specific) --------
-  const mode = draft.serviceAreaMode ?? "radius";
-  const radius = draft.serviceRadiusMiles ?? 0;
-
-  // Center derived from selected location first, then stored coords
-  const center =
-    draft.serviceLocation
-      ? { lat: draft.serviceLocation.lat, lng: draft.serviceLocation.lng }
-      : draft.serviceCenter
-      ? draft.serviceCenter
-      : null;
+  const center = useMemo(() => {
+    if (draft.serviceLocation) {
+      return { lat: draft.serviceLocation.lat, lng: draft.serviceLocation.lng };
+    }
+    if (draft.serviceCenter) {
+      return { lat: draft.serviceCenter.lat, lng: draft.serviceCenter.lng };
+    }
+    return null;
+  }, [
+    draft.serviceLocation?.lat,
+    draft.serviceLocation?.lng,
+    draft.serviceCenter?.lat,
+    draft.serviceCenter?.lng,
+  ]);
 
   const circleFeature = useMemo(() => {
     if (!center) return null;
-    return makeCircleGeoJSON(center, radius);
-  }, [center, radius]);
+    return makeCircleGeoJSON(center, draft.serviceRadiusMiles);
+  }, [center, draft.serviceRadiusMiles]);
 
-  const radiusFeatureCollection = useMemo(() => {
-    return {
-      type: "FeatureCollection" as const,
-      features: circleFeature ? [circleFeature] : [],
-    };
-  }, [circleFeature]);
+  const radiusFeatureCollection = useMemo(
+    () => ({ type: "FeatureCollection" as const, features: circleFeature ? [circleFeature] : [] }),
+    [circleFeature],
+  );
 
-  const centerFeatureCollection = useMemo(() => {
-    return {
+  const centerFeatureCollection = useMemo(
+    () => ({
       type: "FeatureCollection" as const,
       features: center
         ? [
             {
               type: "Feature" as const,
               properties: {},
-              geometry: {
-                type: "Point" as const,
-                coordinates: [center.lng, center.lat],
-              },
+              geometry: { type: "Point" as const, coordinates: [center.lng, center.lat] },
             },
           ]
         : [],
+    }),
+    [center],
+  );
+
+  const createDraftMutation = useMutation({
+    mutationFn: async () => {
+      const res = await apiRequest("POST", "/api/vendor/listings", { listingData: {} });
+      const json = await res.json();
+      if (!res.ok) throw new Error(json?.error || "Failed to create draft");
+      return json;
+    },
+    onSuccess: (payload: any) => {
+      const id = payload?.id || payload?.data?.id;
+      if (!id) return;
+      setListingId(id);
+
+      if (pendingPayloadRef.current) {
+        updateDraftMutation.mutate({ id, payload: pendingPayloadRef.current });
+        pendingPayloadRef.current = null;
+      }
+    },
+    onError: (error: any) => {
+      createRequestedRef.current = false;
+      toast({
+        title: "Unable to create draft",
+        description: error?.message || "Please try again.",
+        variant: "destructive",
+      });
+    },
+  });
+
+  const updateDraftMutation = useMutation({
+    mutationFn: async ({ id, payload }: { id: string; payload: any }) => {
+      const res = await apiRequest("PATCH", `/api/vendor/listings/${id}`, { listingData: payload });
+      const json = await res.json();
+      if (!res.ok) throw new Error(json?.error || "Failed to update listing");
+      return json;
+    },
+  });
+
+  const stepIndex = useMemo(() => STEPS.findIndex((step) => step.id === currentStep), [currentStep]);
+
+  const showTravelSection = draft.category === "Service" || draft.category === "Catering";
+  const showDeliverySection = draft.category === "Rental" || draft.category === "Catering";
+  const showSetupSection = draft.category === "Rental" || draft.category === "Venue" || draft.category === "Catering";
+  const bookingTypeRequired = draft.category === "Service" || draft.category === "Venue" || draft.category === "Catering";
+
+  const listingTags = useMemo(() => draft.tagsByPropType[LISTING_TAG_KEY] ?? [], [draft.tagsByPropType]);
+  const helperText = CATEGORY_HELPER_TEXT[toHelperCategory(draft.category)];
+
+  const hasCategory = Boolean(draft.category);
+  const hasTitle = draft.listingTitle.trim().length > 0;
+  const hasDescription = draft.listingDescription.trim().length > 0;
+  const hasPrice = Number(draft.rate) > 0;
+  const hasLocation =
+    Boolean(draft.serviceLocation?.label) &&
+    Number.isFinite(Number(draft.serviceCenter?.lat)) &&
+    Number.isFinite(Number(draft.serviceCenter?.lng)) &&
+    Number(draft.serviceRadiusMiles) > 0;
+  const hasMinPhotos = draft.photoNames.length >= MIN_PHOTOS_FOR_PUBLISH;
+  const hasValidQuantity = draft.category !== "Rental" || parsePositiveInt(draft.quantity) > 0;
+
+  const publishReady = hasCategory && hasTitle && hasDescription && hasPrice && hasLocation && hasMinPhotos;
+
+  const canContinue = useMemo(() => {
+    if (currentStep === "basics") return hasCategory && hasTitle && hasDescription;
+    if (currentStep === "bookingPricing") return hasPrice && hasValidQuantity;
+    if (currentStep === "serviceArea") return hasLocation;
+    return true;
+  }, [currentStep, hasCategory, hasTitle, hasDescription, hasPrice, hasValidQuantity, hasLocation]);
+
+  const buildListingPayload = useMemo(() => {
+    const quantity = parsePositiveInt(draft.quantity);
+    const priceNumber = Number(draft.rate);
+    const price = Number.isFinite(priceNumber) ? priceNumber : null;
+    const instantBookEnabled = draft.category === "Rental" ? true : draft.bookingType === "instant";
+
+    const centerLat = draft.serviceCenter?.lat ?? draft.serviceLocation?.lat ?? null;
+    const centerLng = draft.serviceCenter?.lng ?? draft.serviceLocation?.lng ?? null;
+
+    return {
+      vendorType,
+      category: draft.category || undefined,
+      listingTitle: draft.listingTitle.trim(),
+      title: draft.listingTitle.trim(),
+      listingDescription: draft.listingDescription.trim(),
+      description: draft.listingDescription.trim(),
+      whatsIncluded: draft.whatsIncluded,
+      tagsByPropType: {
+        ...(draft.tagsByPropType || {}),
+        [LISTING_TAG_KEY]: listingTags,
+      },
+      tags: listingTags.map((tag) => tag.label),
+      popularFor: draft.popularFor,
+
+      instantBookEnabled,
+      bookingType: draft.category === "Rental" ? "instant" : draft.bookingType,
+      pricingUnit: draft.pricingUnit,
+      rate: price,
+      price,
+      priceCents: price != null ? Math.round(price * 100) : null,
+
+      quantity: draft.category === "Rental" ? quantity : null,
+
+      serviceAreaMode: "radius",
+      serviceRadiusMiles: Number(draft.serviceRadiusMiles),
+      listingServiceCenterLabel: draft.serviceLocation?.label ?? null,
+      listingServiceCenterLat: centerLat,
+      listingServiceCenterLng: centerLng,
+      serviceCenter: centerLat != null && centerLng != null ? { lat: centerLat, lng: centerLng } : null,
+      serviceLocation: draft.serviceLocation
+        ? {
+            ...draft.serviceLocation,
+            country:
+              typeof (draft.serviceLocation as any)?.country === "string" &&
+              String((draft.serviceLocation as any).country).trim().length > 0
+                ? (draft.serviceLocation as any).country
+                : "United States",
+          }
+        : null,
+
+      travelOffered: showTravelSection ? draft.travelOffered : false,
+      travelFeeEnabled: showTravelSection ? draft.travelOffered && draft.travelFeeEnabled : false,
+      travelFeeType: showTravelSection && draft.travelFeeEnabled ? draft.travelFeeType : null,
+      travelFeeAmount: showTravelSection && draft.travelFeeEnabled ? Number(draft.travelFeeAmount || 0) : null,
+      travelFeeAmountCents:
+        showTravelSection && draft.travelFeeEnabled ? toMoneyCents(draft.travelFeeAmount) : null,
+
+      deliveryIncluded: showDeliverySection ? draft.deliveryIncluded : false,
+      deliveryOffered: showDeliverySection ? draft.deliveryIncluded : false,
+      pickupOffered: showDeliverySection,
+      deliveryFeeEnabled: showDeliverySection ? draft.deliveryIncluded && draft.deliveryFeeEnabled : false,
+      deliveryFeeAmount:
+        showDeliverySection && draft.deliveryIncluded && draft.deliveryFeeEnabled
+          ? Number(draft.deliveryFeeAmount || 0)
+          : null,
+      deliveryFeeAmountCents:
+        showDeliverySection && draft.deliveryIncluded && draft.deliveryFeeEnabled
+          ? toMoneyCents(draft.deliveryFeeAmount)
+          : null,
+
+      setupIncluded: showSetupSection ? draft.setupIncluded : false,
+      setupOffered: showSetupSection ? draft.setupIncluded : false,
+      setupFeeEnabled: showSetupSection ? draft.setupIncluded && draft.setupFeeEnabled : false,
+      setupFeeAmount:
+        showSetupSection && draft.setupIncluded && draft.setupFeeEnabled ? Number(draft.setupFeeAmount || 0) : null,
+      setupFeeAmountCents:
+        showSetupSection && draft.setupIncluded && draft.setupFeeEnabled
+          ? toMoneyCents(draft.setupFeeAmount)
+          : null,
+
+      photos: {
+        count: draft.photoNames.length,
+        names: draft.photoNames,
+        coverPhotoName: draft.photoNames[0] ?? null,
+        coverPhotoIndex: 0,
+        coverPhotoRatio: draft.coverPhotoRatio,
+        cropsByName: draft.photoCropsByName,
+      },
+      videos: {
+        names: draft.videoNames,
+        count: draft.videoNames.length,
+      },
     };
-  }, [center]);
+  }, [draft, listingTags, showDeliverySection, showSetupSection, showTravelSection, vendorType]);
 
-  const [isMapReady, setIsMapReady] = useState(false);
-  const [errorMsg, setErrorMsg] = useState<string | null>(null);
-
-  const mapContainerRef = useRef<HTMLDivElement | null>(null);
-  const mapRef = useRef<mapboxgl.Map | null>(null);
-  // Initialize the map once (Step 7)
   useEffect(() => {
-    if (currentStep !== "deliverySetup") return;
+    if (!vendorProfile) return;
+    if (draft.serviceCenter || draft.serviceLocation) return;
+
+    const profile = vendorProfile as any;
+    const city = profile?.businessCity || profile?.city || "";
+    const state = profile?.businessState || profile?.state || "";
+    const zip = profile?.businessZip || profile?.zipCode || profile?.postalCode || "";
+    const address = profile?.businessStreet || profile?.streetAddress || profile?.address || "";
+    const label =
+      profile?.businessAddressLabel ||
+      [address, city, state, zip].filter(Boolean).join(", ");
+
+    const homeBaseLat = Number(profile?.homeBaseLat);
+    const homeBaseLng = Number(profile?.homeBaseLng);
+
+    if (Number.isFinite(homeBaseLat) && Number.isFinite(homeBaseLng)) {
+      setDraft((prev) => ({
+        ...prev,
+        serviceCenter: { lat: homeBaseLat, lng: homeBaseLng },
+        serviceLocation: {
+          id: "vendor-home-base",
+          label: label || "Vendor home base",
+          lat: homeBaseLat,
+          lng: homeBaseLng,
+          city: city || undefined,
+          state: state || undefined,
+          zipCode: zip || undefined,
+          country: "United States",
+        },
+      }));
+      return;
+    }
+
+    const query = [address, city, state, zip].filter(Boolean).join(", ").trim();
+    if (!query) return;
+
+    void (async () => {
+      try {
+        const res = await fetch(`/api/locations/search?q=${encodeURIComponent(query)}`);
+        if (!res.ok) return;
+        const results: LocationResult[] = await res.json();
+        const first = results?.[0];
+        if (!first) return;
+
+        setDraft((prev) => ({
+          ...prev,
+          serviceCenter: { lat: first.lat, lng: first.lng },
+          serviceLocation: {
+            ...first,
+            id: first.id || `loc_${first.lat}_${first.lng}`,
+            label: first.label || label || "Service center",
+          },
+        }));
+      } catch {
+        // no-op
+      }
+    })();
+  }, [vendorProfile, draft.serviceCenter, draft.serviceLocation]);
+
+  useEffect(() => {
+    const hasMeaningfulData =
+      Boolean(draft.category) ||
+      draft.listingTitle.trim().length > 0 ||
+      draft.listingDescription.trim().length > 0 ||
+      draft.photoNames.length > 0 ||
+      Number(draft.rate) > 0;
+
+    if (!hasMeaningfulData) return;
+
+    const payload = buildListingPayload;
+
+    if (!listingId) {
+      pendingPayloadRef.current = payload;
+      if (!createRequestedRef.current) {
+        createRequestedRef.current = true;
+        createDraftMutation.mutate();
+      }
+      return;
+    }
+
+    const timer = setTimeout(() => {
+      updateDraftMutation.mutate({ id: listingId, payload });
+    }, 1200);
+
+    return () => clearTimeout(timer);
+  }, [
+    buildListingPayload,
+    createDraftMutation,
+    draft,
+    listingId,
+    updateDraftMutation,
+  ]);
+
+  useEffect(() => {
+    if (currentStep !== "serviceArea") return;
     if (!mapContainerRef.current) return;
     if (mapRef.current) return;
-    setErrorMsg(null);
+
+    setMapError(null);
 
     if (!MAPBOX_TOKEN) {
-      console.error("Missing VITE_MAPBOX_TOKEN");
-      setErrorMsg("Missing Mapbox token. Please set VITE_MAPBOX_TOKEN.");
+      setMapError("Missing Mapbox token (VITE_MAPBOX_TOKEN).");
       return;
     }
 
     mapboxgl.accessToken = MAPBOX_TOKEN;
 
-    const initialCenter: [number, number] = center
-      ? [center.lng, center.lat]
-      : [-111.891, 40.7608]; // fallback (UT)
+    const initialCenter: [number, number] = center ? [center.lng, center.lat] : [-111.891, 40.7608];
 
     const map = new mapboxgl.Map({
       container: mapContainerRef.current,
@@ -548,6 +761,8 @@ const [draft, setDraft] = useState<ListingDraft>(DEFAULT_DRAFT);
       center: initialCenter,
       zoom: 10,
     });
+    let deferredResizeId: number | null = null;
+    let loadTimeoutId: number | null = null;
 
     mapRef.current = map;
 
@@ -555,28 +770,25 @@ const [draft, setDraft] = useState<ListingDraft>(DEFAULT_DRAFT);
       const detail =
         (event as any)?.error?.message ||
         (event as any)?.error?.statusText ||
-        "";
-      setErrorMsg(detail ? `Map failed to load: ${detail}` : "Map failed to load.");
+        "Map failed to load.";
+      setMapError(detail);
     });
 
     map.on("load", () => {
       setIsMapReady(true);
-
       map.addSource("radius", {
         type: "geojson",
         data: { type: "FeatureCollection", features: [] },
       });
-
       map.addLayer({
         id: "radius-fill",
         type: "fill",
         source: "radius",
         paint: {
           "fill-color": "#9EDBC0",
-          "fill-opacity": 0.25,
+          "fill-opacity": 0.28,
         },
       });
-
       map.addLayer({
         id: "radius-outline",
         type: "line",
@@ -586,12 +798,10 @@ const [draft, setDraft] = useState<ListingDraft>(DEFAULT_DRAFT);
           "line-width": 2,
         },
       });
-
       map.addSource("center", {
         type: "geojson",
         data: { type: "FeatureCollection", features: [] },
       });
-
       map.addLayer({
         id: "center-point",
         type: "circle",
@@ -607,374 +817,133 @@ const [draft, setDraft] = useState<ListingDraft>(DEFAULT_DRAFT);
       requestAnimationFrame(() => {
         try {
           map.resize();
-        } catch {}
+        } catch {
+          // no-op
+        }
       });
+
+      deferredResizeId = window.setTimeout(() => {
+        try {
+          map.resize();
+        } catch {
+          // no-op
+        }
+      }, 140);
     });
+
+    loadTimeoutId = window.setTimeout(() => {
+      if (map.isStyleLoaded()) {
+        setIsMapReady(true);
+        try {
+          map.resize();
+        } catch {
+          // no-op
+        }
+        return;
+      }
+      setMapError((previous) => previous ?? "Map failed to load. Check your Mapbox token and allowed URL settings.");
+    }, 5000);
 
     return () => {
-      map.remove();
+      if (deferredResizeId !== null) {
+        window.clearTimeout(deferredResizeId);
+      }
+      if (loadTimeoutId !== null) {
+        window.clearTimeout(loadTimeoutId);
+      }
+      try {
+        map.remove();
+      } catch {
+        // no-op
+      }
       mapRef.current = null;
+      setIsMapReady(false);
     };
-    // init once
-    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [currentStep]);
 
-  // ResizeObserver: fixes “blank map” when container size changes
   useEffect(() => {
     const map = mapRef.current;
-    const el = mapContainerRef.current;
-    if (!map || !el) return;
+    const mapContainer = mapContainerRef.current;
+    if (!map || !mapContainer) return;
 
-    const ro = new ResizeObserver(() => {
+    const observer = new ResizeObserver(() => {
       try {
         map.resize();
-      } catch {}
+      } catch {
+        // no-op
+      }
     });
 
-    ro.observe(el);
+    observer.observe(mapContainer);
 
     requestAnimationFrame(() => {
       try {
         map.resize();
-      } catch {}
+      } catch {
+        // no-op
+      }
     });
 
-    return () => ro.disconnect();
+    return () => observer.disconnect();
   }, [currentStep]);
 
-  // Update sources + camera whenever center/radius changes (and after map is ready)
   useEffect(() => {
     const map = mapRef.current;
-    if (!map) return;
-    if (!isMapReady) return;
+    if (!map || !isMapReady) return;
+    if (!map.isStyleLoaded()) return;
 
-    const radiusSrc = map.getSource("radius") as mapboxgl.GeoJSONSource | undefined;
-    if (radiusSrc) radiusSrc.setData(radiusFeatureCollection as any);
+    const radiusSource = map.getSource("radius") as mapboxgl.GeoJSONSource | undefined;
+    if (radiusSource) radiusSource.setData(radiusFeatureCollection as any);
 
-    const centerSrc = map.getSource("center") as mapboxgl.GeoJSONSource | undefined;
-    if (centerSrc) centerSrc.setData(centerFeatureCollection as any);
+    const centerSource = map.getSource("center") as mapboxgl.GeoJSONSource | undefined;
+    if (centerSource) centerSource.setData(centerFeatureCollection as any);
 
-    if (center) {
-      // If using radius mode, fit the viewport to show the whole circle
-      if (mode === "radius" && circleFeature && radius >= 15) {
-        const b = boundsFromCircleFeature(circleFeature);
-        if (b) {
-          map.fitBounds(b, {
-            padding: 24,
-            duration: 600,
-            maxZoom: 11,
-          });
-          return;
-        }
-      }
+    if (!center) return;
 
-      // Fallback
-      map.easeTo({
-        center: [center.lng, center.lat],
-        zoom: 10,
-        duration: 500,
-      });
-    }
-  }, [
-    isMapReady,
-    center,
-    radius,
-    mode,
-    circleFeature,
-    radiusFeatureCollection,
-    centerFeatureCollection,
-  ]);
-
-
-  const [maxStepReached, setMaxStepReached] = useState<number>(0);
-
-  const [listingId, setListingId] = useState<string | null>(null);
-  const hasCreatedDraftRef = useRef(false);
-
-  const pendingSaveRef = useRef<any | null>(null);
-
-  const createDraft = useMutation({
-    mutationFn: async () => {
-      const res = await apiRequest("POST", "/api/vendor/listings", { listingData: {} });
-      const json = await res.json();
-      if (!res.ok) throw new Error(json?.error || "Failed to create draft");
-      return json;
-    },
-    onSuccess: (data: any) => {
-      const id = data?.data?.id || data?.id;
-      if (id) {
-        setListingId(id);
-
-        // Flush any autosave that fired before the draft existed
-        if (pendingSaveRef.current) {
-          updateDraft.mutate(pendingSaveRef.current);
-          pendingSaveRef.current = null;
-        }
-      }
-    },
-
-    onError: (err: any) => {
-      toast({
-        title: "Error",
-        description: err?.message || "Could not create draft listing.",
-        variant: "destructive",
-      });
-    },
-  });
-
-  const updateDraft = useMutation({
-    mutationFn: async (payload: any) => {
-      if (!listingId) return;
-      const res = await apiRequest("PATCH", `/api/vendor/listings/${listingId}`, {
-        listingData: payload,
-      });
-      const json = await res.json();
-      if (!res.ok) throw new Error(json?.error || "Failed to update draft");
-      return json;
-    },
-  });
-
-  // Autosave listingData (serializable only)
-  useEffect(() => {
-    // Only create a draft after the user has actually started entering data
-    const hasMeaningfulData =
-      (draft.listingTitle || "").trim().length > 0 ||
-      (draft.listingDescription || "").trim().length > 0 ||
-      (draft.whatsIncluded?.length || 0) > 0 ||
-      (draft.rentalTypes?.length || 0) > 0 ||
-      (draft.photoPreviews?.length || 0) > 0 ||
-      (draft.rate && String(draft.rate).trim().length > 0);
-
-    // If user hasn't done anything yet, do nothing (prevents empty shell drafts)
-    if (!hasMeaningfulData) return;
-
-    const payload = {
-  vendorType,
-  pricingMode: draft.pricingMode,
-
-  rentalTypes: draft.rentalTypes,
-  propTypes: draft.rentalTypes, // legacy compatibility for existing listing readers
-  quantitiesByPropType: draft.quantitiesByPropType,
-
-  listingTitle: draft.listingTitle,
-  listingDescription: draft.listingDescription,
-  whatsIncluded: draft.whatsIncluded,
-  perPropDetails: draft.perPropDetails,
-
-  tagsByPropType: draft.tagsByPropType,
-  popularFor: draft.popularFor,
-
-  pricing: {
-    unit: draft.pricingUnit,
-    rate: draft.rate ? Number(draft.rate) : null,
-    minimumHours: draft.minimumHours ? Number(draft.minimumHours) : null,
-    pricingByPropType: Object.fromEntries(
-      Object.entries(draft.pricingByPropType).map(([k, v]) => [
-        k,
-        {
-          rate: v.rate ? Number(v.rate) : null,
-          minimumHours: v.minimumHours ? Number(v.minimumHours) : null,
-        },
-      ])
-    ),
-  },
-
-  photos: {
-    count: draft.photoPreviews.length,
-    names: draft.photoNames,
-    coverPhotoIndex: draft.photoNames.length > 0 ? 0 : 0,
-    coverPhotoRatio: draft.coverPhotoRatio,
-    coverPhotoName: draft.photoNames[0] ?? null,
-    cropsByName: draft.photoCropsByName,
-    byPropType: Object.fromEntries(
-      Object.entries(draft.photosByPropType).map(([k, v]) => [
-        k,
-        { count: v.previews.length, names: v.names },
-      ])
-    ),
-  },
-
-  deliverySetup: {
-    serviceAreaMode: draft.serviceAreaMode,
-    serviceRadiusMiles: draft.serviceRadiusMiles ? Number(draft.serviceRadiusMiles) : null,
-    deliveryIncluded: draft.deliveryIncluded,
-    deliveryFeeEnabled: draft.deliveryFeeEnabled,
-    deliveryFeeAmount: draft.deliveryPerMile ? Number(draft.deliveryPerMile) : null,
-    setupIncluded: draft.setupIncluded,
-    setupFeeEnabled: draft.setupFeeEnabled,
-    setupFeeAmount: draft.setupFlatFee ? Number(draft.setupFlatFee) : null,
-  },
-};
-
-    // If we don't have a listing yet, create ONE draft, then autosave will kick in on next change
-    if (!listingId) {
-      if (hasCreatedDraftRef.current) return;
-      hasCreatedDraftRef.current = true;
-      pendingSaveRef.current = payload;
-      createDraft.mutate();
+    const circleBounds = circleFeature ? boundsFromCircleFeature(circleFeature) : null;
+    if (circleBounds && draft.serviceRadiusMiles >= 15) {
+      map.fitBounds(circleBounds, { padding: 20, duration: 500, maxZoom: 11 });
       return;
     }
 
-  const t = setTimeout(() => {
-    updateDraft.mutate(payload);
-    }, 1200);
+    map.easeTo({ center: [center.lng, center.lat], zoom: 10, duration: 400 });
+  }, [center, centerFeatureCollection, circleFeature, draft.serviceRadiusMiles, isMapReady, radiusFeatureCollection]);
 
-    return () => clearTimeout(t);
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [draft, listingId, vendorType]);
-
-  const stepIndex = useMemo(() => STEPS.findIndex((s) => s.id === currentStep), [currentStep]);
-
-  const goNext = () => {
-    const next = STEPS[stepIndex + 1];
-    if (!next) return;
-
-    const nextIndex = stepIndex + 1;
-    setCurrentStep(next.id);
-    setMaxStepReached((m) => Math.max(m, nextIndex));
-  };
-
-  const goBack = () => {
-    const prev = STEPS[stepIndex - 1];
-    if (prev) setCurrentStep(prev.id);
-  };
-
-  const canContinue = useMemo(() => {
-    // Title & Description
-    if (currentStep === "tags") {
-      if (draft.pricingMode === "a_la_carte") {
-        if (draft.rentalTypes.length === 0) return false;
-        return draft.rentalTypes.every((slug) => {
-          const d = draft.perPropDetails[slug];
-          return !!d?.title?.trim() && !!d?.description?.trim();
-        });
-      }
-
-      return !!draft.listingTitle.trim() && !!draft.listingDescription.trim();
-    }
-
-    if (currentStep === "pricing") {
-      if (draft.pricingMode === "a_la_carte") {
-        if (draft.rentalTypes.length === 0) return false;
-        return draft.rentalTypes.every((slug) => {
-          const p = draft.pricingByPropType[slug];
-          if (!p?.rate?.trim()) return false;
-          if (draft.pricingUnit === "per_hour" && !p?.minimumHours?.trim()) return false;
-          return true;
-        });
-      }
-
-      if (!draft.rate.trim()) return false;
-      if (draft.pricingUnit === "per_hour" && !draft.minimumHours.trim()) return false;
-      return true;
-    }
-
-    // Photos: can skip (Add Later), enforced before publish later
-    if (currentStep === "photos") return true;
-
-    // Delivery / Setup: optional, always continue
-    if (currentStep === "deliverySetup") return true;
-
-    return true;
-  }, [currentStep, draft]);
-
-  const saveAndExit = () => {
-    toast({
-      title: "Saved",
-      description: "Draft saved. You can come back anytime.",
-    });
-    onClose();
-  };
-
-  const pricingModeConfig = useMemo(() => {
-    return {
-      headline: "How will you list your services?",
-      subhead: "Choose a simple structure. You can create more listings later.",
-      cards: [
-        { mode: "single_service" as PricingMode, title: "Single Item", desc: "Single service with simple pricing." },
-        { mode: "package" as PricingMode, title: "Package", desc: "Bundled services into named packages." },
-        { mode: "a_la_carte" as PricingMode, title: "A La Carte", desc: "Customers choose individual rentals with individual pricing." },
-      ],
+  useEffect(() => {
+    return () => {
+      draft.photoPreviews.forEach((url) => URL.revokeObjectURL(url));
     };
-  }, []);
+  }, [draft.photoPreviews]);
 
-  /**
-   * IMPORTANT FIX:
-   * When listing type changes, reset the entire draft so no old selections leak across flows.
-   * (Going back without changing listing type keeps everything.)
-   */
-  const setPricingMode = (mode: PricingMode) => {
-    setDraft((d) => {
-      if (d.pricingMode === mode) return d;
+  const addTag = (raw: string) => {
+    const normalized = normalizeTag(raw);
+    if (!normalized) return;
 
-      // Revoke any existing preview URLs before wiping state
-      d.photoPreviews.forEach((u) => URL.revokeObjectURL(u));
-      Object.values(d.photosByPropType).forEach((bucket) => bucket.previews.forEach((u) => URL.revokeObjectURL(u)));
-
-      const next: ListingDraft = {
-        ...DEFAULT_DRAFT,
-        pricingMode: mode,
-      };
-
-      return next;
-    });
-
-    // Reset navigation progress when listing type changes
-    setCurrentStep("tags");
-    setMaxStepReached(0);
-  };
-
-  // Title/Description helpers
-  const updateSharedTitle = (raw: string) => {
-    const val = titleCaseNoSymbols(raw, 60);
-    setDraft((d) => ({ ...d, listingTitle: val }));
-  };
-
-  const updatePerPropTitle = (slug: string, raw: string) => {
-    const val = titleCaseNoSymbols(raw, 60);
-    setDraft((d) => ({
-      ...d,
-      perPropDetails: {
-        ...d.perPropDetails,
-        [slug]: { title: val, description: d.perPropDetails[slug]?.description ?? "" },
-      },
-    }));
-  };
-
-  // Tags UI helpers
-  const [tagInputByProp, setTagInputByProp] = useState<Record<string, string>>({});
-  const [includedInput, setIncludedInput] = useState("");
-
-  const addTag = (key: string, raw: string) => {
-    const norm = normalizeTag(raw);
-    if (!norm) return;
-
-    setDraft((d) => {
-      const existing = d.tagsByPropType[key] ?? [];
-      const already = existing.some((t) => t.slug === norm.slug);
-      if (already) return d;
-      if (existing.length >= 15) return d;
+    setDraft((prev) => {
+      const existing = prev.tagsByPropType[LISTING_TAG_KEY] ?? [];
+      if (existing.some((tag) => tag.slug === normalized.slug)) return prev;
+      if (existing.length >= 15) return prev;
 
       return {
-        ...d,
+        ...prev,
         tagsByPropType: {
-          ...d.tagsByPropType,
-          [key]: [...existing, norm],
+          ...prev.tagsByPropType,
+          [LISTING_TAG_KEY]: [...existing, normalized],
         },
       };
     });
 
-    setTagInputByProp((m) => ({ ...m, [key]: "" }));
+    setTagInput("");
   };
 
-  const removeTag = (key: string, slug: string) => {
-    setDraft((d) => {
-      const existing = d.tagsByPropType[key] ?? [];
+  const removeTag = (slug: string) => {
+    setDraft((prev) => {
+      const existing = prev.tagsByPropType[LISTING_TAG_KEY] ?? [];
       return {
-        ...d,
+        ...prev,
         tagsByPropType: {
-          ...d.tagsByPropType,
-          [key]: existing.filter((t) => t.slug !== slug),
+          ...prev.tagsByPropType,
+          [LISTING_TAG_KEY]: existing.filter((tag) => tag.slug !== slug),
         },
       };
     });
@@ -984,350 +953,125 @@ const [draft, setDraft] = useState<ListingDraft>(DEFAULT_DRAFT);
     const normalized = normalizeIncludedBullet(raw);
     if (!normalized) return;
 
-    setDraft((d) => {
-      const existing = Array.isArray(d.whatsIncluded) ? d.whatsIncluded : [];
-      const hasDuplicate = existing.some((item) => item.toLowerCase() === normalized.toLowerCase());
-      if (hasDuplicate || existing.length >= 20) return d;
-
-      return {
-        ...d,
-        whatsIncluded: [...existing, normalized],
-      };
+    setDraft((prev) => {
+      const existing = prev.whatsIncluded ?? [];
+      if (existing.some((item) => item.toLowerCase() === normalized.toLowerCase())) return prev;
+      if (existing.length >= 20) return prev;
+      return { ...prev, whatsIncluded: [...existing, normalized] };
     });
+
     setIncludedInput("");
   };
 
-  const removeIncludedItem = (itemToRemove: string) => {
-    setDraft((d) => ({
-      ...d,
-      whatsIncluded: (Array.isArray(d.whatsIncluded) ? d.whatsIncluded : []).filter((item) => item !== itemToRemove),
+  const removeIncludedItem = (item: string) => {
+    setDraft((prev) => ({
+      ...prev,
+      whatsIncluded: prev.whatsIncluded.filter((value) => value !== item),
     }));
   };
 
-  // Quantity helpers (a_la_carte)
-  const setPropQuantity = (slug: string, raw: string) => {
-    const cleaned = raw.replace(/[^\d]/g, "");
-    setDraft((d) => ({
-      ...d,
-      quantitiesByPropType: {
-        ...d.quantitiesByPropType,
-        [slug]: cleaned,
-      },
-    }));
-  };
-
-  const togglePropType = (slug: string) => {
-    setDraft((d) => {
-      const mode = d.pricingMode;
-
-      if (mode === "single_service") {
-        const isSelected = d.rentalTypes[0] === slug;
-        const nextPropTypes = isSelected ? [] : [slug];
-
-        if (isSelected) {
-          setTagInputByProp((m) => {
-            const { [slug]: _i, ...rest } = m;
-            return rest;
-          });
-        }
-
-        return {
-          ...d,
-          rentalTypes: nextPropTypes,
-          quantitiesByPropType: isSelected ? {} : { [slug]: "1" },
-          perPropDetails: isSelected ? {} : { [slug]: d.perPropDetails[slug] ?? { title: "", description: "" } },
-          pricingByPropType: isSelected ? {} : { [slug]: d.pricingByPropType[slug] ?? { rate: "", minimumHours: "" } },
-        };
-      }
-
-      // package / a_la_carte: multi-select
-      const has = d.rentalTypes.includes(slug);
-      const nextPropTypes = has ? d.rentalTypes.filter((x) => x !== slug) : [...d.rentalTypes, slug];
-
-      let nextPerPropDetails = d.perPropDetails;
-      let nextPricingByPropType = d.pricingByPropType;
-      let nextPhotosByProp = d.photosByPropType;
-      let nextQty = d.quantitiesByPropType;
-
-      if (has) {
-        setTagInputByProp((m) => {
-          const { [slug]: _i, ...restInputs } = m;
-          return restInputs;
-        });
-
-        // remove quantity
-        const { [slug]: _removedQty, ...restQty } = d.quantitiesByPropType;
-        nextQty = restQty;
-
-        if (d.pricingMode === "a_la_carte") {
-          const { [slug]: _removedDetails, ...restDetails } = d.perPropDetails;
-          nextPerPropDetails = restDetails;
-
-          const { [slug]: _removedPricing, ...restPricing } = d.pricingByPropType;
-          nextPricingByPropType = restPricing;
-
-          // remove per-prop photos + revoke previews
-          const existingPhotos = d.photosByPropType[slug];
-          if (existingPhotos) {
-            existingPhotos.previews.forEach((u) => URL.revokeObjectURL(u));
-          }
-          const { [slug]: _removedPhotos, ...restPhotos } = d.photosByPropType;
-          nextPhotosByProp = restPhotos;
-        }
-      } else if (!has && d.pricingMode === "a_la_carte") {
-        nextPerPropDetails = {
-          ...d.perPropDetails,
-          [slug]: d.perPropDetails[slug] ?? { title: "", description: "" },
-        };
-        nextPricingByPropType = {
-          ...d.pricingByPropType,
-          [slug]: d.pricingByPropType[slug] ?? { rate: "", minimumHours: "" },
-        };
-        nextPhotosByProp = {
-          ...d.photosByPropType,
-          [slug]: d.photosByPropType[slug] ?? { previews: [], names: [] },
-        };
-        nextQty = {
-          ...d.quantitiesByPropType,
-          [slug]: d.quantitiesByPropType[slug] ?? "1",
-        };
-      } else if (!has && d.pricingMode !== "a_la_carte") {
-        // package: we still allow selecting rentalTypes, but quantity is irrelevant.
-        // Keep it empty to avoid confusion.
-        nextQty = d.quantitiesByPropType;
-      }
-
+  const togglePerfectFor = (option: string) => {
+    setDraft((prev) => {
+      const selected = prev.popularFor.includes(option);
       return {
-        ...d,
-        rentalTypes: nextPropTypes,
-        quantitiesByPropType: nextQty,
-        perPropDetails: nextPerPropDetails,
-        pricingByPropType: nextPricingByPropType,
-        photosByPropType: nextPhotosByProp,
+        ...prev,
+        popularFor: selected
+          ? prev.popularFor.filter((value) => value !== option)
+          : [...prev.popularFor, option],
       };
     });
   };
 
-  // Photos (listing-level)
-  const fileInputRef = useRef<HTMLInputElement | null>(null);
+  const allPerfectForSelected = POPULAR_FOR_OPTIONS.every((option) => draft.popularFor.includes(option));
 
-  type UploadedListingPhoto = { filename: string; url: string };
+  const toggleSelectAllPerfectFor = () => {
+    setDraft((prev) => ({
+      ...prev,
+      popularFor: allPerfectForSelected ? [] : [...POPULAR_FOR_OPTIONS],
+    }));
+  };
 
   async function uploadListingPhoto(file: File): Promise<UploadedListingPhoto> {
     const token = await getFreshAccessToken();
-    const form = new FormData();
-    form.append("photo", file);
+    const formData = new FormData();
+    formData.append("photo", file);
 
-    const res = await fetch("/api/uploads/listing-photo", {
+    const response = await fetch("/api/uploads/listing-photo", {
       method: "POST",
       headers: token ? { Authorization: `Bearer ${token}` } : undefined,
-      body: form,
+      body: formData,
       credentials: "include",
     });
 
-    if (!res.ok) {
-      const text = (await res.text()) || res.statusText;
-      throw new Error(`${res.status}: ${text}`);
+    if (!response.ok) {
+      const errorText = (await response.text()) || response.statusText;
+      throw new Error(`${response.status}: ${errorText}`);
     }
 
-    return await res.json();
+    return await response.json();
   }
 
-  // A La Carte photos (per rental)
-  const [photoFilesByProp, setPhotoFilesByProp] = useState<Record<string, File[]>>({});
-  const fileInputRefsByProp = useRef<Record<string, HTMLInputElement | null>>({});
-
-    const onPickPhotosForProp = async (propType: string, files: FileList | null) => {
+  const onPickPhotos = async (files: FileList | null) => {
     if (!files || files.length === 0) return;
 
-    const allowed = new Set(["image/jpeg", "image/png", "image/webp"]);
-    const all = Array.from(files);
-    console.log(
-      "[photo pick]",
-      all.map((f) => ({ name: f.name, type: f.type, size: f.size }))
+    const allowedMimeTypes = new Set(["image/jpeg", "image/png", "image/webp"]);
+    const selectedFiles = Array.from(files);
+
+    const rejectedHeic = selectedFiles.filter(
+      (file) =>
+        file.type === "image/heic" ||
+        file.type === "image/heif" ||
+        file.name.toLowerCase().endsWith(".heic") ||
+        file.name.toLowerCase().endsWith(".heif"),
     );
 
-
-    const rejectedHeic = all.filter(
-      (f) =>
-        f.type === "image/heic" ||
-        f.type === "image/heif" ||
-        f.name.toLowerCase().endsWith(".heic") ||
-        f.name.toLowerCase().endsWith(".heif")
-    );
-
-    if (rejectedHeic.length) {
+    if (rejectedHeic.length > 0) {
       toast({
         title: "Unsupported image format",
-        description: "Please upload JPG, PNG, or WebP (HEIC/HEIF not supported yet).",
+        description: "Please upload JPG, PNG, or WebP files.",
         variant: "destructive",
       });
     }
 
-    const picked = all.filter((f) => allowed.has(f.type));
-    if (picked.length === 0) return;
-
-    const previews = picked.map((f) => URL.createObjectURL(f));
-
-    setPhotoFilesByProp((prev) => ({
-      ...prev,
-      [propType]: [...(prev[propType] ?? []), ...picked],
-    }));
-
-    // show previews immediately
-    setDraft((d) => {
-      const existing = d.photosByPropType[propType] ?? { previews: [], names: [] };
-      return {
-        ...d,
-        photosByPropType: {
-          ...d.photosByPropType,
-          [propType]: {
-            previews: [...existing.previews, ...previews],
-            names: [...existing.names],
-          },
-        },
-      };
-    });
-
-    try {
-      const uploaded = await Promise.all(picked.map(uploadListingPhoto));
-      const uploadedNames = uploaded.map((u) => u.filename);
-
-      setDraft((d) => {
-        const existing = d.photosByPropType[propType] ?? { previews: [], names: [] };
-        return {
-          ...d,
-          photosByPropType: {
-            ...d.photosByPropType,
-            [propType]: {
-              previews: [...existing.previews],
-              names: [...existing.names, ...uploadedNames],
-            },
-          },
-        };
-      });
-    } catch (err: any) {
-      // rollback previews we just created for this pick
-      previews.forEach((u) => URL.revokeObjectURL(u));
-
-      setDraft((d) => {
-        const existing = d.photosByPropType[propType] ?? { previews: [], names: [] };
-        return {
-          ...d,
-          photosByPropType: {
-            ...d.photosByPropType,
-            [propType]: {
-              previews: existing.previews.slice(0, existing.previews.length - previews.length),
-              names: existing.names,
-            },
-          },
-        };
-      });
-
-      toast({
-        title: "Photo upload failed",
-        description: err?.message || "Please try again.",
-        variant: "destructive",
-      });
-    }
-
-    const input = fileInputRefsByProp.current[propType];
-    if (input) input.value = "";
-  };
-
-
-  const removePhotoForPropAt = (propType: string, idx: number) => {
-    setDraft((d) => {
-      const existing = d.photosByPropType[propType];
-      if (!existing) return d;
-
-      const nextPreviews = existing.previews.slice();
-      const nextNames = existing.names.slice();
-
-      const removedPreview = nextPreviews[idx];
-      if (removedPreview) URL.revokeObjectURL(removedPreview);
-
-      nextPreviews.splice(idx, 1);
-      nextNames.splice(idx, 1);
-
-      const nextPhotosByProp = { ...d.photosByPropType };
-      nextPhotosByProp[propType] = { previews: nextPreviews, names: nextNames };
-
-      return { ...d, photosByPropType: nextPhotosByProp };
-    });
-
-    setPhotoFilesByProp((prev) => {
-      const arr = prev[propType] ?? [];
-      const nextArr = arr.slice();
-      nextArr.splice(idx, 1);
-      return { ...prev, [propType]: nextArr };
-    });
-  };
-
-    const onPickPhotos = async (files: FileList | null) => {
-    if (!files || files.length === 0) return;
-
-    const allowed = new Set(["image/jpeg", "image/png", "image/webp"]);
-    const all = Array.from(files);
-    console.log(
-      "[photo pick]",
-      all.map((f) => ({ name: f.name, type: f.type, size: f.size }))
-    );
-
-
-    const rejectedHeic = all.filter(
-      (f) =>
-        f.type === "image/heic" ||
-        f.type === "image/heif" ||
-        f.name.toLowerCase().endsWith(".heic") ||
-        f.name.toLowerCase().endsWith(".heif")
-    );
-
-    if (rejectedHeic.length) {
-      toast({
-        title: "Unsupported image format",
-        description: "Please upload JPG, PNG, or WebP (HEIC/HEIF not supported yet).",
-        variant: "destructive",
-      });
-    }
-
-    const picked = all.filter((f) => {
-      const lowerName = (f.name || "").toLowerCase();
-      const extOk =
+    const acceptedFiles = selectedFiles.filter((file) => {
+      const lowerName = file.name.toLowerCase();
+      return (
+        allowedMimeTypes.has(file.type) ||
         lowerName.endsWith(".jpg") ||
         lowerName.endsWith(".jpeg") ||
         lowerName.endsWith(".png") ||
-        lowerName.endsWith(".webp");
-      return allowed.has(f.type) || extOk;
+        lowerName.endsWith(".webp")
+      );
     });
-    if (picked.length === 0) return;
 
-    const tempEntries = picked.map((f) => {
-      const ext = (f.name.split(".").pop() || "jpg").toLowerCase();
+    if (acceptedFiles.length === 0) return;
+
+    const tempEntries = acceptedFiles.map((file) => {
+      const ext = (file.name.split(".").pop() || "jpg").toLowerCase();
       const tempName = `__uploading__-${Date.now()}-${Math.random().toString(16).slice(2)}.${ext}`;
-      const preview = URL.createObjectURL(f);
-      return { file: f, tempName, preview };
-    });
-
-    setDraft((d) => {
       return {
-        ...d,
-        photoPreviews: [...d.photoPreviews, ...tempEntries.map((entry) => entry.preview)],
-        photoNames: [...d.photoNames, ...tempEntries.map((entry) => entry.tempName)],
-        coverPhotoIndex: 0,
+        file,
+        tempName,
+        preview: URL.createObjectURL(file),
       };
     });
+
+    setDraft((prev) => ({
+      ...prev,
+      photoPreviews: [...prev.photoPreviews, ...tempEntries.map((entry) => entry.preview)],
+      photoNames: [...prev.photoNames, ...tempEntries.map((entry) => entry.tempName)],
+    }));
 
     try {
       const uploaded = await Promise.all(tempEntries.map((entry) => uploadListingPhoto(entry.file)));
 
-      setDraft((d) => {
-        let nextNames = d.photoNames.slice();
-        const nextCropsByName: Record<string, ListingPhotoCrop> = { ...(d.photoCropsByName || {}) };
+      setDraft((prev) => {
+        let nextPhotoNames = prev.photoNames.slice();
+        const nextCropsByName: Record<string, ListingPhotoCrop> = { ...(prev.photoCropsByName || {}) };
 
-        uploaded.forEach((result, i) => {
-          const tempName = tempEntries[i].tempName;
-          nextNames = nextNames.map((name) => (name === tempName ? result.filename : name));
+        uploaded.forEach((result, index) => {
+          const tempName = tempEntries[index].tempName;
+          nextPhotoNames = nextPhotoNames.map((name) => (name === tempName ? result.filename : name));
 
           if (nextCropsByName[tempName]) {
             nextCropsByName[result.filename] = nextCropsByName[tempName];
@@ -1336,43 +1080,41 @@ const [draft, setDraft] = useState<ListingDraft>(DEFAULT_DRAFT);
         });
 
         return {
-          ...d,
-          photoNames: nextNames,
-          coverPhotoIndex: nextNames.length > 0 ? 0 : 0,
+          ...prev,
+          photoNames: nextPhotoNames,
           photoCropsByName: nextCropsByName,
         };
       });
-    } catch (err: any) {
-      // rollback previews we just created
+    } catch (error: any) {
       tempEntries.forEach((entry) => URL.revokeObjectURL(entry.preview));
-      setDraft((d) => {
-        const toRemove = new Set(tempEntries.map((entry) => entry.tempName));
-        const keptNames: string[] = [];
-        const keptPreviews: string[] = [];
-        d.photoNames.forEach((name, idx) => {
-          if (!toRemove.has(name)) {
-            keptNames.push(name);
-            keptPreviews.push(d.photoPreviews[idx]);
-          }
+
+      setDraft((prev) => {
+        const removeNames = new Set(tempEntries.map((entry) => entry.tempName));
+        const nextPhotoNames: string[] = [];
+        const nextPhotoPreviews: string[] = [];
+
+        prev.photoNames.forEach((name, index) => {
+          if (removeNames.has(name)) return;
+          nextPhotoNames.push(name);
+          nextPhotoPreviews.push(prev.photoPreviews[index]);
         });
 
-        const nextCropsByName: Record<string, ListingPhotoCrop> = { ...(d.photoCropsByName || {}) };
+        const nextCropsByName: Record<string, ListingPhotoCrop> = { ...(prev.photoCropsByName || {}) };
         tempEntries.forEach((entry) => {
           delete nextCropsByName[entry.tempName];
         });
 
         return {
-          ...d,
-          photoNames: keptNames,
-          photoPreviews: keptPreviews,
-          coverPhotoIndex: keptNames.length > 0 ? 0 : 0,
+          ...prev,
+          photoNames: nextPhotoNames,
+          photoPreviews: nextPhotoPreviews,
           photoCropsByName: nextCropsByName,
         };
       });
 
       toast({
         title: "Photo upload failed",
-        description: err?.message || "Please try again.",
+        description: error?.message || "Please try again.",
         variant: "destructive",
       });
     }
@@ -1380,970 +1122,1028 @@ const [draft, setDraft] = useState<ListingDraft>(DEFAULT_DRAFT);
     if (fileInputRef.current) fileInputRef.current.value = "";
   };
 
-  const removePhotoAt = (idx: number) => {
-    setDraft((d) => {
-      const nextPreviews = d.photoPreviews.slice();
-      const nextNames = d.photoNames.slice();
-      const removedPreview = nextPreviews[idx];
+  const removePhotoAt = (index: number) => {
+    setDraft((prev) => {
+      const nextPhotoPreviews = prev.photoPreviews.slice();
+      const nextPhotoNames = prev.photoNames.slice();
+
+      const removedPreview = nextPhotoPreviews[index];
       if (removedPreview) URL.revokeObjectURL(removedPreview);
 
-      nextPreviews.splice(idx, 1);
-      nextNames.splice(idx, 1);
+      nextPhotoPreviews.splice(index, 1);
+      nextPhotoNames.splice(index, 1);
 
-      const nextCropsByName: Record<string, ListingPhotoCrop> = { ...(d.photoCropsByName || {}) };
-      if (typeof d.photoNames[idx] === "string") delete nextCropsByName[d.photoNames[idx]];
+      const nextCropsByName: Record<string, ListingPhotoCrop> = { ...(prev.photoCropsByName || {}) };
+      if (typeof prev.photoNames[index] === "string") {
+        delete nextCropsByName[prev.photoNames[index]];
+      }
 
       return {
-        ...d,
-        photoPreviews: nextPreviews,
-        photoNames: nextNames,
-        coverPhotoIndex: nextNames.length > 0 ? 0 : 0,
+        ...prev,
+        photoPreviews: nextPhotoPreviews,
+        photoNames: nextPhotoNames,
         photoCropsByName: nextCropsByName,
       };
     });
   };
 
   const removePhotoByName = (photoName: string) => {
-    const idx = draft.photoNames.findIndex((name) => name === photoName);
-    if (idx >= 0) removePhotoAt(idx);
+    const index = draft.photoNames.findIndex((name) => name === photoName);
+    if (index >= 0) removePhotoAt(index);
   };
 
-  const reorderListingPhotos = (orderedPhotoNames: string[]) => {
-    setDraft((d) => {
+  const reorderPhotos = (orderedPhotoNames: string[]) => {
+    setDraft((prev) => {
       const previewByName = new Map<string, string>();
-      d.photoNames.forEach((name: string, idx: number) => {
-        previewByName.set(name, d.photoPreviews[idx]);
-      });
+      prev.photoNames.forEach((name, index) => previewByName.set(name, prev.photoPreviews[index]));
 
       const nextNames = orderedPhotoNames.filter((name) => previewByName.has(name));
-      if (nextNames.length !== d.photoNames.length) return d;
+      if (nextNames.length !== prev.photoNames.length) return prev;
 
-      const nextPreviews = nextNames.map((name) => previewByName.get(name) ?? "");
+      const nextPreviews = nextNames.map((name) => previewByName.get(name) || "");
       const nextCropsByName: Record<string, ListingPhotoCrop> = {};
       nextNames.forEach((name) => {
-        if (d.photoCropsByName?.[name]) nextCropsByName[name] = d.photoCropsByName[name];
+        if (prev.photoCropsByName[name]) nextCropsByName[name] = prev.photoCropsByName[name];
       });
 
       return {
-        ...d,
+        ...prev,
         photoNames: nextNames,
         photoPreviews: nextPreviews,
-        coverPhotoIndex: nextNames.length > 0 ? 0 : 0,
         photoCropsByName: nextCropsByName,
       };
     });
   };
 
   const setPhotoCropByName = (photoName: string, crop: ListingPhotoCrop | null) => {
-    setDraft((d) => {
-      const nextCropsByName: Record<string, ListingPhotoCrop> = { ...(d.photoCropsByName || {}) };
+    setDraft((prev) => {
+      const nextCropsByName = { ...(prev.photoCropsByName || {}) };
       if (crop) nextCropsByName[photoName] = crop;
       else delete nextCropsByName[photoName];
-      return { ...d, photoCropsByName: nextCropsByName };
+      return { ...prev, photoCropsByName: nextCropsByName };
     });
   };
 
-  // Cleanup preview URLs on unmount
-  useEffect(() => {
-    return () => {
-      draft.photoPreviews.forEach((u) => URL.revokeObjectURL(u));
-      Object.values(draft.photosByPropType).forEach((bucket) => {
-        bucket.previews.forEach((u) => URL.revokeObjectURL(u));
+  const goNext = () => {
+    if (!canContinue) {
+      setAttemptedStepAdvance((prev) => ({ ...prev, [currentStep]: true }));
+      return;
+    }
+    const nextStep = STEPS[stepIndex + 1];
+    if (!nextStep) return;
+    setCurrentStep(nextStep.id);
+    setMaxStepReached((value) => Math.max(value, stepIndex + 1));
+  };
+
+  const goBack = () => {
+    const previousStep = STEPS[stepIndex - 1];
+    if (!previousStep) return;
+    setCurrentStep(previousStep.id);
+  };
+
+  const ensureListingSaved = async (): Promise<string | null> => {
+    const hasMeaningfulData =
+      Boolean(draft.category) ||
+      draft.listingTitle.trim().length > 0 ||
+      draft.listingDescription.trim().length > 0 ||
+      Number(draft.rate) > 0 ||
+      draft.photoNames.length > 0;
+
+    if (!hasMeaningfulData) return null;
+
+    const payload = buildListingPayload;
+
+    let nextListingId = listingId;
+
+    if (!nextListingId) {
+      const created = await createDraftMutation.mutateAsync();
+      nextListingId = created?.id || created?.data?.id;
+      if (!nextListingId) throw new Error("Failed to create listing draft");
+      setListingId(nextListingId);
+    }
+
+    await updateDraftMutation.mutateAsync({ id: nextListingId, payload });
+    return nextListingId;
+  };
+
+  const handleSaveDraft = async () => {
+    setIsSavingDraft(true);
+    try {
+      const savedId = await ensureListingSaved();
+      toast({
+        title: savedId ? "Draft saved" : "Nothing to save yet",
+        description: savedId
+          ? "Your listing draft is saved. You can come back anytime."
+          : "Add listing details, then save your draft.",
       });
-    };
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, []);
 
-  // Pricing helpers
-  const setListingRate = (raw: string) => {
-    const cleaned = raw.replace(/[^\d.]/g, "");
-    setDraft((d) => ({ ...d, rate: cleaned }));
+      if (savedId) onClose();
+    } catch (error: any) {
+      toast({
+        title: "Save failed",
+        description: error?.message || "Unable to save draft.",
+        variant: "destructive",
+      });
+    } finally {
+      setIsSavingDraft(false);
+    }
   };
 
-  const setListingMinHours = (raw: string) => {
-    const cleaned = raw.replace(/[^\d]/g, "");
-    setDraft((d) => ({ ...d, minimumHours: cleaned }));
-  };
+  const handlePublish = async () => {
+    if (!publishReady) return;
+    setIsPublishing(true);
 
-  const setPropRate = (slug: string, raw: string) => {
-    const cleaned = raw.replace(/[^\d.]/g, "");
-    setDraft((d) => ({
-      ...d,
-      pricingByPropType: {
-        ...d.pricingByPropType,
-        [slug]: {
-          rate: cleaned,
-          minimumHours: d.pricingByPropType[slug]?.minimumHours ?? "",
-        },
-      },
-    }));
-  };
-
-  const setPropMinHours = (slug: string, raw: string) => {
-    const cleaned = raw.replace(/[^\d]/g, "");
-    setDraft((d) => ({
-      ...d,
-      pricingByPropType: {
-        ...d.pricingByPropType,
-        [slug]: {
-          rate: d.pricingByPropType[slug]?.rate ?? "",
-          minimumHours: cleaned,
-        },
-      },
-    }));
-  };
-
-  const selectedPopularFor = Array.isArray(draft.popularFor) ? draft.popularFor : [];
-  const allPopularForSelected = POPULAR_FOR_OPTIONS.every((option) => selectedPopularFor.includes(option));
-
-  const toggleSelectAllPopularFor = () => {
-    setDraft((d) => {
-      const current = Array.isArray(d.popularFor) ? d.popularFor : [];
-      const knownOptions = new Set<string>(POPULAR_FOR_OPTIONS);
-      const hasAllSelected = POPULAR_FOR_OPTIONS.every((option) => current.includes(option));
-
-      if (hasAllSelected) {
-        return {
-          ...d,
-          popularFor: current.filter((value) => !knownOptions.has(value)),
-        };
+    try {
+      const payload = buildListingPayload;
+      const id = await ensureListingSaved();
+      if (!id) {
+        throw new Error("Please complete the required fields before publishing.");
       }
 
-      return {
-        ...d,
-        popularFor: Array.from(new Set([...current, ...POPULAR_FOR_OPTIONS])),
-      };
-    });
+      const response = await apiRequest("PATCH", `/api/vendor/listings/${id}/publish`, {
+        listingData: payload,
+      });
+
+      const result = await response.json().catch(() => ({}));
+      if (!response.ok) {
+        throw new Error(typeof result === "string" ? result : JSON.stringify(result));
+      }
+
+      toast({
+        title: "Listing published",
+        description: "Your listing is now live.",
+      });
+      onClose();
+    } catch (error) {
+      const publishError = getPublishFailureToastContent(error);
+      toast({
+        title: publishError.title,
+        description: publishError.description,
+        variant: "destructive",
+      });
+    } finally {
+      setIsPublishing(false);
+    }
   };
 
   const isLastStep = stepIndex === STEPS.length - 1;
+  const showBasicsValidation = Boolean(attemptedStepAdvance.basics);
+  const showBookingPricingValidation = Boolean(attemptedStepAdvance.bookingPricing);
+  const showServiceAreaValidation = Boolean(attemptedStepAdvance.serviceArea);
 
   return (
-    <div className="fixed inset-0 z-50 bg-[#f0eee9]">
-      <div className="fixed inset-0 flex">
-        {/* Sidebar */}
-        <div className="w-72 bg-[#f0eee9] border-r border-border p-6 overflow-y-auto">
-          <div className="flex items-center justify-between mb-8">
-            <h2 className="text-lg font-semibold">Create Listing</h2>
-            <div className="flex gap-2">
-              <Button variant="ghost" size="icon" onClick={saveAndExit} title="Save and exit">
-                <Save className="h-4 w-4" />
-              </Button>
-              <Button variant="ghost" size="icon" onClick={onClose} title="Close">
-                <X className="h-4 w-4" />
-              </Button>
+    <div className="swap-dashboard-whites flex h-screen w-full flex-col bg-[#ffffff]">
+      <Navigation vendorDashboardAligned />
+
+      <div className="flex min-h-0 flex-1">
+        <div className="w-24 shrink-0 border-r border-[rgba(74,106,125,0.22)] bg-[#ffffff] dark:bg-[#ffffff]">
+          <div className="flex h-full flex-col items-center pt-6">
+            <div className="flex flex-col items-center gap-3">
+              {STEPS.map((step, index) => {
+                const isActive = step.id === currentStep;
+                const isComplete = index < maxStepReached;
+                const isReachable = index <= maxStepReached;
+                const meta = STEP_META[step.id];
+                const Icon = meta.icon;
+
+                return (
+                  <button
+                    key={step.id}
+                    type="button"
+                    aria-label={step.title}
+                    aria-current={isActive ? "step" : undefined}
+                    aria-disabled={!isReachable}
+                    onClick={() => {
+                      if (!isReachable) return;
+                      if (index > stepIndex && !canContinue) {
+                        setAttemptedStepAdvance((prev) => ({ ...prev, [currentStep]: true }));
+                        return;
+                      }
+                      setCurrentStep(step.id);
+                    }}
+                    className={cn(
+                      "group/step relative flex h-14 w-14 items-center justify-center rounded-2xl border border-transparent transition-colors",
+                      isActive
+                        ? "bg-[#4a6a7d] text-[#f5f0e8] hover:bg-[#4a6a7d]"
+                        : isReachable
+                          ? "text-[#2a3a42] hover:bg-[#e6e1d6] hover:text-[#2a3a42]"
+                          : "cursor-not-allowed text-[#9aacb4]",
+                    )}
+                    data-testid={`create-listing-step-${step.id}`}
+                  >
+                    {isComplete ? <Check className="h-5 w-5" /> : <Icon className="h-5 w-5" />}
+                    <span className="sr-only">{step.title}</span>
+                    <span
+                      className={cn(
+                        "pointer-events-none absolute left-[calc(100%+12px)] top-1/2 z-50 min-w-[210px] -translate-y-1/2 rounded-md border border-[rgba(74,106,125,0.22)] bg-[#ffffff] px-2.5 py-2 text-left text-[#2a3a42] opacity-0 shadow-sm transition-opacity duration-150",
+                        "group-hover/step:opacity-100",
+                      )}
+                    >
+                      <span className="block text-sm font-semibold">{step.title}</span>
+                      <span className="mt-0.5 block text-xs leading-snug text-[#4a6a7d]">{meta.description}</span>
+                    </span>
+                  </button>
+                );
+              })}
             </div>
-          </div>
-
-          <div className="space-y-3">
-            {STEPS.map((s) => {
-              const idx = STEPS.findIndex((x) => x.id === s.id);
-              const active = s.id === currentStep;
-
-              // Hard rule: allow only back/current up to maxStepReached (never forward)
-              const canNavigate = idx <= maxStepReached;
-
-              return (
-                <button
-                  key={s.id}
-                  disabled={!canNavigate}
-                  aria-disabled={!canNavigate}
-                  onClick={() => {
-                    if (!canNavigate) return;
-                    setCurrentStep(s.id);
-                  }}
-                  className={[
-                    "w-full text-left rounded-lg px-3 py-2 border transition",
-                    active ? "bg-primary text-white border-primary" : "bg-background hover:bg-muted border-border",
-                    !canNavigate ? "opacity-50 cursor-not-allowed pointer-events-none" : "",
-                  ].join(" ")}
-                >
-                  {s.title}
-                </button>
-              );
-            })}
           </div>
         </div>
 
-        {/* Main panel */}
-        <div className="flex-1 bg-[#f0eee9] p-10 overflow-y-auto">
+        <div className="min-h-0 flex-1 overflow-y-auto">
+          <div
+            className={cn(
+              "create-listing-wizard-typography listing-onboarding-parity vendor-onboarding-input-surface mx-auto w-full max-w-[1400px] px-8 pt-10 sm:px-14 lg:px-20",
+              currentStep === "basics" ? "pb-24" : "pb-36",
+            )}
+          >
 
-          {/* Step 1: Title & Description */}
-          {currentStep === "tags" && (
-            <div className="max-w-3xl space-y-8">
-              <div>
-                <h1 className="text-4xl font-bold">Title &amp; Description</h1>
-                <p className="text-muted-foreground">
-                  {draft.pricingMode === "a_la_carte"
-                    ? "Add a title, short description, and tags for each rental."
-                    : "Add a title, short description, and tags for this listing."}
-                </p>
-              </div>
+        {currentStep === "basics" && (
+          <div className="mx-auto w-full max-w-[53rem] space-y-8">
+            <header className="space-y-3">
+              <h1 className="text-5xl font-semibold tracking-tight">Listing Basics</h1>
+              <p className="text-base text-muted-foreground">
+                Create one listing for one distinct rentable item, set, or style.
+              </p>
+            </header>
 
-              {draft.pricingMode === "a_la_carte" && draft.rentalTypes.length === 0 ? (
-                <div className="text-sm text-muted-foreground">No rental types selected yet. Add rental types while editing this listing.</div>
-              ) : draft.pricingMode === "a_la_carte" ? (
-                <div className="space-y-6">
-                  {draft.rentalTypes.map((slug) => {
-                    const tags = draft.tagsByPropType[slug] ?? [];
-                    const inputVal = tagInputByProp[slug] ?? "";
-                    const suggestions = TAG_SUGGESTIONS[slug] ?? TAG_SUGGESTIONS.Other ?? [];
-
-                    const titleValue = draft.perPropDetails[slug]?.title ?? "";
-                    const descValue = draft.perPropDetails[slug]?.description ?? "";
-
+            <Card className="space-y-6 p-6">
+              <div className="space-y-2">
+                <Label className="text-base font-semibold">Category</Label>
+                <div className="grid grid-cols-2 gap-3 sm:grid-cols-4">
+                  {CATEGORY_OPTIONS.map((option) => {
+                    const active = draft.category === option.value;
                     return (
-                      <Card key={slug} className="p-6 space-y-4">
-                        <div className="flex items-center justify-between gap-4">
-                          <div className="text-xl font-semibold">
-                            Item: {rentalSlugToLabel.get(slug) ?? slug}
-                          </div>
-                          <div className="text-sm text-muted-foreground">
-                            Qty available: <span className="font-medium">{draft.quantitiesByPropType[slug] ?? "1"}</span>
-                          </div>
-                        </div>
-
-                        <div className="space-y-2">
-                          <div className="font-medium">Title</div>
-                          <Input
-                            value={titleValue}
-                            placeholder={`e.g. ${slug} Rental`}
-                            onChange={(e) => {
-                              const raw = e.target.value;
-                              setDraft((d) => ({
-                                ...d,
-                                perPropDetails: {
-                                  ...d.perPropDetails,
-                                  [slug]: {
-                                    title: raw,
-                                    description: d.perPropDetails[slug]?.description ?? "",
-                                  },
-                                },
-                              }));
-                            }}
-                            onBlur={() => updatePerPropTitle(slug, titleValue)}
-                          />
-                        </div>
-
-                        <div className="space-y-2">
-                          <div className="font-medium">Description</div>
-                          <Textarea
-                            value={descValue}
-                            onChange={(e) => {
-                              const cleaned = e.target.value.replace(/[^a-zA-Z0-9\s-.,'"]/g, "");
-                              setDraft((d) => ({
-                                ...d,
-                                perPropDetails: {
-                                  ...d.perPropDetails,
-                                  [slug]: {
-                                    title: d.perPropDetails[slug]?.title ?? "",
-                                    description: cleaned.slice(0, 300),
-                                  },
-                                },
-                              }));
-                            }}
-                            placeholder="Keep it short—what’s included, style, and what couples should expect."
-                            rows={4}
-                          />
-                          <div className="text-xs text-muted-foreground">Max 300 chars. Special symbols removed.</div>
-                        </div>
-
-                        <div className="space-y-3">
-                          <div className="font-medium">Tags</div>
-
-                          {tags.length > 0 && (
-                            <div className="flex flex-wrap gap-2">
-                              {tags.map((t) => (
-                                <span key={t.slug} className="inline-flex items-center gap-2 rounded-full border px-3 py-1 text-sm">
-                                  {t.label}
-                                  <button
-                                    type="button"
-                                    className="text-muted-foreground hover:text-foreground"
-                                    onClick={() => removeTag(slug, t.slug)}
-                                    aria-label={`Remove ${t.label}`}
-                                  >
-                                    ×
-                                  </button>
-                                </span>
-                              ))}
-                            </div>
-                          )}
-
-                          <div className="flex gap-2">
-                            <Input
-                              value={inputVal}
-                              onChange={(e) =>
-                                setTagInputByProp((m) => ({
-                                  ...m,
-                                  [slug]: e.target.value.replace(/[^a-zA-Z0-9\s-]/g, ""),
-                                }))
-                              }
-                              placeholder="Type a tag…"
-                              onKeyDown={(e) => {
-                                if (e.key === "Enter") {
-                                  e.preventDefault();
-                                  addTag(slug, inputVal);
-                                }
-                              }}
-                            />
-                            <Button type="button" variant="outline" onClick={() => addTag(slug, inputVal)}>
-                              Add
-                            </Button>
-                          </div>
-
-                          <div className="space-y-2">
-                            <div className="text-sm text-muted-foreground">Suggestions</div>
-                            <div className="flex flex-wrap gap-2">
-                              {suggestions.map((s) => (
-                                <button
-                                  key={s}
-                                  type="button"
-                                  className="rounded-full border px-3 py-1 text-sm hover:bg-muted"
-                                  onClick={() => addTag(slug, s)}
-                                >
-                                  {s}
-                                </button>
-                              ))}
-                            </div>
-                          </div>
-
-                          <div className="text-xs text-muted-foreground">
-                            Rules: Title Case display, slug storage, max 30 chars, max 15 tags, duplicates prevented.
-                          </div>
-                        </div>
-
-                        {(!titleValue.trim() || !descValue.trim()) && (
-                          <div className="text-sm text-destructive">Add a title and description for this item to continue.</div>
-                        )}
-                      </Card>
+                      <button
+                        key={option.value}
+                        type="button"
+                        onClick={() =>
+                          setDraft((prev) => ({
+                            ...prev,
+                            category: option.value,
+                            bookingType: option.value === "Rental" ? "instant" : prev.bookingType,
+                          }))
+                        }
+                        className={[
+                          "rounded-xl border px-3 py-3 text-sm font-medium transition",
+                          active
+                            ? "border-primary bg-primary text-primary-foreground"
+                            : "border-border bg-background hover:bg-muted",
+                        ].join(" ")}
+                      >
+                        {option.label}
+                      </button>
                     );
                   })}
                 </div>
-              ) : (
-                <Card className="p-6 space-y-5">
-                  <div className="text-xl font-semibold">Listing Details</div>
-
-                  {draft.rentalTypes.length > 1 && (
-                    <div className="space-y-2">
-                      <div className="text-sm text-muted-foreground">Included rental types</div>
-                      <div className="flex flex-wrap gap-2">
-                        {draft.rentalTypes.map((slug) => (
-                          <span key={slug} className="rounded-full border px-3 py-1 text-sm">
-                            {rentalSlugToLabel.get(slug) ?? slug}
-                          </span>
-                        ))}
-                      </div>
-                    </div>
-                  )}
-
-                  <div className="space-y-2">
-                    <div className="font-medium">Title</div>
-                    <Input
-                      value={draft.listingTitle}
-                      placeholder={draft.pricingMode === "package" ? "e.g. Vintage Photo Booth Package" : "e.g. Vintage Photo Booth Rental"}
-                      onChange={(e) => setDraft((d) => ({ ...d, listingTitle: e.target.value }))}
-                      onBlur={() => updateSharedTitle(draft.listingTitle)}
-                    />
-                  </div>
-
-                  <div className="space-y-2">
-                    <div className="font-medium">Description</div>
-                    <Textarea
-                      value={draft.listingDescription}
-                      onChange={(e) => {
-                        const cleaned = e.target.value.replace(/[^a-zA-Z0-9\s-.,'"]/g, "");
-                        setDraft((d) => ({
-                          ...d,
-                          listingDescription: cleaned.slice(0, 300),
-                        }));
-                      }}
-                      placeholder="Keep it short—what’s included, style, and what couples should expect."
-                      rows={4}
-                    />
-                    <div className="text-xs text-muted-foreground">Max 300 chars. Special symbols removed.</div>
-                  </div>
-
-                  <div className="space-y-3">
-                    <div className="font-medium">What’s Included</div>
-
-                    {(draft.whatsIncluded ?? []).length > 0 && (
-                      <ul className="space-y-1">
-                        {(draft.whatsIncluded ?? []).map((item) => (
-                          <li key={item} className="flex items-center justify-between rounded-md border px-3 py-2 text-sm">
-                            <span className="flex items-start gap-2">
-                              <span aria-hidden>•</span>
-                              <span>{item}</span>
-                            </span>
-                            <button
-                              type="button"
-                              className="text-muted-foreground hover:text-foreground"
-                              onClick={() => removeIncludedItem(item)}
-                              aria-label={`Remove ${item}`}
-                            >
-                              ×
-                            </button>
-                          </li>
-                        ))}
-                      </ul>
-                    )}
-
-                    <div className="flex gap-2">
-                      <Input
-                        value={includedInput}
-                        onChange={(e) => setIncludedInput(e.target.value)}
-                        placeholder="Type an included item…"
-                        spellCheck={true}
-                        autoCorrect="on"
-                        onKeyDown={(e) => {
-                          if (e.key === "Enter") {
-                            e.preventDefault();
-                            addIncludedItem(includedInput);
-                          }
-                        }}
-                      />
-                      <Button
-                        type="button"
-                        disabled={includedInput.trim().length === 0}
-                        onClick={() => addIncludedItem(includedInput)}
-                        className={
-                          includedInput.trim().length > 0
-                            ? "bg-primary text-primary-foreground hover:bg-primary/90"
-                            : "bg-muted text-muted-foreground"
-                        }
-                      >
-                        Add to listing
-                      </Button>
-                    </div>
-
-                    <div className="text-xs text-muted-foreground">
-                      Rules: Each bullet is capitalized, ends without a period, and typos are highlighted by spellcheck.
-                    </div>
-                  </div>
-
-                  <div className="space-y-3">
-                    <div className="font-medium">Tags</div>
-
-                    {(draft.tagsByPropType[LISTING_TAG_KEY] ?? []).length > 0 && (
-                      <div className="flex flex-wrap gap-2">
-                        {(draft.tagsByPropType[LISTING_TAG_KEY] ?? []).map((t) => (
-                          <span key={t.slug} className="inline-flex items-center gap-2 rounded-full border px-3 py-1 text-sm">
-                            {t.label}
-                            <button
-                              type="button"
-                              className="text-muted-foreground hover:text-foreground"
-                              onClick={() => removeTag(LISTING_TAG_KEY, t.slug)}
-                              aria-label={`Remove ${t.label}`}
-                            >
-                              ×
-                            </button>
-                          </span>
-                        ))}
-                      </div>
-                    )}
-
-                    <div className="flex gap-2">
-                      <Input
-                        value={tagInputByProp[LISTING_TAG_KEY] ?? ""}
-                        onChange={(e) =>
-                          setTagInputByProp((m) => ({
-                            ...m,
-                            [LISTING_TAG_KEY]: e.target.value.replace(/[^a-zA-Z0-9\s-]/g, ""),
-                          }))
-                        }
-                        placeholder="Type a tag…"
-                        onKeyDown={(e) => {
-                          if (e.key === "Enter") {
-                            e.preventDefault();
-                            addTag(LISTING_TAG_KEY, tagInputByProp[LISTING_TAG_KEY] ?? "");
-                          }
-                        }}
-                      />
-                      <Button
-                        type="button"
-                        variant="outline"
-                        onClick={() => addTag(LISTING_TAG_KEY, tagInputByProp[LISTING_TAG_KEY] ?? "")}
-                      >
-                        Add
-                      </Button>
-                    </div>
-
-                    <div className="text-xs text-muted-foreground">
-                      Rules: Title Case display, slug storage, max 30 chars, max 15 tags, duplicates prevented.
-                    </div>
-                  </div>
-
-                  {(!draft.listingTitle.trim() || !draft.listingDescription.trim()) && (
-                    <div className="text-sm text-destructive">Add a title and description for this listing to continue.</div>
-                  )}
-                </Card>
-              )}
-            </div>
-          )}
-
-          {/* Step 2: Popular For */}
-          {currentStep === "popularFor" && (
-            <div className="max-w-3xl space-y-6">
-              <h1 className="text-4xl font-bold">Popular For</h1>
-              <div className="flex flex-wrap items-center justify-between gap-3">
-                <p className="text-muted-foreground">Optional. Select all that apply.</p>
-                <Button type="button" variant="outline" onClick={toggleSelectAllPopularFor}>
-                  {allPopularForSelected ? "Deselect all" : "Select all"}
-                </Button>
+                {showBasicsValidation && !hasCategory ? <p className="text-sm text-destructive">Category is required.</p> : null}
               </div>
 
-              <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
-                {POPULAR_FOR_OPTIONS.map((opt) => {
-                  const checked = selectedPopularFor.includes(opt);
+              <div className="space-y-2">
+                <Label htmlFor="listing-title" className="text-base font-semibold">
+                  Title
+                </Label>
+                <Input
+                  id="listing-title"
+                  value={draft.listingTitle}
+                  placeholder="e.g. Gold Vase Set of 5"
+                  onChange={(event) =>
+                    setDraft((prev) => ({
+                      ...prev,
+                      listingTitle: normalizeTitleInput(event.target.value, 80),
+                    }))
+                  }
+                />
+                {showBasicsValidation && !hasTitle ? <p className="text-sm text-destructive">Title is required.</p> : null}
+              </div>
+
+              <div className="space-y-2">
+                <Label htmlFor="listing-description" className="text-base font-semibold">
+                  Description
+                </Label>
+                <Textarea
+                  id="listing-description"
+                  rows={5}
+                  maxLength={DESCRIPTION_MAX_CHARS}
+                  value={draft.listingDescription}
+                  spellCheck={true}
+                  autoCorrect="on"
+                  placeholder={helperText.description}
+                  onChange={(event) =>
+                    setDraft((prev) => ({
+                      ...prev,
+                      listingDescription: event.target.value.slice(0, DESCRIPTION_MAX_CHARS),
+                    }))
+                  }
+                />
+                <div className="text-xs text-muted-foreground">{draft.listingDescription.length}/{DESCRIPTION_MAX_CHARS}</div>
+                {showBasicsValidation && !hasDescription ? <p className="text-sm text-destructive">Description is required.</p> : null}
+              </div>
+
+              <div className="space-y-3">
+                <Label className="text-base font-semibold">What's Included</Label>
+                <p className="text-sm text-muted-foreground">
+                  {helperText.included}
+                </p>
+
+                {draft.whatsIncluded.length > 0 ? (
+                  <ul className="flex flex-wrap gap-2">
+                    {draft.whatsIncluded.map((item) => (
+                      <li
+                        key={item}
+                        className="inline-flex items-center gap-2 rounded-lg border border-border px-3 py-2 text-sm"
+                      >
+                        <span className="flex items-start gap-2">
+                          <span aria-hidden>•</span>
+                          <span>{item}</span>
+                        </span>
+                        <button
+                          type="button"
+                          className="text-muted-foreground hover:text-foreground"
+                          onClick={() => removeIncludedItem(item)}
+                          aria-label={`Remove ${item}`}
+                        >
+                          x
+                        </button>
+                      </li>
+                    ))}
+                  </ul>
+                ) : null}
+
+                <div className="flex gap-2">
+                  <Input
+                    value={includedInput}
+                    spellCheck={true}
+                    autoCorrect="on"
+                    placeholder="What do you include?"
+                    onChange={(event) => setIncludedInput(event.target.value)}
+                    onKeyDown={(event) => {
+                      if (event.key !== "Enter") return;
+                      event.preventDefault();
+                      addIncludedItem(includedInput);
+                    }}
+                  />
+                  <Button
+                    type="button"
+                    variant="outline"
+                    disabled={includedInput.trim().length === 0}
+                    onClick={() => addIncludedItem(includedInput)}
+                  >
+                    Add
+                  </Button>
+                </div>
+              </div>
+
+              <div className="space-y-3">
+                <Label className="text-base font-semibold">Search Tags</Label>
+                <p className="text-sm text-muted-foreground">
+                  {helperText.tags}
+                </p>
+
+                {listingTags.length > 0 ? (
+                  <div className="flex flex-wrap gap-2">
+                    {listingTags.map((tag) => (
+                      <span
+                        key={tag.slug}
+                        className="inline-flex items-center gap-2 rounded-full border border-[#E07A6A] bg-[#E07A6A] px-3 py-1 text-sm text-white"
+                      >
+                        {tag.label}
+                        <button
+                          type="button"
+                          className="text-white/80 hover:text-white"
+                          onClick={() => removeTag(tag.slug)}
+                          aria-label={`Remove ${tag.label}`}
+                        >
+                          x
+                        </button>
+                      </span>
+                    ))}
+                  </div>
+                ) : null}
+
+                <div className="flex gap-2">
+                  <Input
+                    value={tagInput}
+                    placeholder="Add a search tag"
+                    onChange={(event) => setTagInput(event.target.value)}
+                    onKeyDown={(event) => {
+                      if (event.key !== "Enter") return;
+                      event.preventDefault();
+                      addTag(tagInput);
+                    }}
+                  />
+                  <Button type="button" variant="outline" onClick={() => addTag(tagInput)}>
+                    Add
+                  </Button>
+                </div>
+              </div>
+            </Card>
+          </div>
+        )}
+
+        {currentStep === "perfectFor" && (
+          <div className="mx-auto w-full max-w-[53rem] space-y-8">
+            <header className="space-y-3">
+              <h1 className="text-5xl font-semibold tracking-tight">Perfect For</h1>
+              <p className="text-base text-muted-foreground">Choose the events this listing is best for.</p>
+            </header>
+
+            <Card className="space-y-5 border-0 p-6 shadow-none">
+              <div className="flex flex-wrap justify-center gap-3">
+                {POPULAR_FOR_OPTIONS.map((option) => {
+                  const selected = draft.popularFor.includes(option);
+                  const emoji = PERFECT_FOR_EMOJI[option] ?? "✨";
                   return (
-                    <label
-                      key={opt}
+                    <button
+                      key={option}
+                      type="button"
+                      onClick={() => togglePerfectFor(option)}
                       className={[
-                        "flex items-center gap-3 rounded-lg border px-4 py-3 cursor-pointer",
-                        checked ? "border-primary bg-primary/5" : "border-border hover:bg-muted",
+                        "inline-flex items-center gap-[0.78rem] rounded-full border px-[1.95rem] py-[1.18rem] text-[1.56rem] font-medium leading-none transition",
+                        selected
+                          ? "border-[#E07A6A] bg-[#E07A6A] text-white hover:bg-[#E07A6A]"
+                          : "border-[#4a6a7d] bg-background text-[#2a3a42] hover:bg-muted",
                       ].join(" ")}
                     >
-                      <input
-                        type="checkbox"
-                        checked={checked}
-                        onChange={() =>
-                          setDraft((d) => ({
-                            ...d,
-                            popularFor: checked
-                              ? (Array.isArray(d.popularFor) ? d.popularFor.filter((x) => x !== opt) : [])
-                              : Array.from(new Set([...(Array.isArray(d.popularFor) ? d.popularFor : []), opt])),
-                          }))
-                        }
-                      />
-                      <span className="font-medium">{opt}</span>
-                    </label>
+                      <span>{option}</span>
+                      <span aria-hidden="true">{emoji}</span>
+                    </button>
                   );
                 })}
               </div>
-            </div>
-          )}
 
-          {/* Step 3: Pricing */}
-          {currentStep === "pricing" && (
-            <div className="max-w-3xl space-y-8">
-              <div>
-                <h1 className="text-4xl font-bold">Pricing</h1>
-                <p className="text-muted-foreground">
-                  {draft.pricingMode === "a_la_carte"
-                    ? "Set a price for each rental. Customers can choose what they want."
-                    : "Set one price for this listing."}
+              <div className="flex justify-end pt-1">
+                <Button type="button" variant="outline" onClick={toggleSelectAllPerfectFor}>
+                  {allPerfectForSelected ? "Clear all" : "Select all"}
+                </Button>
+              </div>
+            </Card>
+          </div>
+        )}
+
+        {currentStep === "bookingPricing" && (
+          <div className="mx-auto w-full max-w-[53rem] space-y-8">
+            <header className="space-y-3">
+              <h1 className="text-5xl font-semibold tracking-tight">Booking & Pricing</h1>
+              <p className="text-base text-muted-foreground">
+                Set booking behavior, pricing model, and quantity for identical rental units.
+              </p>
+            </header>
+
+            <Card className="space-y-6 p-6">
+              {bookingTypeRequired ? (
+                <div className="space-y-3">
+                  <Label className="text-base font-semibold">Booking Type</Label>
+                  <div className="flex flex-wrap gap-3">
+                    <Button
+                      type="button"
+                      variant={draft.bookingType === "instant" ? "default" : "outline"}
+                      onClick={() => setDraft((prev) => ({ ...prev, bookingType: "instant" }))}
+                    >
+                      Instant Book
+                    </Button>
+                    <Button
+                      type="button"
+                      variant={draft.bookingType === "request" ? "default" : "outline"}
+                      onClick={() => setDraft((prev) => ({ ...prev, bookingType: "request" }))}
+                    >
+                      Request to Book
+                    </Button>
+                  </div>
+                  <p className="text-sm text-muted-foreground">
+                    Request to Book means customers submit requested dates and you manually accept or decline.
+                  </p>
+                </div>
+              ) : null}
+
+              <div className="space-y-3">
+                <Label className="text-base font-semibold">Pricing Model</Label>
+                <div className="flex flex-wrap gap-3">
+                  <Button
+                    type="button"
+                    variant={draft.pricingUnit === "per_day" ? "default" : "outline"}
+                    onClick={() => setDraft((prev) => ({ ...prev, pricingUnit: "per_day" }))}
+                  >
+                    Per day
+                  </Button>
+                  <Button
+                    type="button"
+                    variant={draft.pricingUnit === "per_hour" ? "default" : "outline"}
+                    onClick={() => setDraft((prev) => ({ ...prev, pricingUnit: "per_hour" }))}
+                  >
+                    Per hour
+                  </Button>
+                </div>
+              </div>
+
+              <div className="space-y-2">
+                <Label className="text-base font-semibold">
+                  {draft.pricingUnit === "per_day" ? "Rate per day" : "Rate per hour"}
+                </Label>
+                <div className="relative max-w-sm">
+                  <span className="pointer-events-none absolute left-3 top-1/2 -translate-y-1/2 text-muted-foreground">$</span>
+                  <Input
+                    className="pl-7"
+                    value={draft.rate}
+                    inputMode="decimal"
+                    placeholder={draft.pricingUnit === "per_day" ? "e.g. 250" : "e.g. 75"}
+                    onChange={(event) =>
+                      setDraft((prev) => ({
+                        ...prev,
+                        rate: event.target.value.replace(/[^\d.]/g, ""),
+                      }))
+                    }
+                  />
+                </div>
+                {showBookingPricingValidation && !hasPrice ? <p className="text-sm text-destructive">A rate is required.</p> : null}
+              </div>
+
+              {draft.category === "Rental" ? (
+                <div className="space-y-2 rounded-xl border border-border bg-muted/30 p-4">
+                  <Label className="text-base font-semibold">
+                    How many identical units of this listing do you have available?
+                  </Label>
+                  <p className="text-sm text-muted-foreground">
+                    Example: if this listing is for a set of 5 vases and you own 3 identical sets, enter 3.
+                  </p>
+                  <Input
+                    value={draft.quantity}
+                    inputMode="numeric"
+                    className="max-w-[140px]"
+                    onChange={(event) =>
+                      setDraft((prev) => ({
+                        ...prev,
+                        quantity: event.target.value.replace(/[^\d]/g, ""),
+                      }))
+                    }
+                  />
+                  <p className="text-xs text-muted-foreground">
+                    *Quantity means identical rentable units only.*
+                  </p>
+                  <p className="text-xs text-muted-foreground">
+                    Use "What's Included" from Step 1 for piece counts or components.
+                  </p>
+                </div>
+              ) : null}
+            </Card>
+          </div>
+        )}
+
+        {currentStep === "serviceArea" && (
+          <div className="mx-auto w-full max-w-[53rem] space-y-8">
+            <header className="space-y-3">
+              <h1 className="text-5xl font-semibold tracking-tight">Service Area</h1>
+              <p className="text-base text-muted-foreground">
+                Set your coverage area for this listing. This controls where you operate, not global shipping.
+              </p>
+            </header>
+
+            <Card className="space-y-6 p-6">
+              <div className="space-y-2">
+                <Label className="text-base font-semibold">Listing center address</Label>
+                <LocationPicker
+                  value={draft.serviceLocation}
+                  placeholder="Search listing service center"
+                  onChange={(location) => {
+                    setMapError(null);
+                    const normalizedLocation = location
+                      ? {
+                          ...location,
+                          country:
+                            typeof (location as any)?.country === "string" &&
+                            String((location as any).country).trim().length > 0
+                              ? (location as any).country
+                              : "United States",
+                        }
+                      : null;
+                    setDraft((prev) => ({
+                      ...prev,
+                      serviceLocation: normalizedLocation,
+                      serviceCenter: normalizedLocation
+                        ? { lat: normalizedLocation.lat, lng: normalizedLocation.lng }
+                        : prev.serviceCenter,
+                    }));
+                  }}
+                />
+                {showServiceAreaValidation && !hasLocation ? (
+                  <p className="text-sm text-destructive">
+                    Service center and radius are required to continue.
+                  </p>
+                ) : null}
+              </div>
+
+              <div className="space-y-3">
+                <div className="flex items-center justify-between">
+                  <Label className="text-base font-semibold">Coverage radius</Label>
+                  <span className="text-sm text-muted-foreground">{draft.serviceRadiusMiles} miles</span>
+                </div>
+
+                <Slider
+                  value={[draft.serviceRadiusMiles]}
+                  min={5}
+                  max={300}
+                  step={5}
+                  disabled={!center}
+                  onValueChange={(values) => {
+                    const next = values?.[0] ?? 30;
+                    setDraft((prev) => ({ ...prev, serviceRadiusMiles: next }));
+                  }}
+                />
+
+                <p className="text-xs text-muted-foreground">
+                  Use your listing center address as the middle point. You can override your onboarding default per listing.
                 </p>
               </div>
 
-              <div className="flex gap-3">
-                <Button
-                  variant={draft.pricingUnit === "per_day" ? "default" : "outline"}
-                  onClick={() => setDraft((d) => ({ ...d, pricingUnit: "per_day" }))}
-                >
-                  Per day (flat)
-                </Button>
-                <Button
-                  variant={draft.pricingUnit === "per_hour" ? "default" : "outline"}
-                  onClick={() => setDraft((d) => ({ ...d, pricingUnit: "per_hour" }))}
-                >
-                  Per hour (+ minimum hours)
-                </Button>
-              </div>
+              <div className="relative h-72 overflow-hidden rounded-xl border border-border">
+                <div ref={mapContainerRef} className="h-full w-full" />
 
-              {draft.pricingMode === "a_la_carte" ? (
-                draft.rentalTypes.length === 0 ? (
-                  <div className="text-sm text-muted-foreground">No rental types selected yet. Add rental types while editing this listing.</div>
-                ) : (
-                  <div className="space-y-6">
-                    {draft.rentalTypes.map((slug) => {
-                      const p = draft.pricingByPropType[slug] ?? { rate: "", minimumHours: "" };
-                      return (
-                        <Card key={slug} className="p-6 space-y-4">
-                          <div className="flex items-center justify-between gap-4">
-                            <div className="text-xl font-semibold">Pricing for {slug}</div>
-                            <div className="text-sm text-muted-foreground">
-                              Qty available: <span className="font-medium">{draft.quantitiesByPropType[slug] ?? "1"}</span>
+                {!center && (
+                  <div className="pointer-events-none absolute inset-0 flex items-center justify-center bg-background/50 text-sm text-muted-foreground">
+                    Set a listing center to preview coverage.
+                  </div>
+                )}
+
+                {mapError ? (
+                  <div className="absolute inset-0 flex items-center justify-center bg-background/70 px-4 text-center text-sm text-destructive">
+                    {mapError}
+                  </div>
+                ) : null}
+
+                {!isMapReady && !mapError ? (
+                  <div className="absolute inset-0 flex items-center justify-center bg-background/50 text-sm text-muted-foreground">
+                    Loading map...
+                  </div>
+                ) : null}
+              </div>
+            </Card>
+          </div>
+        )}
+
+        {currentStep === "logistics" && (
+          <div className="mx-auto w-full max-w-[53rem] space-y-8">
+            <header className="space-y-3">
+              <h1 className="text-5xl font-semibold tracking-tight">Logistics</h1>
+              <p className="text-base text-muted-foreground">
+                Configure travel, delivery, and setup behavior. Applicable fees are included in checkout totals.
+              </p>
+            </header>
+
+            <div className="space-y-6">
+              {showTravelSection ? (
+                <Card className="space-y-5 p-6">
+                  <div className="text-xl font-semibold">Travel</div>
+
+                  <div className="flex flex-wrap items-center justify-between gap-3">
+                    <Label className="text-base">Do you travel?</Label>
+                    <ToggleGroup
+                      value={draft.travelOffered}
+                      onChange={(next) =>
+                        setDraft((prev) => ({
+                          ...prev,
+                          travelOffered: next,
+                          travelFeeEnabled: next ? prev.travelFeeEnabled : false,
+                          travelFeeAmount: next ? prev.travelFeeAmount : "",
+                        }))
+                      }
+                      trueLabel="Yes"
+                      falseLabel="No"
+                    />
+                  </div>
+
+                  {draft.travelOffered ? (
+                    <>
+                      <div className="flex flex-wrap items-center justify-between gap-3">
+                        <Label className="text-base">Is there a travel fee?</Label>
+                        <ToggleGroup
+                          value={draft.travelFeeEnabled}
+                          onChange={(next) =>
+                            setDraft((prev) => ({
+                              ...prev,
+                              travelFeeEnabled: next,
+                              travelFeeAmount: next ? prev.travelFeeAmount : "",
+                            }))
+                          }
+                          trueLabel="Yes"
+                          falseLabel="No"
+                        />
+                      </div>
+
+                      {draft.travelFeeEnabled ? (
+                        <div className="grid gap-3 sm:grid-cols-2">
+                          <div className="space-y-2">
+                            <Label>How do you charge?</Label>
+                            <div className="flex flex-wrap gap-2">
+                              {[
+                                { value: "per_mile", label: "Per mile" },
+                                { value: "per_hour", label: "Per hour" },
+                                { value: "flat", label: "Flat rate" },
+                              ].map((option) => (
+                                <Button
+                                  key={option.value}
+                                  type="button"
+                                  size="sm"
+                                  variant={draft.travelFeeType === option.value ? "default" : "outline"}
+                                  onClick={() =>
+                                    setDraft((prev) => ({
+                                      ...prev,
+                                      travelFeeType: option.value as TravelFeeType,
+                                    }))
+                                  }
+                                >
+                                  {option.label}
+                                </Button>
+                              ))}
                             </div>
                           </div>
 
-                          <div className="space-y-2 max-w-sm">
-                            <div className="font-medium">{draft.pricingUnit === "per_day" ? "Rate per day" : "Rate per hour"}</div>
+                          <div className="space-y-2">
+                            <Label>Travel fee</Label>
                             <div className="relative">
-                              <div className="pointer-events-none absolute inset-y-0 left-3 flex items-center text-muted-foreground">
-                                $
-                              </div>
+                              <span className="pointer-events-none absolute left-3 top-1/2 -translate-y-1/2 text-muted-foreground">$</span>
                               <Input
                                 className="pl-7"
-                                value={p.rate}
-                                onChange={(e) => setPropRate(slug, e.target.value)}
-                                placeholder={draft.pricingUnit === "per_day" ? "e.g. 300" : "e.g. 75"}
+                                value={draft.travelFeeAmount}
                                 inputMode="decimal"
+                                onChange={(event) =>
+                                  setDraft((prev) => ({
+                                    ...prev,
+                                    travelFeeAmount: event.target.value.replace(/[^\d.]/g, ""),
+                                  }))
+                                }
+                                placeholder={
+                                  draft.travelFeeType === "per_mile"
+                                    ? "e.g. 2.50"
+                                    : draft.travelFeeType === "per_hour"
+                                    ? "e.g. 35"
+                                    : "e.g. 75"
+                                }
                               />
                             </div>
                           </div>
-
-                          {draft.pricingUnit === "per_hour" && (
-                            <div className="space-y-2 max-w-sm">
-                              <div className="font-medium">Minimum hours</div>
-                              <Input
-                                value={p.minimumHours}
-                                onChange={(e) => setPropMinHours(slug, e.target.value)}
-                                placeholder="e.g. 2"
-                                inputMode="numeric"
-                              />
-                            </div>
-                          )}
-
-                          {!p.rate.trim() && <div className="text-sm text-destructive">Enter a rate for {slug} to continue.</div>}
-                          {draft.pricingUnit === "per_hour" && !p.minimumHours.trim() && (
-                            <div className="text-sm text-destructive">Enter minimum hours for {slug} to continue.</div>
-                          )}
-                        </Card>
-                      );
-                    })}
-                  </div>
-                )
-              ) : (
-                <div className="space-y-6">
-                  <Card className="p-6 space-y-4">
-                    <div className="text-xl font-semibold">{draft.pricingMode === "package" ? "Package Price" : "Listing Price"}</div>
-
-                    <div className="space-y-2 max-w-sm">
-                      <div className="font-medium">{draft.pricingUnit === "per_day" ? "Rate per day" : "Rate per hour"}</div>
-
-                      <div className="relative">
-                        <div className="pointer-events-none absolute inset-y-0 left-3 flex items-center text-muted-foreground">
-                          $
                         </div>
-                        <Input
-                          className="pl-7"
-                          value={draft.rate}
-                          onChange={(e) => setListingRate(e.target.value)}
-                          placeholder={draft.pricingUnit === "per_day" ? "e.g. 300" : "e.g. 75"}
-                          inputMode="decimal"
+                      ) : null}
+                    </>
+                  ) : null}
+                </Card>
+              ) : null}
+
+              {showDeliverySection ? (
+                <Card className="space-y-5 p-6">
+                  <div className="text-xl font-semibold">Delivery</div>
+
+                  <div className="flex flex-wrap items-center justify-between gap-3">
+                    <Label className="text-base">Do you deliver?</Label>
+                    <ToggleGroup
+                      value={draft.deliveryIncluded}
+                      onChange={(next) =>
+                        setDraft((prev) => ({
+                          ...prev,
+                          deliveryIncluded: next,
+                          deliveryFeeEnabled: next ? prev.deliveryFeeEnabled : false,
+                          deliveryFeeAmount: next ? prev.deliveryFeeAmount : "",
+                        }))
+                      }
+                      trueLabel="Yes"
+                      falseLabel="No"
+                    />
+                  </div>
+
+                  <p className="text-sm text-muted-foreground">
+                    If no, this listing is pickup only.
+                  </p>
+
+                  {draft.deliveryIncluded ? (
+                    <>
+                      <div className="flex flex-wrap items-center justify-between gap-3">
+                        <Label className="text-base">Is there a delivery fee?</Label>
+                        <ToggleGroup
+                          value={draft.deliveryFeeEnabled}
+                          onChange={(next) =>
+                            setDraft((prev) => ({
+                              ...prev,
+                              deliveryFeeEnabled: next,
+                              deliveryFeeAmount: next ? prev.deliveryFeeAmount : "",
+                            }))
+                          }
+                          trueLabel="Yes"
+                          falseLabel="No"
                         />
                       </div>
-                    </div>
 
-                    {draft.pricingUnit === "per_hour" && (
-                      <div className="space-y-2 max-w-sm">
-                        <div className="font-medium">Minimum hours</div>
-                        <Input
-                          value={draft.minimumHours}
-                          onChange={(e) => setListingMinHours(e.target.value)}
-                          placeholder="e.g. 2"
-                          inputMode="numeric"
+                      {draft.deliveryFeeEnabled ? (
+                        <div className="max-w-sm space-y-2">
+                          <Label>Delivery fee</Label>
+                          <div className="relative">
+                            <span className="pointer-events-none absolute left-3 top-1/2 -translate-y-1/2 text-muted-foreground">$</span>
+                            <Input
+                              className="pl-7"
+                              value={draft.deliveryFeeAmount}
+                              inputMode="decimal"
+                              placeholder="e.g. 50"
+                              onChange={(event) =>
+                                setDraft((prev) => ({
+                                  ...prev,
+                                  deliveryFeeAmount: event.target.value.replace(/[^\d.]/g, ""),
+                                }))
+                              }
+                            />
+                          </div>
+                        </div>
+                      ) : null}
+                    </>
+                  ) : null}
+                </Card>
+              ) : null}
+
+              {showSetupSection ? (
+                <Card className="space-y-5 p-6">
+                  <div className="text-xl font-semibold">Setup</div>
+
+                  <div className="flex flex-wrap items-center justify-between gap-3">
+                    <Label className="text-base">Do you set up?</Label>
+                    <ToggleGroup
+                      value={draft.setupIncluded}
+                      onChange={(next) =>
+                        setDraft((prev) => ({
+                          ...prev,
+                          setupIncluded: next,
+                          setupFeeEnabled: next ? prev.setupFeeEnabled : false,
+                          setupFeeAmount: next ? prev.setupFeeAmount : "",
+                        }))
+                      }
+                      trueLabel="Yes"
+                      falseLabel="No"
+                    />
+                  </div>
+
+                  {draft.setupIncluded ? (
+                    <>
+                      <div className="flex flex-wrap items-center justify-between gap-3">
+                        <Label className="text-base">Is there a setup fee?</Label>
+                        <ToggleGroup
+                          value={draft.setupFeeEnabled}
+                          onChange={(next) =>
+                            setDraft((prev) => ({
+                              ...prev,
+                              setupFeeEnabled: next,
+                              setupFeeAmount: next ? prev.setupFeeAmount : "",
+                            }))
+                          }
+                          trueLabel="Yes"
+                          falseLabel="No"
                         />
                       </div>
-                    )}
 
-                    {!draft.rate.trim() && <div className="text-sm text-destructive">Enter a rate to continue.</div>}
-                    {draft.pricingUnit === "per_hour" && !draft.minimumHours.trim() && (
-                      <div className="text-sm text-destructive">Enter minimum hours to continue.</div>
-                    )}
-                  </Card>
+                      {draft.setupFeeEnabled ? (
+                        <div className="max-w-sm space-y-2">
+                          <Label>Setup fee</Label>
+                          <div className="relative">
+                            <span className="pointer-events-none absolute left-3 top-1/2 -translate-y-1/2 text-muted-foreground">$</span>
+                            <Input
+                              className="pl-7"
+                              value={draft.setupFeeAmount}
+                              inputMode="decimal"
+                              placeholder="e.g. 75"
+                              onChange={(event) =>
+                                setDraft((prev) => ({
+                                  ...prev,
+                                  setupFeeAmount: event.target.value.replace(/[^\d.]/g, ""),
+                                }))
+                              }
+                            />
+                          </div>
+                        </div>
+                      ) : null}
+                    </>
+                  ) : null}
+                </Card>
+              ) : null}
 
-                  {draft.pricingMode === "package" && draft.rentalTypes.length > 1 && (
-                    <div className="text-sm text-muted-foreground">
-                      This is one package price for all selected rentals inside the package.
-                    </div>
-                  )}
-                </div>
-              )}
+              {!showTravelSection && !showDeliverySection && !showSetupSection ? (
+                <Card className="p-6 text-sm text-muted-foreground">
+                  Select a category in Listing Basics to configure applicable logistics options.
+                </Card>
+              ) : null}
             </div>
-          )}
+          </div>
+        )}
 
-          {/* Step 4: Photos */}
-          {currentStep === "photos" && (
-            <div className="max-w-3xl space-y-6">
-              <div>
-                <h1 className="text-4xl font-bold">Photos</h1>
-                <p className="text-muted-foreground">Add photos now, or you can add later. (Photos required before publishing.)</p>
-              </div>
+        {currentStep === "media" && (
+          <div className="mx-auto w-full max-w-[53rem] space-y-8">
+            <header className="space-y-3">
+              <h1 className="text-5xl font-semibold tracking-tight">Photos & Videos</h1>
+              <p className="text-base text-muted-foreground">
+                Add at least 3 photos to publish. Drafts can be saved with fewer photos.
+              </p>
+            </header>
 
-              {/* Listing-level photo input */}
+            <Card className="space-y-5 p-6">
               <input
                 ref={fileInputRef}
                 type="file"
                 accept="image/jpeg,image/png,image/webp"
                 multiple
                 className="hidden"
-                onChange={(e) => onPickPhotos(e.target.files)}
+                onChange={(event) => void onPickPhotos(event.target.files)}
               />
 
-              <div className="flex gap-3">
-                <Button onClick={() => fileInputRef.current?.click()} className="gap-2" type="button">
+              <div className="flex flex-wrap gap-3">
+                <Button type="button" className="gap-2" onClick={() => fileInputRef.current?.click()}>
                   <Upload className="h-4 w-4" />
                   Add photos
                 </Button>
-                <Button
-                  variant="outline"
-                  type="button"
-                  onClick={() => {
-                    toast({ title: "Okay", description: "You can add photos later. (Required before publishing.)" });
-                    goNext();
-                  }}
-                >
-                  Add later
-                </Button>
+                <span className="text-sm text-muted-foreground">
+                  {draft.photoNames.length} photo{draft.photoNames.length === 1 ? "" : "s"} uploaded
+                </span>
               </div>
 
               <InlinePhotoEditor
-                photos={draft.photoNames.map((name, idx) => ({
+                photos={draft.photoNames.map((name, index) => ({
                   id: name,
                   name,
-                  src: draft.photoPreviews[idx] || `/uploads/listings/${name}`,
+                  src: draft.photoPreviews[index] || `/uploads/listings/${name}`,
                 }))}
                 coverRatio={draft.coverPhotoRatio}
                 cropsByPhotoId={draft.photoCropsByName}
                 onAddPhotos={() => fileInputRef.current?.click()}
                 onRemovePhoto={removePhotoByName}
-                onReorderPhotos={reorderListingPhotos}
-                onCoverRatioChange={(ratio) => setDraft((d) => ({ ...d, coverPhotoRatio: ratio, coverPhotoIndex: 0 }))}
+                onReorderPhotos={reorderPhotos}
+                onCoverRatioChange={(ratio) => setDraft((prev) => ({ ...prev, coverPhotoRatio: ratio }))}
                 onCropChange={setPhotoCropByName}
               />
-              <div className="text-xs text-muted-foreground">Count: {draft.photoNames.length}</div>
-            </div>
-          )}
 
-          {/* Step 5: Delivery / Setup */}
-          {currentStep === "deliverySetup" && (
-            <div className="max-w-3xl space-y-10">
-              <div>
-                <h1 className="text-4xl font-bold">Delivery / Setup</h1>
-                <p className="text-muted-foreground">Optional. Add delivery/setup details and fees.</p>
+              {!hasMinPhotos ? (
+                <p className="text-sm text-muted-foreground">
+                  Publish readiness requires at least {MIN_PHOTOS_FOR_PUBLISH} photos.
+                </p>
+              ) : null}
+
+              <div className="rounded-xl border border-border bg-muted/20 p-4 text-sm text-muted-foreground">
+                Video uploads are deferred for launch safety in this pass. TODO: add dedicated MP4/MOV upload endpoint and
+                duration/size validation before enabling vendor video uploads.
               </div>
+            </Card>
+          </div>
+        )}
+          </div>
+        </div>
+      </div>
 
-              <Card className="p-6 space-y-5">
-                <div className="text-xl font-semibold">Delivery</div>
-                  <div className="space-y-2">
-                    <div className="space-y-2">
-                      <Label>Service area center (listing-specific)</Label>
-                      <LocationPicker
-                        value={draft.serviceLocation ?? null}
-                        onChange={(loc) => {
-                          setErrorMsg(null);
-                          setDraft((d) => ({
-                            ...d,
-                            serviceLocation: loc,
-                            serviceCenter: loc ? { lat: loc.lat, lng: loc.lng } : d.serviceCenter,
-                          }));
-                        }}
-                        placeholder="Search the center point for this listing..."
-                      />
-                      <p className="text-xs text-muted-foreground">
-                        Default comes from your vendor onboarding address, but you can override it per listing.
-                      </p>
-                    </div>
-
-                    {/* Map preview */}
-                    <div className="relative rounded-xl border overflow-hidden h-64">
-                      <div ref={mapContainerRef} className="w-full h-full" />
-
-                      {!center && (
-                        <div className="absolute inset-0 flex items-center justify-center text-sm text-muted-foreground pointer-events-none bg-background/40">
-                          Choose a location to preview your service radius.
-                        </div>
-                      )}
-
-                      {!!errorMsg && (
-                        <div className="absolute inset-0 flex items-center justify-center bg-background/70 px-6 text-center text-sm text-destructive">
-                          {errorMsg}
-                        </div>
-                      )}
-
-                      {!isMapReady && !errorMsg && (
-                        <div className="absolute inset-0 flex items-center justify-center text-sm text-muted-foreground bg-background/50">
-                          Loading map…
-                        </div>
-                      )}
-                    </div>
-
-                    <Label>Where do you provide these services?</Label>
-                    <Select
-                      value={draft.serviceAreaMode}
-                      onValueChange={(v) => {
-                        const next = v as "radius" | "nationwide" | "global";
-                        setDraft((d) => ({
-                          ...d,
-                          serviceAreaMode: next,
-                          ...(next === "radius" ? {} : { serviceRadiusMiles: 500 }),
-                        }));
-                      }}
-
-                    >
-                      <SelectTrigger>
-                        <SelectValue placeholder="Select service area" />
-                      </SelectTrigger>
-                      <SelectContent>
-                        <SelectItem value="radius">Set Radius</SelectItem>
-                        <SelectItem value="nationwide">Nationally</SelectItem>
-                        <SelectItem value="global">Globally</SelectItem>
-                      </SelectContent>
-                    </Select>
-
-                    {draft.serviceAreaMode === "radius" && (
-                    <div className="space-y-2">
-                      <div className="flex items-center justify-between">
-                        <Label>Service radius</Label>
-                        <span className="text-sm text-muted-foreground">
-                          {draft.serviceRadiusMiles} miles
-                        </span>
-                      </div>
-
-                      <Slider
-                        value={[draft.serviceRadiusMiles]}
-                        min={0}
-                        max={500}
-                        step={15}
-                        onValueChange={(vals) => {
-                          const value = vals?.[0] ?? 0;
-                          setDraft((d) => ({ ...d, serviceRadiusMiles: value }));
-                        }}
-                        disabled={!center}
-                      />
-
-                      <p className="text-xs text-muted-foreground">
-                        Adjust in 15-mile increments. (Max 500 miles)
-                      </p>
-                    </div>
-                  )}
-                  </div>
-                <div className="flex items-center justify-between gap-6">
-                  <Label>Do you deliver?</Label>
-                  <YesNoButtons
-                    value={draft.deliveryIncluded}
-                    onChange={(v) =>
-                      setDraft((d) => ({
-                        ...d,
-                        deliveryIncluded: v,
-                        deliveryFeeEnabled: v ? d.deliveryFeeEnabled : false,
-                        deliveryPerMile: v ? d.deliveryPerMile : "",
-                      }))
-                    }
-                  />
-                </div>
-
-                {draft.deliveryIncluded && (
-                  <div className="flex items-center justify-between gap-6">
-                    <Label>Is there a delivery fee?</Label>
-                    <YesNoButtons
-                      value={draft.deliveryFeeEnabled}
-                      onChange={(v) =>
-                        setDraft((d) => ({
-                          ...d,
-                          deliveryFeeEnabled: v,
-                          deliveryPerMile: v ? d.deliveryPerMile : "",
-                        }))
-                      }
-                    />
-                  </div>
-                )}
-
-                {draft.deliveryIncluded && draft.deliveryFeeEnabled && (
-                  <div className="space-y-2 max-w-sm">
-                    <Label>Delivery fee amount</Label>
-                    <div className="relative">
-                      <div className="pointer-events-none absolute inset-y-0 left-3 flex items-center text-muted-foreground">
-                        $
-                      </div>
-                      <Input
-                        className="pl-7"
-                        value={draft.deliveryPerMile}
-                        onChange={(e) =>
-                          setDraft((d) => ({
-                            ...d,
-                            deliveryPerMile: e.target.value.replace(/[^\d.]/g, ""),
-                          }))
-                        }
-                        placeholder="e.g. 50"
-                        inputMode="decimal"
-                      />
-                    </div>
-                  </div>
-                )}
-              </Card>
-
-              <Card className="p-6 space-y-5">
-                <div className="text-xl font-semibold">Setup</div>
-
-                <div className="flex items-center justify-between gap-6">
-                  <Label>Do you set up?</Label>
-                  <YesNoButtons
-                    value={draft.setupIncluded}
-                    onChange={(v) =>
-                      setDraft((d) => ({
-                        ...d,
-                        setupIncluded: v,
-                        setupFeeEnabled: v ? d.setupFeeEnabled : false,
-                        setupFlatFee: v ? d.setupFlatFee : "",
-                      }))
-                    }
-                  />
-                </div>
-
-                {draft.setupIncluded && (
-                  <div className="flex items-center justify-between gap-6">
-                    <Label>Is there a setup fee?</Label>
-                    <YesNoButtons
-                      value={draft.setupFeeEnabled}
-                      onChange={(v) =>
-                        setDraft((d) => ({
-                          ...d,
-                          setupFeeEnabled: v,
-                          setupFlatFee: v ? d.setupFlatFee : "",
-                        }))
-                      }
-                    />
-                  </div>
-                )}
-
-                {draft.setupIncluded && draft.setupFeeEnabled && (
-                  <div className="space-y-2 max-w-sm">
-                    <Label>Setup fee amount</Label>
-                    <div className="relative">
-                      <div className="pointer-events-none absolute inset-y-0 left-3 flex items-center text-muted-foreground">
-                        $
-                      </div>
-                      <Input
-                        className="pl-7"
-                        value={draft.setupFlatFee}
-                        onChange={(e) =>
-                          setDraft((d) => ({
-                            ...d,
-                            setupFlatFee: e.target.value.replace(/[^\d.]/g, ""),
-                          }))
-                        }
-                        placeholder="e.g. 75"
-                        inputMode="decimal"
-                      />
-                    </div>
-                  </div>
-                )}
-              </Card>
-
-              {draft.photoPreviews.length === 0 && (
-                <div className="text-sm text-muted-foreground">
-                  Reminder: photos are required before publishing (we'll enforce on the publish endpoint/UI next).
-                </div>
-              )}
-            </div>
-          )}
-
-          {/* Footer nav */}
-          <div className="max-w-3xl mt-10 flex items-center justify-between">
-            <Button variant="outline" onClick={goBack} disabled={stepIndex === 0}>
+      <div className="fixed bottom-0 left-24 right-0 z-30 bg-[#ffffff]/96 backdrop-blur-sm">
+        <div className="mx-auto flex w-full max-w-[1400px] flex-wrap items-center justify-between gap-3 px-6 pt-4 pb-8 sm:px-12 lg:px-16">
+          <div className="flex items-center gap-2">
+            <Button
+              type="button"
+              variant="outline"
+              onClick={goBack}
+              disabled={stepIndex === 0}
+              className="min-h-[2.7rem] px-6 font-sans text-[1.2rem] font-medium"
+            >
               Back
             </Button>
+            <Button
+              type="button"
+              variant="outline"
+              onClick={handleSaveDraft}
+              disabled={isSavingDraft || isPublishing}
+              className="min-h-[2.7rem] px-6 font-sans text-[1.2rem] font-medium"
+            >
+              {isSavingDraft ? "Saving..." : "Save Draft"}
+            </Button>
+          </div>
 
+          <div className="flex items-center gap-2">
             {isLastStep ? (
-              <Button onClick={saveAndExit} disabled={!canContinue}>
+              <Button
+                type="button"
+                variant="outline"
+                onClick={onClose}
+                disabled={isPublishing}
+                className="min-h-[2.7rem] px-6 font-sans text-[1.2rem] font-medium"
+              >
                 Finish
               </Button>
             ) : (
-              <Button onClick={goNext} disabled={!canContinue}>
-                Next
+              <Button
+                type="button"
+                onClick={goNext}
+                disabled={isPublishing}
+                className="min-h-[2.7rem] px-6 font-sans text-[1.2rem] font-medium"
+              >
+                Continue
               </Button>
             )}
+
+            {isLastStep && publishReady ? (
+              <Button
+                type="button"
+                onClick={handlePublish}
+                disabled={isPublishing}
+                className="min-h-[2.7rem] px-6 font-sans text-[1.2rem] font-medium"
+              >
+                {isPublishing ? "Publishing..." : "Publish"}
+              </Button>
+            ) : null}
           </div>
         </div>
       </div>

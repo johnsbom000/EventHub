@@ -5,16 +5,49 @@ import "./index.css";
 import "mapbox-gl/dist/mapbox-gl.css";
 import "stream-chat-react/dist/css/v2/index.css";
 import { LocationProvider } from "./context/LocationContext";
-import { Auth0Provider } from "@auth0/auth0-react";
+import { Auth0Context, Auth0Provider, initialContext, type Auth0ContextInterface } from "@auth0/auth0-react";
 import { useAuth0 } from "@auth0/auth0-react";
 import { setTokenGetter } from "@/lib/authToken";
 
 const THEME_STORAGE_KEY = "eventhub-theme";
 if (typeof window !== "undefined") {
-  const persistedTheme = window.localStorage.getItem(THEME_STORAGE_KEY);
-  const initialTheme = persistedTheme === "dark" ? "dark" : "light";
-  document.documentElement.classList.toggle("dark", initialTheme === "dark");
+  window.localStorage.setItem(THEME_STORAGE_KEY, "light");
+  document.documentElement.classList.remove("dark");
+  document.documentElement.style.colorScheme = "light";
 }
+
+const INSECURE_PREVIEW_AUTH_MESSAGE =
+  "Sign in is unavailable on non-secure preview URLs. Use localhost on your Mac or an HTTPS preview URL.";
+
+function isAuth0SecureOrigin(): boolean {
+  if (typeof window === "undefined") return true;
+  if (window.isSecureContext) return true;
+  const host = window.location.hostname.trim().toLowerCase();
+  return host === "localhost" || host === "127.0.0.1" || host === "::1";
+}
+
+const AUTH0_SECURE_ORIGIN_ENABLED = isAuth0SecureOrigin();
+
+const insecurePreviewAuth0ContextValue: Auth0ContextInterface = {
+  ...initialContext,
+  isAuthenticated: false,
+  isLoading: false,
+  error: undefined,
+  user: undefined,
+  getAccessTokenSilently: (async () => "") as any,
+  getAccessTokenWithPopup: (async () => undefined) as any,
+  getIdTokenClaims: (async () => undefined) as any,
+  loginWithRedirect: (async () => {
+    throw new Error(INSECURE_PREVIEW_AUTH_MESSAGE);
+  }) as any,
+  loginWithPopup: (async () => {
+    throw new Error(INSECURE_PREVIEW_AUTH_MESSAGE);
+  }) as any,
+  connectAccountWithRedirect: (async () => {
+    throw new Error(INSECURE_PREVIEW_AUTH_MESSAGE);
+  }) as any,
+  logout: (async () => undefined) as any,
+};
 
 // Simple error boundary to catch runtime errors
 class ErrorBoundary extends Component<{ children: ReactNode }, { hasError: boolean }> {
@@ -35,8 +68,8 @@ class ErrorBoundary extends Component<{ children: ReactNode }, { hasError: boole
     if (this.state.hasError) {
       return (
         <div style={{ padding: "20px", fontFamily: "\"DM Sans\", \"Segoe UI\", sans-serif" }}>
-          <h1>Something went wrong</h1>
-          <p>Please check the console for more details.</p>
+          <h1>We hit a temporary issue</h1>
+          <p>Please refresh the page and try again.</p>
         </div>
       );
     }
@@ -78,31 +111,41 @@ if (!rootElement) {
 
 const root = createRoot(rootElement);
 
+const appContent = (
+  <>
+    <AuthTokenBridge />
+    <LocationProvider>
+      <App />
+    </LocationProvider>
+  </>
+);
+
 root.render(
   <React.StrictMode>
     <ErrorBoundary>
-      <Auth0Provider
-        domain="dev-u831fugzvigrqe8g.us.auth0.com"
-        clientId="gris26WuQ5P9me2vXPJBSuzKNpJrR5nW"
-        cacheLocation="localstorage"
-        useRefreshTokens={false}
-        authorizationParams={{
-          redirect_uri: window.location.origin,
-          audience: "https://eventhub-api",
-          scope: "openid profile email",
-        }}
-
-
-        onRedirectCallback={(appState) => {
-          const target = appState?.returnTo || window.location.pathname;
-          window.location.assign(target);
-        }}
-      >
-        <AuthTokenBridge />
-        <LocationProvider>
-          <App />
-        </LocationProvider>
-      </Auth0Provider>
+      {AUTH0_SECURE_ORIGIN_ENABLED ? (
+        <Auth0Provider
+          domain="dev-u831fugzvigrqe8g.us.auth0.com"
+          clientId="gris26WuQ5P9me2vXPJBSuzKNpJrR5nW"
+          cacheLocation="localstorage"
+          useRefreshTokens={false}
+          authorizationParams={{
+            redirect_uri: window.location.origin,
+            audience: "https://eventhub-api",
+            scope: "openid profile email",
+          }}
+          onRedirectCallback={(appState) => {
+            const target = appState?.returnTo || window.location.pathname;
+            window.location.assign(target);
+          }}
+        >
+          {appContent}
+        </Auth0Provider>
+      ) : (
+        <Auth0Context.Provider value={insecurePreviewAuth0ContextValue}>
+          {appContent}
+        </Auth0Context.Provider>
+      )}
     </ErrorBoundary>
   </React.StrictMode>
 );

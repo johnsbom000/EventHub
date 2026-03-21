@@ -347,7 +347,13 @@ export function InlinePhotoEditor({
                     { label: "9:16", value: 9 / 16 },
                     { label: "16:9", value: 16 / 9 },
                   ].map((opt) => (
-                    <Button key={opt.label} type="button" size="sm" variant="outline" onClick={() => applyAspect(opt.value)}>
+                    <Button
+                      key={opt.label}
+                      type="button"
+                      size="sm"
+                      variant={approxEqual(aspect, opt.value, 0.02) ? "default" : "outline"}
+                      onClick={() => applyAspect(opt.value)}
+                    >
                       {opt.label}
                     </Button>
                   ))}
@@ -395,12 +401,6 @@ export function InlinePhotoEditor({
               <SortableContext items={photoIds} strategy={rectSortingStrategy}>
                 <div className="grid grid-cols-2 sm:grid-cols-3 lg:grid-cols-4 gap-3">
                   {photos.map((photo, idx) => {
-                    const rawAspect =
-                      idx === 0
-                        ? Number(coverRatio.split(":")[0]) / Number(coverRatio.split(":")[1] || 1)
-                        : 4 / 5;
-                    const tileAspect =
-                      Number.isFinite(rawAspect) && rawAspect > 0 ? Math.max(0.5, Math.min(1.8, rawAspect)) : 4 / 5;
                     return (
                       <SortablePhotoTile
                         key={photo.id}
@@ -408,7 +408,7 @@ export function InlinePhotoEditor({
                         src={photo.src}
                         isCover={idx === 0}
                         isSelected={selectedPhotoId === photo.id}
-                        aspect={tileAspect}
+                        aspect={4 / 5}
                         onSelect={() => setSelectedPhotoId(photo.id)}
                         onRemove={() => onRemovePhoto(photo.id)}
                       />

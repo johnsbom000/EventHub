@@ -389,7 +389,7 @@ const EventPlanner = () => {
   return (
     <div className="min-h-screen flex flex-col">
       <Navigation />
-      <main className="flex-1 bg-card/50 py-12">
+      <main className="flex-1 bg-[#ffffff] py-12">
         <div className="max-w-3xl mx-auto px-4 sm:px-6 lg:px-8">
           <div className="text-center mb-8">
             <h1 className="text-3xl md:text-4xl font-bold mb-4" data-testid="text-page-title">New Event</h1>
