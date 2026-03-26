@@ -5,7 +5,6 @@ import crypto from "crypto";
 import {
   insertEventSchema,
   insertVendorAccountSchema,
-  insertVendorProfileSchema,
   vendorProfiles,
   vendorAccounts,
   vendorListings,
@@ -24,11 +23,7 @@ import {
 } from "@shared/schema";
 import {
   hashPassword,
-  comparePassword,
-  generateToken,
   verifyToken,
-  requireVendorAuth, // legacy (kept for now; not used on vendor routes below)
-  requireDualAuth,
   requireDualAuthAuth0,
   requireAdminAuth,
   resolveVendorAccountForAuth0Identity,
@@ -74,6 +69,7 @@ import {
   isDisputeWindowOpen,
   DISPUTE_WINDOW_HOURS,
 } from "./payoutEligibility";
+import { decryptToken, encryptToken } from "./lib/tokenEncryption";
 
 /**proxy: {
   "/api": {
@@ -518,11 +514,6 @@ function createIpRateLimiter(options: { label: string; maxPerMinute: number }) {
   };
 }
 
-const authRateLimiter = createIpRateLimiter({
-  label: "auth",
-  maxPerMinute: 40,
-});
-
 const paymentRateLimiter = createIpRateLimiter({
   label: "payments",
   maxPerMinute: 20,
@@ -533,9 +524,26 @@ const uploadRateLimiter = createIpRateLimiter({
   maxPerMinute: 30,
 });
 
+const bookingRateLimiter = createIpRateLimiter({
+  label: "bookings",
+  maxPerMinute: 5,
+});
+
 function logRouteError(route: string, error: unknown) {
   const message = error instanceof Error ? error.message : String(error);
   console.error(`${route} failed:`, message);
+}
+
+function respondWithInternalServerError(req: any, res: any, error: unknown) {
+  const method = typeof req?.method === "string" ? req.method : "UNKNOWN";
+  const routePath =
+    typeof req?.originalUrl === "string" && req.originalUrl.trim().length > 0
+      ? req.originalUrl
+      : typeof req?.path === "string" && req.path.trim().length > 0
+        ? req.path
+        : "unknown_route";
+  logRouteError(`${method} ${routePath}`, error);
+  return res.status(500).json({ error: "Internal server error" });
 }
 
 async function syncBookingToGoogleCalendarSafely(bookingId: string, route: string) {
@@ -1736,16 +1744,6 @@ async function refreshPaymentPayoutStateInTx(
     })
     .where(eq(payments.id, paymentContext.paymentId));
 
-  await tx
-    .update(bookings)
-    .set({
-      payoutStatus: payoutEligibility.payoutStatus,
-      payoutEligibleAt: payoutEligibility.payoutEligibleAt,
-      payoutBlockedReason: payoutEligibility.payoutBlockedReason,
-      updatedAt: now,
-    })
-    .where(eq(bookings.id, paymentContext.bookingId));
-
   return {
     paymentContext,
     payoutEligibility,
@@ -1822,24 +1820,14 @@ async function processSinglePayoutCandidate(params: {
   const chargeId = asTrimmedString(refreshed.paymentContext.stripeChargeId);
 
   if (!connectedAccountId || !chargeId || payoutAmount <= 0) {
-    await db.transaction(async (tx) => {
-      await tx
-        .update(payments)
-        .set({
-          payoutStatus: "blocked",
-          payoutBlockedReason: "missing_transfer_requirements",
-          payoutAdjustedAmount: payoutAmount,
-        })
-        .where(eq(payments.id, paymentId));
-      await tx
-        .update(bookings)
-        .set({
-          payoutStatus: "blocked",
-          payoutBlockedReason: "missing_transfer_requirements",
-          updatedAt: new Date(),
-        })
-        .where(eq(bookings.id, bookingId));
-    });
+    await db
+      .update(payments)
+      .set({
+        payoutStatus: "blocked",
+        payoutBlockedReason: "missing_transfer_requirements",
+        payoutAdjustedAmount: payoutAmount,
+      })
+      .where(eq(payments.id, paymentId));
     return {
       paymentId,
       bookingId,
@@ -1921,15 +1909,6 @@ async function processSinglePayoutCandidate(params: {
             payoutAdjustedAmount: eligibilityLocked.adjustedPayoutAmount,
           })
           .where(eq(payments.id, paymentId));
-        await tx
-          .update(bookings)
-          .set({
-            payoutStatus: eligibilityLocked.payoutStatus,
-            payoutEligibleAt: eligibilityLocked.payoutEligibleAt,
-            payoutBlockedReason: eligibilityLocked.payoutBlockedReason,
-            updatedAt: nowLocked,
-          })
-          .where(eq(bookings.id, locked.bookingId));
         return {
           outcome: eligibilityLocked.payoutStatus === "blocked" ? "blocked" : "skipped",
           reason: eligibilityLocked.payoutBlockedReason || "not_eligible",
@@ -1948,16 +1927,6 @@ async function processSinglePayoutCandidate(params: {
           payoutAdjustedAmount: payoutAmount,
         })
         .where(eq(payments.id, paymentId));
-      await tx
-        .update(bookings)
-        .set({
-          payoutStatus: "paid",
-          payoutEligibleAt: eligibilityLocked.payoutEligibleAt,
-          paidOutAt: nowLocked,
-          payoutBlockedReason: null,
-          updatedAt: nowLocked,
-        })
-        .where(eq(bookings.id, locked.bookingId));
 
       return {
         outcome: "paid" as const,
@@ -1979,24 +1948,14 @@ async function processSinglePayoutCandidate(params: {
       typeof error?.message === "string" && error.message.trim().length > 0
         ? error.message.trim().slice(0, 200)
         : "transfer_failed";
-    await db.transaction(async (tx) => {
-      await tx
-        .update(payments)
-        .set({
-          payoutStatus: "blocked",
-          payoutBlockedReason: "transfer_failed",
-          payoutAdjustedAmount: payoutAmount,
-        })
-        .where(eq(payments.id, paymentId));
-      await tx
-        .update(bookings)
-        .set({
-          payoutStatus: "blocked",
-          payoutBlockedReason: "transfer_failed",
-          updatedAt: new Date(),
-        })
-        .where(eq(bookings.id, bookingId));
-    });
+    await db
+      .update(payments)
+      .set({
+        payoutStatus: "blocked",
+        payoutBlockedReason: "transfer_failed",
+        payoutAdjustedAmount: payoutAmount,
+      })
+      .where(eq(payments.id, paymentId));
     return {
       paymentId,
       bookingId,
@@ -4492,19 +4451,6 @@ app.post(
     }
   });
 
-  // Vendor Authentication Routes (legacy; kept but not required for Auth0-only flow)
-  const vendorSignupSchema = z.object({
-    email: z.string().email(),
-    password: z.string().min(8),
-    businessName: z.string().min(2),
-  });
-
-  const vendorLoginSchema = z.object({
-    email: z.string().email(),
-    password: z.string(),
-  });
-  const AUTH_FAILURE_MESSAGE = "Invalid email or password";
-
   // Update current vendor account (protected route)
   const updateVendorMeSchema = z.object({
     businessName: z.string().min(1).max(100).optional(),
@@ -4579,99 +4525,7 @@ app.post(
         activeProfileId: profileContext?.activeProfileId ?? null,
       });
     } catch (error: any) {
-      res.status(500).json({ error: error.message });
-    }
-  });
-
-  // Legacy vendor signup/login (kept; not used for Auth0-only vendors)
-  app.post("/api/vendor/signup", authRateLimiter, async (req, res) => {
-    try {
-      const { email, password, businessName } = vendorSignupSchema.parse(req.body);
-
-      // Check if vendor account already exists (check database)
-      const existing = await db.select().from(vendorAccounts).where(eq(vendorAccounts.email, email));
-      if (existing.length > 0) {
-        return res.status(400).json({ error: "Unable to create account" });
-      }
-
-      // Hash password
-      const hashedPassword = await hashPassword(password);
-
-      // Create vendor account in database
-      const [account] = await db
-        .insert(vendorAccounts)
-        .values({
-          email,
-          password: hashedPassword,
-          businessName,
-          stripeConnectId: null,
-          stripeAccountType: null,
-          stripeOnboardingComplete: false,
-        })
-        .returning();
-
-      // Generate JWT token
-      const token = generateToken({
-        id: account.id,
-        email: account.email,
-        type: "vendor",
-      });
-
-      res.json({
-        token,
-        vendorAccount: {
-          id: account.id,
-          email: account.email,
-          profileComplete: account.profileComplete,
-          stripeOnboardingComplete: account.stripeOnboardingComplete,
-        },
-      });
-    } catch (error: any) {
-      res.status(400).json({ error: "Unable to create account" });
-    }
-  });
-
-  app.post("/api/vendor/login", authRateLimiter, async (req, res) => {
-    try {
-      const { email, password } = vendorLoginSchema.parse(req.body);
-
-      // Find vendor account (from database)
-      const accounts = await db.select().from(vendorAccounts).where(eq(vendorAccounts.email, email));
-      if (accounts.length === 0) {
-        return res.status(401).json({ error: AUTH_FAILURE_MESSAGE });
-      }
-      const account = accounts[0];
-      if (account.deletedAt) {
-        return res.status(403).json({ error: "Vendor account is deleted" });
-      }
-      if (account.active === false) {
-        return res.status(403).json({ error: "Vendor account is not active" });
-      }
-
-      // Verify password
-      const valid = await comparePassword(password, account.password);
-      if (!valid) {
-        return res.status(401).json({ error: AUTH_FAILURE_MESSAGE });
-      }
-
-      // Generate JWT token
-      const token = generateToken({
-        id: account.id,
-        email: account.email,
-        type: "vendor",
-      });
-
-      res.json({
-        token,
-        vendorAccount: {
-          id: account.id,
-          email: account.email,
-          profileComplete: account.profileComplete,
-          stripeOnboardingComplete: account.stripeOnboardingComplete,
-        },
-      });
-    } catch (error: any) {
-      res.status(401).json({ error: AUTH_FAILURE_MESSAGE });
+      return respondWithInternalServerError(req, res, error);
     }
   });
 
@@ -4730,26 +4584,12 @@ app.post(
   });
 
   /**
-   * POST /api/vendor/me/deactivate
-   * Deprecated product concept: account deactivation is no longer supported.
-   */
-  app.post("/api/vendor/me/deactivate", ...requireVendorAuth0, async (_req, res) => {
-    return res.status(410).json({
-      error:
-        "Account deactivation is no longer supported. Use profile deactivation for reversible offboarding or account deletion for full exit.",
-    });
-  });
-
-  /**
    * POST /api/vendor/me/delete ✅ Auth0-only
    * Final account exit while preserving historical booking/payment integrity.
    */
   app.post("/api/vendor/me/delete", ...requireVendorAuth0, async (req, res) => {
     try {
-      const vendorAuth = (req as any).vendorAuth;
-      if (!vendorAuth?.id) {
-        return res.status(403).json({ error: "Vendor account required" });
-      }
+      const vendorAuth = (req as any).vendorAuth as { id: string };
 
       const accountRows = await db
         .select({
@@ -4829,110 +4669,6 @@ app.post(
     } catch (error: any) {
       logRouteError("/api/vendor/me/delete", error);
       return res.status(500).json({ error: "Unable to delete vendor account" });
-    }
-  });
-
-  // Customer Authentication Routes (unchanged)
-  const customerSignupSchema = z.object({
-    name: z.string().min(2),
-    email: z.string().email(),
-    password: z.string().min(8),
-  });
-
-  const customerLoginSchema = z.object({
-    email: z.string().email(),
-    password: z.string(),
-  });
-
-  app.post("/api/customer/signup", authRateLimiter, async (req, res) => {
-    try {
-      const { name, email, password } = customerSignupSchema.parse(req.body);
-
-      // Check if customer already exists
-      const existing = await db.select().from(users).where(eq(users.email, email));
-      if (existing.length > 0) {
-        return res.status(400).json({
-          error: "Unable to create account",
-        });
-      }
-
-      // Hash password
-      const hashedPassword = await hashPassword(password);
-
-      // Create customer account with role and lastLoginAt
-      const [user] = await db
-        .insert(users)
-        .values({
-          name,
-          email,
-          password: hashedPassword,
-          role: "customer",
-          displayName: name,
-          lastLoginAt: new Date(),
-        })
-        .returning();
-
-      // Generate JWT token with appropriate type
-      const tokenType = user.role === "admin" ? "admin" : "customer";
-      const token = generateToken({
-        id: user.id,
-        email: user.email,
-        type: tokenType,
-      });
-
-      res.json({
-        token,
-        user: {
-          id: user.id,
-          name: user.name,
-          email: user.email,
-          role: user.role,
-        },
-      });
-    } catch (error: any) {
-      res.status(400).json({ error: "Unable to create account" });
-    }
-  });
-
-  app.post("/api/customer/login", authRateLimiter, async (req, res) => {
-    try {
-      const { email, password } = customerLoginSchema.parse(req.body);
-
-      // Find customer account
-      const userAccounts = await db.select().from(users).where(eq(users.email, email));
-      if (userAccounts.length === 0) {
-        return res.status(401).json({ error: AUTH_FAILURE_MESSAGE });
-      }
-      const user = userAccounts[0];
-
-      // Verify password
-      const valid = await comparePassword(password, user.password);
-      if (!valid) {
-        return res.status(401).json({ error: AUTH_FAILURE_MESSAGE });
-      }
-
-      // Update last login timestamp
-      await db.update(users).set({ lastLoginAt: new Date() }).where(eq(users.id, user.id));
-
-      // Generate JWT token with appropriate type
-      const tokenType = user.role === "admin" ? "admin" : "customer";
-      const token = generateToken({
-        id: user.id,
-        email: user.email,
-        type: tokenType,
-      });
-
-      res.json({
-        token,
-        user: {
-          id: user.id,
-          name: user.name,
-          email: user.email,
-          role: user.role,
-        },
-      });
-    } catch (error: any) {
-      res.status(401).json({ error: AUTH_FAILURE_MESSAGE });
     }
   });
 
@@ -5093,12 +4829,6 @@ app.post(
     }
   });
 
-  // Unified Login Endpoint (legacy; kept)
-  const unifiedLoginSchema = z.object({
-    email: z.string().email(),
-    password: z.string(),
-  });
-
   app.get("/api/google/oauth/start", async (req, res) => {
     const clientId = (process.env.GOOGLE_CLIENT_ID || "").trim();
     if (!clientId) {
@@ -5238,7 +4968,18 @@ app.post(
       const refreshToken =
         typeof tokens.refresh_token === "string" && tokens.refresh_token.trim()
           ? tokens.refresh_token.trim()
-          : vendorAccount.googleRefreshToken ?? null;
+          : (() => {
+              const existing = vendorAccount.googleRefreshToken;
+              if (!existing) return null;
+              try {
+                return decryptToken(existing);
+              } catch {
+                console.warn(
+                  "[google] legacy plaintext token detected for vendor, re-encrypt on next OAuth"
+                );
+                return existing;
+              }
+            })();
       const expiresAt =
         typeof tokens.expires_in === "number" && Number.isFinite(tokens.expires_in)
           ? new Date(Date.now() + tokens.expires_in * 1000)
@@ -5247,8 +4988,8 @@ app.post(
       await db
         .update(vendorAccounts)
         .set({
-          googleAccessToken: accessToken,
-          googleRefreshToken: refreshToken,
+          googleAccessToken: encryptToken(accessToken),
+          googleRefreshToken: refreshToken ? encryptToken(refreshToken) : null,
           googleTokenExpiresAt: expiresAt,
           googleCalendarId: vendorAccount.googleCalendarId ?? null,
           googleConnectionStatus: "connected",
@@ -5817,104 +5558,6 @@ app.post(
     }
   });
 
-  app.post("/api/auth/login", authRateLimiter, async (req, res) => {
-    try {
-      const { email, password } = unifiedLoginSchema.parse(req.body);
-      const customerAccounts = await db.select().from(users).where(eq(users.email, email));
-      const adminUser = customerAccounts.find((row) => row.role === "admin");
-      if (adminUser) {
-        const valid = await comparePassword(password, adminUser.password);
-        if (!valid) {
-          return res.status(401).json({ error: AUTH_FAILURE_MESSAGE });
-        }
-
-        await db.update(users).set({ lastLoginAt: new Date() }).where(eq(users.id, adminUser.id));
-        const token = generateToken({
-          id: adminUser.id,
-          email: adminUser.email,
-          type: "admin",
-        });
-
-        return res.json({
-          token,
-          user: {
-            id: adminUser.id,
-            name: adminUser.name,
-            email: adminUser.email,
-            role: adminUser.role,
-          },
-        });
-      }
-
-      // For non-admin emails, check vendor accounts FIRST (legacy)
-      const vendorAccountsResult = await db.select().from(vendorAccounts).where(eq(vendorAccounts.email, email));
-      if (vendorAccountsResult.length > 0) {
-        const account = vendorAccountsResult[0];
-
-        // Verify password
-        const valid = await comparePassword(password, account.password);
-        if (!valid) {
-          return res.status(401).json({ error: AUTH_FAILURE_MESSAGE });
-        }
-
-        // Generate vendor JWT token
-        const token = generateToken({
-          id: account.id,
-          email: account.email,
-          type: "vendor",
-        });
-
-        return res.json({
-          token,
-          user: {
-            id: account.id,
-            email: account.email,
-            businessName: account.businessName,
-            role: "vendor",
-            profileComplete: account.profileComplete,
-            stripeOnboardingComplete: account.stripeOnboardingComplete,
-          },
-        });
-      }
-
-      // Second, check customer accounts (users table)
-      if (customerAccounts.length > 0) {
-        const user = customerAccounts[0];
-
-        // Verify password
-        const valid = await comparePassword(password, user.password);
-        if (!valid) {
-          return res.status(401).json({ error: AUTH_FAILURE_MESSAGE });
-        }
-
-        // Update last login timestamp
-        await db.update(users).set({ lastLoginAt: new Date() }).where(eq(users.id, user.id));
-
-        // Generate customer JWT token
-        const token = generateToken({
-          id: user.id,
-          email: user.email,
-          type: "customer",
-        });
-
-        return res.json({
-          token,
-          user: {
-            id: user.id,
-            name: user.name,
-            email: user.email,
-            role: user.role,
-          },
-        });
-      }
-
-      // No account found in either table
-      return res.status(401).json({ error: AUTH_FAILURE_MESSAGE });
-    } catch (error: any) {
-      res.status(401).json({ error: AUTH_FAILURE_MESSAGE });
-    }
-  });
-
   const ALL_VENDOR_TYPES = [
     "venue",
     "photography",
@@ -6199,46 +5842,9 @@ app.post(
       if (error.name === "ZodError") {
         return res.status(400).json({ error: "Validation failed", details: error.errors });
       }
-      return res.status(500).json({ error: error.message });
+      return respondWithInternalServerError(req, res, error);
     }
   });
-
-  // Create vendor profile (protected route, steps 1-6 of onboarding)
-  const createVendorProfileSchema = insertVendorProfileSchema
-    .omit({ accountId: true })
-    .extend({
-      profileName: z.string().min(2).max(120).optional(),
-      serviceType: z.enum(ENABLED_VENDOR_TYPES, {
-        errorMap: () => ({ message: "Select a valid vendor type" }),
-      }),
-      serviceRadius: z.number().optional(),
-      serviceAddress: z.string().optional(),
-      onlineProfiles: z.any().optional(),
-    })
-    .refine(
-      (data) => {
-        if (data.travelMode === "travel-to-guests") {
-          return data.serviceRadius !== undefined && data.serviceRadius > 0;
-        }
-        return true;
-      },
-      {
-        message: "Service radius is required when you travel to guests",
-        path: ["serviceRadius"],
-      }
-    )
-    .refine(
-      (data) => {
-        if (data.travelMode === "guests-come-to-me") {
-          return data.serviceAddress !== undefined && data.serviceAddress.length > 0;
-        }
-        return true;
-      },
-      {
-        message: "Service address is required when guests come to you",
-        path: ["serviceAddress"],
-      }
-    );
 
   const updateVendorProfileSchema = z
     .object({
@@ -6257,60 +5863,6 @@ app.post(
       serviceDescription: z.string().optional(),
     })
     .passthrough();
-
-  /**
-   * POST /api/vendor/profile ✅ Auth0-only
-   */
-  app.post("/api/vendor/profile", ...requireVendorAuth0, async (req, res) => {
-    try {
-      const vendorAuth = (req as any).vendorAuth;
-
-      const accounts = await db.select().from(vendorAccounts).where(eq(vendorAccounts.id, vendorAuth.id));
-      if (accounts.length === 0) {
-        return res.status(404).json({ error: "Account not found" });
-      }
-      const account = accounts[0];
-
-      const validatedData = createVendorProfileSchema.parse(req.body);
-      const normalizedRequestedProfileName = normalizeProfileNameText((validatedData as any).profileName, 120);
-      const normalizedFallbackProfileName = normalizeProfileNameText(account.businessName, 120);
-      const resolvedProfileName = normalizedRequestedProfileName || normalizedFallbackProfileName || "Vendor Profile";
-
-      const profileData = {
-        ...validatedData,
-        profileName: resolvedProfileName,
-        accountId: account.id,
-      };
-
-      const [profile] = await db.insert(vendorProfiles).values(profileData).returning();
-
-      await db
-        .update(vendorAccounts)
-        .set({
-          profileComplete: true,
-          activeProfileId: profile.id,
-        })
-        .where(eq(vendorAccounts.id, account.id));
-
-      res.json({
-        account: {
-          id: account.id,
-          email: account.email,
-          businessName: account.businessName,
-          stripeConnectId: account.stripeConnectId,
-          stripeAccountType: account.stripeAccountType,
-          stripeOnboardingComplete: account.stripeOnboardingComplete,          profileComplete: true,
-          profileId: profile.id,
-        },
-        profile,
-      });
-    } catch (error: any) {
-      if (error.name === "ZodError") {
-        return res.status(400).json({ error: "Validation failed", details: error.errors });
-      }
-      res.status(500).json({ error: error.message });
-    }
-  });
 
     /**
    * GET /api/vendor/profile ✅ Auth0-only
@@ -6526,14 +6078,8 @@ app.post(
       if (error.name === "ZodError") {
         return res.status(400).json({ error: "Validation failed", details: error.errors });
       }
-      return res.status(500).json({ error: error.message });
+      return respondWithInternalServerError(req, res, error);
     }
-  });
-
-  const createAdditionalVendorProfileSchema = z.object({
-    profileName: z.string().min(2).max(120),
-    serviceType: z.enum(ENABLED_VENDOR_TYPES).optional(),
-    cloneFromActive: z.boolean().optional(),
   });
 
   app.get("/api/vendor/profiles", ...requireVendorAuth0, async (req, res) => {
@@ -6559,90 +6105,7 @@ app.post(
         profiles,
       });
     } catch (error: any) {
-      return res.status(500).json({ error: error.message });
-    }
-  });
-
-  app.post("/api/vendor/profiles", ...requireVendorAuth0, async (req, res) => {
-    try {
-      const context = await resolveActiveVendorProfile(req);
-      if (!context?.account?.id) {
-        return res.status(404).json({ error: "Vendor account not found" });
-      }
-
-      const data = createAdditionalVendorProfileSchema.parse(req.body ?? {});
-      const normalizedProfileName = normalizeProfileNameText(data.profileName, 120);
-      if (!normalizedProfileName || normalizedProfileName.length < 2) {
-        return res.status(400).json({
-          error: "Validation failed",
-          details: [{ message: "profileName is invalid. Use letters, numbers, spaces, and apostrophes only." }],
-        });
-      }
-      const cloneFromActive = data.cloneFromActive !== false;
-      const source = cloneFromActive ? context.activeProfile : null;
-
-      const sourceOnlineProfiles =
-        source?.onlineProfiles && typeof source.onlineProfiles === "object" && !Array.isArray(source.onlineProfiles)
-          ? (source.onlineProfiles as Record<string, unknown>)
-          : {};
-
-      const [createdProfile] = await db
-        .insert(vendorProfiles)
-        .values({
-          accountId: context.account.id,
-          profileName: normalizedProfileName,
-          businessPhone: source?.businessPhone ?? null,
-          businessEmail: source?.businessEmail ?? null,
-          businessAddressLabel: source?.businessAddressLabel ?? source?.serviceAddress ?? source?.address ?? null,
-          businessStreet: source?.businessStreet ?? null,
-          businessCity: source?.businessCity ?? source?.city ?? null,
-          businessState: source?.businessState ?? null,
-          businessZip: source?.businessZip ?? null,
-          homeBaseLat: source?.homeBaseLat ?? null,
-          homeBaseLng: source?.homeBaseLng ?? null,
-          operatingTimezone: normalizeIanaTimeZone(source?.operatingTimezone, "UTC"),
-          showBusinessPhoneToCustomers: Boolean(source?.showBusinessPhoneToCustomers),
-          showBusinessEmailToCustomers: Boolean(source?.showBusinessEmailToCustomers),
-          showBusinessAddressToCustomers: Boolean(source?.showBusinessAddressToCustomers),
-          aboutVendor: source?.aboutVendor ?? null,
-          aboutBusiness: source?.aboutBusiness ?? null,
-          serviceType: data.serviceType ?? source?.serviceType ?? "prop-decor",
-          experience: Number.isFinite(source?.experience) ? Number(source.experience) : 0,
-          qualifications: Array.isArray(source?.qualifications) ? source.qualifications : [],
-          onlineProfiles: {
-            ...sourceOnlineProfiles,
-            profileBusinessName: normalizedProfileName,
-            operatingTimezone: normalizeIanaTimeZone(source?.operatingTimezone, "UTC"),
-          },
-          address: source?.address ?? "",
-          city: source?.city ?? "",
-          travelMode: source?.travelMode ?? "included",
-          serviceRadius: source?.serviceRadius ?? null,
-          serviceAddress: source?.serviceAddress ?? "",
-          photos: Array.isArray(source?.photos) ? source.photos : [],
-          serviceDescription: source?.serviceDescription ?? "",
-          createdAt: new Date(),
-          updatedAt: new Date(),
-        })
-        .returning();
-
-      await db
-        .update(vendorAccounts)
-        .set({
-          profileComplete: true,
-          activeProfileId: createdProfile.id,
-        })
-        .where(eq(vendorAccounts.id, context.account.id));
-
-      return res.status(201).json({
-        activeProfileId: createdProfile.id,
-        profile: createdProfile,
-      });
-    } catch (error: any) {
-      if (error?.name === "ZodError") {
-        return res.status(400).json({ error: "Validation failed", details: error.errors });
-      }
-      return res.status(500).json({ error: error.message });
+      return respondWithInternalServerError(req, res, error);
     }
   });
 
@@ -6683,7 +6146,7 @@ app.post(
       if (error?.name === "ZodError") {
         return res.status(400).json({ error: "Validation failed", details: error.errors });
       }
-      return res.status(500).json({ error: error.message });
+      return respondWithInternalServerError(req, res, error);
     }
   });
 
@@ -8116,7 +7579,7 @@ app.post(
         onboardingUrl: result.onboardingUrl,
       });
     } catch (error: any) {
-      res.status(500).json({ error: error.message });
+      return respondWithInternalServerError(req, res, error);
     }
   });
 
@@ -8149,7 +7612,7 @@ app.post(
         manualPayoutSchedule: true,
       });
     } catch (error: any) {
-      res.status(500).json({ error: error.message });
+      return respondWithInternalServerError(req, res, error);
     }
   });
 
@@ -8166,7 +7629,7 @@ app.post(
 
       res.json({ url });
     } catch (error: any) {
-      res.status(500).json({ error: error.message });
+      return respondWithInternalServerError(req, res, error);
     }
   });
 
@@ -8243,7 +7706,7 @@ app.post(
       const url = await createAccountOnboardingLink(account.stripeConnectId);
       return res.json({ url });
     } catch (error: any) {
-      res.status(500).json({ error: error.message });
+      return respondWithInternalServerError(req, res, error);
     }
   });
 
@@ -8419,7 +7882,7 @@ app.post(
         recentBookings,
       });
     } catch (error: any) {
-      res.status(500).json({ error: error.message });
+      return respondWithInternalServerError(req, res, error);
     }
   });
 
@@ -8656,7 +8119,11 @@ app.post(
           b.google_event_id as "googleEventId",
           b.google_calendar_id as "googleCalendarId",
           coalesce(b.event_date, e.date) as "eventDate",
-          coalesce(b.event_start_time, e.start_time) as "eventStartTime"
+          coalesce(b.event_start_time, e.start_time) as "eventStartTime",
+          b.payout_status as "payoutStatus",
+          b.payout_eligible_at as "payoutEligibleAt",
+          b.payout_blocked_reason as "payoutBlockedReason",
+          b.paid_out_at as "paidOutAt"
         from bookings b
         left join events e on e.id = b.event_id
         left join vendor_listings listing_owner on listing_owner.id = b.listing_id
@@ -8671,7 +8138,7 @@ app.post(
       );
       return res.json(scopedRows);
     } catch (error: any) {
-      res.status(500).json({ error: error.message });
+      return respondWithInternalServerError(req, res, error);
     }
   });
 
@@ -8821,7 +8288,7 @@ app.post(
       );
       return res.json(conversations);
     } catch (error: any) {
-      return res.status(500).json({ error: error.message });
+      return respondWithInternalServerError(req, res, error);
     }
   });
 
@@ -8845,7 +8312,7 @@ app.post(
       );
       return res.json(conversations);
     } catch (error: any) {
-      return res.status(500).json({ error: error.message });
+      return respondWithInternalServerError(req, res, error);
     }
   });
 
@@ -8866,7 +8333,7 @@ app.post(
       });
       return res.json({ unreadCount: unread.totalUnread });
     } catch (error: any) {
-      return res.status(500).json({ error: error.message });
+      return respondWithInternalServerError(req, res, error);
     }
   });
 
@@ -8948,7 +8415,7 @@ app.post(
         retentionExpiresAt: streamState.retentionExpiresAt,
       });
     } catch (error: any) {
-      return res.status(500).json({ error: error.message });
+      return respondWithInternalServerError(req, res, error);
     }
   });
 
@@ -8973,7 +8440,7 @@ app.post(
       );
       return res.json(conversations);
     } catch (error: any) {
-      return res.status(500).json({ error: error.message });
+      return respondWithInternalServerError(req, res, error);
     }
   });
 
@@ -8995,7 +8462,7 @@ app.post(
       });
       return res.json({ unreadCount: unread.totalUnread });
     } catch (error: any) {
-      return res.status(500).json({ error: error.message });
+      return respondWithInternalServerError(req, res, error);
     }
   });
 
@@ -9076,7 +8543,7 @@ app.post(
         retentionExpiresAt: streamState.retentionExpiresAt,
       });
     } catch (error: any) {
-      return res.status(500).json({ error: error.message });
+      return respondWithInternalServerError(req, res, error);
     }
   });
 
@@ -9334,7 +8801,7 @@ app.post(
         })),
       });
     } catch (error: any) {
-      res.status(500).json({ error: error.message });
+      return respondWithInternalServerError(req, res, error);
     }
   });
 
@@ -9529,7 +8996,7 @@ app.post(
       const options = await getCustomerEventOptions(customerAuth.id);
       return res.json(options);
     } catch (error: any) {
-      res.status(500).json({ error: error.message });
+      return respondWithInternalServerError(req, res, error);
     }
   });
 
@@ -9726,7 +9193,7 @@ app.post(
       `);
       return res.json(await attachCustomerBookingContext(extractRows(rows) as any));
     } catch (error: any) {
-      res.status(500).json({ error: error.message });
+      return respondWithInternalServerError(req, res, error);
     }
   });
 
@@ -10005,6 +9472,9 @@ app.post(
       });
     } catch (error: any) {
       const status = typeof error?.status === "number" ? error.status : 400;
+      if (status >= 500) {
+        return respondWithInternalServerError(req, res, error);
+      }
       return res.status(status).json({ error: error.message });
     }
   });
@@ -10112,15 +9582,6 @@ app.post(
           payoutBlockedReason: "customer_dispute_open",
         })
         .where(eq(payments.bookingId, bookingId));
-
-      await db
-        .update(bookings)
-        .set({
-          payoutStatus: "blocked",
-          payoutBlockedReason: "customer_dispute_open",
-          updatedAt: now,
-        })
-        .where(eq(bookings.id, bookingId));
 
       return res.status(201).json({
         disputeId: createdDispute.id,
@@ -10359,9 +9820,6 @@ app.post(
             .update(bookings)
             .set({
               paymentStatus: "refunded",
-              payoutStatus: "cancelled",
-              payoutEligibleAt: null,
-              payoutBlockedReason: "dispute_refund_approved",
               cancellationReason: "admin_dispute_refund",
               updatedAt: now,
             })
@@ -10408,16 +9866,6 @@ app.post(
             payoutBlockedReason: null,
           })
           .where(and(eq(payments.bookingId, dispute.bookingId), eq(payments.paymentType, "deposit")));
-
-        await tx
-          .update(bookings)
-          .set({
-            payoutStatus: "eligible",
-            payoutEligibleAt: now,
-            payoutBlockedReason: null,
-            updatedAt: now,
-          })
-          .where(eq(bookings.id, dispute.bookingId));
       });
 
       const depositRows = await db
@@ -10478,7 +9926,7 @@ app.post(
     finalPaymentStrategy: z.enum(["immediately", "2_weeks_prior", "day_of_event"]),
   });
 
-  app.post("/api/bookings", requireCustomerAnyAuth, async (req, res) => {
+  app.post("/api/bookings", bookingRateLimiter, requireCustomerAnyAuth, async (req, res) => {
     let stage = "start";
     const fail = (
       status: number,
@@ -11431,9 +10879,6 @@ app.post(
                       bookingRow.cancellationReason ||
                       `payment_succeeded_after_${bookingStatus || "closure"}`,
                     paymentStatus: nextBookingPaymentStatus as any,
-                    payoutStatus: payoutEligibility.payoutStatus,
-                    payoutEligibleAt: payoutEligibility.payoutEligibleAt,
-                    payoutBlockedReason: payoutEligibility.payoutBlockedReason,
                     updatedAt: now,
                   })
                   .where(eq(bookings.id, bookingRow.id));
@@ -11443,9 +10888,6 @@ app.post(
                   .set({
                     status: "confirmed",
                     paymentStatus: nextBookingPaymentStatus as any,
-                    payoutStatus: payoutEligibility.payoutStatus,
-                    payoutEligibleAt: payoutEligibility.payoutEligibleAt,
-                    payoutBlockedReason: payoutEligibility.payoutBlockedReason,
                     confirmedAt: now,
                     updatedAt: now,
                   })
@@ -11484,14 +10926,6 @@ app.post(
             if (nextBookingPaymentStatus === "failed") {
               await markBookingAsPaymentFailedInTx(tx, payment.bookingId, "stripe_payment_failed");
             }
-            await tx
-              .update(bookings)
-              .set({
-                payoutStatus: "cancelled",
-                payoutBlockedReason: "payment_failed",
-                updatedAt: now,
-              })
-              .where(eq(bookings.id, payment.bookingId));
           });
         }
       } else if (eventType === "charge.dispute.created" || eventType === "charge.dispute.closed") {
@@ -11574,14 +11008,6 @@ app.post(
             }
 
             await recomputeBookingPaymentStatusInTx(tx, payment.bookingId);
-            await tx
-              .update(bookings)
-              .set({
-                payoutStatus: "blocked",
-                payoutBlockedReason: "active_dispute",
-                updatedAt: now,
-              })
-              .where(eq(bookings.id, payment.bookingId));
             return;
           }
 
@@ -11597,15 +11023,6 @@ app.post(
                 payoutAdjustedAmount: 0,
               })
               .where(eq(payments.id, payment.id));
-
-            await tx
-              .update(bookings)
-              .set({
-                payoutStatus: "cancelled",
-                payoutBlockedReason: "dispute_lost",
-                updatedAt: now,
-              })
-              .where(eq(bookings.id, payment.bookingId));
             return;
           }
 
@@ -11676,9 +11093,6 @@ app.post(
             .update(bookings)
             .set({
               paymentStatus: nextBookingPaymentStatus as any,
-              payoutStatus: payoutEligibility.payoutStatus,
-              payoutEligibleAt: payoutEligibility.payoutEligibleAt,
-              payoutBlockedReason: payoutEligibility.payoutBlockedReason,
               updatedAt: now,
             })
             .where(eq(bookings.id, payment.bookingId));
@@ -11782,8 +11196,6 @@ app.post(
                     when status in ('pending', 'confirmed', 'failed', 'expired') then 'cancelled'
                     else status
                   end,
-                  payout_status = 'cancelled',
-                  payout_blocked_reason = 'fully_refunded',
                   cancellation_reason = coalesce(nullif(trim(cancellation_reason), ''), 'payment_refunded'),
                   cancelled_at = coalesce(cancelled_at, ${now}),
                   updated_at = ${now}
@@ -11794,9 +11206,6 @@ app.post(
                 .update(bookings)
                 .set({
                   paymentStatus: nextBookingPaymentStatus as any,
-                  payoutStatus: payoutEligibility.payoutStatus,
-                  payoutEligibleAt: payoutEligibility.payoutEligibleAt,
-                  payoutBlockedReason: payoutEligibility.payoutBlockedReason,
                   updatedAt: now,
                 })
                 .where(eq(bookings.id, payment.bookingId));
@@ -11920,24 +11329,14 @@ app.post(
         const chargeId = asTrimmedString(refreshed.paymentContext.stripeChargeId);
 
         if (!connectedAccountId || !chargeId || payoutAmount <= 0) {
-          await db.transaction(async (tx) => {
-            await tx
-              .update(payments)
-              .set({
-                payoutStatus: "blocked",
-                payoutBlockedReason: "missing_transfer_requirements",
-                payoutAdjustedAmount: payoutAmount,
-              })
-              .where(eq(payments.id, paymentId));
-            await tx
-              .update(bookings)
-              .set({
-                payoutStatus: "blocked",
-                payoutBlockedReason: "missing_transfer_requirements",
-                updatedAt: new Date(),
-              })
-              .where(eq(bookings.id, bookingId));
-          });
+          await db
+            .update(payments)
+            .set({
+              payoutStatus: "blocked",
+              payoutBlockedReason: "missing_transfer_requirements",
+              payoutAdjustedAmount: payoutAmount,
+            })
+            .where(eq(payments.id, paymentId));
           results.push({
             paymentId,
             bookingId,
@@ -12027,15 +11426,6 @@ app.post(
                   payoutAdjustedAmount: eligibilityLocked.adjustedPayoutAmount,
                 })
                 .where(eq(payments.id, paymentId));
-              await tx
-                .update(bookings)
-                .set({
-                  payoutStatus: eligibilityLocked.payoutStatus,
-                  payoutEligibleAt: eligibilityLocked.payoutEligibleAt,
-                  payoutBlockedReason: eligibilityLocked.payoutBlockedReason,
-                  updatedAt: nowLocked,
-                })
-                .where(eq(bookings.id, locked.bookingId));
               return {
                 outcome: eligibilityLocked.payoutStatus === "blocked" ? "blocked" : "skipped",
                 reason: eligibilityLocked.payoutBlockedReason || "not_eligible",
@@ -12054,16 +11444,6 @@ app.post(
                 payoutAdjustedAmount: payoutAmount,
               })
               .where(eq(payments.id, paymentId));
-            await tx
-              .update(bookings)
-              .set({
-                payoutStatus: "paid",
-                payoutEligibleAt: eligibilityLocked.payoutEligibleAt,
-                paidOutAt: nowLocked,
-                payoutBlockedReason: null,
-                updatedAt: nowLocked,
-              })
-              .where(eq(bookings.id, locked.bookingId));
 
             return {
               outcome: "paid" as const,
@@ -12085,24 +11465,14 @@ app.post(
             typeof error?.message === "string" && error.message.trim().length > 0
               ? error.message.trim().slice(0, 200)
               : "transfer_failed";
-          await db.transaction(async (tx) => {
-            await tx
-              .update(payments)
-              .set({
-                payoutStatus: "blocked",
-                payoutBlockedReason: "transfer_failed",
-                payoutAdjustedAmount: payoutAmount,
-              })
-              .where(eq(payments.id, paymentId));
-            await tx
-              .update(bookings)
-              .set({
-                payoutStatus: "blocked",
-                payoutBlockedReason: "transfer_failed",
-                updatedAt: new Date(),
-              })
-              .where(eq(bookings.id, bookingId));
-          });
+          await db
+            .update(payments)
+            .set({
+              payoutStatus: "blocked",
+              payoutBlockedReason: "transfer_failed",
+              payoutAdjustedAmount: payoutAmount,
+            })
+            .where(eq(payments.id, paymentId));
           results.push({
             paymentId,
             bookingId,
@@ -12277,9 +11647,6 @@ app.post(
             .set({
               status: "cancelled",
               paymentStatus: "refunded",
-              payoutStatus: "cancelled",
-              payoutEligibleAt: null,
-              payoutBlockedReason: "fully_refunded",
               cancellationReason: requestedReason || stripeReason,
               cancelledAt: now,
               updatedAt: now,
@@ -12357,12 +11724,12 @@ app.post(
     }
   });
 
-  app.post("/api/admin/chat/cleanup-expired", requireAdminAuth, async (_req, res) => {
+  app.post("/api/admin/chat/cleanup-expired", requireAdminAuth, async (req, res) => {
     try {
       const result = await cleanupExpiredStreamChannels();
       return res.json(result);
     } catch (error: any) {
-      return res.status(500).json({ error: error.message });
+      return respondWithInternalServerError(req, res, error);
     }
   });
 
@@ -12402,7 +11769,7 @@ app.post(
         userGrowth,
       });
     } catch (error: any) {
-      res.status(500).json({ error: error.message });
+      return respondWithInternalServerError(req, res, error);
     }
   });
 
@@ -12445,7 +11812,7 @@ app.post(
         inactiveListings,
       });
     } catch (error: any) {
-      res.status(500).json({ error: error.message });
+      return respondWithInternalServerError(req, res, error);
     }
   });
 
@@ -12484,11 +11851,11 @@ app.post(
         totalFeeEarnings: totalFeeEarnings / 100,
       });
     } catch (error: any) {
-      res.status(500).json({ error: error.message });
+      return respondWithInternalServerError(req, res, error);
     }
   });
 
-  app.get("/api/admin/stats/chat-flags", requireAdminAuth, async (_req, res) => {
+  app.get("/api/admin/stats/chat-flags", requireAdminAuth, async (req, res) => {
     try {
       await ensureModerationTable();
 
@@ -12539,7 +11906,7 @@ app.post(
 
       return res.json(rows);
     } catch (error: any) {
-      return res.status(500).json({ error: error.message });
+      return respondWithInternalServerError(req, res, error);
     }
   });
 
@@ -12586,7 +11953,7 @@ app.post(
         dailyTraffic,
       });
     } catch (error: any) {
-      res.status(500).json({ error: error.message });
+      return respondWithInternalServerError(req, res, error);
     }
   });
 

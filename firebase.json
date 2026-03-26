@@ -1,4 +1,5 @@
 {
+  "_NOTE": "Firebase Hosting is NOT the production host for this app. The Express server (npm run start) handles both static file serving and API routes. Deploy to Railway (or another Node.js host) instead. This file is kept only for reference and must NOT be deployed for the main web app.",
   "hosting": {
     "public": "dist/public",
     "ignore": [

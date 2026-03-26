@@ -1,3 +1,5 @@
+import { resolveAssetUrl } from "@/lib/runtimeUrls";
+
 export const COVER_RATIO_OPTIONS = ["1:1", "4:5", "2:3", "9:16", "10:21"] as const;
 export type CoverRatio = (typeof COVER_RATIO_OPTIONS)[number];
 
@@ -25,14 +27,14 @@ export function coverRatioToAspectRatio(value: unknown): string {
 
 export function normalizePhotoToUrl(photo: any): string | undefined {
   if (typeof photo === "string") {
-    return isLoadablePath(photo) ? photo : undefined;
+    return isLoadablePath(photo) ? resolveAssetUrl(photo) : undefined;
   }
   if (photo && typeof photo === "object") {
     const url = photo.url;
-    if (isLoadablePath(url)) return url;
+    if (isLoadablePath(url)) return resolveAssetUrl(url);
 
     const name = photo.name || photo.filename;
-    if (typeof name === "string" && name.trim()) return `/uploads/listings/${name}`;
+    if (typeof name === "string" && name.trim()) return resolveAssetUrl(`/uploads/listings/${name}`);
   }
   return undefined;
 }
@@ -46,11 +48,13 @@ export function getListingPhotoUrls(listingAny: any): string[] {
 
   const listingData = listingAny?.listingData ?? {};
   const photosFromListingDataUrls = Array.isArray(listingData?.photos?.urls)
-    ? listingData.photos.urls.filter((url: unknown): url is string => typeof url === "string")
+    ? listingData.photos.urls
+        .filter((url: unknown): url is string => typeof url === "string")
+        .map((url: string) => resolveAssetUrl(url))
     : [];
   const photosFromListingDataNames = Array.isArray(listingData?.photos?.names)
     ? listingData.photos.names
-        .map((name: unknown) => (typeof name === "string" ? `/uploads/listings/${name}` : null))
+        .map((name: unknown) => (typeof name === "string" ? resolveAssetUrl(`/uploads/listings/${name}`) : null))
         .filter((url: unknown): url is string => typeof url === "string")
     : [];
 

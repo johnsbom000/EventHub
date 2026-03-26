@@ -8,6 +8,7 @@ import ListingCard from "@/components/ListingCard";
 import MasonryListingGrid from "@/components/MasonryListingGrid";
 import { apiRequest } from "@/lib/queryClient";
 import { getFreshAccessToken } from "@/lib/authToken";
+import { resolveAssetUrl } from "@/lib/runtimeUrls";
 import { useToast } from "@/hooks/use-toast";
 import { Button } from "@/components/ui/button";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
@@ -578,8 +579,8 @@ export default function MyHub() {
   const persistedLikesDislikes = asTrimmedString(onlineProfiles.likesDislikes);
   const persistedHomeState = asTrimmedString(onlineProfiles.homeState);
   const persistedFunFacts = asTrimmedString(onlineProfiles.funFacts);
-  const persistedProfileImageUrl = asTrimmedString(onlineProfiles.shopProfileImageUrl);
-  const persistedCoverImageUrl = asTrimmedString(onlineProfiles.shopCoverImageUrl);
+  const persistedProfileImageUrl = resolveAssetUrl(asTrimmedString(onlineProfiles.shopProfileImageUrl));
+  const persistedCoverImageUrl = resolveAssetUrl(asTrimmedString(onlineProfiles.shopCoverImageUrl));
   const persistedCoverPhotoPosition = parsePhotoPosition(onlineProfiles.shopCoverImagePosition);
 
   useEffect(() => {

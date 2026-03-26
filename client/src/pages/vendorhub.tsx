@@ -11,6 +11,7 @@ import { Button } from "@/components/ui/button";
 import { Dialog, DialogContent, DialogHeader, DialogTitle } from "@/components/ui/dialog";
 import type { ListingPublic } from "@/types/listing";
 import { getFreshAccessToken } from "@/lib/authToken";
+import { resolveAssetUrl } from "@/lib/runtimeUrls";
 import { normalizeHobbyList } from "@shared/hobby-tags";
 
 type VendorReview = {
@@ -286,8 +287,8 @@ export default function VendorHub() {
 
   const vendor = data?.vendor;
   const canExitCustomerMode = Boolean(vendorMe?.id && vendor?.id && vendorMe.id === vendor.id);
-  const profileImageUrl = asTrimmedString(vendor?.profileImageUrl);
-  const coverImageUrl = asTrimmedString(vendor?.coverImageUrl);
+  const profileImageUrl = resolveAssetUrl(asTrimmedString(vendor?.profileImageUrl));
+  const coverImageUrl = resolveAssetUrl(asTrimmedString(vendor?.coverImageUrl));
   const coverImagePosition = normalizePhotoPosition(vendor?.coverImagePosition);
   const resolvedProfileImageUrl = asTrimmedString(normalizedProfileImageUrl || profileImageUrl);
   const resolvedCoverImageUrl = asTrimmedString(normalizedCoverImageUrl || coverImageUrl);

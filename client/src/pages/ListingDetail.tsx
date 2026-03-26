@@ -10,6 +10,7 @@ import {
   getCoverPhotoRatio,
   moveCoverToFront,
 } from "@/lib/listingPhotos";
+import { resolveAssetUrl } from "@/lib/runtimeUrls";
 
 type RouteParams = { id: string };
 const LISTING_DETAIL_GALLERY_HEIGHT_CLASS = "h-[60vh] min-h-[320px] max-h-[520px]";
@@ -22,15 +23,15 @@ function isNonEmptyString(v: unknown): v is string {
 function normalizePhotoToUrl(photo: any): string | undefined {
   if (typeof photo === "string") {
     // allow absolute, relative, uploads path
-    if (photo.startsWith("http://") || photo.startsWith("https://") || photo.startsWith("/")) return photo;
+    if (photo.startsWith("http://") || photo.startsWith("https://") || photo.startsWith("/")) return resolveAssetUrl(photo);
     return undefined;
   }
   if (photo && typeof photo === "object") {
     const url = photo.url;
-    if (isNonEmptyString(url) && (url.startsWith("http") || url.startsWith("/"))) return url;
+    if (isNonEmptyString(url) && (url.startsWith("http") || url.startsWith("/"))) return resolveAssetUrl(url);
 
     const name = photo.name || photo.filename;
-    if (isNonEmptyString(name)) return `/uploads/listings/${name}`;
+    if (isNonEmptyString(name)) return resolveAssetUrl(`/uploads/listings/${name}`);
   }
   return undefined;
 }
@@ -200,13 +201,15 @@ export default function ListingDetailPage() {
         : [];
 
       const photosFromListingData: string[] = Array.isArray(ld?.photos?.urls)
-        ? ld.photos.urls.filter((u: any) => typeof u === "string")
+        ? ld.photos.urls
+            .filter((u: any) => typeof u === "string")
+            .map((u: string) => resolveAssetUrl(u))
         : Array.isArray(ld?.photos?.names)
           ? ld.photos.names
-              .map((n: any) => (typeof n === "string" ? `/uploads/listings/${n}` : null))
+              .map((n: any) => (typeof n === "string" ? resolveAssetUrl(`/uploads/listings/${n}`) : null))
               .filter(Boolean)
           : Array.isArray(ld?.photos)
-            ? ld.photos.filter((u: any) => typeof u === "string")
+            ? ld.photos.filter((u: any) => typeof u === "string").map((u: string) => resolveAssetUrl(u))
             : [];
 
       const allPhotos = [...photosFromObjects, ...photosFromListingData].filter(Boolean);

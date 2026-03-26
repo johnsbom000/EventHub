@@ -263,6 +263,7 @@ export default function BrowseVendors() {
   const browseSurfaceClass = "bg-[#ffffff] dark:bg-background";
   const browseInputClass =
     "bg-[#efefef] text-[#2a3a42] placeholder:text-[#8fa2ad] border-[rgba(74,106,125,0.24)] dark:bg-[hsl(var(--card))] dark:text-[#f5f0e8] dark:placeholder:text-[#9aacb4] dark:border-[hsl(var(--card-border))]";
+  const browseFilterLabelClass = "!text-[11.5px]";
 
   const [showFilters, setShowFilters] = useState(false);
 
@@ -632,7 +633,7 @@ export default function BrowseVendors() {
               <SlidersHorizontal className="h-8 w-8" />
             </button>
 
-            <div className="flex-1 overflow-x-auto">
+            <div className="scrollbar-hidden flex-1 overflow-x-auto">
               <div className="flex gap-2.5">
                 {availableTags.map((tag, index) => {
                   const selected = selectedTags.includes(tag);
@@ -702,7 +703,7 @@ export default function BrowseVendors() {
                 <section className="space-y-6">
                   <h2 className="text-[20px] font-heading">Filters</h2>
                     <div className="space-y-2">
-                      <Label htmlFor="filter-location">Location</Label>
+                      <Label htmlFor="filter-location" className={browseFilterLabelClass}>Location</Label>
                       <Input
                         id="filter-location"
                         placeholder="City or address"
@@ -717,7 +718,7 @@ export default function BrowseVendors() {
                     </div>
 
                     <div className="space-y-2">
-                      <Label>Price range</Label>
+                      <Label className={browseFilterLabelClass}>Price range</Label>
                       <div className="grid grid-cols-2 gap-2">
                         <Input
                           type="number"
@@ -742,7 +743,7 @@ export default function BrowseVendors() {
 
                     <div className="space-y-3">
                       <div className="flex items-center justify-between">
-                        <Label htmlFor="filter-delivery">Delivery included?</Label>
+                        <Label htmlFor="filter-delivery" className={browseFilterLabelClass}>Delivery included?</Label>
                         <div className="flex items-center gap-2">
                           <span className="text-xs font-medium">{deliveryIncludedOnly ? "Yes" : "No"}</span>
                           <Switch
@@ -754,7 +755,7 @@ export default function BrowseVendors() {
                         </div>
                       </div>
                       <div className="flex items-center justify-between">
-                        <Label htmlFor="filter-setup">Setup included?</Label>
+                        <Label htmlFor="filter-setup" className={browseFilterLabelClass}>Setup included?</Label>
                         <div className="flex items-center gap-2">
                           <span className="text-xs font-medium">{setupIncludedOnly ? "Yes" : "No"}</span>
                           <Switch
@@ -768,7 +769,7 @@ export default function BrowseVendors() {
                     </div>
 
                     <div className="space-y-2">
-                      <Label htmlFor="filter-availability-date">Availability date</Label>
+                      <Label htmlFor="filter-availability-date" className={browseFilterLabelClass}>Availability date</Label>
                       <Input
                         id="filter-availability-date"
                         type="date"
@@ -780,7 +781,7 @@ export default function BrowseVendors() {
                     </div>
 
                     <div className="space-y-2">
-                      <Label>Best for event types</Label>
+                      <Label className={browseFilterLabelClass}>Best for event types</Label>
                       <div className="flex flex-wrap gap-2">
                         {availableBestFor.map((eventType) => {
                           const token = toIdToken(eventType);
@@ -863,6 +864,7 @@ export default function BrowseVendors() {
                       priceScale="double"
                       titleScale="oneAndHalf"
                       titleFont="heading"
+                      primaryActionScale="plus15"
                     />
                   )}
                 />

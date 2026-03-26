@@ -28,6 +28,7 @@ import { getFreshAccessToken } from "@/lib/authToken";
 import { DEFAULT_COVER_RATIO, type CoverRatio } from "@/lib/listingPhotos";
 import { getPublishFailureToastContent } from "@/lib/publishFailureToast";
 import { apiRequest } from "@/lib/queryClient";
+import { resolveAssetUrl } from "@/lib/runtimeUrls";
 import { cn } from "@/lib/utils";
 import type { LocationResult } from "@/types/location";
 import { POPULAR_FOR_OPTIONS } from "@/constants/eventTypes";
@@ -2189,7 +2190,7 @@ export function CreateListingWizard({ onClose }: CreateListingWizardProps) {
                 photos={draft.photoNames.map((name, index) => ({
                   id: name,
                   name,
-                  src: draft.photoPreviews[index] || `/uploads/listings/${name}`,
+                  src: draft.photoPreviews[index] || resolveAssetUrl(`/uploads/listings/${name}`),
                 }))}
                 coverRatio={draft.coverPhotoRatio}
                 cropsByPhotoId={draft.photoCropsByName}

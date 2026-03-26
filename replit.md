@@ -32,24 +32,22 @@ Preferred communication style: Simple, everyday language.
 
 ### Authentication & Authorization
 - **Roles**: Customer, Vendor, and Admin roles with role-based access control.
-- **Unified Authentication System**: 
-  - **Single Login Entry Point**: "Login / Sign up" modal serves all users
-  - **Unified Login Endpoint** (`/api/auth/login`): Checks both `users` table (customers) and `vendor_accounts` table (vendors)
-  - **Admin Authority Source**: Admin access is determined by persisted database role (`users.role = "admin"`), not by email environment variables
-  - **Role-Based Redirects**: Automatically routes users to appropriate dashboard based on role
+- **Canonical Authentication System**:
+  - **Auth0-based login**: Frontend login/signup paths route into Auth0; legacy email/password API endpoints were removed.
+  - **Admin Authority Source**: Admin access is determined by persisted database role (`users.role = "admin"`), not by email environment variables.
+  - **Role-Based Redirects**: Automatically routes users to appropriate dashboard based on role.
     - Customers → `/dashboard`
     - Vendors → `/vendor/dashboard`
     - Admins → `/admin`
-  - **Auth Failure Hardening**:
-    - Login/signup failures use normalized generic errors to reduce account-enumeration signals
-  - **Token Management**: 
-    - Auth0 access tokens are primary for active authenticated routes
-    - Legacy JWT tokens remain supported for compatibility/migration paths
-    - JWT tokens contain `type` field ("customer", "vendor", or "admin") for backend authorization
-  - **User Data Persistence**: `users` table includes `role`, `displayName`, and `lastLoginAt` fields
+  - **Token Management**:
+    - Auth0 access tokens are the canonical auth mechanism for protected routes.
+  - **User Data Persistence**: `users` table includes `role`, `displayName`, and `lastLoginAt` fields.
+- **Vendor Ownership Model**:
+  - One Auth0 user maps to one `vendor_account`.
+  - One `vendor_account` can own many `vendor_profiles`.
+  - Active vendor profile selection is account-scoped and switched via `POST /api/vendor/profiles/switch`.
 - **Customer-to-Vendor Upgrade**: Full account linking system implemented. When a customer becomes a vendor:
   - Vendor account is created with `userId` foreign key linking to customer account
-  - Password hash is synchronized so customer can log in as vendor with same credentials
   - Prevents account hijacking by only linking unowned or already-linked vendor accounts
   - All onboarding data (business name, profile, social links) properly persisted
 - **Admin Authentication**:
@@ -59,7 +57,6 @@ Preferred communication style: Simple, everyday language.
   - **Middleware Protection**: `requireAdminAuth` middleware protects all `/api/admin/*` endpoints
   - **Frontend Verification**: AdminDashboard queries `/api/customer/me` to verify admin role before rendering
   - **requireCustomerAuth** accepts both customer and admin tokens for shared customer/admin endpoints
-- **Dual-Auth Middleware**: `requireDualAuth` accepts both customer and vendor tokens, setting appropriate `req.customerAuth` or `req.vendorAuth` context
 
 ### Key Features
 - **Airbnb-Style Navigation System**: Role-aware navigation with distinct states:
@@ -68,11 +65,7 @@ Preferred communication style: Simple, everyday language.
   - **Vendor Logged In**: "Switch to Vendor Dashboard" text link (Airbnb "Switch to hosting" pattern) + profile dropdown
   - **Profile Dropdowns**: Enhanced with shadow styling (`w-60 shadow-lg`), includes Profile, Messages, Notifications, Account settings, Languages & currency, Help Center, and Sign out
   - **Smart Routing**: All dropdown items route to role-specific dashboard sections
-- **Unified Signup Flow**: Multi-step process with role selection:
-  - **Step 1**: Basic info (name, email, password)
-  - **Step 2**: "Are you a vendor?" choice
-  - **Customer path**: Creates customer account → redirects to homepage
-  - **Vendor path**: Collects business name → creates vendor account → redirects to onboarding wizard
+- **Unified Auth Entry Flow**: "Login / Sign up" UI enters Auth0 auth flow, then routes users by role/account state.
 - **Customer Dashboard** (Airbnb-style sidebar layout at `/dashboard`):
   - **Sidebar Navigation**: 5 sections with URL-driven active state (single source of truth)
     - **My profile**: Editable profile fields (display name, bio, location), avatar with initials fallback, edit/save functionality with toast notifications
@@ -86,7 +79,7 @@ Preferred communication style: Simple, everyday language.
 - **Multi-Step Event Planning Intake**: Comprehensive questionnaire system (`/planner`) for collecting event details, offering paths for direct vendor browsing or curated recommendations.
 - **Intelligent Vendor Ranking & Recommendation System**: 4-dimension weighted scoring algorithm (Availability, Budget, Service Match, Location) with labels like "Best match" and "Budget friendly". Presents recommendations in a Netflix-style UI.
 - **Vendor Portal**:
-  - **Authentication**: Vendor signup, login, and JWT-based authentication with smart login redirect based on onboarding status.
+  - **Authentication**: Auth0-based login with vendor account resolution and onboarding-aware routing.
   - **6-Step Onboarding Wizard**: Comprehensive vendor profile creation flow (`/vendor/onboarding`) with sidebar progress tracking:
     - **Step 1 - Service Type**: Grid selection of 9 service categories (catering, hair-styling, makeup, DJ, nails, florist, photography, videography, prop-rental)
     - **Step 2 - About You**: Business info with video introduction field, social media links (website, Instagram, TikTok)
@@ -95,11 +88,11 @@ Preferred communication style: Simple, everyday language.
     - **Step 5 - Service Description**: Service headline and detailed description
     - **Step 6 - Completion**: Choice to create listing immediately or visit dashboard
   - **Onboarding Completion API** (`/api/vendor/onboarding/complete`):
-    - Handles both new vendor signups and customer-to-vendor upgrades
-    - For customer upgrades: creates/links vendor account, synchronizes password, stores vendor token
+    - Handles both first-time vendor onboarding and customer-to-vendor upgrades
+    - For customer upgrades: creates/links vendor account under canonical Auth0 identity
     - Persists all wizard data: businessName, serviceType, bio, social links, headline, location, portfolio, service description
-    - Sets `profileComplete` flag and returns vendor authentication token
-  - **Entry Points**: New vendor signup → onboarding wizard; Customer "Become a Vendor" (from dropdown) → onboarding wizard
+    - Sets vendor account/profile completion state used by dashboard routing
+  - **Entry Points**: Auth0 login → vendor onboarding when needed; Customer "Become a Vendor" (from dropdown) → onboarding wizard
   - **Dashboard UI**: Complete dashboard with sidebar navigation, stats cards, onboarding status, and quick actions.
   - **Feature Pages (UI Complete)**: Bookings, Listings (create/edit/delete, publish draft functionality), Messages, Calendar, Payments, Reviews, Notifications.
 - **Admin Dashboard** (Hidden system at `/admin`):
@@ -119,7 +112,7 @@ Preferred communication style: Simple, everyday language.
     - GET `/api/admin/stats/traffic` - Traffic analytics
     - GET `/api/admin/stats/listings` - Listing statistics
   - **Traffic Tracking**: Optional tracking system (`web_traffic` table)
-    - Authenticated users: userId/userType extracted from JWT (tamper-proof)
+    - Authenticated users: user identity derived from validated auth context
     - Anonymous users: Tracked with userId=null (for total visit counts)
     - Basic input validation and silent error handling
 

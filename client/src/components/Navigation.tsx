@@ -88,7 +88,7 @@ export default function Navigation({
     error: vendorMeError,
   });
 
-  // Fetch customer account if customer token exists (legacy)
+  // Fetch customer account only when explicit vendor-state is non-vendor.
   const { data: customer } = useQuery<Customer>({
     queryKey: ["/api/customer/me"],
     enabled: isAuthenticated && vendorDetection.status === "non_vendor",
@@ -136,20 +136,7 @@ export default function Navigation({
       return;
     }
   }, [isAuthenticated, vendorDetection.status, lastKnownVendorAccount]);
-
-
-
-  // If Auth0 says you're authenticated but legacy tokens/role aren't set yet,
-  // treat the user as "customer" so the UI doesn't look logged out.
-  // (Later you'll map Auth0 -> vendor/customer via backend.)
-
   const handleLogout = () => {
-    // Clear legacy tokens
-    localStorage.removeItem("vendorToken");
-    localStorage.removeItem("vendorAccountId");
-    localStorage.removeItem("customerToken");
-    localStorage.removeItem("customerId");
-
     setUserRole(null);
 
     // Auth0 logout

@@ -58,7 +58,11 @@ export default function Footer() {
             <ul className="space-y-2">
               {shouldShowBecomeVendor && (
                 <li>
-                  <Link href="/vendor/signup" className="font-sans text-[0.98rem] text-[rgba(245,240,232,0.85)] hover:text-[#f5f0e8]" data-testid="link-footer-vendor-signup">
+                  <Link
+                    href="/vendor/login?returnTo=%2Fvendor%2Fonboarding"
+                    className="font-sans text-[0.98rem] text-[rgba(245,240,232,0.85)] hover:text-[#f5f0e8]"
+                    data-testid="link-footer-vendor-signup"
+                  >
                     Become a Vendor
                   </Link>
                 </li>

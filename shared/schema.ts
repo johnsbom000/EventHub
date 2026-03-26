@@ -668,6 +668,42 @@ export const insertReviewReplySchema = createInsertSchema(reviewReplies).omit({
 export type InsertReviewReply = z.infer<typeof insertReviewReplySchema>;
 export type ReviewReply = typeof reviewReplies.$inferSelect;
 
+// Listing Reviews
+export const listingReviews = pgTable(
+  "listing_reviews",
+  {
+    id: varchar("id").primaryKey().default(sql`gen_random_uuid()`),
+    listingId: varchar("listing_id")
+      .notNull()
+      .references(() => vendorListings.id, { onDelete: "cascade" }),
+    bookingId: varchar("booking_id").references(() => bookings.id, { onDelete: "set null" }),
+    vendorAccountId: varchar("vendor_account_id").references(() => vendorAccounts.id, { onDelete: "set null" }),
+    userId: varchar("user_id").references(() => users.id, { onDelete: "set null" }),
+    rating: integer("rating").notNull(),
+    title: text("title"),
+    body: text("body").notNull(),
+    isPublished: boolean("is_published").notNull().default(true),
+    createdAt: timestamp("created_at").defaultNow().notNull(),
+    updatedAt: timestamp("updated_at").defaultNow().notNull(),
+  },
+  (table) => ({
+    listingIdIdx: index("idx_listing_reviews_listing_id").on(table.listingId, table.createdAt),
+    vendorAccountIdIdx: index("idx_listing_reviews_vendor_account_id").on(table.vendorAccountId),
+    bookingIdUniqueIdx: uniqueIndex("listing_reviews_booking_id_unique_idx")
+      .on(table.bookingId)
+      .where(sql`${table.bookingId} is not null`),
+  })
+);
+
+export const insertListingReviewSchema = createInsertSchema(listingReviews).omit({
+  id: true,
+  createdAt: true,
+  updatedAt: true,
+});
+
+export type InsertListingReview = z.infer<typeof insertListingReviewSchema>;
+export type ListingReview = typeof listingReviews.$inferSelect;
+
 // Web Traffic Tracking (for admin analytics)
 export const webTraffic = pgTable("web_traffic", {
   id: varchar("id").primaryKey().default(sql`gen_random_uuid()`),

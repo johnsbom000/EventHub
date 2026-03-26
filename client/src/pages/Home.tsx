@@ -75,6 +75,7 @@ export default function Home() {
                   priceScale="double"
                   titleScale="oneAndHalf"
                   titleFont="heading"
+                  primaryActionScale="plus15"
                 />
               )}
             />

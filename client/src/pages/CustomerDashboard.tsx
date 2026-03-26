@@ -116,7 +116,11 @@ export default function CustomerDashboard() {
 
   useEffect(() => {
     if (!isAuthLoading && !isAuthenticated) {
-      setLocation("/login");
+      const returnTo =
+        typeof window !== "undefined"
+          ? `${window.location.pathname}${window.location.search}${window.location.hash}`
+          : "/dashboard";
+      setLocation(`/vendor/login?returnTo=${encodeURIComponent(returnTo)}`);
     }
   }, [isAuthLoading, isAuthenticated, setLocation]);
 

@@ -3,6 +3,7 @@ import { eq, sql as drizzleSql } from "drizzle-orm";
 import { bookings, vendorAccounts } from "@shared/schema";
 
 import { db } from "./db";
+import { decryptToken, encryptToken } from "./lib/tokenEncryption";
 import {
   addDaysToIsoDate,
   formatDateInTimeZone,
@@ -763,7 +764,33 @@ async function loadVendorGoogleConnection(
     });
   }
 
-  return account;
+  // Decrypt stored tokens. Tokens written before encryption was introduced are
+  // stored as plaintext — decryptToken() will throw on those, so we fall back
+  // to the raw value and log a warning. They will be re-encrypted on the next
+  // successful token refresh.
+  let googleAccessToken = account.googleAccessToken;
+  if (googleAccessToken) {
+    try {
+      googleAccessToken = decryptToken(googleAccessToken);
+    } catch {
+      console.warn(
+        "[google] legacy plaintext token detected for vendor, re-encrypt on next OAuth"
+      );
+    }
+  }
+
+  let googleRefreshToken = account.googleRefreshToken;
+  if (googleRefreshToken) {
+    try {
+      googleRefreshToken = decryptToken(googleRefreshToken);
+    } catch {
+      console.warn(
+        "[google] legacy plaintext token detected for vendor, re-encrypt on next OAuth"
+      );
+    }
+  }
+
+  return { ...account, googleAccessToken, googleRefreshToken };
 }
 
 async function refreshGoogleAccessToken(
@@ -826,8 +853,8 @@ async function refreshGoogleAccessToken(
   await db
     .update(vendorAccounts)
     .set({
-      googleAccessToken: nextAccessToken,
-      googleRefreshToken: nextRefreshToken,
+      googleAccessToken: encryptToken(nextAccessToken),
+      googleRefreshToken: encryptToken(nextRefreshToken),
       googleTokenExpiresAt: nextExpiresAt,
       googleConnectionStatus: "connected",
     })

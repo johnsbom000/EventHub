@@ -9,8 +9,6 @@ import { TooltipProvider } from "@/components/ui/tooltip";
 import { useTrackPageView } from "@/hooks/useTrackPageView";
 
 import Home from "@/pages/Home";
-import Login from "@/pages/Login";
-import Signup from "@/pages/Signup";
 import BrowseVendors from "@/pages/BrowseVendors";
 import VendorProfile from "@/pages/VendorProfile";
 import EventPlanner from "@/pages/EventPlanner";
@@ -44,8 +42,6 @@ function Router() {
       <ScrollToTop />
       <Switch>
         <Route path="/" component={Home} />
-        <Route path="/login" component={Login} />
-        <Route path="/signup" component={Signup} />
 
         {/* Customer */}
         <Route path="/dashboard" component={CustomerDashboard} />
@@ -60,7 +56,6 @@ function Router() {
 
         {/* Vendor */}
         <Route path="/vendor/login" component={VendorLogin} />
-        <Route path="/vendor/signup" component={Signup} />
         <Route path="/vendor/onboarding" component={VendorOnboarding} />
         <Route path="/vendor/dashboard" component={VendorDashboard} />
         <Route path="/vendor/bookings" component={VendorBookings} />

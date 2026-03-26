@@ -1,6 +1,6 @@
 # Event Hub Decisions Log
 
-Last updated: March 25, 2026
+Last updated: March 26, 2026
 
 ## Purpose
 This file tracks decisions that affect product scope, architecture, and launch tradeoffs.
@@ -13,6 +13,105 @@ Template for new entries:
 - Why:
 - Impact:
 - Revisit trigger:
+
+---
+
+## [2026-03-26] Add split-hosting production bridge with frontend API base routing and backend CORS allowlist
+- Context: Production setup requires frontend requests to target Railway API while app code used relative `/api` and `/uploads` paths, which breaks when frontend and backend run on different origins.
+- Decision: Add frontend runtime URL resolver with optional `VITE_API_BASE_URL`, patch `window.fetch` to reroute relative `/api`/`/uploads` requests to that base, normalize listing/media URL builders through the same resolver, and add backend CORS allowlist support (`APP_URL` + `CORS_ALLOWED_ORIGINS`) with credentialed preflight handling.
+- Why: This is the thinnest launch-safe path to keep existing client fetch/media code working in split hosting without large call-site rewrites.
+- Impact: Frontend can call Railway from production frontend domains using one env var, uploaded media paths resolve correctly when backend is cross-origin, and backend now explicitly allows configured production origins for Auth0 bearer-token API calls.
+- Revisit trigger: If deployment standardizes on single-origin hosting (frontend + API behind one domain), remove fetch URL patching and simplify to direct relative paths with tighter CORS defaults.
+
+---
+
+## [2026-03-26] Apply launch-priority auth/payment security hardening for bookings and Google OAuth tokens
+- Context: Security audit identified three pre-launch hardening gaps: plaintext Google OAuth token storage at rest, missing booking creation rate limiting, and multiple `500` responses leaking raw `error.message` values to clients.
+- Decision: Encrypt Google access/refresh tokens in `server/google.ts` write paths using the existing AES-GCM helper and document `GOOGLE_TOKEN_ENCRYPTION_KEY`; add `bookingRateLimiter` to `POST /api/bookings`; replace raw `500` error-message responses in `server/routes.ts` with a centralized sanitized responder that logs server-side details and returns `"Internal server error"`.
+- Why: These changes reduce blast radius from DB credential leaks, booking-flood abuse, and internal error information disclosure without changing core booking or Auth0/Stripe behavior.
+- Impact: Booking endpoint now has per-IP throttling, Google token refresh writes are encrypted, and client-visible `500` responses no longer expose internal exception strings while preserving route-level error logging.
+- Revisit trigger: When route modules are split from `routes.ts`, move the internal-error responder and rate-limit policy into shared middleware to enforce uniformly across all domains.
+
+---
+
+## [2026-03-26] Remove remaining legacy auth compatibility route shims in frontend router
+- Context: `/login`, `/signup`, and `/vendor/signup` were still present as compatibility redirect shims in client routing after legacy auth/page cleanup.
+- Decision: Delete those three shim routes and remove their redirect helper components from `client/src/App.tsx`, leaving canonical `/vendor/login` Auth0 flow as the only explicit login route.
+- Why: Product direction is to fully retire legacy auth page behavior instead of preserving compatibility redirects.
+- Impact: Hitting `/login`, `/signup`, or `/vendor/signup` now falls through to the app not-found route instead of redirecting; canonical auth/login flow remains unchanged.
+- Revisit trigger: If external link traffic still depends on these URLs, add targeted server-level redirects with telemetry instead of restoring client-side legacy shims.
+
+---
+
+## [2026-03-26] Scope Browse filter-label typography override to explicit 11.5px
+- Context: Browse Vendors filter-field labels (`Location`, `Price range`, `Delivery included?`, `Setup included?`, etc.) rendered too small after global font scaling and needed a precise size target.
+- Decision: Apply a page-local class override on those specific Browse filter `Label` instances to force `11.5px` text, instead of changing shared `Label` defaults.
+- Why: This satisfies exact UX sizing requirements without changing label typography across onboarding/forms elsewhere.
+- Impact: Browse filter labels now render at `11.5px` effective size on desktop and mobile, with scope limited to this page’s filter panel.
+- Revisit trigger: If a consistent filter-typography token is introduced, replace inline per-label override with a shared semantic class.
+
+---
+
+## [2026-03-26] Hide browse tag-row scrollbar while preserving horizontal scrolling behavior
+- Context: The top tag-pill strip on Browse Vendors showed an always-visible horizontal scrollbar that felt visually heavy and distracting.
+- Decision: Hide the scrollbar for that specific horizontal pill scroller using a scoped utility class (`scrollbar-width: none`, `-ms-overflow-style: none`, and WebKit scrollbar suppression) while keeping `overflow-x-auto` unchanged.
+- Why: This keeps the interaction (mouse wheel, trackpad, touch, keyboard-driven horizontal scroll) intact but removes the visible bar for cleaner presentation.
+- Impact: No visible horizontal scrollbar under the tag pills; pill strip still scrolls smoothly on desktop and mobile without layout shifts.
+- Revisit trigger: If discoverability drops for horizontal filtering, add a lightweight visual affordance (edge fade/chevrons) without restoring the native bar.
+
+---
+
+## [2026-03-26] Remove deprecated duplicate vendor profile-create endpoint and align docs to canonical Auth0 model
+- Context: `POST /api/vendor/profiles` had been running in deprecated mode (`410` + telemetry/dev fallback) as the last duplicate vendor profile creation path after canonical onboarding/profile flows were established.
+- Decision: Delete `POST /api/vendor/profiles` entirely, remove its route-specific deprecation/schema helpers, and update core docs (`API_DOCS.md`, `replit.md`) to reflect Auth0-managed login and the canonical one-vendor-account/many-vendor-profiles model.
+- Why: The route was not part of active frontend flows and keeping a deprecated duplicate create path increased unnecessary surface area and documentation drift.
+- Impact: No duplicate backend vendor profile-create endpoint remains outside onboarding; docs no longer describe removed legacy password-auth endpoints as active behavior.
+- Revisit trigger: If external clients surface unexpected dependency on the removed route, add a short-lived explicit migration notice endpoint instead of restoring duplicate create logic.
+
+---
+
+## [2026-03-26] Remove fully blocked legacy email/password auth endpoints from backend
+- Context: Legacy email/password auth endpoints (`/api/vendor/signup`, `/api/vendor/login`, `/api/customer/signup`, `/api/customer/login`, `/api/auth/login`) had already been rerouted away in frontend and were default-blocked via deprecation `410` responses.
+- Decision: Delete all five legacy endpoint handlers, remove their now-dead schemas and auth-deprecation helper code, and remove dead auth helpers (`comparePassword`, `generateToken`) that were only used by those endpoints.
+- Why: This safely reduces auth surface area and maintenance burden without touching canonical Auth0 identity/account resolution flows.
+- Impact: Legacy password-auth backend entrypoints are now absent (`404`), while canonical Auth0 onboarding/account/profile flows remain unchanged.
+- Revisit trigger: If any external legacy client usage appears after removal, evaluate adding a short-lived explicit migration response route instead of restoring password-auth logic.
+
+---
+
+## [2026-03-26] Consolidate duplicate vendor profile creation surface by removing one path and deprecating the other
+- Context: Profile creation had three backend entrypoints (`/api/vendor/onboarding/complete`, `POST /api/vendor/profile`, `POST /api/vendor/profiles`) while current frontend profile creation flows already route through onboarding.
+- Decision: Remove `POST /api/vendor/profile` entirely as an unused duplicate and deprecate `POST /api/vendor/profiles` behind telemetry + `410` with a dev-only fallback switch (`ALLOW_LEGACY_VENDOR_PROFILE_CREATE_IN_DEV=true`), keeping canonical onboarding/profile read-update/switch/lifecycle routes unchanged.
+- Why: This is the smallest low-risk cleanup that reduces duplicate create paths without affecting active vendor onboarding/dashboard flows.
+- Impact: Duplicate profile-create surface is reduced immediately; any legacy callers of `POST /api/vendor/profiles` now get explicit deprecation behavior in production and can be temporarily allowed in dev for troubleshooting.
+- Revisit trigger: After telemetry remains quiet for a stable window, remove `POST /api/vendor/profiles` handler body and delete the dev fallback.
+
+---
+
+## [2026-03-26] Cleanup Batch 3 backend legacy auth middleware and deprecated no-op vendor route
+- Context: Backend still carried unused JWT-era middleware exports (`requireVendorAuth`, `requireCustomerAuth`, `requireDualAuth`) and a deprecated no-op route (`POST /api/vendor/me/deactivate`) that had no current frontend call sites.
+- Decision: Delete the three unused middleware exports from `server/auth.ts`, remove stale imports from `server/routes.ts`, and remove `POST /api/vendor/me/deactivate` while keeping other deprecated legacy auth endpoints blocked with `410` + telemetry.
+- Why: This trims dead backend auth surface area and reduces maintenance noise without changing active Auth0 vendor/customer flows or broadening route access.
+- Impact: Dead middleware code is gone, the deprecated no-op deactivation endpoint now fully resolves to absence (`404`) instead of an intentional `410`, and canonical vendor-account gating remains the active protection path.
+- Revisit trigger: When legacy-auth telemetry confirms zero usage over a stable window, remove remaining blocked legacy auth endpoints entirely.
+
+---
+
+## [2026-03-26] Remove dead legacy frontend auth pages and trim unused token/local-storage remnants
+- Context: After Batch 1 rerouted legacy auth paths and deprecated backend legacy auth endpoints, `Login.tsx` / `Signup.tsx` were no longer reachable by canonical flow and some frontend legacy localStorage writes/cleanup remained.
+- Decision: Delete dead legacy auth pages, keep compatibility routes as redirect shims in `App.tsx`, remove unused legacy token-clearing in navigation logout, and remove unused onboarding writes for `vendorAccountId` / `vendorProfileId`.
+- Why: This reduces frontend auth drift and dead code without changing user-visible Auth0 onboarding/dashboard behavior.
+- Impact: Frontend auth entry now consistently funnels through canonical Auth0 screens with less legacy noise and fewer stale localStorage side effects.
+- Revisit trigger: When compatibility routes are no longer needed externally, retire `/login`, `/signup`, and `/vendor/signup` redirect shims entirely.
+
+---
+
+## [2026-03-26] Deprecate legacy password auth entrypoints and reroute frontend auth paths to canonical Auth0 flow
+- Context: Legacy email/password signup/login routes remained reachable from frontend paths (`/login`, `/signup`, `/vendor/signup`) and backend endpoints (`/api/vendor/signup`, `/api/vendor/login`, `/api/customer/signup`, `/api/customer/login`, `/api/auth/login`), creating ownership-drift risk against the canonical Auth0-linked vendor identity model.
+- Decision: Reroute frontend legacy auth routes to canonical Auth0 entrypoints via `/vendor/login` return-to redirects, replace footer "Become a Vendor" target to Auth0 + onboarding path, and deprecate the five legacy backend auth endpoints with structured telemetry + controlled `410` responses that direct clients to Auth0. Keep a guarded dev-only fallback switch (`ALLOW_LEGACY_AUTH_IN_DEV=true`) to avoid silently breaking insecure preview troubleshooting.
+- Why: This stops new production traffic from entering legacy account-creation/auth paths while preserving a narrow emergency/dev bridge without broad deletion.
+- Impact: New auth/account creation traffic is funneled into Auth0 flow; legacy endpoints no longer create accounts by default and emit auditable deprecation logs when called.
+- Revisit trigger: After transition confidence is high and preview/dev no longer needs legacy fallback, remove endpoint bodies and delete legacy Signup/Login UI modules entirely.
 
 ---
 

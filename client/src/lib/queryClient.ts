@@ -1,5 +1,6 @@
 import { QueryClient, QueryFunction } from "@tanstack/react-query";
 import { getFreshAccessToken } from "@/lib/authToken";
+import { isApiLikeUrl, resolveRuntimeUrl } from "@/lib/runtimeUrls";
 
 export class ApiRequestError extends Error {
   status: number;
@@ -35,7 +36,7 @@ async function buildHeaders(url: string, data?: unknown): Promise<HeadersInit> {
 
   // Only attach auth header for API calls (your server routes)
   // (This keeps it from accidentally attaching to external URLs)
-  if (url.startsWith("/api/") || url.includes("/api/")) {
+  if (isApiLikeUrl(url)) {
     const token = await getFreshAccessToken();
     if (token) headers["Authorization"] = `Bearer ${token}`;
   }
@@ -56,9 +57,10 @@ export async function apiRequest(
   url: string,
   data?: unknown | undefined
 ): Promise<Response> {
-const headers = await buildHeaders(url, data);
+  const requestUrl = resolveRuntimeUrl(url);
+  const headers = await buildHeaders(requestUrl, data);
 
-  const res = await fetch(url, {
+  const res = await fetch(requestUrl, {
     method,
     headers,
     body: data !== undefined ? JSON.stringify(data) : undefined,
@@ -76,7 +78,7 @@ export const getQueryFn: <T>(options: {
 }) => QueryFunction<T> =
   ({ on401: unauthorizedBehavior }) =>
   async ({ queryKey }) => {
-    const url = queryKey.join("/") as string;
+    const url = resolveRuntimeUrl(queryKey.join("/") as string);
     const headers = await buildHeaders(url);
 
     const res = await fetch(url, {

@@ -4,10 +4,17 @@
 `https://api.eventhub.example.com/v1`
 
 ## Authentication
-Most endpoints require authentication. Include the JWT token in the `Authorization` header:
+Most protected endpoints require an Auth0 access token in the `Authorization` header:
 ```
-Authorization: Bearer <your_jwt_token>
+Authorization: Bearer <auth0_access_token>
 ```
+
+Email/password login/signup API endpoints are not supported. Authentication is handled through Auth0-managed login flows.
+
+## Vendor Identity Model
+- One Auth0 user maps to one `vendor_account`.
+- A `vendor_account` can own many `vendor_profiles`.
+- New vendor profile creation is handled by onboarding completion (`POST /api/vendor/onboarding/complete`), not by legacy standalone profile-create endpoints.
 
 ## Customer Endpoints
 
@@ -170,34 +177,6 @@ POST /api/vendors/tasks
   "description": "Customer asked about wedding package pricing",
   "dueDate": "2025-12-15T18:00:00Z",
   "priority": 1
-}
-```
-
-## Authentication
-
-### Login
-```
-POST /api/auth/login
-```
-**Request Body**
-```json
-{
-  "email": "user@example.com",
-  "password": "securepassword"
-}
-```
-
-### Register
-```
-POST /api/auth/register
-```
-**Request Body**
-```json
-{
-  "email": "user@example.com",
-  "password": "securepassword",
-  "name": "John Doe",
-  "role": "customer" // or 'vendor'
 }
 ```
 

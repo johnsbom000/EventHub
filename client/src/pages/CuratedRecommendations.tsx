@@ -9,6 +9,7 @@ import Navigation from "@/components/Navigation";
 import Footer from "@/components/Footer";
 import { Star, MapPin, CheckCircle2, Calendar } from "lucide-react";
 import type { Event } from "@shared/schema";
+import { resolveAssetUrl } from "@/lib/runtimeUrls";
 
 // Local type (because @shared/schema no longer exports Vendor)
 type Vendor = {
@@ -158,7 +159,7 @@ export default function CuratedRecommendations() {
                             <div className="relative h-[200px] bg-muted">
                               {vendor.imageUrl ? (
                                 <img
-                                  src={vendor.imageUrl}
+                                  src={resolveAssetUrl(vendor.imageUrl)}
                                   alt={vendorName}
                                   className="w-full h-full object-cover"
                                 />

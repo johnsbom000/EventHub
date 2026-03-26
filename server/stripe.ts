@@ -20,7 +20,7 @@ export interface ConnectAccountOnboardingResult {
   dashboardUrl?: string; // For both types
 }
 
-const connectAppBaseUrl = process.env.REPLIT_DEV_DOMAIN || "http://localhost:5000";
+const connectAppBaseUrl = (process.env.APP_URL || "http://localhost:5000").trim().replace(/\/+$/, "");
 
 function getConnectRedirectUrl(path: string) {
   return `${connectAppBaseUrl}${path}`;

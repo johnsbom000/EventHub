@@ -39,6 +39,7 @@ interface ListingCardProps {
   titleSizeClassName?: string;
   priceSizeClassName?: string;
   titleFont?: "sans" | "heading";
+  primaryActionScale?: "default" | "plus15";
   showVendorShopButton?: boolean;
   disableCardNavigation?: boolean;
   cardNavigationPath?: string | null;
@@ -53,6 +54,7 @@ export default function ListingCard({
   titleSizeClassName,
   priceSizeClassName,
   titleFont = "sans",
+  primaryActionScale = "default",
   showVendorShopButton = false,
   disableCardNavigation = false,
   cardNavigationPath,
@@ -145,6 +147,11 @@ export default function ListingCard({
       : priceScale === "oneAndHalf"
         ? "text-[1.92rem] leading-none"
         : "text-[1.28rem]");
+  const primaryActionClasses =
+    primaryActionScale === "plus15"
+      ? "gap-[0.575rem] px-[1.15rem] py-[0.575rem] text-[1.16rem]"
+      : "gap-2 px-4 py-2 text-[1.01rem]";
+  const primaryActionIconClasses = primaryActionScale === "plus15" ? "h-[1.15rem] w-[1.15rem]" : "h-4 w-4";
 
   return (
     <>
@@ -189,10 +196,10 @@ export default function ListingCard({
                   e.stopPropagation();
                   handleOpenPrimaryAction();
                 }}
-                className="inline-flex items-center gap-2 rounded-full border border-[rgba(74,106,125,0.2)] bg-white/95 px-4 py-2 text-[1.01rem] font-sans font-medium text-[#2a3a42] shadow-sm backdrop-blur-sm"
+                className={`inline-flex items-center rounded-full border border-[rgba(74,106,125,0.2)] bg-white/95 font-sans font-medium text-[#2a3a42] shadow-sm backdrop-blur-sm ${primaryActionClasses}`}
                 data-testid={`button-view-listing-${listingId ?? "unknown"}`}
               >
-                <ArrowUpRight className="h-4 w-4" />
+                <ArrowUpRight className={primaryActionIconClasses} />
                 {primaryActionLabel}
               </button>
               <button

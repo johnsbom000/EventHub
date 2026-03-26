@@ -33,6 +33,8 @@ const migrationModules = [
   '../migrations/0024_booking_disputes_and_24h_payout_window.ts',
   '../migrations/0025_vendor_identity_backfill_and_constraint_hardening.ts',
   '../migrations/0026_vendor_deletion_identity_isolation.ts',
+  '../migrations/0027_backfill_payment_stripe_connected_account.ts',
+  '../migrations/0028_payout_sync_trigger.ts',
 ] as const;
 
 async function runUpMigrations() {

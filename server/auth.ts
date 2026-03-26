@@ -27,17 +27,9 @@ export async function hashPassword(password: string): Promise<string> {
   return bcrypt.hash(password, SALT_ROUNDS);
 }
 
-export async function comparePassword(password: string, hash: string): Promise<boolean> {
-  return bcrypt.compare(password, hash);
-}
-
 /* ======================================================
-   JWT helpers (existing system – unchanged)
+   JWT helpers
 ====================================================== */
-
-export function generateToken(payload: JWTPayload): string {
-  return jwt.sign(payload, JWT_SECRET, { expiresIn: "7d" });
-}
 
 export function verifyToken(token: string): JWTPayload | null {
   try {
@@ -369,71 +361,8 @@ export async function resolveVendorAccountForAuth0Identity(
 }
 
 /* ======================================================
-   JWT-based middleware (existing system – unchanged)
+   JWT/Auth0 bridge middleware
 ====================================================== */
-
-export function requireVendorAuth(req: Request, res: Response, next: NextFunction) {
-  const authHeader = req.headers.authorization;
-
-  if (!authHeader || !authHeader.startsWith("Bearer ")) {
-    return res.status(401).json({ message: "No token provided" });
-  }
-
-  const token = authHeader.substring(7);
-  const payload = verifyToken(token);
-
-  if (!payload || payload.type !== "vendor") {
-    return res.status(401).json({ message: "Invalid or expired token" });
-  }
-
-  (req as any).vendorAuth = payload;
-  next();
-}
-
-export function requireCustomerAuth(req: Request, res: Response, next: NextFunction) {
-  const authHeader = req.headers.authorization;
-
-  if (!authHeader || !authHeader.startsWith("Bearer ")) {
-    return res.status(401).json({ message: "No token provided" });
-  }
-
-  const token = authHeader.substring(7);
-  const payload = verifyToken(token);
-
-  if (payload && (payload.type === "customer" || payload.type === "admin")) {
-    (req as any).customerAuth = payload;
-    return next();
-  }
-
-  // Fallback for Auth0 access tokens during migration.
-  return requireDualAuthAuth0(req, res, next);
-}
-
-export function requireDualAuth(req: Request, res: Response, next: NextFunction) {
-  const authHeader = req.headers.authorization;
-
-  if (!authHeader || !authHeader.startsWith("Bearer ")) {
-    return res.status(401).json({ message: "No token provided" });
-  }
-
-  const token = authHeader.substring(7);
-  const payload = verifyToken(token);
-
-  if (payload) {
-    if (payload.type === "customer" || payload.type === "admin") {
-      (req as any).customerAuth = payload;
-    } else if (payload.type === "vendor") {
-      (req as any).vendorAuth = payload;
-    } else {
-      return res.status(401).json({ message: "Invalid token type" });
-    }
-
-    return next();
-  }
-
-  // Fallback for Auth0 access tokens during migration.
-  return requireDualAuthAuth0(req, res, next);
-}
 
 export function requireAdminAuth(req: Request, res: Response, next: NextFunction) {
   const authHeader = req.headers.authorization;

@@ -29,6 +29,7 @@ import {
 } from "@/lib/listingPhotos";
 import { InlinePhotoEditor, type ListingPhotoCrop } from "@/components/listings/InlinePhotoEditor";
 import { getPublishFailureToastContent } from "@/lib/publishFailureToast";
+import { resolveAssetUrl } from "@/lib/runtimeUrls";
 
 import { LocationPicker } from "@/components/LocationPicker";
 import mapboxgl from "mapbox-gl";
@@ -386,7 +387,7 @@ export default function VendorListingEdit() {
       _photoPreviewsByName: orderedPhotoNames.reduce(
         (acc: Record<string, string>, name: string) => {
           const isHeic = String(name).toLowerCase().endsWith(".heic") || String(name).toLowerCase().endsWith(".heif");
-          if (!isHeic) acc[name] = `/uploads/listings/${name}`;
+          if (!isHeic) acc[name] = resolveAssetUrl(`/uploads/listings/${name}`);
           return acc;
         },
         {}
@@ -656,7 +657,7 @@ export default function VendorListingEdit() {
 
         // move preview mapping temp -> real filename
         delete map[tempName];
-        map[u.filename] = `/uploads/listings/${u.filename}`;
+        map[u.filename] = resolveAssetUrl(`/uploads/listings/${u.filename}`);
         if (nextCropsByName[tempName]) {
           nextCropsByName[u.filename] = nextCropsByName[tempName];
           delete nextCropsByName[tempName];
@@ -1245,7 +1246,7 @@ export default function VendorListingEdit() {
   const photoNames: string[] = Array.isArray(draft?.photos?.names) ? draft.photos.names : [];
   const coverPhotoRatio = normalizePhotoCoverRatio(draft?.photos?.coverPhotoRatio ?? DEFAULT_COVER_RATIO);
   const getPhotoPreviewSrc = (name: string) =>
-    draft?._photoPreviewsByName?.[name] || `/uploads/listings/${name}`;
+    draft?._photoPreviewsByName?.[name] || resolveAssetUrl(`/uploads/listings/${name}`);
   const inlinePhotos = photoNames.map((name) => ({
     id: name,
     name,

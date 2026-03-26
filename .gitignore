@@ -9,6 +9,7 @@ coverage/
 # environment / secrets
 .env
 .env.*
+!.env.production.example
 *.local
 
 # tool/editor state
@@ -16,6 +17,9 @@ coverage/
 .vscode/
 .idea/
 .DS_Store
+
+# uploaded user content (ephemeral, not source code)
+server/uploads/
 
 # logs
 *.log

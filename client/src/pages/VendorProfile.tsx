@@ -10,6 +10,7 @@ import { Separator } from "@/components/ui/separator";
 import { Avatar, AvatarFallback } from "@/components/ui/avatar";
 
 import { Star, MapPin, Heart, Check, Calendar, DollarSign, Award, Users } from "lucide-react";
+import { resolveAssetUrl } from "@/lib/runtimeUrls";
 
 /**
  * Local types (because these are NOT exported from @shared/schema anymore).
@@ -127,6 +128,7 @@ export default function VendorProfile() {
   }
 
   const ratingNumber = toNumber(vendor.rating);
+  const vendorImageUrl = resolveAssetUrl(vendor.imageUrl);
 
   return (
     <div className="min-h-screen bg-background">
@@ -137,8 +139,8 @@ export default function VendorProfile() {
         <div
           className="absolute inset-0 bg-cover bg-center"
           style={{
-            backgroundImage: vendor.imageUrl
-              ? `linear-gradient(rgba(0, 0, 0, 0.4), rgba(0, 0, 0, 0.4)), url(${vendor.imageUrl})`
+            backgroundImage: vendorImageUrl
+              ? `linear-gradient(rgba(0, 0, 0, 0.4), rgba(0, 0, 0, 0.4)), url(${vendorImageUrl})`
               : "linear-gradient(135deg, hsl(var(--primary)) 0%, hsl(var(--primary) / 0.8) 100%)",
           }}
         />

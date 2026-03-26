@@ -8,9 +8,11 @@ import { LocationProvider } from "./context/LocationContext";
 import { Auth0Context, Auth0Provider, initialContext, type Auth0ContextInterface } from "@auth0/auth0-react";
 import { useAuth0 } from "@auth0/auth0-react";
 import { setTokenGetter } from "@/lib/authToken";
+import { installRuntimeFetchBaseUrl } from "@/lib/runtimeUrls";
 
 const THEME_STORAGE_KEY = "eventhub-theme";
 if (typeof window !== "undefined") {
+  installRuntimeFetchBaseUrl();
   window.localStorage.setItem(THEME_STORAGE_KEY, "light");
   document.documentElement.classList.remove("dark");
   document.documentElement.style.colorScheme = "light";

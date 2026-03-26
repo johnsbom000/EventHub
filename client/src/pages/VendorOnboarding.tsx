@@ -411,9 +411,6 @@ export default function VendorOnboarding() {
     },
 
     onSuccess: (data: any) => {
-      if (data?.vendorAccountId) localStorage.setItem("vendorAccountId", data.vendorAccountId);
-      if (data?.profileId) localStorage.setItem("vendorProfileId", data.profileId);
-
       queryClient.invalidateQueries({ queryKey: ["/api/vendor/me"] });
       queryClient.invalidateQueries({ queryKey: ["/api/customer/me"] });
 

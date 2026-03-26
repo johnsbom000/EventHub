@@ -23,6 +23,58 @@ if (process.env.NODE_ENV !== "production") {
 
 const app = express();
 
+function normalizeOrigin(value: string): string {
+  try {
+    return new URL(value).origin;
+  } catch {
+    return "";
+  }
+}
+
+function parseAllowedOrigins(): Set<string> {
+  const rawValues = [
+    process.env.APP_URL || "",
+    ...(process.env.CORS_ALLOWED_ORIGINS || "")
+      .split(",")
+      .map((value) => value.trim()),
+  ];
+
+  const normalized = rawValues
+    .map((value) => normalizeOrigin(value))
+    .filter((value) => value.length > 0);
+
+  return new Set(normalized);
+}
+
+const allowedCorsOrigins = parseAllowedOrigins();
+
+app.use((req, res, next) => {
+  const originHeader = typeof req.headers.origin === "string" ? req.headers.origin : "";
+  const requestOrigin = normalizeOrigin(originHeader);
+  const isAllowed = requestOrigin.length > 0 && allowedCorsOrigins.has(requestOrigin);
+
+  if (isAllowed) {
+    res.setHeader("Access-Control-Allow-Origin", requestOrigin);
+    res.setHeader("Vary", "Origin");
+    res.setHeader("Access-Control-Allow-Credentials", "true");
+    res.setHeader("Access-Control-Allow-Methods", "GET,POST,PUT,PATCH,DELETE,OPTIONS");
+    res.setHeader("Access-Control-Allow-Headers", "Authorization,Content-Type,Accept");
+    res.setHeader("Access-Control-Max-Age", "86400");
+  }
+
+  if (req.method === "OPTIONS") {
+    if (!originHeader) {
+      return res.status(204).end();
+    }
+    if (isAllowed) {
+      return res.status(204).end();
+    }
+    return res.status(403).end();
+  }
+
+  return next();
+});
+
 // Serve uploaded files
 app.use(
   "/uploads",
