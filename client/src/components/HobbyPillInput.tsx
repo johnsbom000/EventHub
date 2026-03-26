@@ -16,6 +16,7 @@ type HobbyPillInputProps = {
   onChange: (nextValue: string) => void;
   placeholder?: string;
   disabled?: boolean;
+  spellCheck?: boolean;
   inputTestId?: string;
   pillClassName?: string;
   pillRemoveButtonClassName?: string;
@@ -28,6 +29,7 @@ export default function HobbyPillInput({
   onChange,
   placeholder = "Add a hobby",
   disabled = false,
+  spellCheck,
   inputTestId,
   pillClassName,
   pillRemoveButtonClassName,
@@ -91,6 +93,7 @@ export default function HobbyPillInput({
           value={draft}
           placeholder={placeholder}
           disabled={disabled}
+          spellCheck={spellCheck}
           data-testid={inputTestId}
           onChange={(event) => setDraft(normalizeHobbyInput(event.target.value))}
           onKeyDown={(event) => {

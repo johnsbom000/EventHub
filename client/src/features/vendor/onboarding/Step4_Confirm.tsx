@@ -28,6 +28,8 @@ interface Step4ConfirmProps {
   };
   onBack: () => void;
   onComplete: (createListing: boolean, destination?: "dashboard" | "myHub") => void;
+  isSubmitting?: boolean;
+  submittingAction?: "createListing" | "myHub" | "dashboard" | null;
 }
 
 type ConfirmField = {
@@ -44,6 +46,8 @@ export default function Step4_Confirm({
   formData,
   onBack,
   onComplete,
+  isSubmitting = false,
+  submittingAction = null,
 }: Step4ConfirmProps) {
   const businessFields: ConfirmField[] = [
     {
@@ -136,61 +140,72 @@ export default function Step4_Confirm({
         <h1 className="text-[3rem] font-semibold">Confirm</h1>
       </div>
 
-      <div className="grid w-full max-w-[1400px] gap-6 md:grid-cols-2">
-        <div className="rounded-xl border p-4 space-y-6">
-          <section className="space-y-3">
-            <h2 className="!text-[25px] leading-tight font-semibold">Business Details</h2>
-            <div className="space-y-2">
-              {businessFields.map((field) => (
-                <div key={field.label} className="space-y-2">
-                  <div className="text-[14.5px] leading-normal">
-                    <span className="text-[14.5px] font-semibold">{field.label}:</span>{" "}
-                    <span>{field.value}</span>
+      <div className="vendor-onboarding-step-content">
+        <div className="grid w-full max-w-[1400px] gap-6 md:grid-cols-2">
+          <div className="rounded-xl border p-4 space-y-6">
+            <section className="space-y-3">
+              <h2 className="!text-[25px] leading-tight font-semibold">Business Details</h2>
+              <div className="space-y-2">
+                {businessFields.map((field) => (
+                  <div key={field.label} className="space-y-2">
+                    <div className="text-[14.5px] leading-normal">
+                      <span className="text-[14.5px] font-semibold">{field.label}:</span>{" "}
+                      <span>{field.value}</span>
+                    </div>
                   </div>
-                </div>
-              ))}
-            </div>
-          </section>
+                ))}
+              </div>
+            </section>
+          </div>
+
+          <div className="rounded-xl border p-4 space-y-6">
+            <section className="space-y-3">
+              <h2 className="!text-[25px] leading-tight font-semibold">About the Owner</h2>
+              <div className="space-y-2">
+                {ownerFields.map((field) => (
+                  <div key={field.label} className="space-y-2">
+                    <div className="text-[14.5px] leading-normal">
+                      <span className="text-[14.5px] font-semibold">{field.label}:</span>{" "}
+                      <span>{field.value}</span>
+                    </div>
+                  </div>
+                ))}
+              </div>
+            </section>
+          </div>
         </div>
 
-        <div className="rounded-xl border p-4 space-y-6">
-          <section className="space-y-3">
-            <h2 className="!text-[25px] leading-tight font-semibold">About the Owner</h2>
-            <div className="space-y-2">
-              {ownerFields.map((field) => (
-                <div key={field.label} className="space-y-2">
-                  <div className="text-[14.5px] leading-normal">
-                    <span className="text-[14.5px] font-semibold">{field.label}:</span>{" "}
-                    <span>{field.value}</span>
-                  </div>
-                </div>
-              ))}
-            </div>
-          </section>
-        </div>
-      </div>
-
-      <div className="fixed bottom-0 left-24 right-0 z-30 bg-[#ffffff]/96 backdrop-blur-sm">
-        <div className="mx-auto flex w-full max-w-[1400px] items-center justify-between px-6 pt-4 pb-8 sm:px-12 lg:px-16">
-          <Button
-            variant="outline"
-            onClick={onBack}
-            className="min-h-[2.7rem] px-6 font-sans text-[1.2rem] font-medium"
-          >
-            Back
-          </Button>
-
-          <div className="flex items-center gap-3">
+        <div className="fixed bottom-0 left-24 right-0 z-30 bg-[#ffffff]/96 backdrop-blur-sm">
+          <div className="mx-auto flex w-full max-w-[1400px] items-center justify-between px-6 pt-4 pb-8 sm:px-12 lg:px-16">
             <Button
               variant="outline"
-              onClick={() => onComplete(false, "myHub")}
+              type="button"
+              onClick={onBack}
+              disabled={isSubmitting}
               className="min-h-[2.7rem] px-6 font-sans text-[1.2rem] font-medium"
             >
-              Go To My Hub
+              Back
             </Button>
-            <Button onClick={() => onComplete(true)} className="min-h-[2.7rem] px-6 font-sans text-[1.2rem] font-medium">
-              Create first listing
-            </Button>
+
+            <div className="flex items-center gap-3">
+              <Button
+                variant="outline"
+                type="button"
+                onClick={() => onComplete(false, "myHub")}
+                disabled={isSubmitting}
+                className="min-h-[2.7rem] px-6 font-sans text-[1.2rem] font-medium"
+              >
+                {isSubmitting && submittingAction === "myHub" ? "Opening My Hub..." : "Go To My Hub"}
+              </Button>
+              <Button
+                type="button"
+                onClick={() => onComplete(true)}
+                disabled={isSubmitting}
+                className="min-h-[2.7rem] px-6 font-sans text-[1.2rem] font-medium"
+              >
+                {isSubmitting && submittingAction === "createListing" ? "Opening listing wizard..." : "Create first listing"}
+              </Button>
+            </div>
           </div>
         </div>
       </div>

@@ -714,12 +714,14 @@ export default function Step3_AboutOwner({
         <p className="text-[14px] text-muted-foreground">Optional but highly recommended!</p>
       </div>
 
-      <div className="grid gap-y-6 lg:grid-cols-[minmax(0,1.5fr)_3rem_minmax(430px,520px)] xl:grid-cols-[minmax(0,1.5fr)_4rem_minmax(430px,520px)] lg:items-start">
-        <div className="space-y-4 rounded-2xl border border-[rgba(154,172,180,0.55)] bg-[#ffffff] p-6 lg:col-[1/2]">
+      <div className="vendor-onboarding-step-content">
+        <div className="grid gap-y-6 lg:grid-cols-[minmax(0,1.5fr)_3rem_minmax(430px,520px)] xl:grid-cols-[minmax(0,1.5fr)_4rem_minmax(430px,520px)] lg:items-start">
+          <div className="space-y-4 rounded-2xl border border-[rgba(154,172,180,0.55)] bg-[#ffffff] p-6 lg:col-[1/2]">
           <div className="space-y-2">
             <Label htmlFor="onboarding-about-owner">Tell your customers about yourself!</Label>
             <Textarea
               id="onboarding-about-owner"
+              spellCheck
               value={formData.aboutVendor}
               onChange={(event) => updateFormData({ aboutVendor: event.target.value })}
               placeholder="Share a short intro about the owner."
@@ -734,6 +736,7 @@ export default function Step3_AboutOwner({
               value={formData.hobbies}
               onChange={(nextHobbies) => updateFormData({ hobbies: nextHobbies })}
               placeholder="Type a hobby and press Enter"
+              spellCheck
               pillClassName="border-[#E07A6A] bg-[#E07A6A] text-[#ffffff]"
               pillRemoveButtonClassName="text-[#ffffff]/80 hover:text-[#ffffff]"
               addButtonClassName="editorial-search-btn editorial-search-btn-white-text"
@@ -744,6 +747,7 @@ export default function Step3_AboutOwner({
             <Label htmlFor="onboarding-shop-home-state">Where are you from?</Label>
             <Input
               id="onboarding-shop-home-state"
+              spellCheck
               value={formData.homeState}
               onChange={(event) => updateFormData({ homeState: event.target.value })}
               placeholder="Example: Utah"
@@ -754,6 +758,7 @@ export default function Step3_AboutOwner({
             <Label htmlFor="onboarding-shop-fun-facts">Fun Facts</Label>
             <Textarea
               id="onboarding-shop-fun-facts"
+              spellCheck
               value={formData.funFacts}
               onChange={(event) => updateFormData({ funFacts: event.target.value })}
               placeholder="Optional fun facts customers can read."
@@ -762,7 +767,7 @@ export default function Step3_AboutOwner({
           </div>
         </div>
 
-        <div className="space-y-6 rounded-2xl border border-[rgba(154,172,180,0.55)] bg-[#ffffff] p-6 lg:col-[3/4]">
+          <div className="space-y-6 rounded-2xl border border-[rgba(154,172,180,0.55)] bg-[#ffffff] p-6 lg:col-[3/4]">
           <div className="space-y-2">
             <Label>Customize your hub with some photos!</Label>
           </div>
@@ -914,21 +919,21 @@ export default function Step3_AboutOwner({
               This image appears as the hero cover on your Vendor Hub.
             </p>
           </div>
+          </div>
         </div>
-      </div>
 
-      <Dialog
-        open={isProfileEditorOpen}
-        onOpenChange={(open) => {
-          setIsProfileEditorOpen(open);
-          if (!open) profileEditorDragStateRef.current = null;
-        }}
-      >
-        <DialogContent className="sm:max-w-md">
-          <DialogHeader>
-            <DialogTitle>Edit profile photo</DialogTitle>
-            <DialogDescription>Drag to reposition and use the slider to zoom.</DialogDescription>
-          </DialogHeader>
+        <Dialog
+          open={isProfileEditorOpen}
+          onOpenChange={(open) => {
+            setIsProfileEditorOpen(open);
+            if (!open) profileEditorDragStateRef.current = null;
+          }}
+        >
+          <DialogContent className="sm:max-w-md">
+            <DialogHeader>
+              <DialogTitle>Edit profile photo</DialogTitle>
+              <DialogDescription>Drag to reposition and use the slider to zoom.</DialogDescription>
+            </DialogHeader>
 
           <div className="space-y-4">
             <div className="flex justify-center">
@@ -984,21 +989,21 @@ export default function Step3_AboutOwner({
               {isApplyingProfileEdits ? "Applying..." : "Apply"}
             </Button>
           </DialogFooter>
-        </DialogContent>
-      </Dialog>
+          </DialogContent>
+        </Dialog>
 
-      <Dialog
-        open={isCoverEditorOpen}
-        onOpenChange={(open) => {
-          setIsCoverEditorOpen(open);
-          if (!open) coverEditorDragStateRef.current = null;
-        }}
-      >
-        <DialogContent className="w-[min(92vw,760px)] sm:max-w-[760px]">
-          <DialogHeader>
-            <DialogTitle>Edit cover photo</DialogTitle>
-            <DialogDescription>Drag to reposition and use the slider to zoom.</DialogDescription>
-          </DialogHeader>
+        <Dialog
+          open={isCoverEditorOpen}
+          onOpenChange={(open) => {
+            setIsCoverEditorOpen(open);
+            if (!open) coverEditorDragStateRef.current = null;
+          }}
+        >
+          <DialogContent className="w-[min(92vw,760px)] sm:max-w-[760px]">
+            <DialogHeader>
+              <DialogTitle>Edit cover photo</DialogTitle>
+              <DialogDescription>Drag to reposition and use the slider to zoom.</DialogDescription>
+            </DialogHeader>
 
           <div className="space-y-4">
             <div className="flex justify-center">
@@ -1055,26 +1060,27 @@ export default function Step3_AboutOwner({
               {isApplyingCoverEdits ? "Applying..." : "Apply"}
             </Button>
           </DialogFooter>
-        </DialogContent>
-      </Dialog>
+          </DialogContent>
+        </Dialog>
 
-      <div className="fixed bottom-0 left-24 right-0 z-30 bg-[#ffffff]/96 backdrop-blur-sm">
-        <div className="mx-auto flex w-full max-w-[1400px] items-center justify-between px-6 pt-4 pb-8 sm:px-12 lg:px-16">
-          <Button
-            type="button"
-            variant="outline"
-            onClick={onBack}
-            className="min-h-[2.7rem] px-6 font-sans text-[1.2rem] font-medium"
-          >
-            Back
-          </Button>
-          <Button
-            type="button"
-            onClick={onNext}
-            className="min-h-[2.7rem] px-6 font-sans text-[1.2rem] font-medium"
-          >
-            Next
-          </Button>
+        <div className="fixed bottom-0 left-24 right-0 z-30 bg-[#ffffff]/96 backdrop-blur-sm">
+          <div className="mx-auto flex w-full max-w-[1400px] items-center justify-between px-6 pt-4 pb-8 sm:px-12 lg:px-16">
+            <Button
+              type="button"
+              variant="outline"
+              onClick={onBack}
+              className="min-h-[2.7rem] px-6 font-sans text-[1.2rem] font-medium"
+            >
+              Back
+            </Button>
+            <Button
+              type="button"
+              onClick={onNext}
+              className="min-h-[2.7rem] px-6 font-sans text-[1.2rem] font-medium"
+            >
+              Next
+            </Button>
+          </div>
         </div>
       </div>
     </div>

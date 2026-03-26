@@ -1,6 +1,6 @@
 # Event Hub Decisions Log
 
-Last updated: March 21, 2026
+Last updated: March 25, 2026
 
 ## Purpose
 This file tracks decisions that affect product scope, architecture, and launch tradeoffs.
@@ -13,6 +13,96 @@ Template for new entries:
 - Why:
 - Impact:
 - Revisit trigger:
+
+---
+
+## [2026-03-25] Stabilize Hub routes and extend venue logistics with takedown fees while removing duplicate edit-map rendering
+- Context: My Hub/Vendor Hub navigation needed stronger compatibility for legacy links, listing logistics UX needed visible currency prefixes and venue takedown controls, and edit listing service-area preview was rendering two overlapping maps.
+- Decision: Add route/API compatibility for hub paths (`/vendor/hub/:vendorId`, `/vendor/my-hub`, `/my-hub`) and support legacy public-shop IDs by resolving `:vendorId` as either `vendor_accounts.id` or `vendor_profiles.id`; remove static map overlay in edit flow so only one live map renders; add venue-only takedown fields (toggle + fee enable + amount) to create/edit listing flows; keep fee inputs currency-prefixed; propagate takedown fee through checkout/booking logistics totals.
+- Why: These are targeted MVP fixes that restore key navigation paths, prevent map UX confusion, and complete venue logistics configuration without broad schema refactors.
+- Impact: Hub links are resilient to old URLs, edit listing now shows a single map, create/edit logistics now supports takedown pricing for venues, and checkout/booking totals include takedown fees when configured.
+- Revisit trigger: When listing logistics columns are expanded in DB, promote takedown from listingData JSON to canonical columns and simplify fee parsing fallbacks.
+
+---
+
+## [2026-03-23] Harden vendor identity ownership at DB layer with guarded backfill, duplicate repair/reporting, and partial uniqueness
+- Context: Identity resolution and frontend vendor-state handling were hardened in app code, but DB-level ownership guarantees for `users.auth0_sub` and `vendor_accounts.user_id`/`auth0_sub` were still incomplete.
+- Decision: Add migration `0025_vendor_identity_backfill_and_constraint_hardening` to (1) align schema by ensuring `users.auth0_sub`, (2) run unambiguous identity backfills, (3) detect/report duplicates, (4) run deterministic account-level duplicate repair when safe (repoint dependents + soft-retire duplicates), and (5) enforce unique indexes only after unresolved duplicates are absent.
+- Why: Canonical ownership rules must be guaranteed in data, not only in request-time resolver logic.
+- Impact: Active vendor accounts are now protected by unique partial identity constraints (`vendor_accounts.user_id` and `vendor_accounts.auth0_sub` for non-deleted rows) and users are protected by unique Auth0 subject mapping; unresolved conflicts block constraint enforcement with a persistent report trail.
+- Revisit trigger: After identity cleanup stabilizes in production, consider removing migration-window dependency on `vendor_accounts.auth0_sub` as fallback and tightening account/profile integrity constraints further.
+
+---
+
+## [2026-03-23] Add explicit vendor-state contract and error-aware frontend vendor detection
+- Context: Frontend vendor detection was using `/api/vendor/me` success as vendor and any failure as non-vendor, causing returning vendors to appear as non-vendors during auth/session or transient API failures.
+- Decision: Extend `/api/vendor/me` with compatibility-safe state booleans (`hasVendorAccount`, `hasAnyVendorProfiles`, `hasActiveVendorProfile`, `needsNewVendorProfileOnboarding`) and update frontend vendor checks to classify `401` (auth/session), `404` (non-vendor), and transient failures separately instead of collapsing them into non-vendor.
+- Why: Vendor account existence, profile existence, and active profile selection are different states; collapsing them produced incorrect UI role gating.
+- Impact: Returning vendors are no longer immediately downshifted to customer UI on transient or auth errors, and dashboard/nav gating can rely on explicit vendor-state semantics.
+- Revisit trigger: After DB identity constraints and resolver migration are complete, replace local fallback heuristics with a shared typed vendor-state hook across all pages that query `/api/vendor/me`.
+
+---
+
+## [2026-03-23] Centralize Auth0 vendor account resolution with deterministic precedence and guarded link-heal
+- Context: Returning vendors were intermittently treated as non-vendors because backend resolution paths diverged (email-first in some routes, sub-first in others) and could overwrite/link identity fields unsafely.
+- Decision: Add one canonical backend resolver (`resolveVendorAccountForAuth0Identity`) and route all Auth0 vendor-account resolution through it with strict precedence: `Auth0 sub -> users.auth0_sub -> vendor_accounts.user_id` (primary), then `vendor_accounts.auth0_sub`, then email fallback only for one-time legacy linking. Add guarded in-app link-heal for missing `vendor_accounts.user_id` / `vendor_accounts.auth0_sub` only when matches are unique and non-conflicting.
+- Why: Deterministic identity resolution prevents duplicate-account drift and restores reliable returning-vendor recognition without schema migrations or frontend changes.
+- Impact: Vendor identity checks now share one source of truth across Auth0 bridge middleware, vendor-only route middleware, onboarding completion account lookup, and Google OAuth vendor resolution; ambiguity/conflict cases are logged and never auto-overwritten.
+- Revisit trigger: After duplicate-account cleanup + DB uniqueness constraints are in place, tighten resolver behavior to fail fast on conflicts and remove legacy email fallback path where safe.
+
+---
+
+## [2026-03-23] Use popup-first re-auth + one-shot retry for onboarding final CTA actions
+- Context: Vendors reported `Go To My Hub` and `Create first listing` appearing non-functional on onboarding confirm because both actions depended on one protected submit path that could fail on expired/missing auth tokens.
+- Decision: In onboarding final submit, add stronger auth-error normalization, run popup-first Auth0 re-auth (`loginWithPopupFirst` with redirect fallback), retry onboarding completion once after successful popup auth, and disable CTA buttons with in-button progress text while submit is in-flight.
+- Why: Both CTAs share the same mutation; this keeps end-of-onboarding routing reliable under token churn and removes the silent/no-feedback feel when auth recovery is needed.
+- Impact: If submit auth is stale, onboarding now attempts immediate re-auth and retries completion in-place before routing to `/vendor/shop`, `/vendor/dashboard`, or `/vendor/listings/new`; buttons no longer allow duplicate clicks during finalize.
+- Revisit trigger: If centralized API auth refresh/retry middleware is introduced, remove onboarding-local retry/auth-detection logic and rely on shared request-layer behavior.
+
+---
+
+## [2026-03-23] Treat onboarding submit 401/403 responses as re-auth flow instead of hard failure
+- Context: Vendors on onboarding `Confirm` could click `Create first listing` and receive `Onboarding failed: Login required` even though the intended behavior is to continue into the listing wizard.
+- Decision: In `VendorOnboarding`, normalize auth failure detection so API submit responses with `401/403` (or auth-required error messages) map to the existing `loginWithRedirect` path that preserves onboarding draft state.
+- Why: This keeps the end-of-onboarding CTA reliable and avoids dead-end toasts for recoverable auth/session expiration states.
+- Impact: Clicking `Create first listing` now triggers re-auth when needed and returns the user to onboarding with draft preserved, allowing completion and navigation to `/vendor/listings/new`.
+- Revisit trigger: If auth is centralized with automatic token refresh/retry for protected mutations, remove onboarding-local auth error pattern matching and rely on shared auth middleware.
+
+---
+
+## [2026-03-23] Preserve onboarding draft and trigger Auth0 re-login when final submit token is missing
+- Context: Vendors could return to onboarding `Confirm` with draft data, but clicking `Create first listing` failed with `Login required` when silent token retrieval was unavailable.
+- Decision: In `VendorOnboarding`, switch final submit token retrieval to shared `getFreshAccessToken`, treat missing token as an auth-reauth case, trigger `loginWithRedirect` back to the same onboarding URL, and preserve draft local-storage across that redirect by bypassing unmount cleanup only for that case.
+- Why: This keeps the final onboarding action reliable without changing existing onboarding/profile persistence behavior and avoids losing user-entered data during re-auth.
+- Impact: If auth is valid, onboarding completes and routes to `/vendor/listings/new` as before; if auth is stale, user is re-authenticated and returned to onboarding with draft intact so they can complete and proceed to the listing wizard.
+- Revisit trigger: If onboarding gains route-level auth guards or a centralized session-refresh mechanism, remove local submit-level re-auth handling and rely on shared guard behavior.
+
+---
+
+## [2026-03-23] Enable onboarding spellcheck for non-address text fields, including Specialties
+- Context: Product requested browser spellcheck for the vendor onboarding `Specialties` input and asked to apply the same behavior to other onboarding text fields, except address fields.
+- Decision: Add optional `spellCheck` support to shared `HobbyPillInput` and enable `spellCheck` on non-address onboarding text inputs/textareas in Step 2 and Step 3, while explicitly keeping address fields (`street`, `city`, `state`, `zip`, and address search input) non-spellchecked.
+- Why: This delivers native spelling feedback for freeform/vendor-entered copy without changing current normalization, validation, or address-entry behavior.
+- Impact: `Specialties`, `Hobbies`, and other non-address onboarding text fields now surface browser spellcheck cues; address-entry flow remains unchanged.
+- Revisit trigger: If onboarding form configuration is centralized, move spellcheck allow/deny behavior into a shared field metadata map instead of per-field props.
+
+---
+
+## [2026-03-23] Increase vendor onboarding step-body typography by 0.5px while excluding sidebar and headers
+- Context: Product requested all text in vendor onboarding steps be increased by `0.5px`, with explicit exclusions for sidebar and header text.
+- Decision: Add vendor-onboarding-only typography scope classes (`vendor-onboarding-steps-typography` and `vendor-onboarding-step-content`) and apply `+0.5px` overrides for step-body typography (default body text, inputs/textarea/select, labels, `text-xs`, `text-sm`, `text-base`, confirm row text, and large action button text), while leaving step headers and sidebar text outside the scoped wrapper.
+- Why: Scoped classes satisfy the request precisely without leaking typography changes into shared create-listing styles that reuse onboarding input-surface classes.
+- Impact: Vendor onboarding body content reads larger by `0.5px` across steps; sidebar icon rail labels and step header text remain unchanged.
+- Revisit trigger: If onboarding typography is centralized into semantic tokens, replace scoped per-class pixel overrides with token-driven step-body and step-header variants.
+
+---
+
+## [2026-03-21] Configure Firebase Hosting deployment for EventHub web app
+- Context: Project needed immediate Hosting deployment on Firebase (`eventhub-a5700`) while postponing Functions/Firestore deployment setup.
+- Decision: Add repo-level Firebase Hosting config (`firebase.json`, `.firebaserc`) targeting Vite client output at `dist/public`, and deploy with `firebase deploy --only hosting --project eventhub-a5700`.
+- Why: This enables fast MVP web deployment with minimal scope and avoids coupling this release to backend cloud migration work.
+- Impact: Static web app now deploys reliably to Firebase Hosting via one command; Functions/Firestore can be configured later without blocking web release.
+- Revisit trigger: If backend APIs or server rendering move to Firebase infrastructure, extend config to include Functions/Firestore and environment-specific targets.
 
 ---
 

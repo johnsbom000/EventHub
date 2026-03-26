@@ -87,6 +87,9 @@ type ListingDraft = {
   setupIncluded: boolean;
   setupFeeEnabled: boolean;
   setupFeeAmount: string;
+  takedownIncluded: boolean;
+  takedownFeeEnabled: boolean;
+  takedownFeeAmount: string;
 
   photoPreviews: string[];
   photoNames: string[];
@@ -126,6 +129,9 @@ const DEFAULT_DRAFT: ListingDraft = {
   setupIncluded: false,
   setupFeeEnabled: false,
   setupFeeAmount: "",
+  takedownIncluded: false,
+  takedownFeeEnabled: false,
+  takedownFeeAmount: "",
 
   photoPreviews: [],
   photoNames: [],
@@ -524,6 +530,7 @@ export function CreateListingWizard({ onClose }: CreateListingWizardProps) {
   const showTravelSection = draft.category === "Service" || draft.category === "Catering";
   const showDeliverySection = draft.category === "Rental" || draft.category === "Catering";
   const showSetupSection = draft.category === "Rental" || draft.category === "Venue" || draft.category === "Catering";
+  const showTakedownSection = draft.category === "Venue";
   const bookingTypeRequired = draft.category === "Service" || draft.category === "Venue" || draft.category === "Catering";
 
   const listingTags = useMemo(() => draft.tagsByPropType[LISTING_TAG_KEY] ?? [], [draft.tagsByPropType]);
@@ -629,6 +636,17 @@ export function CreateListingWizard({ onClose }: CreateListingWizardProps) {
         showSetupSection && draft.setupIncluded && draft.setupFeeEnabled
           ? toMoneyCents(draft.setupFeeAmount)
           : null,
+      takedownIncluded: showTakedownSection ? draft.takedownIncluded : false,
+      takedownOffered: showTakedownSection ? draft.takedownIncluded : false,
+      takedownFeeEnabled: showTakedownSection ? draft.takedownIncluded && draft.takedownFeeEnabled : false,
+      takedownFeeAmount:
+        showTakedownSection && draft.takedownIncluded && draft.takedownFeeEnabled
+          ? Number(draft.takedownFeeAmount || 0)
+          : null,
+      takedownFeeAmountCents:
+        showTakedownSection && draft.takedownIncluded && draft.takedownFeeEnabled
+          ? toMoneyCents(draft.takedownFeeAmount)
+          : null,
 
       photos: {
         count: draft.photoNames.length,
@@ -643,7 +661,44 @@ export function CreateListingWizard({ onClose }: CreateListingWizardProps) {
         count: draft.videoNames.length,
       },
     };
-  }, [draft, listingTags, showDeliverySection, showSetupSection, showTravelSection, vendorType]);
+  }, [draft, listingTags, showDeliverySection, showSetupSection, showTakedownSection, showTravelSection, vendorType]);
+
+  const staticMapPreviewUrl = useMemo(() => {
+    if (!center) return null;
+    if (!MAPBOX_TOKEN) return null;
+    const radiusMiles = Number(draft.serviceRadiusMiles);
+    const features: any[] = [];
+    if (Number.isFinite(radiusMiles) && radiusMiles > 0) {
+      features.push({
+        type: "Feature",
+        properties: {
+          fill: "#9EDBC0",
+          "fill-opacity": 0.25,
+          stroke: "#2B7A67",
+          "stroke-width": 2,
+        },
+        geometry: makeCircleGeoJSON(center, radiusMiles, 36).geometry,
+      });
+    }
+    features.push({
+      type: "Feature",
+      properties: {
+        "marker-size": "small",
+        "marker-color": "#2B7A67",
+      },
+      geometry: {
+        type: "Point",
+        coordinates: [center.lng, center.lat],
+      },
+    });
+    const staticOverlay = encodeURIComponent(
+      JSON.stringify({
+        type: "FeatureCollection",
+        features,
+      }),
+    );
+    return `https://api.mapbox.com/styles/v1/mapbox/streets-v12/static/geojson(${staticOverlay})/auto/1200x700?padding=56,56,56,56&access_token=${MAPBOX_TOKEN}`;
+  }, [center, draft.serviceRadiusMiles]);
 
   useEffect(() => {
     if (!vendorProfile) return;
@@ -1755,6 +1810,15 @@ export function CreateListingWizard({ onClose }: CreateListingWizardProps) {
               </div>
 
               <div className="relative h-72 overflow-hidden rounded-xl border border-border">
+                {staticMapPreviewUrl && !isMapReady ? (
+                  <img
+                    src={staticMapPreviewUrl}
+                    alt=""
+                    aria-hidden
+                    className="absolute inset-0 h-full w-full object-cover"
+                    loading="lazy"
+                  />
+                ) : null}
                 <div ref={mapContainerRef} className="h-full w-full" />
 
                 {!center && (
@@ -2019,7 +2083,71 @@ export function CreateListingWizard({ onClose }: CreateListingWizardProps) {
                 </Card>
               ) : null}
 
-              {!showTravelSection && !showDeliverySection && !showSetupSection ? (
+              {showTakedownSection ? (
+                <Card className="space-y-5 p-6">
+                  <div className="text-xl font-semibold">Takedown</div>
+
+                  <div className="flex flex-wrap items-center justify-between gap-3">
+                    <Label className="text-base">Do you offer takedown?</Label>
+                    <ToggleGroup
+                      value={draft.takedownIncluded}
+                      onChange={(next) =>
+                        setDraft((prev) => ({
+                          ...prev,
+                          takedownIncluded: next,
+                          takedownFeeEnabled: next ? prev.takedownFeeEnabled : false,
+                          takedownFeeAmount: next ? prev.takedownFeeAmount : "",
+                        }))
+                      }
+                      trueLabel="Yes"
+                      falseLabel="No"
+                    />
+                  </div>
+
+                  {draft.takedownIncluded ? (
+                    <>
+                      <div className="flex flex-wrap items-center justify-between gap-3">
+                        <Label className="text-base">Is there a takedown fee?</Label>
+                        <ToggleGroup
+                          value={draft.takedownFeeEnabled}
+                          onChange={(next) =>
+                            setDraft((prev) => ({
+                              ...prev,
+                              takedownFeeEnabled: next,
+                              takedownFeeAmount: next ? prev.takedownFeeAmount : "",
+                            }))
+                          }
+                          trueLabel="Yes"
+                          falseLabel="No"
+                        />
+                      </div>
+
+                      {draft.takedownFeeEnabled ? (
+                        <div className="max-w-sm space-y-2">
+                          <Label>Takedown fee</Label>
+                          <div className="relative">
+                            <span className="pointer-events-none absolute left-3 top-1/2 -translate-y-1/2 text-muted-foreground">$</span>
+                            <Input
+                              className="pl-7"
+                              value={draft.takedownFeeAmount}
+                              inputMode="decimal"
+                              placeholder="e.g. 75"
+                              onChange={(event) =>
+                                setDraft((prev) => ({
+                                  ...prev,
+                                  takedownFeeAmount: event.target.value.replace(/[^\d.]/g, ""),
+                                }))
+                              }
+                            />
+                          </div>
+                        </div>
+                      ) : null}
+                    </>
+                  ) : null}
+                </Card>
+              ) : null}
+
+              {!showTravelSection && !showDeliverySection && !showSetupSection && !showTakedownSection ? (
                 <Card className="p-6 text-sm text-muted-foreground">
                   Select a category in Listing Basics to configure applicable logistics options.
                 </Card>

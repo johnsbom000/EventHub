@@ -169,7 +169,7 @@ export default function Step2_BusinessDetails({
       </div>
 
       <form
-        className="space-y-6"
+        className="vendor-onboarding-step-content space-y-6"
         onSubmit={(e) => {
           e.preventDefault();
           if (!isComplete) return;
@@ -186,6 +186,7 @@ export default function Step2_BusinessDetails({
                 id="onboarding-business-name"
                 name="businessName"
                 placeholder="Business name"
+                spellCheck
                 value={formData.businessName}
                 onChange={(e) =>
                   updateFormData({ businessName: normalizeBusinessNameInput(e.target.value) })
@@ -251,6 +252,7 @@ export default function Step2_BusinessDetails({
                     id="onboarding-street-address"
                     name="streetAddress"
                     placeholder="Street address (auto-filled after selection)"
+                    spellCheck={false}
                     value={formData.streetAddress}
                     onChange={(e) =>
                       updateFormData({
@@ -270,6 +272,7 @@ export default function Step2_BusinessDetails({
                       id="onboarding-city"
                       name="city"
                       placeholder="City"
+                      spellCheck={false}
                       value={formData.city}
                       onChange={(e) =>
                         updateFormData({
@@ -287,6 +290,7 @@ export default function Step2_BusinessDetails({
                       id="onboarding-state"
                       name="state"
                       placeholder="State"
+                      spellCheck={false}
                       value={formData.state}
                       onChange={(e) =>
                         updateFormData({
@@ -306,6 +310,7 @@ export default function Step2_BusinessDetails({
                     id="onboarding-zip"
                     name="zipCode"
                     placeholder="Zip"
+                    spellCheck={false}
                     value={formData.zipCode}
                     onChange={(e) =>
                       updateFormData({
@@ -331,6 +336,7 @@ export default function Step2_BusinessDetails({
                   id="onboarding-business-phone"
                   name="businessPhone"
                   placeholder="Business phone"
+                  spellCheck
                   value={formData.businessPhone}
                   onChange={(e) => updateFormData({ businessPhone: e.target.value })}
                   required
@@ -342,6 +348,7 @@ export default function Step2_BusinessDetails({
                   id="onboarding-business-email"
                   name="businessEmail"
                   placeholder="Business email"
+                  spellCheck
                   value={formData.businessEmail}
                   onChange={(e) => updateFormData({ businessEmail: e.target.value })}
                   type="email"
@@ -360,6 +367,7 @@ export default function Step2_BusinessDetails({
                   id="onboarding-about-business"
                   name="aboutBusiness"
                   placeholder="About the business (optional)"
+                  spellCheck
                   value={formData.aboutBusiness}
                   onChange={(e) => updateFormData({ aboutBusiness: e.target.value })}
                   rows={4}
@@ -371,6 +379,7 @@ export default function Step2_BusinessDetails({
                   <Label htmlFor="onboarding-shop-tagline">Tagline</Label>
                   <Input
                     id="onboarding-shop-tagline"
+                    spellCheck
                     value={formData.shopTagline}
                     onChange={(event) => updateFormData({ shopTagline: event.target.value })}
                     placeholder="Example: Making your events unforgettable, one detail at a time."
@@ -381,6 +390,7 @@ export default function Step2_BusinessDetails({
                   <Label htmlFor="onboarding-shop-in-business-since">In Business Since (Year)</Label>
                   <Input
                     id="onboarding-shop-in-business-since"
+                    spellCheck
                     value={formData.inBusinessSinceYear}
                     onChange={(event) =>
                       updateFormData({
@@ -398,6 +408,7 @@ export default function Step2_BusinessDetails({
                     value={formData.specialties}
                     onChange={(nextSpecialties) => updateFormData({ specialties: nextSpecialties })}
                     placeholder="Type a specialty and press Enter"
+                    spellCheck
                     pillClassName="border-[#E07A6A] bg-[#E07A6A] text-[#ffffff]"
                     pillRemoveButtonClassName="text-[#ffffff]/80 hover:text-[#ffffff]"
                     addButtonClassName="editorial-search-btn editorial-search-btn-white-text"
@@ -408,6 +419,7 @@ export default function Step2_BusinessDetails({
                   <Label htmlFor="onboarding-shop-events-baseline">Events Served To Date</Label>
                   <Input
                     id="onboarding-shop-events-baseline"
+                    spellCheck
                     value={formData.eventsServedBaseline}
                     onChange={(event) =>
                       updateFormData({ eventsServedBaseline: event.target.value.replace(/[^\d]/g, "") })

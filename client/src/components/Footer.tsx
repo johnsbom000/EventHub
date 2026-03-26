@@ -2,20 +2,28 @@ import { Link } from "wouter";
 import { useAuth0 } from "@auth0/auth0-react";
 import { useQuery } from "@tanstack/react-query";
 import BrandWordmark from "@/components/BrandWordmark";
-
-interface VendorAccount {
-  id: string;
-}
+import { deriveVendorDetection, type VendorMeState } from "@/lib/vendorState";
 
 export default function Footer() {
   const { isAuthenticated } = useAuth0();
-  const { data: vendorAccount } = useQuery<VendorAccount>({
+  const {
+    data: vendorAccount,
+    isLoading: isVendorLoading,
+    isFetching: isVendorFetching,
+    error: vendorError,
+  } = useQuery<VendorMeState>({
     queryKey: ["/api/vendor/me"],
     enabled: isAuthenticated,
     retry: false,
     staleTime: 60_000,
   });
-  const isVendor = Boolean(vendorAccount);
+  const vendorDetection = deriveVendorDetection({
+    data: vendorAccount,
+    isLoading: isVendorLoading,
+    isFetching: isVendorFetching,
+    error: vendorError,
+  });
+  const shouldShowBecomeVendor = !isAuthenticated || vendorDetection.status === "non_vendor";
 
   return (
     <footer className="border-t border-[rgba(245,240,232,0.12)] bg-[#4a6a7d] dark:bg-[#16222d]">
@@ -48,7 +56,7 @@ export default function Footer() {
           <div>
             <h3 className="mb-4 font-sans text-[0.84rem] font-medium uppercase tracking-[0.1em] text-[#9dd4cc]">For Vendors</h3>
             <ul className="space-y-2">
-              {!isVendor && (
+              {shouldShowBecomeVendor && (
                 <li>
                   <Link href="/vendor/signup" className="font-sans text-[0.98rem] text-[rgba(245,240,232,0.85)] hover:text-[#f5f0e8]" data-testid="link-footer-vendor-signup">
                     Become a Vendor

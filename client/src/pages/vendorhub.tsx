@@ -239,8 +239,9 @@ function formatReviewDate(value: string | null | undefined) {
 
 export default function VendorHub() {
   const [, setLocation] = useLocation();
-  const [, params] = useRoute("/shop/:vendorId");
-  const vendorId = params?.vendorId;
+  const [, shopParams] = useRoute("/shop/:vendorId");
+  const [, legacyParams] = useRoute("/vendor/hub/:vendorId");
+  const vendorId = shopParams?.vendorId || legacyParams?.vendorId;
   const [normalizedProfileImageUrl, setNormalizedProfileImageUrl] = useState("");
   const [normalizedCoverImageUrl, setNormalizedCoverImageUrl] = useState("");
   const [coverImageLoadFailed, setCoverImageLoadFailed] = useState(false);
@@ -501,23 +502,6 @@ export default function VendorHub() {
                   )}
                 </section>
 
-                {specialties.length > 0 ? (
-                  <Card>
-                    <CardHeader className="pb-3">
-                      <CardTitle>Specialties</CardTitle>
-                    </CardHeader>
-                    <CardContent className="flex flex-wrap gap-2">
-                      {specialties.map((item) => (
-                        <span
-                          key={item}
-                          className="rounded-full border border-[rgba(74,106,125,0.25)] px-3 py-1 text-sm text-foreground"
-                        >
-                          {item}
-                        </span>
-                      ))}
-                    </CardContent>
-                  </Card>
-                ) : null}
               </div>
 
               <div className="space-y-0 lg:order-1">
@@ -591,6 +575,21 @@ export default function VendorHub() {
                       <p className="text-lg text-[#2a3a42] dark:text-[#f5f0e8]">In Business Since</p>
                       <p className="text-[1.25rem] font-semibold text-[#2a3a42] dark:text-[#f5f0e8]">{formatInBusinessLabel(vendor.inBusinessSinceYear)}</p>
                     </div>
+                    {specialties.length > 0 ? (
+                      <div>
+                        <p className="text-lg text-[#2a3a42] dark:text-[#f5f0e8]">Specialties</p>
+                        <div className="mt-2 flex flex-wrap gap-2">
+                          {specialties.map((item) => (
+                            <span
+                              key={item}
+                              className="rounded-full border border-[rgba(74,106,125,0.25)] px-3 py-1 text-sm text-[#2a3a42] dark:text-[#f5f0e8]"
+                            >
+                              {item}
+                            </span>
+                          ))}
+                        </div>
+                      </div>
+                    ) : null}
                     {hasAvgResponseTime ? (
                       <div>
                         <p className="text-lg text-[#2a3a42] dark:text-[#f5f0e8]">Avg. Response Time</p>

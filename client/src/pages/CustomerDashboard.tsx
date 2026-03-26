@@ -1,4 +1,4 @@
-import { useEffect, useMemo } from "react";
+import { useEffect, useMemo, useState } from "react";
 import { Link, useLocation } from "wouter";
 import { useQuery } from "@tanstack/react-query";
 import { useAuth0 } from "@auth0/auth0-react";
@@ -17,6 +17,8 @@ import { SidebarProvider } from "@/components/ui/sidebar";
 import { Button } from "@/components/ui/button";
 import { CustomerSidebar } from "@/components/customer-sidebar";
 import BrandWordmark from "@/components/BrandWordmark";
+import { ApiRequestError } from "@/lib/queryClient";
+import { deriveVendorDetection, type VendorMeState } from "@/lib/vendorState";
 import CustomerProfile from "./customer/CustomerProfile";
 import CustomerEvents from "./customer/CustomerEvents";
 import CustomerMessages from "./customer/CustomerMessages";
@@ -60,6 +62,10 @@ function getPersonInitials(value: string) {
 export default function CustomerDashboard() {
   const [location, setLocation] = useLocation();
   const { isAuthenticated, isLoading: isAuthLoading, getAccessTokenSilently, logout } = useAuth0();
+  const [lastKnownVendorAccount] = useState<boolean>(() => {
+    if (typeof window === "undefined") return false;
+    return window.localStorage.getItem("eventhub:last-known-vendor-account") === "1";
+  });
 
   // Fetch current customer
   const { data: customer, isLoading, error } = useQuery<Customer>({
@@ -67,7 +73,12 @@ export default function CustomerDashboard() {
     enabled: isAuthenticated,
     retry: false,
   });
-  const { data: vendorAccount, isLoading: isVendorAccountLoading } = useQuery<{ id: string } | null>({
+  const {
+    data: vendorAccount,
+    isLoading: isVendorAccountLoading,
+    isFetching: isVendorAccountFetching,
+    error: vendorAccountError,
+  } = useQuery<VendorMeState | null>({
     queryKey: ["/api/vendor/me", "customer-dashboard-header"],
     enabled: isAuthenticated,
     retry: false,
@@ -79,9 +90,19 @@ export default function CustomerDashboard() {
         headers: { Authorization: `Bearer ${token}` },
         credentials: "include",
       });
-      if (!res.ok) return null;
+      if (res.status === 404) return null;
+      if (!res.ok) {
+        const text = (await res.text()) || res.statusText;
+        throw new ApiRequestError(res.status, text);
+      }
       return res.json();
     },
+  });
+  const vendorDetection = deriveVendorDetection({
+    data: vendorAccount,
+    isLoading: isVendorAccountLoading,
+    isFetching: isVendorAccountFetching,
+    error: vendorAccountError,
   });
 
   const sidebarStyle = useMemo(
@@ -107,8 +128,15 @@ export default function CustomerDashboard() {
     // Default to profile for /dashboard and /dashboard/profile
     return "profile";
   }, [location]);
-  const hasVendorAccount = Boolean(vendorAccount?.id);
-  const shouldShowCustomerPhoto = !isVendorAccountLoading && !hasVendorAccount;
+  const hasVendorAccount =
+    vendorDetection.status === "vendor" ||
+    (lastKnownVendorAccount &&
+      (vendorDetection.status === "auth_error" || vendorDetection.status === "transient_error"));
+  const shouldShowCustomerPhoto =
+    !isVendorAccountLoading &&
+    !isVendorAccountFetching &&
+    !hasVendorAccount &&
+    vendorDetection.status === "non_vendor";
   const realName = customer?.displayName?.trim() || customer?.name || "Customer";
   const initials = getPersonInitials(realName);
 

@@ -1,6 +1,6 @@
 // client/src/pages/VendorOnboarding.tsx
 
-import { useEffect, useState } from "react";
+import { useEffect, useRef, useState } from "react";
 import { useLocation } from "wouter";
 import { BadgeCheck, Building2, Check, ClipboardList, Sparkles } from "lucide-react";
 import { useMutation } from "@tanstack/react-query";
@@ -9,6 +9,8 @@ import { useToast } from "@/hooks/use-toast";
 import Navigation from "@/components/Navigation";
 import { useAuth0 } from "@auth0/auth0-react";
 import { cn } from "@/lib/utils";
+import { getFreshAccessToken } from "@/lib/authToken";
+import { loginWithPopupFirst } from "@/lib/auth0Login";
 
 // Step components (Prop/Decor-only flow)
 import Step2_BusinessDetails from "@/features/vendor/onboarding/Step2_BusinessDetails";
@@ -119,6 +121,77 @@ function getStepMeta(stepLabel: string): {
 }
 
 const STORAGE_KEY = "vendorOnboarding:v1";
+const AUTH_LOGIN_REQUIRED_ERROR = "AUTH_LOGIN_REQUIRED";
+const AUTH_REQUIRED_MESSAGE_PATTERNS = [
+  "login required",
+  "login_required",
+  "unauthorized",
+  "forbidden",
+  "not authenticated",
+  "authentication required",
+  "invalid token",
+  "jwt",
+  "missing authorization bearer token",
+  "no token provided",
+  "missing or invalid refresh token",
+  "consent required",
+];
+
+function isAuthRequiredError(error: unknown): boolean {
+  const extractText = (value: unknown): string[] => {
+    if (typeof value === "string") {
+      return [value];
+    }
+
+    if (value instanceof Error) {
+      return [value.message];
+    }
+
+    if (!value || typeof value !== "object") {
+      return [];
+    }
+
+    const source = value as Record<string, unknown>;
+    const nestedResponse =
+      source.response && typeof source.response === "object"
+        ? ((source.response as Record<string, unknown>).data as Record<string, unknown> | undefined)
+        : undefined;
+
+    const candidates: unknown[] = [
+      source.message,
+      source.error,
+      source.description,
+      source.code,
+      source.error_description,
+      source.status,
+      source.statusCode,
+      nestedResponse?.message,
+      nestedResponse?.error,
+      nestedResponse?.description,
+      nestedResponse?.code,
+      nestedResponse?.status,
+      nestedResponse?.statusCode,
+      source?.response && typeof source.response === "object"
+        ? (source.response as Record<string, unknown>).status
+        : undefined,
+    ];
+
+    return candidates
+      .filter((candidate): candidate is string | number => typeof candidate === "string" || typeof candidate === "number")
+      .map((candidate) => String(candidate));
+  };
+
+  const messages = extractText(error)
+    .map((value) => value.trim().toLowerCase())
+    .filter(Boolean);
+
+  if (messages.length === 0) return false;
+  if (messages.includes(AUTH_LOGIN_REQUIRED_ERROR.toLowerCase())) return true;
+  if (messages.includes("401") || messages.includes("403")) return true;
+  return messages.some((message) =>
+    AUTH_REQUIRED_MESSAGE_PATTERNS.some((pattern) => message.includes(pattern))
+  );
+}
 
 const DEFAULT_ONBOARDING_DATA: VendorOnboardingData = {
   vendorType: SINGLE_VENDOR_MODE ? SINGLE_VENDOR_TYPE : "",
@@ -152,15 +225,18 @@ export default function VendorOnboarding() {
 
   const [, setLocation] = useLocation();
   const { toast } = useToast();
-  const { getAccessTokenSilently } = useAuth0();
+  const { loginWithRedirect, loginWithPopup } = useAuth0();
   const isCreatingAdditionalProfile =
     typeof window !== "undefined" &&
     new URLSearchParams(window.location.search).get("createProfile") === "1";
+  const preserveDraftOnUnmountRef = useRef(false);
 
   // If the user leaves the onboarding page entirely, start fresh next time.
   useEffect(() => {
     return () => {
-      localStorage.removeItem(STORAGE_KEY);
+      if (!preserveDraftOnUnmountRef.current) {
+        localStorage.removeItem(STORAGE_KEY);
+      }
     };
   }, []);
 
@@ -221,6 +297,8 @@ export default function VendorOnboarding() {
       return [];
     }
   });
+  const [isFinalizingOnboarding, setIsFinalizingOnboarding] = useState(false);
+  const [pendingFinalAction, setPendingFinalAction] = useState<"createListing" | "myHub" | "dashboard" | null>(null);
 
   const updateFormData = (updates: Partial<VendorOnboardingData>) => {
     setFormData((prev) => ({ ...prev, ...updates }));
@@ -300,7 +378,10 @@ export default function VendorOnboarding() {
 
   const completeOnboardingMutation = useMutation({
     mutationFn: async (data: VendorOnboardingData) => {
-      const token = await getAccessTokenSilently();
+      const token = await getFreshAccessToken();
+      if (!token) {
+        throw new Error(AUTH_LOGIN_REQUIRED_ERROR);
+      }
       const browserTimeZone =
         typeof Intl !== "undefined" ? Intl.DateTimeFormat().resolvedOptions().timeZone || undefined : undefined;
 
@@ -319,7 +400,11 @@ export default function VendorOnboarding() {
 
       if (!res.ok) {
         const err = await res.json().catch(() => ({} as any));
-        throw new Error(err?.error || err?.message || "Failed to complete onboarding");
+        const errorMessage = String(err?.error || err?.message || "").trim();
+        if (res.status === 401 || res.status === 403 || isAuthRequiredError(errorMessage)) {
+          throw new Error(AUTH_LOGIN_REQUIRED_ERROR);
+        }
+        throw new Error(errorMessage || "Failed to complete onboarding");
       }
 
       return res.json();
@@ -343,7 +428,12 @@ export default function VendorOnboarding() {
     createListing: boolean,
     destination: "dashboard" | "myHub" = "dashboard",
   ) => {
-    try {
+    if (isFinalizingOnboarding) return;
+    setIsFinalizingOnboarding(true);
+    setPendingFinalAction(createListing ? "createListing" : destination);
+
+    const finishAndNavigate = async () => {
+      preserveDraftOnUnmountRef.current = false;
       await completeOnboardingMutation.mutateAsync(formData);
       localStorage.removeItem(STORAGE_KEY);
       if (createListing) {
@@ -351,12 +441,79 @@ export default function VendorOnboarding() {
       } else {
         setLocation(destination === "myHub" ? "/vendor/shop" : "/vendor/dashboard");
       }
+    };
+
+    try {
+      await finishAndNavigate();
     } catch (e: any) {
+      if (isAuthRequiredError(e)) {
+        try {
+          preserveDraftOnUnmountRef.current = true;
+          const returnTo =
+            typeof window !== "undefined"
+              ? `${window.location.pathname}${window.location.search}${window.location.hash}`
+              : "/vendor/onboarding";
+
+          const loginResult = await loginWithPopupFirst({
+            loginWithPopup,
+            loginWithRedirect,
+            popupOptions: {
+              authorizationParams: {
+                prompt: "login",
+              },
+            },
+            redirectOptions: {
+              appState: { returnTo },
+              authorizationParams: {
+                prompt: "login",
+              },
+            },
+          });
+
+          if (loginResult === "redirect") {
+            return;
+          }
+
+          if (loginResult === "cancelled") {
+            preserveDraftOnUnmountRef.current = false;
+            toast({
+              title: "Login required",
+              description: "Please sign in to finish onboarding.",
+              variant: "destructive",
+            });
+            return;
+          }
+
+          preserveDraftOnUnmountRef.current = false;
+          await finishAndNavigate();
+          return;
+        } catch (authError: any) {
+          preserveDraftOnUnmountRef.current = false;
+          if (!isAuthRequiredError(authError)) {
+            toast({
+              title: "Onboarding failed",
+              description: authError?.message || "Please try again.",
+              variant: "destructive",
+            });
+            return;
+          }
+          toast({
+            title: "Login required",
+            description: authError?.message || "Please sign in again to finish onboarding.",
+            variant: "destructive",
+          });
+          return;
+        }
+      }
+
       toast({
         title: "Onboarding failed",
         description: e?.message || "Please try again.",
         variant: "destructive",
       });
+    } finally {
+      setIsFinalizingOnboarding(false);
+      setPendingFinalAction(null);
     }
   };
 
@@ -393,6 +550,8 @@ export default function VendorOnboarding() {
               formData={formData}
               onBack={handleBack}
               onComplete={handleComplete}
+              isSubmitting={isFinalizingOnboarding}
+              submittingAction={pendingFinalAction}
             />
           );
         default:
@@ -430,6 +589,8 @@ export default function VendorOnboarding() {
             formData={formData}
             onBack={handleBack}
             onComplete={handleComplete}
+            isSubmitting={isFinalizingOnboarding}
+            submittingAction={pendingFinalAction}
           />
         );
       default:
@@ -507,7 +668,7 @@ export default function VendorOnboarding() {
         <div className="flex-1 overflow-y-auto">
           <div
             className={cn(
-              "vendor-onboarding-input-surface mx-auto w-full max-w-[1400px] py-10 px-12 sm:px-24 lg:px-36"
+              "vendor-onboarding-input-surface vendor-onboarding-steps-typography mx-auto w-full max-w-[1400px] py-10 px-12 sm:px-24 lg:px-36"
             )}
           >
             {renderStep()}

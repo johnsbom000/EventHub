@@ -838,6 +838,42 @@
     line-height: 1.35;
   }
 
+  .vendor-onboarding-steps-typography .vendor-onboarding-step-content {
+    font-size: 16.5px;
+  }
+
+  .vendor-onboarding-steps-typography .vendor-onboarding-step-content input:not([type="checkbox"]):not([type="radio"]):not([type="file"]):not([type="range"]),
+  .vendor-onboarding-steps-typography .vendor-onboarding-step-content textarea,
+  .vendor-onboarding-steps-typography .vendor-onboarding-step-content select,
+  .vendor-onboarding-steps-typography .vendor-onboarding-step-content [role="combobox"] {
+    font-size: 13.5px !important;
+  }
+
+  .vendor-onboarding-steps-typography .vendor-onboarding-step-content label {
+    font-size: 13px;
+    line-height: 1.3;
+  }
+
+  .vendor-onboarding-steps-typography .vendor-onboarding-step-content .text-xs {
+    font-size: 12.5px !important;
+  }
+
+  .vendor-onboarding-steps-typography .vendor-onboarding-step-content .text-sm {
+    font-size: 14.5px !important;
+  }
+
+  .vendor-onboarding-steps-typography .vendor-onboarding-step-content .text-base {
+    font-size: 16.5px !important;
+  }
+
+  .vendor-onboarding-steps-typography .vendor-onboarding-step-content .text-\[14\.5px\] {
+    font-size: 15px !important;
+  }
+
+  .vendor-onboarding-steps-typography .vendor-onboarding-step-content .text-\[1\.2rem\] {
+    font-size: 19.7px !important;
+  }
+
   .vendor-onboarding-input-surface input:-webkit-autofill,
   .vendor-onboarding-input-surface input:-webkit-autofill:hover,
   .vendor-onboarding-input-surface input:-webkit-autofill:focus,

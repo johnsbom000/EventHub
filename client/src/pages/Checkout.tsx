@@ -212,11 +212,20 @@ function buildHourlyWindowGuidance(input: {
   deliveryIncluded: boolean;
   pickupEnabled: boolean;
   setupIncluded: boolean;
+  takedownIncluded?: boolean;
 }) {
   const listingName = input.listingTitle || "this item";
+  const setupTakedownLabel =
+    input.setupIncluded && input.takedownIncluded
+      ? "setup and takedown"
+      : input.setupIncluded
+        ? "setup"
+        : input.takedownIncluded
+          ? "takedown"
+          : null;
   const logisticsParts = [
     input.deliveryIncluded ? "delivery" : input.pickupEnabled ? "pickup" : "on-site service",
-    input.setupIncluded ? "setup and takedown" : null,
+    setupTakedownLabel,
   ].filter(Boolean);
   const logisticsLabel = logisticsParts.join(" plus ");
 
@@ -502,6 +511,11 @@ function CheckoutContent({
         parseOptionalNumber(ld?.setupFeeAmountCents) ??
         parseMoneyToCents(ld?.setupFeeAmount) ??
         null;
+      const takedownFeeAmountCents =
+        parseOptionalNumber(raw?.takedownFeeAmountCents) ??
+        parseOptionalNumber(ld?.takedownFeeAmountCents) ??
+        parseMoneyToCents(ld?.takedownFeeAmount) ??
+        null;
       const deliveryFeeEnabled =
         parseBooleanLike(
           raw?.deliveryFeeEnabled ??
@@ -512,8 +526,16 @@ function CheckoutContent({
           raw?.setupFeeEnabled ??
             ld?.setupFeeEnabled
         );
+      const takedownFeeEnabled =
+        parseBooleanLike(
+          raw?.takedownFeeEnabled ??
+            ld?.takedownFeeEnabled
+        );
       const setupIncluded = parseBooleanLike(
         raw?.setupOffered ?? ld?.setupOffered ?? ld?.setupIncluded
+      );
+      const takedownIncluded = parseBooleanLike(
+        raw?.takedownOffered ?? ld?.takedownOffered ?? ld?.takedownIncluded
       );
 
       return {
@@ -529,6 +551,7 @@ function CheckoutContent({
         deliveryIncluded,
         pickupEnabled,
         setupIncluded,
+        takedownIncluded,
         instantBookEnabled,
         pricingUnit,
         minimumHours,
@@ -555,6 +578,8 @@ function CheckoutContent({
         deliveryFeeAmountCents,
         setupFeeEnabled,
         setupFeeAmountCents,
+        takedownFeeEnabled,
+        takedownFeeAmountCents,
       };
     },
   });
@@ -760,8 +785,9 @@ function CheckoutContent({
       deliveryIncluded: Boolean(data.deliveryIncluded),
       pickupEnabled: Boolean(data.pickupEnabled),
       setupIncluded: Boolean(data.setupIncluded),
+      takedownIncluded: Boolean((data as any)?.takedownIncluded),
     });
-  }, [data?.deliveryIncluded, data?.pickupEnabled, data?.setupIncluded, data?.title]);
+  }, [data?.deliveryIncluded, data?.pickupEnabled, data?.setupIncluded, (data as any)?.takedownIncluded, data?.title]);
 
   const hasPendingPaymentToResume =
     Boolean(pendingPaymentDraft?.bookingId) &&
@@ -800,6 +826,10 @@ function CheckoutContent({
     data?.setupIncluded && data?.setupFeeEnabled
       ? Math.max(0, Math.round(data?.setupFeeAmountCents || 0))
       : 0;
+  const takedownFeeCents =
+    (data as any)?.takedownIncluded && (data as any)?.takedownFeeEnabled
+      ? Math.max(0, Math.round((data as any)?.takedownFeeAmountCents || 0))
+      : 0;
   const travelFlatFeeCents =
     data?.travelOffered && data?.travelFeeEnabled && data?.travelFeeType === "flat"
       ? Math.max(0, Math.round(data?.travelFeeAmountCents || 0))
@@ -808,7 +838,7 @@ function CheckoutContent({
     data?.travelOffered &&
     data?.travelFeeEnabled &&
     (data?.travelFeeType === "per_mile" || data?.travelFeeType === "per_hour");
-  const logisticsSubtotal = deliveryFeeCents + setupFeeCents + travelFlatFeeCents;
+  const logisticsSubtotal = deliveryFeeCents + setupFeeCents + takedownFeeCents + travelFlatFeeCents;
   const customerFeeAmount = Math.round((baseSubtotal + logisticsSubtotal) * CUSTOMER_FEE_RATE);
   const customerTotal = baseSubtotal + logisticsSubtotal + customerFeeAmount;
 
@@ -1369,7 +1399,14 @@ function CheckoutContent({
                   <div className="md:col-span-2 text-sm text-muted-foreground">
                     Use the needed-by and done-with window for the actual rental possession period. Include buffer for{" "}
                     {data.deliveryIncluded ? "delivery" : data.pickupEnabled ? "pickup" : "service access"}
-                    {data.setupIncluded ? ", setup, and takedown" : ""} so the vendor has enough time on both sides.
+                    {data.setupIncluded && (data as any)?.takedownIncluded
+                      ? ", setup, and takedown"
+                      : data.setupIncluded
+                        ? ", setup"
+                        : (data as any)?.takedownIncluded
+                          ? ", takedown"
+                          : ""}{" "}
+                    so the vendor has enough time on both sides.
                   </div>
                   {perDayLogisticsError ? (
                     <div className="md:col-span-2 text-sm text-red-600">{perDayLogisticsError}</div>
@@ -1485,6 +1522,13 @@ function CheckoutContent({
                 <div className="flex items-center justify-between">
                   <span className="text-sm text-muted-foreground">Setup fee</span>
                   <span className="font-medium">{formatUsdFromCents(setupFeeCents)}</span>
+                </div>
+              ) : null}
+
+              {takedownFeeCents > 0 ? (
+                <div className="flex items-center justify-between">
+                  <span className="text-sm text-muted-foreground">Takedown fee</span>
+                  <span className="font-medium">{formatUsdFromCents(takedownFeeCents)}</span>
                 </div>
               ) : null}
 

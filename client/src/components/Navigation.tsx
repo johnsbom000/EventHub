@@ -28,14 +28,9 @@ import {
   Briefcase,
   Store,
 } from "lucide-react";
+import { deriveVendorDetection, type VendorMeState } from "@/lib/vendorState";
 
 type UserRole = "customer" | "vendor" | null;
-
-interface VendorAccount {
-  id: string;
-  email: string;
-  businessName: string;
-}
 
 interface Customer {
   id: string;
@@ -64,44 +59,83 @@ export default function Navigation({
   const hideAvatarNotifications = location === "/";
   const isVendorOnboardingRoute = location.startsWith("/vendor/onboarding");
   const [userRole, setUserRole] = useState<UserRole>(null);
+  const [lastKnownVendorAccount, setLastKnownVendorAccount] = useState<boolean>(() => {
+    if (typeof window === "undefined") return false;
+    return window.localStorage.getItem("eventhub:last-known-vendor-account") === "1";
+  });
   const [authModalOpen, setAuthModalOpen] = useState(false);
   const { isAuthenticated, user, logout: auth0Logout } = useAuth0();
   useEffect(() => {
     if (user) console.log("AUTH0 USER OBJECT:", user);
   }, [user]);
 
-  // Fetch vendor account if vendor token exists (legacy)
-  const { getAccessTokenSilently } = useAuth0();
-
   const {
     data: vendorAccount,
     isLoading: vendorMeLoading,
-    isError: vendorMeError,
-  } = useQuery<VendorAccount>({
+    isFetching: vendorMeFetching,
+    error: vendorMeError,
+  } = useQuery<VendorMeState>({
     queryKey: ["/api/vendor/me"],     // ✅ MUST be only this
     enabled: isAuthenticated,
     retry: false,
     refetchOnMount: "always",
     staleTime: 0,
   });
+  const vendorDetection = deriveVendorDetection({
+    data: vendorAccount,
+    isLoading: vendorMeLoading,
+    isFetching: vendorMeFetching,
+    error: vendorMeError,
+  });
 
   // Fetch customer account if customer token exists (legacy)
   const { data: customer } = useQuery<Customer>({
     queryKey: ["/api/customer/me"],
-    enabled: isAuthenticated && !vendorMeLoading && !vendorAccount,
+    enabled: isAuthenticated && vendorDetection.status === "non_vendor",
     retry: false,
   });
 
-  // Update user role based on fetched data (legacy)
+  // Resolve nav role using explicit vendor state. Do not treat auth/transient
+  // vendor-me failures as proof the user is a non-vendor.
   useEffect(() => {
     if (!isAuthenticated) {
       setUserRole(null);
+      setLastKnownVendorAccount(false);
+      if (typeof window !== "undefined") {
+        window.localStorage.removeItem("eventhub:last-known-vendor-account");
+      }
       return;
     }
-    if (vendorMeLoading) return;
-    if (vendorAccount) setUserRole("vendor");
-    else setUserRole("customer");
-  }, [isAuthenticated, vendorAccount, vendorMeLoading]);
+
+    if (vendorDetection.status === "vendor") {
+      setUserRole("vendor");
+      if (!lastKnownVendorAccount) {
+        setLastKnownVendorAccount(true);
+        if (typeof window !== "undefined") {
+          window.localStorage.setItem("eventhub:last-known-vendor-account", "1");
+        }
+      }
+      return;
+    }
+
+    if (vendorDetection.status === "non_vendor") {
+      setUserRole("customer");
+      if (lastKnownVendorAccount) {
+        setLastKnownVendorAccount(false);
+        if (typeof window !== "undefined") {
+          window.localStorage.removeItem("eventhub:last-known-vendor-account");
+        }
+      }
+      return;
+    }
+
+    if (vendorDetection.status === "auth_error" || vendorDetection.status === "transient_error") {
+      if (lastKnownVendorAccount) {
+        setUserRole("vendor");
+      }
+      return;
+    }
+  }, [isAuthenticated, vendorDetection.status, lastKnownVendorAccount]);
 
 
 
@@ -137,7 +171,7 @@ export default function Navigation({
 
   // Get display name based on role (fallback to Auth0)
   const getDisplayName = () => {
-    if (userRole === "vendor" && vendorAccount) {
+    if (userRole === "vendor" && vendorAccount?.businessName) {
       return vendorAccount.businessName;
     } else if (userRole === "customer" && customer) {
       return customer.displayName?.trim() || customer.name;

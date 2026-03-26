@@ -299,8 +299,13 @@ export default function ListingDetailPage() {
         parseBooleanLike(raw?.setupOffered) ??
         parseBooleanLike(ld?.setupOffered ?? ld?.setupIncluded) ??
         false;
+      const takedownIncluded =
+        parseBooleanLike(raw?.takedownOffered) ??
+        parseBooleanLike(ld?.takedownOffered ?? ld?.takedownIncluded) ??
+        false;
       const deliveryFeeCents = toFiniteNumber(raw?.deliveryFeeAmountCents);
       const setupFeeCents = toFiniteNumber(raw?.setupFeeAmountCents);
+      const takedownFeeCents = toFiniteNumber(raw?.takedownFeeAmountCents);
       const deliveryFeeEnabled =
         parseBooleanLike(raw?.deliveryFeeEnabled) ??
         parseBooleanLike(ld?.deliveryFeeEnabled) ??
@@ -309,10 +314,16 @@ export default function ListingDetailPage() {
         parseBooleanLike(raw?.setupFeeEnabled) ??
         parseBooleanLike(ld?.setupFeeEnabled) ??
         false;
+      const takedownFeeEnabled =
+        parseBooleanLike(raw?.takedownFeeEnabled) ??
+        parseBooleanLike(ld?.takedownFeeEnabled) ??
+        false;
       const deliveryFeeAmountRaw = ld?.deliveryFeeAmount;
       const setupFeeAmountRaw = ld?.setupFeeAmount;
+      const takedownFeeAmountRaw = ld?.takedownFeeAmount;
       const deliveryFeeAmount = typeof deliveryFeeCents === "number" ? deliveryFeeCents / 100 : toFiniteNumber(deliveryFeeAmountRaw);
       const setupFeeAmount = typeof setupFeeCents === "number" ? setupFeeCents / 100 : toFiniteNumber(setupFeeAmountRaw);
+      const takedownFeeAmount = typeof takedownFeeCents === "number" ? takedownFeeCents / 100 : toFiniteNumber(takedownFeeAmountRaw);
       const radiusMiles = Number(raw?.serviceRadiusMiles ?? ld?.serviceRadiusMiles ?? 0) || null;
 
       const deliveryLabel =
@@ -327,6 +338,12 @@ export default function ListingDetailPage() {
           ? `Setup fee: ${money(setupFeeAmount) ?? "Applies"}`
           : setupIncluded
             ? "Setup included"
+            : "Not configured yet";
+      const takedownLabel =
+        takedownFeeEnabled
+          ? `Takedown fee: ${money(takedownFeeAmount) ?? "Applies"}`
+          : takedownIncluded
+            ? "Takedown included"
             : "Not configured yet";
 
       return {
@@ -351,8 +368,10 @@ export default function ListingDetailPage() {
         logistics: {
           deliveryIncluded,
           setupIncluded,
+          takedownIncluded,
           deliveryLabel,
           setupLabel,
+          takedownLabel,
           radiusMiles,
         },
       };
@@ -616,6 +635,16 @@ export default function ListingDetailPage() {
                 </div>
                 <p className="mt-2 text-sm text-muted-foreground">
                   {data.logistics?.setupLabel ?? "Not configured yet"}
+                </p>
+              </div>
+
+              <div className="rounded-xl border border-border p-4">
+                <div className="flex items-center gap-2 font-medium">
+                  <Wrench className="w-4 h-4" />
+                  Takedown
+                </div>
+                <p className="mt-2 text-sm text-muted-foreground">
+                  {data.logistics?.takedownLabel ?? "Not configured yet"}
                 </p>
               </div>
             </div>

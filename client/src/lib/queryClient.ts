@@ -1,6 +1,31 @@
 import { QueryClient, QueryFunction } from "@tanstack/react-query";
 import { getFreshAccessToken } from "@/lib/authToken";
 
+export class ApiRequestError extends Error {
+  status: number;
+  responseText: string;
+
+  constructor(status: number, responseText: string) {
+    super(`${status}: ${responseText || "Request failed"}`);
+    this.name = "ApiRequestError";
+    this.status = status;
+    this.responseText = responseText;
+  }
+}
+
+export function getApiErrorStatus(error: unknown): number | null {
+  if (!error) return null;
+  if (typeof error === "object" && error !== null && "status" in error) {
+    const statusValue = Number((error as any).status);
+    if (Number.isFinite(statusValue)) return statusValue;
+  }
+  if (error instanceof Error) {
+    const match = error.message.match(/^(\d{3}):/);
+    if (match) return Number(match[1]);
+  }
+  return null;
+}
+
 async function buildHeaders(url: string, data?: unknown): Promise<HeadersInit> {
   const headers: Record<string, string> = {};
 
@@ -22,7 +47,7 @@ async function buildHeaders(url: string, data?: unknown): Promise<HeadersInit> {
 async function throwIfResNotOk(res: Response) {
   if (!res.ok) {
     const text = (await res.text()) || res.statusText;
-    throw new Error(`${res.status}: ${text}`);
+    throw new ApiRequestError(res.status, text);
   }
 }
 

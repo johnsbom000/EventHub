@@ -139,6 +139,7 @@ export class MemStorage implements IStorage {
       password: insertUser.password,
 
       role: "customer",
+      auth0Sub: null,
       displayName: null,
       lastLoginAt: null,
       defaultLocation: null,

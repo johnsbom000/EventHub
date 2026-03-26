@@ -119,6 +119,14 @@ const toNumOrEmpty = (v: any) => {
   return s;
 };
 
+function parseMoneyStringToOptionalNumber(value: unknown): number | null {
+  if (value === null || value === undefined) return null;
+  const normalized = String(value).replace(/[^\d.]/g, "").trim();
+  if (!normalized) return null;
+  const parsed = Number(normalized);
+  return Number.isFinite(parsed) && parsed >= 0 ? parsed : null;
+}
+
 function normalizeIncludedBullet(raw: string): string {
   const cleaned = (raw ?? "")
     .replace(/[^a-zA-Z0-9\s&/,'-]/g, "")
@@ -385,8 +393,41 @@ export default function VendorListingEdit() {
       ),
 
 
-      // Delivery / Setup
-      deliverySetup: ld?.deliverySetup || {},
+      // Delivery / Setup / Takedown
+      deliverySetup: {
+        deliveryIncluded:
+          Boolean(
+            ld?.deliverySetup?.deliveryIncluded ??
+              ld?.deliveryIncluded ??
+              ld?.deliveryOffered
+          ),
+        deliveryFeeEnabled:
+          Boolean(ld?.deliverySetup?.deliveryFeeEnabled ?? ld?.deliveryFeeEnabled),
+        deliveryFeeAmount: toNumOrEmpty(
+          ld?.deliverySetup?.deliveryFeeAmount ??
+            ld?.deliveryFeeAmount ??
+            (ld?.deliveryFeeAmountCents != null ? Number(ld.deliveryFeeAmountCents) / 100 : "")
+        ),
+        setupIncluded:
+          Boolean(
+            ld?.deliverySetup?.setupIncluded ??
+              ld?.setupIncluded ??
+              ld?.setupOffered
+          ),
+        setupFeeEnabled: Boolean(ld?.deliverySetup?.setupFeeEnabled ?? ld?.setupFeeEnabled),
+        setupFeeAmount: toNumOrEmpty(
+          ld?.deliverySetup?.setupFeeAmount ??
+            ld?.setupFeeAmount ??
+            (ld?.setupFeeAmountCents != null ? Number(ld.setupFeeAmountCents) / 100 : "")
+        ),
+        takedownIncluded: Boolean(ld?.deliverySetup?.takedownIncluded ?? ld?.takedownIncluded ?? ld?.takedownOffered),
+        takedownFeeEnabled: Boolean(ld?.deliverySetup?.takedownFeeEnabled ?? ld?.takedownFeeEnabled),
+        takedownFeeAmount: toNumOrEmpty(
+          ld?.deliverySetup?.takedownFeeAmount ??
+            ld?.takedownFeeAmount ??
+            (ld?.takedownFeeAmountCents != null ? Number(ld.takedownFeeAmountCents) / 100 : "")
+        ),
+      },
       serviceAreaMode: (ld?.serviceAreaMode || "radius") as ServiceAreaMode,
       serviceRadiusMiles: Number(ld?.serviceRadiusMiles ?? 30),
       serviceCenter: normalizeLngLat(ld?.serviceCenter) ?? undefined,
@@ -481,7 +522,6 @@ export default function VendorListingEdit() {
   const photoInputRef = useRef<HTMLInputElement | null>(null);
   const [isMapReady, setIsMapReady] = useState(false);
   const [errorMsg, setErrorMsg] = useState<string | null>(null);
-  const [mapPreviewSize, setMapPreviewSize] = useState({ width: 1200, height: 700 });
 
   const mapContainerRef = useRef<HTMLDivElement | null>(null);
   const mapRef = useRef<mapboxgl.Map | null>(null);
@@ -817,6 +857,24 @@ export default function VendorListingEdit() {
 
   const buildPersistPayload = () => {
     if (!draft) return null;
+    const deliverySetupDraft =
+      draft?.deliverySetup && typeof draft.deliverySetup === "object" ? draft.deliverySetup : {};
+    const deliveryIncluded = Boolean(deliverySetupDraft?.deliveryIncluded);
+    const deliveryFeeEnabled = deliveryIncluded && Boolean(deliverySetupDraft?.deliveryFeeEnabled);
+    const deliveryFeeAmount = deliveryFeeEnabled
+      ? parseMoneyStringToOptionalNumber(deliverySetupDraft?.deliveryFeeAmount)
+      : null;
+
+    const setupIncluded = Boolean(deliverySetupDraft?.setupIncluded);
+    const setupFeeEnabled = setupIncluded && Boolean(deliverySetupDraft?.setupFeeEnabled);
+    const setupFeeAmount = setupFeeEnabled ? parseMoneyStringToOptionalNumber(deliverySetupDraft?.setupFeeAmount) : null;
+
+    const isVenueCategory = draft.category === "Venue";
+    const takedownIncluded = isVenueCategory && Boolean(deliverySetupDraft?.takedownIncluded);
+    const takedownFeeEnabled = takedownIncluded && Boolean(deliverySetupDraft?.takedownFeeEnabled);
+    const takedownFeeAmount = takedownFeeEnabled
+      ? parseMoneyStringToOptionalNumber(deliverySetupDraft?.takedownFeeAmount)
+      : null;
 
     const nextListingData = {
       ...(listing?.listingData || {}),
@@ -853,7 +911,33 @@ export default function VendorListingEdit() {
             ? draft.photos.cropsByName
             : {},
       },
-      deliverySetup: draft.deliverySetup,
+      deliveryIncluded,
+      deliveryOffered: deliveryIncluded,
+      deliveryFeeEnabled,
+      deliveryFeeAmount,
+      deliveryFeeAmountCents: deliveryFeeAmount != null ? Math.round(deliveryFeeAmount * 100) : null,
+      setupIncluded,
+      setupOffered: setupIncluded,
+      setupFeeEnabled,
+      setupFeeAmount,
+      setupFeeAmountCents: setupFeeAmount != null ? Math.round(setupFeeAmount * 100) : null,
+      takedownIncluded,
+      takedownOffered: takedownIncluded,
+      takedownFeeEnabled,
+      takedownFeeAmount,
+      takedownFeeAmountCents: takedownFeeAmount != null ? Math.round(takedownFeeAmount * 100) : null,
+      deliverySetup: {
+        ...deliverySetupDraft,
+        deliveryIncluded,
+        deliveryFeeEnabled,
+        deliveryFeeAmount: deliveryFeeAmount ?? "",
+        setupIncluded,
+        setupFeeEnabled,
+        setupFeeAmount: setupFeeAmount ?? "",
+        takedownIncluded,
+        takedownFeeEnabled,
+        takedownFeeAmount: takedownFeeAmount ?? "",
+      },
       serviceAreaMode: draft.serviceAreaMode,
       serviceRadiusMiles: draft.serviceRadiusMiles,
       serviceCenter: draft.serviceCenter,
@@ -946,70 +1030,6 @@ export default function VendorListingEdit() {
     if (fromLocation) return fromLocation;
     return normalizeLngLat(draft?.serviceCenter);
   }, [draft?.serviceLocation, draft?.serviceCenter]);
-
-  useEffect(() => {
-    const el = mapContainerRef.current;
-    if (!el) return;
-
-    const updateSize = () => {
-      const rect = el.getBoundingClientRect();
-      const width = Math.max(0, Math.round(rect.width));
-      const height = Math.max(0, Math.round(rect.height));
-      if (!width || !height) return;
-      setMapPreviewSize((prev) => {
-        if (prev.width === width && prev.height === height) return prev;
-        return { width, height };
-      });
-    };
-
-    updateSize();
-    const ro = new ResizeObserver(updateSize);
-    ro.observe(el);
-    return () => ro.disconnect();
-  }, [listingId, draft?.serviceAreaMode]);
-
-  const staticMapPreviewUrl = useMemo(() => {
-    if (!center) return null;
-    if (!MAPBOX_TOKEN) return null;
-    const width = Math.min(1280, Math.max(320, mapPreviewSize.width || 1200));
-    const height = Math.min(1280, Math.max(240, mapPreviewSize.height || 700));
-    const radiusMiles = Number(draft?.serviceRadiusMiles ?? 0);
-    const features: any[] = [];
-
-    if (Number.isFinite(radiusMiles) && radiusMiles > 0) {
-      features.push({
-        type: "Feature",
-        properties: {
-          fill: "#c9a06a",
-          "fill-opacity": 0.25,
-          stroke: "#c9a06a",
-          "stroke-width": 2,
-        },
-        geometry: makeCircleGeoJSON(center, radiusMiles, 36).geometry,
-      });
-    }
-
-    features.push({
-      type: "Feature",
-      properties: {
-        "marker-size": "small",
-        "marker-color": "#111827",
-      },
-      geometry: {
-        type: "Point",
-        coordinates: [center.lng, center.lat],
-      },
-    });
-
-    const staticOverlay = encodeURIComponent(
-      JSON.stringify({
-        type: "FeatureCollection",
-        features,
-      })
-    );
-
-    return `https://api.mapbox.com/styles/v1/mapbox/streets-v12/static/geojson(${staticOverlay})/auto/${width}x${height}?padding=56,56,56,56&access_token=${MAPBOX_TOKEN}`;
-  }, [center, draft?.serviceRadiusMiles, mapPreviewSize.width, mapPreviewSize.height]);
 
   const circleFeature = useMemo(() => {
     if (!center) return null;
@@ -1730,19 +1750,7 @@ export default function VendorListingEdit() {
                             Adjust in 15-mile increments. (Max 500 miles)
                           </p>
 
-                          {/* Map preview placeholder for now; the real map wiring is already proven in Create Listing.
-                              If you want the full Mapbox preview on this screen too, we’ll copy the map init block next. */}
-                          {/* Map preview */}
                           <div className="relative rounded-xl border overflow-hidden h-64">
-                            {staticMapPreviewUrl && (
-                              <img
-                                src={staticMapPreviewUrl}
-                                alt=""
-                                aria-hidden
-                                className="absolute inset-0 z-0 h-full w-full object-fill pointer-events-none select-none"
-                                loading="lazy"
-                              />
-                            )}
                             <div ref={mapContainerRef} className="relative z-10 w-full h-full" />
 
                             {!center && (
@@ -1807,21 +1815,24 @@ export default function VendorListingEdit() {
                             {!!draft.deliverySetup?.deliveryFeeEnabled && (
                               <div className="md:col-start-2 space-y-2">
                                 <Label>Delivery fee amount</Label>
-                                <Input
-                                  value={toNumOrEmpty(draft.deliverySetup?.deliveryFeeAmount)}
-                                  onChange={(e) =>
-                                    setDraft((d: any) => ({
-                                      ...d,
-                                      deliverySetup: {
-                                        ...(d.deliverySetup || {}),
-                                        deliveryFeeAmount: e.target.value.replace(/[^\d]/g, ""),
-                                      },
-                                    }))
-                                  }
-                                  inputMode="numeric"
-                                  placeholder="e.g. 75"
-                                  className={fieldSurfaceClass}
-                                />
+                                <div className="relative">
+                                  <span className="pointer-events-none absolute left-3 top-1/2 -translate-y-1/2 text-muted-foreground">$</span>
+                                  <Input
+                                    value={toNumOrEmpty(draft.deliverySetup?.deliveryFeeAmount)}
+                                    onChange={(e) =>
+                                      setDraft((d: any) => ({
+                                        ...d,
+                                        deliverySetup: {
+                                          ...(d.deliverySetup || {}),
+                                          deliveryFeeAmount: e.target.value.replace(/[^\d.]/g, ""),
+                                        },
+                                      }))
+                                    }
+                                    inputMode="decimal"
+                                    placeholder="e.g. 75"
+                                    className={`${fieldSurfaceClass} pl-7`}
+                                  />
+                                </div>
                               </div>
                             )}
                           </div>
@@ -1867,25 +1878,95 @@ export default function VendorListingEdit() {
                             {!!draft.deliverySetup?.setupFeeEnabled && (
                               <div className="md:col-start-2 space-y-2">
                                 <Label>Setup fee amount</Label>
-                                <Input
-                                  value={toNumOrEmpty(draft.deliverySetup?.setupFeeAmount)}
-                                  onChange={(e) =>
-                                    setDraft((d: any) => ({
-                                      ...d,
-                                      deliverySetup: {
-                                        ...(d.deliverySetup || {}),
-                                        setupFeeAmount: e.target.value.replace(/[^\d]/g, ""),
-                                      },
-                                    }))
-                                  }
-                                  inputMode="numeric"
-                                  placeholder="e.g. 50"
-                                  className={fieldSurfaceClass}
-                                />
+                                <div className="relative">
+                                  <span className="pointer-events-none absolute left-3 top-1/2 -translate-y-1/2 text-muted-foreground">$</span>
+                                  <Input
+                                    value={toNumOrEmpty(draft.deliverySetup?.setupFeeAmount)}
+                                    onChange={(e) =>
+                                      setDraft((d: any) => ({
+                                        ...d,
+                                        deliverySetup: {
+                                          ...(d.deliverySetup || {}),
+                                          setupFeeAmount: e.target.value.replace(/[^\d.]/g, ""),
+                                        },
+                                      }))
+                                    }
+                                    inputMode="decimal"
+                                    placeholder="e.g. 50"
+                                    className={`${fieldSurfaceClass} pl-7`}
+                                  />
+                                </div>
                               </div>
                             )}
                           </div>
                         )}
+
+                        {draft.category === "Venue" ? (
+                          <>
+                            <div className="flex items-center justify-between gap-6">
+                              <Label>Do you offer takedown?</Label>
+                              <YesNoButtons
+                                value={!!draft.deliverySetup?.takedownIncluded}
+                                onChange={(v) =>
+                                  setDraft((d: any) => ({
+                                    ...d,
+                                    deliverySetup: {
+                                      ...(d.deliverySetup || {}),
+                                      takedownIncluded: v,
+                                      takedownFeeEnabled: v ? !!d.deliverySetup?.takedownFeeEnabled : false,
+                                      takedownFeeAmount: v ? d.deliverySetup?.takedownFeeAmount ?? "" : "",
+                                    },
+                                  }))
+                                }
+                              />
+                            </div>
+
+                            {!!draft.deliverySetup?.takedownIncluded && (
+                              <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
+                                <div className="md:col-span-2 flex items-center justify-between gap-6">
+                                  <Label>Is there a takedown fee?</Label>
+                                  <YesNoButtons
+                                    value={!!draft.deliverySetup?.takedownFeeEnabled}
+                                    onChange={(v) =>
+                                      setDraft((d: any) => ({
+                                        ...d,
+                                        deliverySetup: {
+                                          ...(d.deliverySetup || {}),
+                                          takedownFeeEnabled: v,
+                                          takedownFeeAmount: v ? d.deliverySetup?.takedownFeeAmount ?? "" : "",
+                                        },
+                                      }))
+                                    }
+                                  />
+                                </div>
+
+                                {!!draft.deliverySetup?.takedownFeeEnabled && (
+                                  <div className="md:col-start-2 space-y-2">
+                                    <Label>Takedown fee amount</Label>
+                                    <div className="relative">
+                                      <span className="pointer-events-none absolute left-3 top-1/2 -translate-y-1/2 text-muted-foreground">$</span>
+                                      <Input
+                                        value={toNumOrEmpty(draft.deliverySetup?.takedownFeeAmount)}
+                                        onChange={(e) =>
+                                          setDraft((d: any) => ({
+                                            ...d,
+                                            deliverySetup: {
+                                              ...(d.deliverySetup || {}),
+                                              takedownFeeAmount: e.target.value.replace(/[^\d.]/g, ""),
+                                            },
+                                          }))
+                                        }
+                                        inputMode="decimal"
+                                        placeholder="e.g. 50"
+                                        className={`${fieldSurfaceClass} pl-7`}
+                                      />
+                                    </div>
+                                  </div>
+                                )}
+                              </div>
+                            )}
+                          </>
+                        ) : null}
                       </div>
                     </div>
                   </Card>

@@ -31,6 +31,7 @@ import {
   requireDualAuth,
   requireDualAuthAuth0,
   requireAdminAuth,
+  resolveVendorAccountForAuth0Identity,
 } from "./auth";
 import { requireAuth0, verifyAuth0Token } from "./auth0"; // ✅ Auth0 middleware
 import { z } from "zod";
@@ -88,7 +89,12 @@ import {
 async function requireVendorAccountAuth0(req: any, res: any, next: any) {
   try {
     const auth0 = req.auth0 as { sub?: string; email?: string } | undefined;
-    const account = await resolveVendorAccountForAuth0Identity(auth0?.sub, auth0?.email);
+    const resolution = await resolveVendorAccountForAuth0Identity({
+      auth0Sub: auth0?.sub,
+      email: auth0?.email,
+      context: "requireVendorAccountAuth0",
+    });
+    const account = resolution.account;
 
     if (!account) {
       // Auth0 is valid, but user doesn't have a vendor account row yet
@@ -135,64 +141,6 @@ async function getVendorAccountFromRequest(req: any) {
   if (account) {
     req.vendorAccount = account;
   }
-  return account;
-}
-
-async function resolveVendorAccountForAuth0Identity(auth0Sub?: string, rawEmail?: string) {
-  const emailNormalized = rawEmail ? rawEmail.toLowerCase().trim() : undefined;
-
-  if (!auth0Sub && !emailNormalized) {
-    return undefined;
-  }
-
-  let account: any | undefined;
-
-  if (emailNormalized) {
-    const byEmail = await db
-      .select()
-      .from(vendorAccounts)
-      .where(
-        and(
-          drizzleSql`lower(${vendorAccounts.email}) = ${emailNormalized}`,
-          isNull(vendorAccounts.deletedAt)
-        )
-      );
-
-    if (byEmail.length > 0) {
-      account = byEmail[0];
-    }
-
-    if (account && auth0Sub && !account.auth0Sub) {
-      const [updated] = await db
-        .update(vendorAccounts)
-        .set({ auth0Sub })
-        .where(eq(vendorAccounts.id, account.id))
-        .returning();
-
-      account = updated;
-    }
-  }
-
-  if (!account && auth0Sub) {
-    const bySub = await db
-      .select()
-      .from(vendorAccounts)
-      .where(and(eq(vendorAccounts.auth0Sub, auth0Sub), isNull(vendorAccounts.deletedAt)));
-
-    if (bySub.length > 0) {
-      account = bySub[0];
-    }
-  }
-
-  if (account && auth0Sub && account.auth0Sub !== auth0Sub) {
-    const [updated] = await db
-      .update(vendorAccounts)
-      .set({ auth0Sub })
-      .where(eq(vendorAccounts.id, account.id))
-      .returning();
-    account = updated;
-  }
-
   return account;
 }
 
@@ -2064,6 +2012,8 @@ async function runAutoPayoutTick() {
   if (autoPayoutTickInFlight) return;
   autoPayoutTickInFlight = true;
   try {
+    await expireStalePendingBookings();
+
     const payoutCandidates = await db
       .select({
         paymentId: payments.id,
@@ -2844,6 +2794,9 @@ function mirrorListingQuantityIntoListingData(input: {
     setupOffered?: unknown;
     setupFeeEnabled?: unknown;
     setupFeeAmountCents?: unknown;
+    takedownOffered?: unknown;
+    takedownFeeEnabled?: unknown;
+    takedownFeeAmountCents?: unknown;
     travelOffered?: unknown;
     travelFeeEnabled?: unknown;
     travelFeeType?: unknown;
@@ -2961,6 +2914,9 @@ function getListingLogisticsFeeSummaryCents(input: {
     setupOffered?: unknown;
     setupFeeEnabled?: unknown;
     setupFeeAmountCents?: unknown;
+    takedownOffered?: unknown;
+    takedownFeeEnabled?: unknown;
+    takedownFeeAmountCents?: unknown;
     travelOffered?: unknown;
     travelFeeEnabled?: unknown;
     travelFeeType?: unknown;
@@ -3009,6 +2965,24 @@ function getListingLogisticsFeeSummaryCents(input: {
         0
       : 0;
 
+  const takedownIncluded =
+    parseBooleanInput(canonical.takedownOffered) ??
+    parseBooleanInput(listingData?.takedownIncluded) ??
+    parseBooleanInput(listingData?.takedownOffered) ??
+    false;
+  const takedownFeeAmountFromCanonical = parseIntegerValue(canonical.takedownFeeAmountCents);
+  const takedownFeeEnabled =
+    parseBooleanInput(canonical.takedownFeeEnabled) ??
+    parseBooleanInput(listingData?.takedownFeeEnabled) ??
+    false;
+  const takedownFeeCents =
+    takedownIncluded && takedownFeeEnabled
+      ? takedownFeeAmountFromCanonical ??
+        parseIntegerValue(listingData?.takedownFeeAmountCents) ??
+        parseMoneyToCents(listingData?.takedownFeeAmount) ??
+        0
+      : 0;
+
   const travelOffered =
     parseBooleanInput(canonical.travelOffered) ??
     parseBooleanInput(listingData?.travelOffered) ??
@@ -3034,6 +3008,7 @@ function getListingLogisticsFeeSummaryCents(input: {
   return {
     deliveryFeeCents: Math.max(0, deliveryFeeCents),
     setupFeeCents: Math.max(0, setupFeeCents),
+    takedownFeeCents: Math.max(0, takedownFeeCents),
     travelFlatFeeCents: Math.max(0, travelFeeCents),
     variableTravelFeePending,
   };
@@ -3948,12 +3923,11 @@ async function resolveCanonicalIdentityEmail(params: {
   if (!sub) return undefined;
 
   try {
-    const vendorBySub = await db
-      .select({ email: vendorAccounts.email })
-      .from(vendorAccounts)
-      .where(eq(vendorAccounts.auth0Sub, sub))
-      .limit(1);
-    return normalizeIdentityEmailCandidate(vendorBySub[0]?.email);
+    const resolution = await resolveVendorAccountForAuth0Identity({
+      auth0Sub: sub,
+      context: "resolveCanonicalIdentityEmail",
+    });
+    return normalizeIdentityEmailCandidate(resolution.account?.email);
   } catch {
     return undefined;
   }
@@ -4030,30 +4004,13 @@ async function resolveVendorBusinessNameForIdentity(params: {
   sub?: string;
   email?: string;
 }): Promise<string | null> {
-  const sub = params.sub?.trim();
-  const email = params.email?.trim().toLowerCase();
-
-  if (sub) {
-    const bySub = await db
-      .select({ businessName: vendorAccounts.businessName })
-      .from(vendorAccounts)
-      .where(eq(vendorAccounts.auth0Sub, sub))
-      .limit(1);
-    const name = bySub[0]?.businessName?.trim();
-    if (name) return name;
-  }
-
-  if (email) {
-    const byEmail = await db
-      .select({ businessName: vendorAccounts.businessName })
-      .from(vendorAccounts)
-      .where(drizzleSql`lower(${vendorAccounts.email}) = ${email}`)
-      .limit(1);
-    const name = byEmail[0]?.businessName?.trim();
-    if (name) return name;
-  }
-
-  return null;
+  const resolution = await resolveVendorAccountForAuth0Identity({
+    auth0Sub: params.sub,
+    email: params.email,
+    context: "resolveVendorBusinessNameForIdentity",
+  });
+  const name = resolution.account?.businessName?.trim();
+  return name || null;
 }
 
 async function resolveCustomerAuthFromRequest(
@@ -4737,6 +4694,12 @@ app.post(
       const account = context.account;
       const activeProfile = context.activeProfile;
       const activeProfileName = activeProfile ? getProfileDisplayName(activeProfile, account.businessName) : null;
+      const hasVendorAccount = Boolean(account?.id);
+      const hasAnyVendorProfiles = context.profiles.length > 0;
+      const hasActiveVendorProfile = Boolean(
+        context.activeProfileId && context.profiles.some((profile) => profile.id === context.activeProfileId)
+      );
+      const needsNewVendorProfileOnboarding = hasVendorAccount && !hasAnyVendorProfiles;
 
       res.json({
         id: account.id,
@@ -4754,6 +4717,10 @@ app.post(
         operatingTimezone: normalizeIanaTimeZone(activeProfile?.operatingTimezone),
         googleConnectionStatus: account.googleConnectionStatus,
         googleCalendarId: account.googleCalendarId,
+        hasVendorAccount,
+        hasAnyVendorProfiles,
+        hasActiveVendorProfile,
+        needsNewVendorProfileOnboarding,
         __marker: "vendor_me_route_hit",
       });
     } catch (error: any) {
@@ -4832,6 +4799,7 @@ app.post(
           deletedAt: now,
           email: obfuscatedEmail,
           auth0Sub: null,
+          userId: null,
           password: randomPassword,
           businessName: `Deleted Vendor ${vendorAuth.id.slice(0, 8)}`,
           stripeConnectId: null,
@@ -5151,7 +5119,12 @@ app.post(
 
     try {
       const auth0 = await verifyAuth0Token(authHeader.slice("Bearer ".length).trim());
-      const vendorAccount = await resolveVendorAccountForAuth0Identity(auth0.sub, auth0.email);
+      const vendorResolution = await resolveVendorAccountForAuth0Identity({
+        auth0Sub: auth0.sub,
+        email: auth0.email,
+        context: "/api/google/oauth/start",
+      });
+      const vendorAccount = vendorResolution.account;
 
       if (!vendorAccount?.id) {
         return res.status(404).json({ error: "Vendor account not found for this Auth0 user" });
@@ -6016,11 +5989,17 @@ app.post(
         return res.status(400).json({ error: "Auth0 email is required for onboarding" });
       }
 
-      const existingAccounts = await db
-        .select()
-        .from(vendorAccounts)
-        .where(drizzleSql`lower(${vendorAccounts.email}) = ${email}`);
-      let account = existingAccounts[0];
+      const vendorResolution = await resolveVendorAccountForAuth0Identity({
+        auth0Sub,
+        email,
+        context: "/api/vendor/onboarding/complete",
+      });
+      let account = vendorResolution.account;
+
+      // Treat deleted accounts as non-existent — re-registration gets a fresh start.
+      if (account?.deletedAt) {
+        account = null;
+      }
 
       if (!account) {
         const [created] = await db
@@ -6028,6 +6007,7 @@ app.post(
           .values({
             email,
             auth0Sub,
+            userId: vendorResolution.resolvedUserId || undefined,
             password: "auth0-external",
             businessName: normalizedProfileName,
             profileComplete: false,
@@ -6041,7 +6021,6 @@ app.post(
           .update(vendorAccounts)
           .set({
             businessName: currentBusinessName || normalizedProfileName,
-            auth0Sub: auth0Sub ?? account.auth0Sub,
           })
           .where(eq(vendorAccounts.id, account.id))
           .returning();
@@ -6049,7 +6028,7 @@ app.post(
         account = updated;
       }
 
-      const existingProfiles = await db.select().from(vendorProfiles).where(eq(vendorProfiles.accountId, account.id));
+      const existingProfiles = await db.select().from(vendorProfiles).where(and(eq(vendorProfiles.accountId, account.id), eq(vendorProfiles.active, true)));
       const existingActiveProfile =
         existingProfiles.find((candidate) => candidate.id === account.activeProfileId) || existingProfiles[0] || null;
       const resolvedOperatingTimezone = normalizeIanaTimeZone(
@@ -7346,13 +7325,14 @@ app.post(
     try {
       res.setHeader("Cache-Control", "no-store");
 
-      const vendorId = asTrimmedString(req.params?.vendorId);
+      const vendorIdParam = asTrimmedString(req.params?.vendorId);
       const requestedProfileId = asTrimmedString(req.query?.profileId);
-      if (!vendorId) {
+      if (!vendorIdParam) {
         return res.status(400).json({ error: "Invalid vendor id" });
       }
 
-      await deactivateActiveListingsViolatingPublishGate(vendorId);
+      let resolvedVendorAccountId = vendorIdParam;
+      let resolvedProfileId = requestedProfileId;
 
       const accountRows = await db
         .select({
@@ -7361,27 +7341,52 @@ app.post(
           activeProfileId: vendorAccounts.activeProfileId,
         })
         .from(vendorAccounts)
-        .where(and(eq(vendorAccounts.id, vendorId), eq(vendorAccounts.active, true)))
+        .where(and(eq(vendorAccounts.id, resolvedVendorAccountId), eq(vendorAccounts.active, true)))
         .limit(1);
 
-      const account = accountRows[0];
+      let account = accountRows[0];
+      if (!account) {
+        const profileOwnerRows = await db
+          .select({
+            accountId: vendorProfiles.accountId,
+            profileId: vendorProfiles.id,
+            accountBusinessName: vendorAccounts.businessName,
+            accountActiveProfileId: vendorAccounts.activeProfileId,
+          })
+          .from(vendorProfiles)
+          .innerJoin(vendorAccounts, eq(vendorProfiles.accountId, vendorAccounts.id))
+          .where(and(eq(vendorProfiles.id, vendorIdParam), eq(vendorProfiles.active, true), eq(vendorAccounts.active, true)))
+          .limit(1);
+        const profileOwner = profileOwnerRows[0];
+        if (profileOwner?.accountId) {
+          resolvedVendorAccountId = profileOwner.accountId;
+          resolvedProfileId = resolvedProfileId || profileOwner.profileId;
+          account = {
+            id: profileOwner.accountId,
+            businessName: profileOwner.accountBusinessName,
+            activeProfileId: profileOwner.accountActiveProfileId,
+          };
+        }
+      }
       if (!account) {
         return res.status(404).json({ error: "Vendor not found" });
       }
 
-      const profileWhere = requestedProfileId
+      await deactivateActiveListingsViolatingPublishGate(resolvedVendorAccountId);
+
+      const profileWhere = resolvedProfileId
         ? and(
-            eq(vendorProfiles.accountId, vendorId),
-            eq(vendorProfiles.id, requestedProfileId),
+            eq(vendorProfiles.accountId, resolvedVendorAccountId),
+            eq(vendorProfiles.id, resolvedProfileId),
             eq(vendorProfiles.active, true)
           )
         : account.activeProfileId
           ? and(
-              eq(vendorProfiles.accountId, vendorId),
+              eq(vendorProfiles.accountId, resolvedVendorAccountId),
               eq(vendorProfiles.id, account.activeProfileId),
               eq(vendorProfiles.active, true)
             )
-          : and(eq(vendorProfiles.accountId, vendorId), eq(vendorProfiles.active, true));
+          : and(eq(vendorProfiles.accountId, resolvedVendorAccountId), eq(vendorProfiles.active, true));
 
       const profileRows = await db
         .select()
@@ -7389,7 +7394,7 @@ app.post(
         .where(profileWhere)
         .orderBy(asc(vendorProfiles.createdAt), asc(vendorProfiles.id))
         .limit(1);
-      if (requestedProfileId && !profileRows[0]) {
+      if (resolvedProfileId && !profileRows[0]) {
         return res.status(404).json({ error: "Vendor profile not found" });
       }
       const selectedProfile =
@@ -7398,7 +7403,7 @@ app.post(
           await db
             .select()
             .from(vendorProfiles)
-            .where(and(eq(vendorProfiles.accountId, vendorId), eq(vendorProfiles.active, true)))
+            .where(and(eq(vendorProfiles.accountId, resolvedVendorAccountId), eq(vendorProfiles.active, true)))
             .orderBy(asc(vendorProfiles.createdAt), asc(vendorProfiles.id))
             .limit(1)
         )[0];
@@ -7480,7 +7485,7 @@ app.post(
         .innerJoin(vendorProfiles, eq(vendorListings.profileId, vendorProfiles.id))
         .where(
           and(
-            eq(vendorListings.accountId, vendorId),
+            eq(vendorListings.accountId, resolvedVendorAccountId),
             eq(vendorListings.profileId, selectedProfile.id),
             eq(vendorListings.status, "active"),
             eq(vendorProfiles.active, true),
@@ -7517,7 +7522,7 @@ app.post(
         from listing_reviews lr
         inner join vendor_listings vl on vl.id = lr.listing_id
         left join users u on u.id = lr.user_id
-        where vl.account_id = ${vendorId}
+        where vl.account_id = ${resolvedVendorAccountId}
           and vl.profile_id = ${selectedProfile.id}
           and coalesce(lr.is_published, true) = true
         order by lr.created_at desc
@@ -7583,7 +7588,7 @@ app.post(
           limit 1
         ) legacy_item on true
         left join vendor_listings legacy_listing on legacy_listing.id = legacy_item.listing_id
-        where coalesce(listing_owner.account_id, legacy_listing.account_id) = ${vendorId}
+        where coalesce(listing_owner.account_id, legacy_listing.account_id) = ${resolvedVendorAccountId}
           and coalesce(listing_owner.profile_id, legacy_listing.profile_id) = ${selectedProfile.id}
           and b.status = 'completed'
       `);
@@ -7592,14 +7597,14 @@ app.post(
       );
       const eventsServedTotal = eventsServedBaseline + completedBookingsCount;
 
-      const chatContexts = await listVendorBookingChatContexts(vendorId);
+      const chatContexts = await listVendorBookingChatContexts(resolvedVendorAccountId);
       const chatBookingIds = chatContexts
         .map((row) => row.bookingId)
         .filter((id) => id.length > 0);
       let avgResponseMinutes: number | null = null;
       try {
         avgResponseMinutes = await getAverageVendorResponseMinutesForBookings({
-          vendorAccountId: vendorId,
+          vendorAccountId: resolvedVendorAccountId,
           bookingIds: chatBookingIds,
           channelLimit: 40,
           messageLimitPerChannel: 120,
@@ -8560,6 +8565,7 @@ app.post(
         const setupFeeAmountCents =
           parseIntegerValue((row as any)?.setupFeeAmountCents) ??
           parseIntegerValue(itemLogisticsFees?.setupFeeCents);
+        const takedownFeeAmountCents = parseIntegerValue(itemLogisticsFees?.takedownFeeCents);
         const travelFeeAmountCents =
           parseIntegerValue((row as any)?.travelFeeAmountCents) ??
           parseIntegerValue(itemLogisticsFees?.travelFlatFeeCents) ??
@@ -8567,9 +8573,10 @@ app.post(
         const logisticsTotalFromTyped = parseIntegerValue((row as any)?.logisticsTotalCents);
         const logisticsTotalCents =
           logisticsTotalFromTyped ??
-          (deliveryFeeAmountCents != null || setupFeeAmountCents != null || travelFeeAmountCents != null
+          (deliveryFeeAmountCents != null || setupFeeAmountCents != null || takedownFeeAmountCents != null || travelFeeAmountCents != null
             ? Math.max(0, deliveryFeeAmountCents ?? 0) +
               Math.max(0, setupFeeAmountCents ?? 0) +
+              Math.max(0, takedownFeeAmountCents ?? 0) +
               Math.max(0, travelFeeAmountCents ?? 0)
             : null);
         const baseSubtotalCents = parseIntegerValue((row as any)?.baseSubtotalCents);
@@ -8590,6 +8597,7 @@ app.post(
           bookedQuantity: Math.max(1, bookedQuantity),
           deliveryFeeAmountCents: deliveryFeeAmountCents != null ? Math.max(0, deliveryFeeAmountCents) : null,
           setupFeeAmountCents: setupFeeAmountCents != null ? Math.max(0, setupFeeAmountCents) : null,
+          takedownFeeAmountCents: takedownFeeAmountCents != null ? Math.max(0, takedownFeeAmountCents) : null,
           travelFeeAmountCents: travelFeeAmountCents != null ? Math.max(0, travelFeeAmountCents) : null,
           logisticsTotalCents: logisticsTotalCents != null ? Math.max(0, logisticsTotalCents) : null,
           baseSubtotalCents: baseSubtotalCents != null ? Math.max(0, baseSubtotalCents) : null,
@@ -10801,6 +10809,11 @@ app.post(
           setupOffered: listingRow.setupOffered,
           setupFeeEnabled: listingRow.setupFeeEnabled,
           setupFeeAmountCents: listingRow.setupFeeAmountCents,
+          takedownOffered: (listingDataAny as any)?.takedownOffered ?? (listingDataAny as any)?.takedownIncluded,
+          takedownFeeEnabled: (listingDataAny as any)?.takedownFeeEnabled,
+          takedownFeeAmountCents:
+            parseIntegerValue((listingDataAny as any)?.takedownFeeAmountCents) ??
+            parseMoneyToCents((listingDataAny as any)?.takedownFeeAmount),
           travelOffered: listingRow.travelOffered,
           travelFeeEnabled: listingRow.travelFeeEnabled,
           travelFeeType: listingRow.travelFeeType,
@@ -10811,6 +10824,7 @@ app.post(
         unitPriceCentsTotal +
         logisticsFees.deliveryFeeCents +
         logisticsFees.setupFeeCents +
+        logisticsFees.takedownFeeCents +
         logisticsFees.travelFlatFeeCents;
       const customerFee = Math.round(subtotalAmount * CUSTOMER_FEE_RATE);
       const enforcedTotalAmount = subtotalAmount + customerFee;
@@ -10947,6 +10961,7 @@ app.post(
             logisticsTotalCents:
               logisticsFees.deliveryFeeCents +
               logisticsFees.setupFeeCents +
+              logisticsFees.takedownFeeCents +
               logisticsFees.travelFlatFeeCents,
             baseSubtotalCents: unitPriceCentsTotal,
             subtotalAmountCents: subtotalAmount,
@@ -11004,6 +11019,7 @@ app.post(
               logisticsFees: {
                 deliveryFeeCents: logisticsFees.deliveryFeeCents,
                 setupFeeCents: logisticsFees.setupFeeCents,
+                takedownFeeCents: logisticsFees.takedownFeeCents,
                 travelFlatFeeCents: logisticsFees.travelFlatFeeCents,
                 variableTravelFeePending: logisticsFees.variableTravelFeePending,
               },

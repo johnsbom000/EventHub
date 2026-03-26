@@ -63,18 +63,27 @@ export const bookingDisputeStatusEnum = pgEnum("booking_dispute_status", [
   "resolved_payout",
 ]);
 
-export const users = pgTable("users", {
-  id: varchar("id").primaryKey().default(sql`gen_random_uuid()`),
-  name: text("name").notNull(),
-  email: text("email").notNull().unique(),
-  password: text("password").notNull(),
-  role: userRoleEnum("role").notNull().default("customer"),
-  displayName: text("display_name"),
-  lastLoginAt: timestamp("last_login_at"),
-  defaultLocation: jsonb("default_location"),
-  createdAt: timestamp("created_at").defaultNow().notNull(),
-  updatedAt: timestamp("updated_at").defaultNow().notNull(),
-});
+export const users = pgTable(
+  "users",
+  {
+    id: varchar("id").primaryKey().default(sql`gen_random_uuid()`),
+    name: text("name").notNull(),
+    email: text("email").notNull().unique(),
+    password: text("password").notNull(),
+    role: userRoleEnum("role").notNull().default("customer"),
+    auth0Sub: text("auth0_sub"),
+    displayName: text("display_name"),
+    lastLoginAt: timestamp("last_login_at"),
+    defaultLocation: jsonb("default_location"),
+    createdAt: timestamp("created_at").defaultNow().notNull(),
+    updatedAt: timestamp("updated_at").defaultNow().notNull(),
+  },
+  (table) => ({
+    auth0SubUniqueIdx: uniqueIndex("users_auth0_sub_unique_idx")
+      .on(table.auth0Sub)
+      .where(sql`${table.auth0Sub} is not null and btrim(${table.auth0Sub}) <> ''`),
+  })
+);
 
 export const insertUserSchema = createInsertSchema(users).pick({
   name: true,
@@ -202,27 +211,40 @@ export type InsertEvent = z.infer<typeof insertEventSchema>;
 export type Event = typeof events.$inferSelect;
 
 // Vendor Accounts (authentication only)
-export const vendorAccounts = pgTable("vendor_accounts", {
-  id: varchar("id").primaryKey().default(sql`gen_random_uuid()`),
-  userId: varchar("user_id").references(() => users.id), // Links to customer account if upgraded
-  activeProfileId: varchar("active_profile_id"),
-  email: text("email").notNull().unique(),
-  auth0Sub: text("auth0_sub"),
-  password: text("password").notNull(),
-  businessName: text("business_name").notNull(),
-  stripeConnectId: text("stripe_connect_id"),
-  stripeAccountType: text("stripe_account_type"), // 'express' or 'standard'
-  stripeOnboardingComplete: boolean("stripe_onboarding_complete").default(false),
-  profileComplete: boolean("profile_complete").default(false),
-  active: boolean("active").default(true),
-  googleAccessToken: text("google_access_token"),
-  googleRefreshToken: text("google_refresh_token"),
-  googleTokenExpiresAt: timestamp("google_token_expires_at"),
-  googleCalendarId: text("google_calendar_id"),
-  googleConnectionStatus: text("google_connection_status").notNull().default("disconnected"),
-  deletedAt: timestamp("deleted_at"),
-  createdAt: timestamp("created_at").defaultNow(),
-});
+export const vendorAccounts = pgTable(
+  "vendor_accounts",
+  {
+    id: varchar("id").primaryKey().default(sql`gen_random_uuid()`),
+    userId: varchar("user_id").references(() => users.id), // Canonical vendor ownership link
+    activeProfileId: varchar("active_profile_id"),
+    email: text("email").notNull().unique(),
+    auth0Sub: text("auth0_sub"), // Migration-window fallback for identity linking
+    password: text("password").notNull(),
+    businessName: text("business_name").notNull(),
+    stripeConnectId: text("stripe_connect_id"),
+    stripeAccountType: text("stripe_account_type"), // 'express' or 'standard'
+    stripeOnboardingComplete: boolean("stripe_onboarding_complete").default(false),
+    profileComplete: boolean("profile_complete").default(false),
+    active: boolean("active").default(true),
+    googleAccessToken: text("google_access_token"),
+    googleRefreshToken: text("google_refresh_token"),
+    googleTokenExpiresAt: timestamp("google_token_expires_at"),
+    googleCalendarId: text("google_calendar_id"),
+    googleConnectionStatus: text("google_connection_status").notNull().default("disconnected"),
+    deletedAt: timestamp("deleted_at"),
+    createdAt: timestamp("created_at").defaultNow(),
+  },
+  (table) => ({
+    userIdActiveUniqueIdx: uniqueIndex("vendor_accounts_user_id_active_unique_idx")
+      .on(table.userId)
+      .where(sql`${table.userId} is not null and ${table.deletedAt} is null`),
+    auth0SubActiveUniqueIdx: uniqueIndex("vendor_accounts_auth0_sub_active_unique_idx")
+      .on(table.auth0Sub)
+      .where(
+        sql`${table.auth0Sub} is not null and btrim(${table.auth0Sub}) <> '' and ${table.deletedAt} is null`
+      ),
+  })
+);
 
 export const insertVendorAccountSchema = createInsertSchema(vendorAccounts).omit({
   id: true,

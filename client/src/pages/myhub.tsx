@@ -61,6 +61,7 @@ type PhotoBounds = {
 type VendorMe = {
   id: string;
   businessName?: string | null;
+  hasVendorAccount?: boolean | null;
 };
 
 type VendorProfile = {
@@ -420,8 +421,22 @@ export default function MyHub() {
     frameHeight: number;
   } | null>(null);
 
-  const { data: vendorMe, isLoading: isVendorLoading } = useQuery<VendorMe>({
-    queryKey: ["/api/vendor/me"],
+  const { data: vendorMe, isLoading: isVendorLoading } = useQuery<VendorMe | null>({
+    queryKey: ["/api/vendor/me", "vendor-shop-page"],
+    retry: 1,
+    queryFn: async () => {
+      const token = await getFreshAccessToken();
+      const res = await fetch("/api/vendor/me", {
+        credentials: "include",
+        headers: {
+          Accept: "application/json",
+          ...(token ? { Authorization: `Bearer ${token}` } : {}),
+        },
+      });
+      if (res.status === 404) return null;
+      if (!res.ok) throw new Error(`Failed to load vendor account (${res.status})`);
+      return res.json();
+    },
   });
 
   const { data: vendorProfile, isLoading: isProfileLoading } = useQuery<VendorProfile | null>({
@@ -689,7 +704,7 @@ export default function MyHub() {
     };
   }, [persistedCoverImageUrl, persistedCoverPhotoPosition.x, persistedCoverPhotoPosition.y]);
 
-  const vendorId = asTrimmedString(vendorMe?.id);
+  const vendorId = asTrimmedString(vendorMe?.id) || asTrimmedString((vendorProfile as any)?.accountId);
   const publicShopPath = vendorId ? `/shop/${vendorId}` : "";
   const publicShopUrl =
     typeof window !== "undefined" && publicShopPath ? `${window.location.origin}${publicShopPath}` : publicShopPath;
@@ -1418,9 +1433,19 @@ export default function MyHub() {
     );
   };
 
+  const hasVendorAccount = Boolean(vendorMe?.hasVendorAccount ?? vendorMe?.id);
+
   return (
     <VendorShell>
       <div className="w-full space-y-6">
+        {!isVendorLoading && !hasVendorAccount ? (
+          <Card>
+            <CardContent className="py-6 text-sm text-muted-foreground">
+              Vendor account unavailable. Re-open onboarding to finish account setup.
+            </CardContent>
+          </Card>
+        ) : null}
+
         <div className="grid gap-3 lg:grid-cols-3 lg:items-end">
           <div className="lg:col-span-2">
             <h1 className="text-3xl font-bold text-foreground">My Hub</h1>

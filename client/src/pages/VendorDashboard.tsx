@@ -21,6 +21,7 @@ import type { LocationResult } from "@/types/location";
 import { useToast } from "@/hooks/use-toast";
 import { redirectVendorToStripeSetup } from "@/lib/vendorStripe";
 import { apiRequest } from "@/lib/queryClient";
+import { deriveVendorDetection } from "@/lib/vendorState";
 import {
   Select,
   SelectContent,
@@ -34,12 +35,17 @@ import { cn } from "@/lib/utils";
 import { Calendar, DollarSign, Users, TrendingUp, Loader2 } from "lucide-react";
 
 type VendorMe = {
+  id?: string | null;
   businessName?: string | null;
   accountBusinessName?: string | null;
   email?: string | null;
   stripeOnboardingComplete?: boolean | null;
   googleConnectionStatus?: string | null;
   googleCalendarId?: string | null;
+  hasVendorAccount?: boolean | null;
+  hasAnyVendorProfiles?: boolean | null;
+  hasActiveVendorProfile?: boolean | null;
+  needsNewVendorProfileOnboarding?: boolean | null;
 };
 
 type VendorStats = {
@@ -318,9 +324,20 @@ export default function VendorDashboard() {
   const qc = useQueryClient();
   const { toast } = useToast();
 
-  const { data: vendorAccount, isLoading: isVendorLoading } = useQuery<VendorMe>({
+  const {
+    data: vendorAccount,
+    isLoading: isVendorLoading,
+    isFetching: isVendorFetching,
+    error: vendorMeError,
+  } = useQuery<VendorMe>({
     queryKey: ["/api/vendor/me"],
     enabled: isAuthenticated,
+  });
+  const vendorDetection = deriveVendorDetection({
+    data: vendorAccount,
+    isLoading: isVendorLoading,
+    isFetching: isVendorFetching,
+    error: vendorMeError,
   });
 
   const { data: stats, isLoading: isStatsLoading } = useQuery<VendorStats>({
@@ -950,7 +967,7 @@ export default function VendorDashboard() {
     }
   }, [isAuthLoading, isAuthenticated, location, setLocation]);
 
-  const showLoading = isAuthLoading || isVendorLoading || isStatsLoading || isProfileLoading;
+  const showLoading = isAuthLoading || vendorDetection.status === "loading" || isStatsLoading || isProfileLoading;
   const formatMoneyFromCents = (cents: number) =>
     new Intl.NumberFormat("en-US", { style: "currency", currency: "USD" }).format((cents || 0) / 100);
   const showStripeSetupCard = !vendorAccount?.stripeOnboardingComplete;
@@ -1061,6 +1078,31 @@ export default function VendorDashboard() {
     );
   }
 
+  if (vendorDetection.status === "auth_error") {
+    return (
+      <VendorShell onOpenAccountSettings={() => setIsAccountSettingsDialogOpen(true)}>
+        <div className="mx-auto max-w-2xl rounded-lg border p-5 text-sm text-muted-foreground">
+          We could not verify your vendor session right now. Refresh and try again.
+        </div>
+      </VendorShell>
+    );
+  }
+
+  if (vendorDetection.status === "non_vendor") {
+    return (
+      <VendorShell onOpenAccountSettings={() => setIsAccountSettingsDialogOpen(true)}>
+        <div className="mx-auto max-w-2xl rounded-lg border p-5 text-sm text-muted-foreground">
+          This account does not have a vendor account yet. Complete vendor onboarding to continue.
+        </div>
+      </VendorShell>
+    );
+  }
+
+  const showNoActiveProfilePrompt =
+    vendorDetection.status === "vendor" &&
+    vendorDetection.hasVendorAccount &&
+    !vendorDetection.hasActiveVendorProfile;
+
   return (
     <VendorShell onOpenAccountSettings={() => setIsAccountSettingsDialogOpen(true)}>
       <div className="max-w-7xl mx-auto space-y-6">
@@ -1069,6 +1111,27 @@ export default function VendorDashboard() {
             Dashboard
           </h1>
         </div>
+
+        {showNoActiveProfilePrompt ? (
+          <div className="rounded-lg border p-4">
+            <p className="text-sm text-muted-foreground">
+              Your vendor account is active, but no vendor profile is currently selected.
+              {vendorDetection.hasAnyVendorProfiles
+                ? " Select a profile below or create a new one."
+                : " Create your first vendor profile to continue setup."}
+            </p>
+            <div className="mt-3">
+              <Button
+                type="button"
+                variant="outline"
+                onClick={() => setLocation("/vendor/onboarding?createProfile=1")}
+                data-testid="button-dashboard-no-active-profile-create"
+              >
+                Create profile
+              </Button>
+            </div>
+          </div>
+        ) : null}
 
         <div className="space-y-0">
           <div className="grid grid-cols-1 gap-4 md:grid-cols-[minmax(0,1fr)_auto_minmax(0,1fr)_auto_minmax(0,1fr)] md:gap-0">
