@@ -1,5 +1,5 @@
 {
-  "include": ["src/**/*", "../shared/**/*"],
+  "include": ["src/**/*", "shared/**/*"],
   "exclude": ["node_modules", "dist"],
   "compilerOptions": {
     "noEmit": true,
@@ -15,7 +15,7 @@
     "types": ["node", "vite/client"],
     "paths": {
       "@/*": ["./src/*"],
-      "@shared/*": ["../shared/*"]
+      "@shared/*": ["./shared/*"]
     }
   }
 }
