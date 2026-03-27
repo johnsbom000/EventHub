@@ -18,6 +18,11 @@ coverage/
 .idea/
 .DS_Store
 
+# local-only working files
+.claude/
+.firebase/
+docs/design-preview/
+
 # uploaded user content (ephemeral, not source code)
 server/uploads/
 
