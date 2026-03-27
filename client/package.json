@@ -6,7 +6,7 @@
   "scripts": {
     "dev": "vite",
     "build": "vite build",
-    "start:prod": "serve -s dist -l $PORT"
+    "start:prod": "serve -s dist -l tcp://0.0.0.0:$PORT"
   },
   "dependencies": {
     "@auth0/auth0-react": "^2.11.0",
