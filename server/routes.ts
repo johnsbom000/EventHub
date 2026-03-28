@@ -10655,7 +10655,7 @@ app.post(
     }
   );
 
-  app.post("/api/webhooks/stripe", async (req, res) => {
+  app.post("/api/stripe/webhook", async (req, res) => {
     try {
       await ensureStripeWebhookTable();
 
