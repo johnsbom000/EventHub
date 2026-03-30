@@ -30,7 +30,7 @@ export default function Home() {
     <div className="min-h-screen flex flex-col bg-[#ffffff] dark:bg-background">
       <Navigation showBottomBorder={false} />
 
-      <main className="flex-1 bg-[#ffffff] dark:bg-background">
+      <main className="flex-1 min-h-[calc(100vh+7rem)] bg-[#ffffff] dark:bg-background">
         <Hero />
 
         {/* Featured Listings under the hero */}
