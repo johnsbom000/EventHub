@@ -1,6 +1,6 @@
 # Event Hub Decisions Log
 
-Last updated: March 26, 2026
+Last updated: March 30, 2026
 
 ## Purpose
 This file tracks decisions that affect product scope, architecture, and launch tradeoffs.
@@ -13,6 +13,33 @@ Template for new entries:
 - Why:
 - Impact:
 - Revisit trigger:
+
+---
+
+## [2026-03-30] Force favicon refresh with versioned icon URL
+- Context: Browser tabs were still showing the old Replit-style icon even after replacing `client/public/favicon.png`, due to favicon caching.
+- Decision: Append a version query string to the favicon link in `client/index.html` (`/favicon.png?v=2`) so browsers request the updated icon.
+- Why: This is the smallest deploy-safe cache-bust that updates the tab icon without changing routing or build setup.
+- Impact: Browsers fetch the new favicon URL on reload, so the updated EventHub icon appears without waiting for long-lived cache expiry.
+- Revisit trigger: If favicon assets become pipeline-versioned automatically, remove manual query-string versioning from static HTML.
+
+---
+
+## [2026-03-30] Align browser tab and social page-title metadata branding to EventHub
+- Context: Browser tabs were still showing legacy `EventVibe` branding from static HTML metadata despite app branding being EventHub.
+- Decision: Update `client/index.html` title metadata from `EventVibe` to `EventHub` for the document `<title>` and `og:title`.
+- Why: Corrects visible browser-tab branding immediately with minimal scope and no runtime behavior changes.
+- Impact: New page loads now show EventHub branding in tab titles and Open Graph title metadata.
+- Revisit trigger: If product wants a different marketing tagline, update title strings in the same metadata file.
+
+---
+
+## [2026-03-30] Keep Home footer below the fold by default with landing-only content height floor
+- Context: On Home with empty featured listings, the footer was visible immediately on first paint, reducing the intended full-page white hero/listing canvas feel.
+- Decision: Set a Home-page-only `main` minimum height floor (`min-h-[calc(100vh+7rem)]`) so the footer requires scroll to be seen even when listing content is sparse.
+- Why: This preserves current component structure and visual format while achieving the requested above-the-fold behavior only on the landing page.
+- Impact: Home now opens with full white content area and footer below fold by default; other pages remain unchanged.
+- Revisit trigger: If Home receives additional above-the-fold modules that naturally push footer below fold across breakpoints, remove the explicit min-height floor.
 
 ---
 
