@@ -121,6 +121,12 @@ app.use((req, res, next) => {
   next();
 });
 
+// Lightweight health check — must be registered before registerRoutes so it
+// has no dependencies and always responds even if DB/services are unavailable.
+app.get("/api/health", (_req, res) => {
+  res.json({ status: "ok" });
+});
+
 (async () => {
   const server = await registerRoutes(app);
 
