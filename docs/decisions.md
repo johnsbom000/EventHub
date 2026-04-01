@@ -1,6 +1,6 @@
 # Event Hub Decisions Log
 
-Last updated: March 30, 2026
+Last updated: April 1, 2026
 
 ## Purpose
 This file tracks decisions that affect product scope, architecture, and launch tradeoffs.
@@ -13,6 +13,15 @@ Template for new entries:
 - Why:
 - Impact:
 - Revisit trigger:
+
+---
+
+## [2026-04-01] Replace browser favicon with provided faviconv3 asset and increment cache-bust version
+- Context: Production tab branding needed to switch to a new provided logo file (`faviconv3.png`) while prior favicon caching behavior had already been observed.
+- Decision: Replace `client/public/favicon.png` with the provided `Documents/Businesses/EventHub/logo/faviconv3.png` asset as-is and bump `client/index.html` favicon URL from `/favicon.png?v=2` to `/favicon.png?v=3`.
+- Why: This is the smallest reliable path to ship the exact requested favicon and force browsers to fetch the updated icon.
+- Impact: New deploys serve the new favicon image, and browsers request a fresh favicon URL so tab icon updates are visible without waiting for old cache expiry.
+- Revisit trigger: If favicon fingerprinting is automated in the asset pipeline, remove manual query-string version bumps and rely on hashed asset URLs.
 
 ---
 
