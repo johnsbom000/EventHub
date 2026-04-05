@@ -614,7 +614,7 @@ export default function BrowseVendors() {
 
   const browseHeaderContent = (
     <div className={`${browseSurfaceClass} pt-4 pb-8`}>
-      <div className="w-full px-8 lg:px-12">
+      <div className="w-full px-4 sm:px-6 lg:px-12">
         {availableTags.length > 0 && (
           <div className="flex items-center gap-2.5">
             <button
@@ -675,7 +675,7 @@ export default function BrowseVendors() {
       />
 
       <main className={`flex-1 ${browseSurfaceClass}`}>
-        <div className="w-full px-8 lg:px-12 py-8">
+        <div className="w-full px-4 sm:px-6 lg:px-12 py-8">
           <div className={`flex flex-col gap-6 lg:flex-row ${showFilters ? "lg:gap-8" : "lg:gap-0"}`}>
             <aside
               className={[
@@ -686,6 +686,18 @@ export default function BrowseVendors() {
               ].join(" ")}
             >
               <div className="space-y-8 lg:sticky lg:top-0 text-[#2a3a42] dark:text-[#f5f0e8]">
+                {/* Mobile close button at top of filter panel */}
+                <div className="flex items-center justify-between lg:hidden">
+                  <span className="text-[18px] font-heading text-[#2a3a42] dark:text-[#f5f0e8]">Filters</span>
+                  <button
+                    type="button"
+                    onClick={() => setShowFilters(false)}
+                    className="rounded-full border border-[rgba(74,106,125,0.24)] px-4 py-1.5 text-sm font-medium text-[#2a3a42] dark:text-[#f5f0e8]"
+                  >
+                    Close
+                  </button>
+                </div>
+
                 <section className="space-y-3">
                   <h2 className="text-[20px] font-heading">Sort</h2>
                   <Select value={sortBy} onValueChange={(value) => setSortBy(value as SortBy)}>
@@ -799,7 +811,7 @@ export default function BrowseVendors() {
                                 )
                               }
                               className={[
-                                "rounded-full border px-4 py-1.5 text-sm font-medium transition-colors",
+                                "rounded-full border px-4 py-2 text-sm font-medium transition-colors min-h-[44px] flex items-center",
                                 selected
                                   ? "border-[#4a6a7d] bg-[#4a6a7d] text-[#f5f0e8]"
                                   : "border-[rgba(74,106,125,0.24)] bg-[#f5f0e8] text-[#2a3a42] hover:bg-white",

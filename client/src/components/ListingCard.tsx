@@ -243,6 +243,24 @@ export default function ListingCard({
           </p>
         </div>
 
+        {/* Mobile-only share button — hover overlay is invisible on mobile */}
+        <div className="sm:hidden flex justify-end mt-1 px-1">
+          <button
+            type="button"
+            onClick={(e) => {
+              e.stopPropagation();
+              setShareFeedback("");
+              setShareOpen(true);
+            }}
+            className="inline-flex items-center gap-1 text-xs text-muted-foreground py-1"
+            aria-label="Share listing"
+            data-testid={`button-share-mobile-${listingId ?? "unknown"}`}
+          >
+            <Share2 className="h-3.5 w-3.5" />
+            Share
+          </button>
+        </div>
+
         {showVendorShopButton && vendorShopPath ? (
           <div className="mt-2 px-1">
             <button

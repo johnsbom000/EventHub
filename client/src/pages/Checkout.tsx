@@ -1079,8 +1079,8 @@ function CheckoutContent({
   const cover = data.photos?.[0];
 
   return (
-    <div className="w-full h-[calc(100vh-64px)] overflow-hidden">
-      <div className="mx-auto flex h-full w-[75vw] max-w-[1600px] min-w-[980px] flex-col px-6 py-4">
+    <div className="w-full min-h-screen">
+      <div className="mx-auto flex w-full max-w-[1600px] flex-col px-4 py-4 sm:px-6">
       <button
         onClick={() => setLocation(`/listing/${listingId}`)}
         className="mb-3 flex items-center text-muted-foreground hover:text-foreground"
@@ -1089,7 +1089,7 @@ function CheckoutContent({
         Back to listing
       </button>
 
-    <div className="grid flex-1 min-h-0 grid-cols-1 gap-6 lg:grid-cols-[minmax(0,1fr)_520px]">
+    <div className="grid grid-cols-1 gap-6 lg:grid-cols-[minmax(0,1fr)_520px]">
       {/* LEFT: Billing + Payment */}
       <div className="space-y-4">
         {/* Billing Details */}

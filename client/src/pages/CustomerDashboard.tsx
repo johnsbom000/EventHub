@@ -1,4 +1,4 @@
-import { useEffect, useMemo, useState } from "react";
+import React, { useEffect, useMemo, useState } from "react";
 import { Link, useLocation } from "wouter";
 import { useQuery } from "@tanstack/react-query";
 import { useAuth0 } from "@auth0/auth0-react";
@@ -10,6 +10,8 @@ import {
   Home,
   Loader2,
   LogOut,
+  MessageSquare,
+  PlusCircle,
   Settings,
   User,
 } from "lucide-react";
@@ -43,6 +45,34 @@ interface Customer {
 }
 
 type Section = "profile" | "events" | "messages" | "plan";
+
+function CustomerMobileNavLink({
+  href,
+  icon: Icon,
+  label,
+  currentPath,
+}: {
+  href: string;
+  icon: React.ElementType;
+  label: string;
+  currentPath: string;
+}) {
+  const isActive =
+    href === "/dashboard/profile"
+      ? currentPath === "/dashboard" || currentPath.startsWith("/dashboard/profile")
+      : currentPath.startsWith(href);
+  return (
+    <Link
+      href={href}
+      className={`flex flex-col items-center gap-0.5 px-3 py-1 rounded-lg text-[10px] font-medium transition-colors ${
+        isActive ? "text-[#4a6a7d]" : "text-[#8fa2ad]"
+      }`}
+    >
+      <Icon className={`h-5 w-5 ${isActive ? "text-[#4a6a7d]" : "text-[#8fa2ad]"}`} />
+      {label}
+    </Link>
+  );
+}
 
 function getPersonInitials(value: string) {
   const normalized = (value || "").trim();
@@ -281,8 +311,8 @@ export default function CustomerDashboard() {
         </header>
 
         <div className="flex min-h-0 flex-1">
-          <CustomerSidebar className="shrink-0" />
-          <main className="flex-1 overflow-auto p-6">
+          <CustomerSidebar className="hidden lg:flex shrink-0" />
+          <main className="flex-1 overflow-auto p-4 pb-20 lg:p-6 lg:pb-6">
             <div className="max-w-7xl mx-auto">
               {activeSection === "profile" && <CustomerProfile customer={customer} />}
               {activeSection === "events" && <CustomerEvents customer={customer} />}
@@ -291,6 +321,14 @@ export default function CustomerDashboard() {
             </div>
           </main>
         </div>
+
+        {/* Mobile bottom navigation */}
+        <nav className="lg:hidden fixed bottom-0 left-0 right-0 z-50 flex items-center justify-around border-t border-[rgba(74,106,125,0.22)] bg-[#ffffff] px-2 py-2">
+          <CustomerMobileNavLink href="/dashboard/events" icon={Calendar} label="Events" currentPath={location} />
+          <CustomerMobileNavLink href="/dashboard/messages" icon={MessageSquare} label="Messages" currentPath={location} />
+          <CustomerMobileNavLink href="/dashboard/plan" icon={PlusCircle} label="Plan Event" currentPath={location} />
+          <CustomerMobileNavLink href="/dashboard/profile" icon={User} label="Profile" currentPath={location} />
+        </nav>
       </div>
     </SidebarProvider>
   );

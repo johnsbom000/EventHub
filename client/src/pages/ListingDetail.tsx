@@ -417,7 +417,7 @@ export default function ListingDetailPage() {
   };
 
   return (
-    <div className="no-global-scale max-w-6xl mx-auto px-4 sm:px-6 lg:px-8 py-8">
+    <div className="no-global-scale max-w-6xl mx-auto px-4 sm:px-6 lg:px-8 py-8 pb-24 lg:pb-8">
       {/* Back */}
       <button
         onClick={() => setLocation("/browse")}
@@ -733,7 +733,7 @@ export default function ListingDetailPage() {
         </div>
 
         {/* Right sticky reservation card */}
-        <aside className="lg:sticky lg:top-8">
+        <aside id="reservation-card" className="lg:sticky lg:top-8">
           <ReservationCard
             listingId={data.id}
             vendorId={data.vendorId}
@@ -749,6 +749,22 @@ export default function ListingDetailPage() {
           />
         </aside>
       </div>
+
+      {/* Mobile sticky Book Now bar */}
+      {data.price && (
+        <div className="fixed bottom-0 left-0 right-0 z-40 flex items-center justify-between border-t border-border bg-background px-4 py-3 lg:hidden">
+          <div>
+            <span className="text-lg font-bold text-foreground">{money(data.price)}</span>
+            <span className="text-sm text-muted-foreground"> {formatPricingUnit(data.pricingUnit)}</span>
+          </div>
+          <button
+            onClick={() => document.getElementById("reservation-card")?.scrollIntoView({ behavior: "smooth" })}
+            className="rounded-lg bg-rose-600 px-5 py-2.5 text-sm font-semibold text-white"
+          >
+            Book Now
+          </button>
+        </div>
+      )}
 
       {/* Full-screen gallery */}
       {galleryOpen && (

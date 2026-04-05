@@ -229,7 +229,7 @@ export default function Navigation({
             {/* Vendor Logged In State */}
             {isLoggedIn && userRole === "vendor" && (
               <>
-                <Link href="/vendor/dashboard">
+                <Link href="/vendor/dashboard" className="hidden sm:inline-flex">
                   <Button
                     variant="ghost"
                     size="default"
@@ -241,7 +241,7 @@ export default function Navigation({
                 </Link>
 
                 {location.startsWith("/dashboard") ? (
-                  <Link href="/">
+                  <Link href="/" className="hidden sm:inline-flex">
                     <Button
                       variant="ghost"
                       size="default"
@@ -253,7 +253,7 @@ export default function Navigation({
                     </Button>
                   </Link>
                 ) : (
-                  <Link href="/dashboard/events">
+                  <Link href="/dashboard/events" className="hidden sm:inline-flex">
                     <Button
                       variant="ghost"
                       size="default"
@@ -353,7 +353,7 @@ export default function Navigation({
                   <Button
                     variant="ghost"
                     size="default"
-                    className={navActionButtonClass}
+                    className={`hidden sm:inline-flex ${navActionButtonClass}`}
                     onClick={() => setLocation("/vendor/onboarding")}
                     data-testid="button-become-vendor-nav"
                   >
@@ -362,7 +362,7 @@ export default function Navigation({
                 ) : null}
 
                 {location.startsWith("/dashboard") ? (
-                  <Link href="/">
+                  <Link href="/" className="hidden sm:inline-flex">
                     <Button
                       variant="ghost"
                       size="default"
@@ -374,7 +374,7 @@ export default function Navigation({
                     </Button>
                   </Link>
                 ) : (
-                  <Link href="/dashboard">
+                  <Link href="/dashboard" className="hidden sm:inline-flex">
                     <Button
                       variant="ghost"
                       size="default"

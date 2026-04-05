@@ -34,7 +34,7 @@ export default function Home() {
         <Hero />
 
         {/* Featured Listings under the hero */}
-        <section className="w-full px-8 lg:px-12 py-12">
+        <section className="w-full px-4 sm:px-6 lg:px-12 py-12">
           <div className="mb-5 flex items-end justify-between gap-4">
             <div>
               <h2 className="font-heading !text-[32px] font-normal text-[#2a3a42] dark:text-[#f5f0e8]">

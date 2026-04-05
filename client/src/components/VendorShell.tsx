@@ -5,11 +5,14 @@ import {
   ArrowLeft,
   Calendar,
   Check,
+  DollarSign,
   Globe,
   HelpCircle,
   Home,
+  LayoutGrid,
   Loader2,
   LogOut,
+  MessageSquare,
   Settings,
   User,
 } from "lucide-react";
@@ -48,6 +51,22 @@ type VendorProfilesResponse = {
   activeProfileId?: string | null;
   profiles?: VendorProfileSummary[];
 };
+
+function MobileNavLink({ href, icon: Icon, label }: { href: string; icon: React.ElementType; label: string }) {
+  const [location] = useLocation();
+  const isActive = location === href || (href !== "/vendor/dashboard" && location.startsWith(href));
+  return (
+    <Link
+      href={href}
+      className={`flex flex-col items-center gap-0.5 px-3 py-1 rounded-lg text-[10px] font-medium transition-colors ${
+        isActive ? "text-[#4a6a7d]" : "text-[#8fa2ad]"
+      }`}
+    >
+      <Icon className={`h-5 w-5 ${isActive ? "text-[#4a6a7d]" : "text-[#8fa2ad]"}`} />
+      {label}
+    </Link>
+  );
+}
 
 function getInitialsFromName(nameOrEmail: string) {
   const value = (nameOrEmail || "").trim();
@@ -306,9 +325,18 @@ export default function VendorShell({ children, onOpenAccountSettings }: VendorS
         </header>
 
         <div className="flex min-h-0 flex-1">
-          <VendorSidebar className="shrink-0" />
-          <main className="flex-1 overflow-auto p-6">{children}</main>
+          <VendorSidebar className="hidden lg:flex shrink-0" />
+          <main className="flex-1 overflow-auto p-4 pb-20 lg:p-6 lg:pb-6">{children}</main>
         </div>
+
+        {/* Mobile bottom navigation */}
+        <nav className="lg:hidden fixed bottom-0 left-0 right-0 z-50 flex items-center justify-around border-t border-[rgba(74,106,125,0.22)] bg-[#ffffff] px-2 py-2">
+          <MobileNavLink href="/vendor/dashboard" icon={Home} label="Dashboard" />
+          <MobileNavLink href="/vendor/bookings" icon={Calendar} label="Bookings" />
+          <MobileNavLink href="/vendor/listings" icon={LayoutGrid} label="Listings" />
+          <MobileNavLink href="/vendor/messages" icon={MessageSquare} label="Messages" />
+          <MobileNavLink href="/vendor/payments" icon={DollarSign} label="Payments" />
+        </nav>
       </div>
     </SidebarProvider>
   );
