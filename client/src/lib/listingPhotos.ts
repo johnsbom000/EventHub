@@ -27,7 +27,11 @@ export function coverRatioToAspectRatio(value: unknown): string {
 
 export function normalizePhotoToUrl(photo: any): string | undefined {
   if (typeof photo === "string") {
-    return isLoadablePath(photo) ? resolveAssetUrl(photo) : undefined;
+    if (isLoadablePath(photo)) return resolveAssetUrl(photo);
+    // Bare filename from the canonical photos text[] column (e.g. "1773632248205-abc.jpg")
+    const trimmed = (photo as string).trim();
+    if (trimmed) return resolveAssetUrl(`/uploads/listings/${trimmed}`);
+    return undefined;
   }
   if (photo && typeof photo === "object") {
     const url = photo.url;
