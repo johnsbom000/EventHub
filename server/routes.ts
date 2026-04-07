@@ -530,8 +530,14 @@ const bookingRateLimiter = createIpRateLimiter({
 });
 
 function logRouteError(route: string, error: unknown) {
-  const message = error instanceof Error ? error.message : String(error);
-  console.error(`${route} failed:`, message);
+  if (error instanceof Error) {
+    const extra: string[] = [];
+    if ((error as any).detail) extra.push(`detail: ${(error as any).detail}`);
+    if ((error as any).code) extra.push(`code: ${(error as any).code}`);
+    console.error(`${route} failed:`, error.message, ...extra, "\n", error.stack);
+  } else {
+    console.error(`${route} failed:`, String(error));
+  }
 }
 
 function respondWithInternalServerError(req: any, res: any, error: unknown) {
@@ -5645,19 +5651,38 @@ app.post(
       }
 
       if (!account) {
-        const [created] = await db
-          .insert(vendorAccounts)
-          .values({
-            email,
-            auth0Sub,
-            userId: vendorResolution.resolvedUserId || undefined,
-            password: "auth0-external",
-            businessName: normalizedProfileName,
-            profileComplete: false,
-          })
-          .returning();
+        // Before inserting, check if an account already exists for this email (auth0Sub conflict
+        // case — user previously signed up with a different provider). Since Auth0 has already
+        // verified the user owns this email, it is safe to adopt the existing account and heal
+        // the auth0Sub so future lookups resolve correctly.
+        const [existingByEmail] = await db
+          .select()
+          .from(vendorAccounts)
+          .where(and(drizzleSql`lower(${vendorAccounts.email}) = ${email}`, isNull(vendorAccounts.deletedAt)))
+          .limit(1);
 
-        account = created;
+        if (existingByEmail) {
+          const [healed] = await db
+            .update(vendorAccounts)
+            .set({ auth0Sub })
+            .where(eq(vendorAccounts.id, existingByEmail.id))
+            .returning();
+          account = healed;
+          console.log(`[onboarding] healed auth0Sub conflict for account ${existingByEmail.id} (email match)`);
+        } else {
+          const [created] = await db
+            .insert(vendorAccounts)
+            .values({
+              email,
+              auth0Sub,
+              userId: vendorResolution.resolvedUserId || undefined,
+              password: "auth0-external",
+              businessName: normalizedProfileName,
+              profileComplete: false,
+            })
+            .returning();
+          account = created;
+        }
       } else {
         const currentBusinessName = asTrimmedString(account.businessName);
         const [updated] = await db
