@@ -156,6 +156,15 @@ export default function MasonryListingGrid({
       : null;
 
   const resolveColumnCount = (viewportWidth: number, availableWidth: number | null) => {
+    const hasFiniteMaxColumns =
+      typeof maxColumns === "number" && Number.isFinite(maxColumns) && maxColumns >= 1;
+
+    // Mobile requirement: always render 2 masonry columns when possible.
+    if (viewportWidth < 768) {
+      const mobileCap = hasFiniteMaxColumns ? Math.floor(maxColumns) : 2;
+      return Math.max(1, Math.min(2, mobileCap));
+    }
+
     if (normalizedMinCardWidthPx != null) {
       return getColumnCountForMinCardWidth(
         availableWidth ?? viewportWidth,
@@ -172,7 +181,7 @@ export default function MasonryListingGrid({
         ? Math.floor(desktopColumns)
         : getColumnCountForWidth(viewportWidth, normalizedTwoColumnMinWidthPx);
 
-    if (typeof maxColumns !== "number" || !Number.isFinite(maxColumns) || maxColumns < 1) {
+    if (!hasFiniteMaxColumns) {
       return byWidth;
     }
     return Math.min(byWidth, Math.floor(maxColumns));
@@ -228,7 +237,19 @@ export default function MasonryListingGrid({
       ? Math.floor(cardMaxWidthPx)
       : null;
   const cardMaxWidthForCurrentLayout = normalizedCardMaxWidthPx;
-  const useFixedWidthColumns = cardMaxWidthForCurrentLayout != null && columns.length > 1;
+  const requiredFixedWidthPx =
+    cardMaxWidthForCurrentLayout != null
+      ? columns.length * cardMaxWidthForCurrentLayout + (columns.length - 1) * GRID_GAP_PX
+      : null;
+  const availableGridWidthPx =
+    gridWidthPx ??
+    (typeof window !== "undefined" ? Math.floor(window.innerWidth) : null);
+  const useFixedWidthColumns =
+    cardMaxWidthForCurrentLayout != null &&
+    columns.length > 1 &&
+    requiredFixedWidthPx != null &&
+    availableGridWidthPx != null &&
+    availableGridWidthPx >= requiredFixedWidthPx;
   const gridTemplateColumns = useFixedWidthColumns
     ? `repeat(${Math.max(1, columns.length)}, minmax(0, ${cardMaxWidthForCurrentLayout}px))`
     : `repeat(${Math.max(1, columns.length)}, minmax(0, 1fr))`;

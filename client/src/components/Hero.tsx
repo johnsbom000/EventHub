@@ -6,6 +6,7 @@ import { LocationPicker } from "@/components/LocationPicker";
 import { useLocationContext } from "../context/LocationContext";
 import type { LocationResult } from "@/types/location";
 import { EVENT_TYPE_OPTIONS } from "@/constants/eventTypes";
+import { ChevronDown } from "lucide-react";
 import {
   Select,
   SelectContent,
@@ -94,8 +95,8 @@ export default function Hero() {
         </div>
 
         <div className="landing-hero-search-scale-down mx-auto mt-12 w-full max-w-[1320px] rounded-[12px] border-[1.5px] border-[rgba(74,106,125,0.2)] bg-[#ffffff] p-3 dark:bg-[#22303c] lg:mt-[3.9675rem] lg:rounded-[15.87px] lg:p-[0.8rem]">
-          <div className="grid grid-cols-1 gap-2 md:grid-cols-[3fr_1.7fr_1.25fr_1.1fr_1.3fr] md:gap-[0.42rem] lg:grid-cols-[3.4fr_1.955fr_1.2fr_1fr_1.345fr]">
-            <div className="hero-search-location flex items-center px-4 py-2 lg:border-r lg:border-[rgba(74,106,125,0.12)] lg:px-[0.84rem] lg:py-[0.55rem]">
+          <div className="grid grid-cols-1 gap-0 md:grid-cols-[3fr_1.7fr_1.25fr_1.1fr_1.3fr] md:gap-[0.42rem] lg:grid-cols-[3.4fr_1.955fr_1.2fr_1fr_1.345fr]">
+            <div className="hero-search-location flex min-h-[58px] items-center border-b border-[rgba(74,106,125,0.14)] px-4 py-2 md:min-h-0 md:border-b-0 lg:border-r lg:border-[rgba(74,106,125,0.12)] lg:px-[0.84rem] lg:py-[0.55rem]">
               <LocationPicker
                 value={searchLocation}
                 onChange={(loc) => {
@@ -108,7 +109,7 @@ export default function Hero() {
               />
             </div>
 
-            <div className="relative flex items-center px-4 py-2 lg:border-r lg:border-[rgba(74,106,125,0.12)] lg:px-[1.3225rem] lg:py-[0.6613rem]">
+            <div className="relative flex min-h-[58px] items-center border-b border-[rgba(74,106,125,0.14)] px-4 py-2 md:min-h-0 md:border-b-0 lg:border-r lg:border-[rgba(74,106,125,0.12)] lg:px-[1.3225rem] lg:py-[0.6613rem]">
               <div className="relative w-full">
                 <Select
                   value={eventType || undefined}
@@ -144,23 +145,34 @@ export default function Hero() {
               </div>
             </div>
 
-            <div className="relative flex items-center px-4 py-2 lg:border-r lg:border-[rgba(74,106,125,0.12)] lg:px-[1.3225rem] lg:py-[0.6613rem]">
+            <div className="relative flex min-h-[58px] items-center border-b border-[rgba(74,106,125,0.14)] px-4 py-2 md:min-h-0 md:border-b-0 lg:border-r lg:border-[rgba(74,106,125,0.12)] lg:px-[1.3225rem] lg:py-[0.6613rem]">
               <div className="relative w-full">
+                {!eventDate ? (
+                  <span className="pointer-events-none absolute left-0 top-1/2 -translate-y-1/2 font-sans text-[16px] text-[#9aacb4] dark:text-[#b9c7cf] md:hidden">
+                    Select date
+                  </span>
+                ) : null}
+                <ChevronDown
+                  className="pointer-events-none absolute right-3 top-1/2 h-4 w-4 -translate-y-1/2 text-[#9aacb4] dark:text-[#b9c7cf] md:hidden"
+                  aria-hidden="true"
+                />
                 <Input
                   ref={dateInputRef}
+                  id="hero-event-date"
                   type="date"
                   value={eventDate}
                   onChange={(e) => {
                     setEventDate(e.target.value);
                     dateInputRef.current?.blur();
                   }}
-                  className="hero-date-field h-8 border-0 bg-transparent pl-0 !text-[16px] font-sans text-[#2a3a42] shadow-none focus-visible:ring-0 dark:text-[#f5f0e8] lg:h-[2.645rem] lg:pl-0 lg:!text-[25.29px]"
+                  className="hero-date-field h-8 border-0 bg-transparent pl-0 pr-8 md:pr-0 !text-[16px] font-sans text-[#2a3a42] shadow-none focus-visible:ring-0 dark:text-[#f5f0e8] lg:h-[2.645rem] lg:pl-0 lg:!text-[25.29px]"
+                  aria-label="Event date"
                   data-testid="input-event-date"
                 />
               </div>
             </div>
 
-            <div className="flex items-center px-4 py-2 lg:border-r lg:border-[rgba(74,106,125,0.12)] lg:px-[1.3225rem] lg:py-[0.6613rem]">
+            <div className="flex min-h-[58px] items-center border-b border-[rgba(74,106,125,0.14)] px-4 py-2 md:min-h-0 md:border-b-0 lg:border-r lg:border-[rgba(74,106,125,0.12)] lg:px-[1.3225rem] lg:py-[0.6613rem]">
               <div className="relative w-full">
                 <Select
                   value={category}
@@ -191,7 +203,7 @@ export default function Hero() {
               </div>
             </div>
 
-            <div className="flex items-center justify-end px-3 py-2 lg:px-[0.9919rem] lg:py-[0.6613rem]">
+            <div className="flex items-center justify-center px-3 pt-3 pb-2 md:justify-end md:pt-2 lg:px-[0.9919rem] lg:py-[0.6613rem]">
               <Button
                 className="h-[54px] w-full max-w-[210px] text-[22px] editorial-search-btn lg:h-[71.415px] lg:max-w-[277.725px] lg:text-[26px]"
                 onClick={handleSearch}

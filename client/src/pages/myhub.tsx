@@ -1505,6 +1505,8 @@ export default function MyHub() {
                     listing={listing}
                     priceScale="double"
                     titleScale="oneAndHalf"
+                    titleSizeClassName="text-[1.518rem] md:text-[2.6875rem]"
+                    priceSizeClassName="text-[1.932rem] leading-none md:text-[3.0625rem] md:leading-none"
                     titleFont="heading"
                     showVendorShopButton={false}
                     cardNavigationPath={`/vendor/listings/${listing.id}`}

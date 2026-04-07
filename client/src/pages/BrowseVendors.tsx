@@ -615,6 +615,10 @@ export default function BrowseVendors() {
   const browseHeaderContent = (
     <div className={`${browseSurfaceClass} pt-4 pb-8`}>
       <div className="w-full px-4 sm:px-6 lg:px-12">
+        <div className="md:hidden mb-4">
+          {browseSearchBarContent}
+        </div>
+
         {availableTags.length > 0 && (
           <div className="flex items-center gap-2.5">
             <button
@@ -669,7 +673,7 @@ export default function BrowseVendors() {
     <div className={`min-h-screen flex flex-col ${browseSurfaceClass}`}>
       <Navigation
         showBottomBorder={false}
-        middleContent={browseSearchBarContent}
+        middleContent={<div className="hidden md:block">{browseSearchBarContent}</div>}
         headerContent={browseHeaderContent}
         surfaceClassName={browseSurfaceClass}
       />
@@ -875,6 +879,8 @@ export default function BrowseVendors() {
                       listing={listing}
                       priceScale="double"
                       titleScale="oneAndHalf"
+                      titleSizeClassName="text-[1.518rem] md:text-[2.6875rem]"
+                      priceSizeClassName="text-[1.932rem] leading-none md:text-[3.0625rem] md:leading-none"
                       titleFont="heading"
                       primaryActionScale="plus15"
                     />

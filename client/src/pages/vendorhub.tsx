@@ -6,6 +6,7 @@ import { ArrowLeft, ArrowRight, Star } from "lucide-react";
 import Navigation from "@/components/Navigation";
 import Footer from "@/components/Footer";
 import MasonryListingGrid from "@/components/MasonryListingGrid";
+import ListingCard from "@/components/ListingCard";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { Button } from "@/components/ui/button";
 import { Dialog, DialogContent, DialogHeader, DialogTitle } from "@/components/ui/dialog";
@@ -499,6 +500,16 @@ export default function VendorHub() {
                       preserveInputOrder
                       minCardWidthPx={240}
                       cardMaxWidthPx={290}
+                      renderCard={(listing) => (
+                        <ListingCard
+                          listing={listing}
+                          // Match Landing/Browse mobile typography while preserving
+                          // existing Vendor Hub desktop sizes.
+                          titleSizeClassName="text-[1.518rem] md:text-[1.05rem] md:font-sans"
+                          priceSizeClassName="text-[1.932rem] leading-none md:text-[1.28rem]"
+                          titleFont="heading"
+                        />
+                      )}
                     />
                   )}
                 </section>
@@ -507,63 +518,6 @@ export default function VendorHub() {
 
               <div className="space-y-0 lg:order-1">
                 <section className="pb-6">
-                  <div className="space-y-6">
-                    {asTrimmedString(vendor.aboutBusiness) ? (
-                      <div className="space-y-2">
-                        <h3 className="text-3xl font-semibold text-[#2a3a42] dark:text-[#f5f0e8]">About the Business</h3>
-                        <p className="text-[1.25rem] text-[#2a3a42] dark:text-[#f5f0e8]">{vendor.aboutBusiness}</p>
-                      </div>
-                    ) : null}
-                    {asTrimmedString(vendor.aboutOwner) || hasOwnerOptionalDetails ? (
-                      <div className="space-y-2">
-                        <h3 className="text-3xl font-semibold text-[#2a3a42] dark:text-[#f5f0e8]">About the Owner</h3>
-                        {asTrimmedString(vendor.aboutOwner) ? (
-                          <p className="text-[1.25rem] text-[#2a3a42] dark:text-[#f5f0e8]">{vendor.aboutOwner}</p>
-                        ) : null}
-
-                        {hasOwnerOptionalDetails ? (
-                          <div className="mt-4 space-y-3">
-                            {hobbies.length > 0 ? (
-                              <div className="space-y-1">
-                                <h4 className="text-2xl font-semibold text-[#2a3a42] dark:text-[#f5f0e8]">Hobbies</h4>
-                                <div className="flex flex-wrap gap-2">
-                                  {hobbies.map((hobby) => (
-                                    <span
-                                      key={hobby}
-                                      className="rounded-full border border-[rgba(74,106,125,0.25)] px-3 py-1 text-sm text-[#2a3a42] dark:text-[#f5f0e8]"
-                                    >
-                                      {hobby}
-                                    </span>
-                                  ))}
-                                </div>
-                              </div>
-                            ) : null}
-                            {likesDislikes ? (
-                              <div className="space-y-1">
-                                <h4 className="text-2xl font-semibold text-[#2a3a42] dark:text-[#f5f0e8]">Likes &amp; Dislikes</h4>
-                                <p className="text-[1.25rem] text-[#2a3a42] dark:text-[#f5f0e8]">{likesDislikes}</p>
-                              </div>
-                            ) : null}
-                            {homeState ? (
-                              <div className="space-y-1">
-                                <h4 className="text-2xl font-semibold text-[#2a3a42] dark:text-[#f5f0e8]">Home State</h4>
-                                <p className="text-[1.25rem] text-[#2a3a42] dark:text-[#f5f0e8]">{homeState}</p>
-                              </div>
-                            ) : null}
-                            {funFacts ? (
-                              <div className="space-y-1">
-                                <h4 className="text-2xl font-semibold text-[#2a3a42] dark:text-[#f5f0e8]">Fun Facts</h4>
-                                <p className="text-[1.25rem] text-[#2a3a42] dark:text-[#f5f0e8]">{funFacts}</p>
-                              </div>
-                            ) : null}
-                          </div>
-                        ) : null}
-                      </div>
-                    ) : null}
-                  </div>
-                </section>
-
-                <section className="border-t border-[rgba(74,106,125,0.24)] py-6">
                   <h3 className="text-3xl font-semibold text-[#2a3a42] dark:text-[#f5f0e8]">Quick Info</h3>
                   <div className="mt-4 space-y-4">
                     <div>
@@ -611,6 +565,64 @@ export default function VendorHub() {
                     ) : null}
                   </div>
                 </section>
+
+                {asTrimmedString(vendor.aboutBusiness) ? (
+                  <section className="border-t border-[rgba(74,106,125,0.24)] py-6">
+                    <div className="space-y-2">
+                      <h3 className="text-3xl font-semibold text-[#2a3a42] dark:text-[#f5f0e8]">About the Business</h3>
+                      <p className="text-[1.25rem] text-[#2a3a42] dark:text-[#f5f0e8]">{vendor.aboutBusiness}</p>
+                    </div>
+                  </section>
+                ) : null}
+
+                {asTrimmedString(vendor.aboutOwner) || hasOwnerOptionalDetails ? (
+                  <section className="border-t border-[rgba(74,106,125,0.24)] py-6">
+                    <div className="space-y-2">
+                      <h3 className="text-3xl font-semibold text-[#2a3a42] dark:text-[#f5f0e8]">About the Owner</h3>
+                      {asTrimmedString(vendor.aboutOwner) ? (
+                        <p className="text-[1.25rem] text-[#2a3a42] dark:text-[#f5f0e8]">{vendor.aboutOwner}</p>
+                      ) : null}
+
+                      {hasOwnerOptionalDetails ? (
+                        <div className="mt-4 space-y-3">
+                          {hobbies.length > 0 ? (
+                            <div className="space-y-1">
+                              <h4 className="text-2xl font-semibold text-[#2a3a42] dark:text-[#f5f0e8]">Hobbies</h4>
+                              <div className="flex flex-wrap gap-2">
+                                {hobbies.map((hobby) => (
+                                  <span
+                                    key={hobby}
+                                    className="rounded-full border border-[rgba(74,106,125,0.25)] px-3 py-1 text-sm text-[#2a3a42] dark:text-[#f5f0e8]"
+                                  >
+                                    {hobby}
+                                  </span>
+                                ))}
+                              </div>
+                            </div>
+                          ) : null}
+                          {likesDislikes ? (
+                            <div className="space-y-1">
+                              <h4 className="text-2xl font-semibold text-[#2a3a42] dark:text-[#f5f0e8]">Likes &amp; Dislikes</h4>
+                              <p className="text-[1.25rem] text-[#2a3a42] dark:text-[#f5f0e8]">{likesDislikes}</p>
+                            </div>
+                          ) : null}
+                          {homeState ? (
+                            <div className="space-y-1">
+                              <h4 className="text-2xl font-semibold text-[#2a3a42] dark:text-[#f5f0e8]">Home State</h4>
+                              <p className="text-[1.25rem] text-[#2a3a42] dark:text-[#f5f0e8]">{homeState}</p>
+                            </div>
+                          ) : null}
+                          {funFacts ? (
+                            <div className="space-y-1">
+                              <h4 className="text-2xl font-semibold text-[#2a3a42] dark:text-[#f5f0e8]">Fun Facts</h4>
+                              <p className="text-[1.25rem] text-[#2a3a42] dark:text-[#f5f0e8]">{funFacts}</p>
+                            </div>
+                          ) : null}
+                        </div>
+                      ) : null}
+                    </div>
+                  </section>
+                ) : null}
 
                 <section className="space-y-4 border-t border-[rgba(74,106,125,0.24)] pt-6">
                   <div className="flex items-center justify-between">

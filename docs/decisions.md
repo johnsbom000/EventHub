@@ -16,6 +16,141 @@ Template for new entries:
 
 ---
 
+## [2026-04-06] Show listing-card share/send icon only after card selection state on mobile
+- Context: Product requested that mobile listing-card send/share icon not be visible by default and only appear after a user selects the card once, while preserving current tap-to-open listing behavior.
+- Decision: Remove the always-visible mobile in-image share button and rely on the existing overlay share action that is revealed by card hover/focus/selection state.
+- Why: This keeps the existing interaction model and removes default visual clutter while matching the requested reveal behavior.
+- Impact: Mobile cards no longer show a persistent send/share icon; the icon appears only when the card enters selected/overlay-visible state.
+- Revisit trigger: If mobile share discoverability drops, add a subtle selection hint rather than restoring a persistent icon.
+
+---
+
+## [2026-04-06] Center hero search CTA on mobile while preserving desktop alignment
+- Context: Mobile hero search CTA appeared right-shifted in its row and needed to look visually centered.
+- Decision: Update the hero button row wrapper to `justify-center` on mobile with `md:justify-end` fallback so desktop/right alignment remains unchanged.
+- Why: This is the smallest class-level adjustment that improves mobile balance without altering desktop layout.
+- Impact: On mobile, the hero `Search` button appears centered in its section; desktop presentation is unchanged.
+- Revisit trigger: If the mobile hero is redesigned into a full-width stacked action layout, remove breakpoint-specific justification overrides.
+
+---
+
+## [2026-04-06] Remove external mobile share row under listing cards and keep share action inside card image
+- Context: Product requested removing the small `Share` label/button below listing card prices on mobile while retaining an in-card share control.
+- Decision: Delete the mobile-only under-card share row in `ListingCard` and add a mobile-only in-image share icon button (`ShareSquareIcon`) anchored inside the card image area.
+- Why: This keeps sharing available without extra text clutter below pricing and aligns control placement inside the card.
+- Impact: On mobile, share remains accessible from within each card image; the separate under-price `Share` text/button no longer appears.
+- Revisit trigger: If mobile sharing discoverability drops, add a subtle tooltip/badge to the in-image icon rather than restoring the external row.
+
+---
+
+## [2026-04-06] Reorder Vendor Hub detail sections to place Quick Info first while preserving divider styling
+- Context: Vendor Hub detail panel needed a new section order on both desktop and mobile: Quick Info first, then About the Business, About the Owner, and What Clients Say.
+- Decision: Reorder section blocks in `vendorhub.tsx` to the requested sequence and keep the existing horizontal-divider treatment (`border-t` separators) between visible sections.
+- Why: This satisfies requested content hierarchy without introducing new visual patterns or changing component behavior.
+- Impact: Vendor Hub now presents key operational facts first, followed by narrative content and reviews, with divider lines preserved between sections.
+- Revisit trigger: If section order should be user-configurable or differ by viewport in the future, move the section composition into an ordered config map.
+
+---
+
+## [2026-04-06] Match Vendor Hub listing-title font to Landing/My Hub on mobile only
+- Context: Product requested Vendor Hub and My Hub listing-card title font type to match Landing with strict mobile-only change policy.
+- Decision: Add a Vendor Hub mobile title-font override (`font-heading`) with `md:font-sans` fallback in `titleSizeClassName`; keep My Hub unchanged because it already used `titleFont="heading"` and matched Landing on mobile.
+- Why: This achieves requested mobile font parity without altering desktop UI.
+- Impact: Vendor Hub listing titles now use Landing’s title font family on mobile while desktop Vendor Hub remains unchanged.
+- Revisit trigger: If shared card typography variants are introduced, replace page-local override classes with a reusable mobile font-variant prop.
+
+---
+
+## [2026-04-06] Apply third mobile-only Vendor Hub avatar reduction by another 40%
+- Context: After two prior mobile avatar reductions, product reported the Vendor Hub profile circle still looked too large and requested another 40% shrink.
+- Decision: Reduce mobile `--vendor-hub-avatar-size` from `101.25px` to `60.75px` (60% of the prior value), leaving `sm` and desktop sizing unchanged.
+- Why: This directly follows the latest visual-size request while preserving desktop UI.
+- Impact: Vendor Hub mobile avatar and overlap spacing are substantially smaller; tablet/desktop remain unchanged.
+- Revisit trigger: If avatar legibility or brand presence is compromised, increase mobile size incrementally while keeping desktop constants.
+
+---
+
+## [2026-04-06] Apply second mobile-only Vendor Hub avatar reduction by another 25%
+- Context: After the initial mobile avatar reduction, product requested an additional 25% shrink for the Vendor Hub circular profile image area.
+- Decision: Reduce mobile `--vendor-hub-avatar-size` from `135px` to `101.25px` (exactly 75% of the prior value), leaving `sm` and desktop sizes unchanged.
+- Why: This directly satisfies the follow-up sizing request while keeping desktop UI untouched.
+- Impact: Vendor Hub mobile avatar and its associated overlap spacing are smaller again; tablet/desktop presentation remains unchanged.
+- Revisit trigger: If mobile avatar readability/brand presence is too small, increase base size incrementally while preserving the desktop breakpoints.
+
+---
+
+## [2026-04-06] Align Vendor Hub mobile listing-card title/price sizes to Landing/Browse while preserving desktop sizes
+- Context: Product requested Vendor Hub/My Hub listing card title and price typography to match Landing/Browse, with a strict mobile-only change policy.
+- Decision: Add Vendor Hub `renderCard` overrides so mobile title/price sizes match Landing/Browse mobile targets (`11px`/`14px` effective), while `md` fallback keeps existing Vendor Hub desktop sizes unchanged. My Hub already matched the Landing/Browse mobile sizing and was left unchanged.
+- Why: This satisfies typography parity for mobile without altering desktop UI.
+- Impact: Vendor Hub listing card title/price text now matches Landing/Browse on mobile; desktop Vendor Hub typography remains as before.
+- Revisit trigger: If product later wants full cross-page typography parity on desktop too, replace desktop fallbacks with shared Landing/Browse desktop token values.
+
+---
+
+## [2026-04-06] Reduce Vendor Hub hero profile avatar by ~25% on mobile only
+- Context: Vendor Hub hero circular profile image appeared oversized on mobile and needed a smaller footprint without affecting larger breakpoints.
+- Decision: Decrease mobile `--vendor-hub-avatar-size` from `180px` to `135px` in `index.css`, leaving the existing `sm` breakpoint size (`216px`) unchanged.
+- Why: This is the smallest safe change that achieves the requested visual scale reduction while preserving desktop/tablet behavior.
+- Impact: On mobile widths below `640px`, the Vendor Hub profile avatar and dependent top spacing render smaller; desktop and `sm+` layouts remain unchanged.
+- Revisit trigger: If mobile branding presence feels too reduced after QA, adjust the base size upward incrementally (for example to `144px`) while keeping desktop constants.
+
+---
+
+## [2026-04-06] Add mobile-only chevron affordance to hero date selection row
+- Context: In the mobile hero search bar, the date row lacked a dropdown-style visual cue while neighboring select fields showed a down chevron.
+- Decision: Add a mobile-only down-chevron icon to the hero date row and reserve right-side input padding for the icon, leaving desktop rendering unchanged.
+- Why: This improves affordance consistency and scannability without changing date-picker behavior.
+- Impact: Mobile users now see a clear selection indicator in the date row; desktop UI and date functionality remain unchanged.
+- Revisit trigger: If hero search fields are refactored into shared input primitives, move this icon behavior into the shared mobile date-field variant.
+
+---
+
+## [2026-04-06] Revise mobile listing-card typography targets to 11px title and 14px price on Home/Browse/My Hub
+- Context: Product immediately revised mobile listing-card typography after prior adjustment and requested smaller text targets.
+- Decision: Update Home/Browse/My Hub `ListingCard` mobile-only size overrides to effective 11px titles and 14px prices, keeping existing `md` desktop fallbacks unchanged.
+- Why: This aligns with the updated readability preference while preserving desktop UI stability.
+- Impact: Mobile listing cards on Home/Browse/My Hub now render smaller title/price text; desktop remains unchanged and Vendor Hub is unaffected.
+- Revisit trigger: If text becomes too small for accessibility on narrow devices, raise targets or introduce page-level exceptions.
+
+---
+
+## [2026-04-06] Set mobile listing-card title/price typography to fixed effective sizes on Home, Browse, and My Hub
+- Context: Product requested consistent mobile listing-card text sizing so titles render at 15px and prices at 17px across Home, Browse, and My Hub.
+- Decision: Add per-page `ListingCard` mobile-only size overrides (`titleSizeClassName`, `priceSizeClassName`) with `md` fallbacks to existing desktop values, scoped only to Home/Browse/My Hub render paths.
+- Why: This delivers exact mobile typography targets without changing desktop UI or affecting Vendor Hub card typography.
+- Impact: On mobile, listing-card title/price text is standardized across Home/Browse/My Hub; desktop card typography remains unchanged.
+- Revisit trigger: If listing-card typography gets centralized into shared tokens, replace page-level overrides with a shared mobile variant prop.
+
+---
+
+## [2026-04-06] Force 2-column masonry listing grids on mobile across marketplace surfaces
+- Context: Listing-card grids on mobile were frequently collapsing to one column due to minimum card width constraints, reducing scan efficiency on Home/Browse/Vendor Hub/My Hub.
+- Decision: Update shared `MasonryListingGrid` column resolution to force up to 2 columns for viewport widths below `768px`, while preserving existing tablet/desktop column logic and per-page `maxColumns` caps.
+- Why: A shared mobile rule delivers consistent listing density across all requested surfaces with a single low-risk change.
+- Impact: Mobile listing grids now render in two masonry columns (when at least two cards exist); desktop layout behavior is unchanged.
+- Revisit trigger: If mobile card readability drops on very narrow devices, add a prop-based opt-out per page or introduce a narrower mobile breakpoint fallback.
+
+---
+
+## [2026-04-06] Reposition Browse search input below nav row on mobile while preserving desktop header layout
+- Context: On mobile Browse, search input in the nav middle slot was less clear to scan and needed to appear below the `EventHub` + `Login / Sign up` row but above filter pills.
+- Decision: Render the browse search input in `headerContent` for mobile only (`md:hidden`) and keep the existing nav middle-slot search on desktop/tablet only (`hidden md:block`).
+- Why: This satisfies the mobile placement request without changing desktop UI structure or behavior.
+- Impact: Mobile Browse now shows search directly under the nav row and above filter pills; desktop Browse remains unchanged.
+- Revisit trigger: If navigation/header composition is centralized into a dedicated responsive header system, collapse this duplicated mobile/desktop placement into shared breakpoint-aware slots.
+
+---
+
+## [2026-04-05] Improve mobile-only hero search clarity with row dividers and visible date prompt
+- Context: Mobile home hero search controls were visually blending together, and the date selection row appeared missing/blank on iPhone when no date had been picked.
+- Decision: Add mobile-only horizontal separators and fixed row heights for the four hero input rows (location, event type, date, category), keep desktop grid/separators unchanged, and show a mobile-only `Select date` prompt overlay when the date field is empty.
+- Why: This is the smallest launch-safe fix that improves scanability and makes date selection discoverable without changing desktop UI behavior.
+- Impact: Mobile hero controls now read as clearly separated sections with a visible date affordance; desktop hero layout and styling stay intact.
+- Revisit trigger: If the hero search is redesigned into a dedicated mobile modal/sheet flow, remove these row-divider/prompt patches and replace with the new interaction pattern.
+
+---
+
 ## [2026-04-01] Replace browser favicon with provided faviconv3 asset and increment cache-bust version
 - Context: Production tab branding needed to switch to a new provided logo file (`faviconv3.png`) while prior favicon caching behavior had already been observed.
 - Decision: Replace `client/public/favicon.png` with the provided `Documents/Businesses/EventHub/logo/faviconv3.png` asset as-is and bump `client/index.html` favicon URL from `/favicon.png?v=2` to `/favicon.png?v=3`.
