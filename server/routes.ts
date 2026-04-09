@@ -34,8 +34,8 @@ import { db } from "./db";
 import { eq, and, or, ne, isNull, inArray, sql as drizzleSql, count, sum, gte, lte, desc, asc } from "drizzle-orm";
 import multer from "multer";
 import path from "path";
-import fs from "fs";
 import { sendBookingConfirmationEmail } from "./email";
+import { uploadBufferToObjectStorage, makeObjectKey, resolveStoredUploadPath, type UploadFolder } from "./lib/objectStorage";
 import {
   computeChatRetentionExpiry,
   deleteStreamBookingChannel,
@@ -4228,18 +4228,21 @@ async function persistUploadedImage(buffer: Buffer, dir: string): Promise<{ file
     throw new Error("Unsupported file content. Upload JPG, PNG, or WebP.");
   }
 
-  const filename = `${Date.now()}-${crypto.randomUUID()}.${format}`;
-  const destination = path.join(dir, filename);
-  await fs.promises.writeFile(destination, buffer);
+  const contentTypeMap = { jpg: "image/jpeg", png: "image/png", webp: "image/webp" } as const;
+  const folder = path.basename(dir) as UploadFolder;
+  const key = makeObjectKey(folder, `image.${format}`);
+
+  await uploadBufferToObjectStorage({ buffer, key, contentType: contentTypeMap[format] });
+
+  // Return just the base filename so callers can build /uploads/<folder>/<filename> as before
+  const filename = key.split("/").pop()!;
   return { filename, format };
 }
 
 export async function registerRoutes(app: Express): Promise<Server> {
   // --- Listing photo uploads (local disk) ---
   const listingUploadsDir = path.join(process.cwd(), "server/uploads/listings");
-  if (!fs.existsSync(listingUploadsDir)) fs.mkdirSync(listingUploadsDir, { recursive: true });
   const vendorShopUploadsDir = path.join(process.cwd(), "server/uploads/vendor-shops");
-  if (!fs.existsSync(vendorShopUploadsDir)) fs.mkdirSync(vendorShopUploadsDir, { recursive: true });
 
   await assertCanonicalBookingSchemaReady();
 
@@ -4368,10 +4371,8 @@ app.post(
       return res.status(400).json({ error: error?.message || "Invalid upload" });
     }
 
-    return res.json({
-      url: `/uploads/listings/${persisted.filename}`,
-      filename: persisted.filename,
-    });
+    const url = resolveStoredUploadPath(`/uploads/listings/${persisted.filename}`) ?? `/uploads/listings/${persisted.filename}`;
+    return res.json({ url, filename: persisted.filename });
   }
 );
 
@@ -4403,10 +4404,8 @@ app.post(
         return res.status(400).json({ error: error?.message || "Invalid upload" });
       }
 
-      return res.json({
-        url: `/uploads/vendor-shops/${persisted.filename}`,
-        filename: persisted.filename,
-      });
+      const url = resolveStoredUploadPath(`/uploads/vendor-shops/${persisted.filename}`) ?? `/uploads/vendor-shops/${persisted.filename}`;
+      return res.json({ url, filename: persisted.filename });
     }
   );
 
@@ -6915,8 +6914,8 @@ app.post(
           : {};
       const aboutBusiness = asTrimmedString((onlineProfiles as any).aboutBusiness);
       const aboutOwner = asTrimmedString((onlineProfiles as any).aboutOwner);
-      const profileImageUrl = asTrimmedString((onlineProfiles as any).shopProfileImageUrl);
-      const coverImageUrl = asTrimmedString((onlineProfiles as any).shopCoverImageUrl);
+      const profileImageUrl = resolveStoredUploadPath(asTrimmedString((onlineProfiles as any).shopProfileImageUrl));
+      const coverImageUrl = resolveStoredUploadPath(asTrimmedString((onlineProfiles as any).shopCoverImageUrl));
       const coverImagePosition = normalizePhotoPosition((onlineProfiles as any).shopCoverImagePosition);
       const tagline = asTrimmedString((onlineProfiles as any).shopTagline);
       const serviceArea = asTrimmedString((onlineProfiles as any).serviceAreaLabel);
@@ -6994,6 +6993,7 @@ app.post(
 
       const listingsWithVendorMeta = compliantListings.map((listing: any) => ({
         ...listing,
+        photos: (listing.photos ?? []).map((p: string) => resolveStoredUploadPath(p) ?? p),
         vendorName: asTrimmedString(listing?.vendorName) || vendor.businessName,
         vendorProfileImageUrl: profileImageUrl || null,
       }));
@@ -7215,10 +7215,11 @@ app.post(
           !Array.isArray(listing.vendorOnlineProfiles)
             ? (listing.vendorOnlineProfiles as Record<string, unknown>)
             : {};
-        const vendorProfileImageUrl = asTrimmedString((onlineProfiles as any).shopProfileImageUrl);
+        const vendorProfileImageUrl = resolveStoredUploadPath(asTrimmedString((onlineProfiles as any).shopProfileImageUrl));
         const { vendorOnlineProfiles: _ignored, ...safeListing } = listing;
         return {
           ...safeListing,
+          photos: ((safeListing as any).photos ?? []).map((p: string) => resolveStoredUploadPath(p) ?? p),
           vendorProfileImageUrl: vendorProfileImageUrl || null,
         };
       });
@@ -7318,12 +7319,13 @@ app.post(
         !Array.isArray(listingRaw.vendorOnlineProfiles)
           ? (listingRaw.vendorOnlineProfiles as Record<string, unknown>)
           : {};
-      const vendorProfileImageUrl = asTrimmedString((onlineProfiles as any).shopProfileImageUrl);
+      const vendorProfileImageUrl = resolveStoredUploadPath(asTrimmedString((onlineProfiles as any).shopProfileImageUrl));
       const listing = listingRaw
         ? (() => {
             const { vendorOnlineProfiles: _ignored, ...safeListing } = listingRaw as any;
             return {
               ...safeListing,
+              photos: ((safeListing as any).photos ?? []).map((p: string) => resolveStoredUploadPath(p) ?? p),
               vendorProfileImageUrl: vendorProfileImageUrl || null,
             };
           })()
@@ -7441,7 +7443,10 @@ app.post(
         .where(whereClause)
         .orderBy(desc(vendorListings.updatedAt), desc(vendorListings.createdAt), asc(vendorListings.id));
 
-      res.json(listings);
+      res.json(listings.map((l) => ({
+        ...l,
+        photos: (l.photos ?? []).map((p) => resolveStoredUploadPath(p) ?? p),
+      })));
     } catch (error: any) {
       logRouteError("/api/vendor/listings", error);
       res.status(500).json({ error: "Unable to load listings" });
@@ -7481,16 +7486,21 @@ app.post(
       if (listings[0]?.profileId && listings[0].profileId !== activeProfileId) {
         return res.status(404).json({ error: "Listing not found in active profile" });
       }
+      const resolvePhotos = (row: any) => ({
+        ...row,
+        photos: (row?.photos ?? []).map((p: string) => resolveStoredUploadPath(p) ?? p),
+      });
+
       if (!listings[0]?.profileId) {
         const [backfilled] = await db
           .update(vendorListings)
           .set({ profileId: activeProfileId, updatedAt: new Date() })
           .where(and(eq(vendorListings.id, id), eq(vendorListings.accountId, vendorAuth.id)))
           .returning();
-        return res.json(backfilled);
+        return res.json(resolvePhotos(backfilled));
       }
 
-      res.json(listings[0]);
+      res.json(resolvePhotos(listings[0]));
     } catch (error: any) {
       logRouteError("/api/vendor/listings/:id", error);
       res.status(500).json({ error: "Unable to load listing" });

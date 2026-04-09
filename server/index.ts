@@ -75,15 +75,6 @@ app.use((req, res, next) => {
   return next();
 });
 
-// Serve uploaded files
-app.use(
-  "/uploads",
-  express.static(path.join(process.cwd(), "server/uploads"), {
-    setHeaders: (res) => {
-      res.setHeader("X-Content-Type-Options", "nosniff");
-    },
-  })
-);
 
 
 declare module 'http' {
