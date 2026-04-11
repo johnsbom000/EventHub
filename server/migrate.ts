@@ -57,9 +57,15 @@ async function recordMigration(name: string): Promise<void> {
 }
 
 function getMigrationFiles(): string[] {
-  const migrationsDir = path.resolve(__dirname, "../migrations");
+  // In production, migrations are compiled to dist/migrations/*.js
+  // In development (tsx), they are loaded as .ts from migrations/
+  const isProd = process.env.NODE_ENV === "production";
+  const migrationsDir = isProd
+    ? path.resolve(__dirname, "./migrations")   // dist/migrations/
+    : path.resolve(__dirname, "../migrations"); // repo root migrations/
+  const ext = isProd ? /^00\d+_.*\.js$/ : /^00\d+_.*\.ts$/;
   return readdirSync(migrationsDir)
-    .filter((file) => /^00\d+_.*\.ts$/.test(file) || /^00\d+_.*\.js$/.test(file))
+    .filter((file) => ext.test(file))
     .sort()
     .map((file) => path.join(migrationsDir, file));
 }
