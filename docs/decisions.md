@@ -4170,3 +4170,59 @@ Template for new entries:
 - Why: A single launch-safe admin source of truth avoids hidden lockouts and role drift between FE and BE.
 - Impact: Admin routes now align with current Auth0-based auth flows while preserving backward compatibility for legacy tokens.
 - Revisit trigger: If role/permission needs expand beyond admin/customer/vendor, replace middleware branching with explicit RBAC policy layer.
+
+## [2026-04-09] Prompt AuthModal and preserve create-listing wizard state on session timeout
+- Context: Vendors could remain on `/vendor/listings/new` after session expiry and hit `Photo upload failed: Missing Authorization Bearer token`, with no in-flow re-login prompt and risk of losing wizard progress after re-auth redirect.
+- Decision: In `CreateListingWizard`, add auth-required error normalization for upload/save/publish/draft-write paths, open the same `AuthModal` used by the top-right `Login / Sign up` CTA when auth is missing/expired, and persist wizard draft state (`step`, `max step`, `listingId`, `draft`) to `localStorage` with restore on load.
+- Why: This keeps session-recovery UX consistent with existing login modal behavior and protects in-progress listing work across Auth0 redirects.
+- Impact: If auth is stale or missing, vendors are prompted to sign back in via the same login modal and return to the listing wizard with their progress restored instead of seeing raw bearer-token failures.
+- Revisit trigger: If a centralized auth-refresh/request-retry layer is introduced for all protected mutations, remove wizard-local auth detection and rely on shared middleware.
+
+## [2026-04-09] Preserve active listing photo preview URLs across reorder
+- Context: Reordering photos in the create listing wizard sometimes broke the large cropper image while thumbnails still appeared, because cleanup revoked object URLs still in use by the reordered selection.
+- Decision: Replace broad `photoPreviews` cleanup with differential revocation in `CreateListingWizard` so only removed preview URLs are revoked during state changes, and revoke all remaining URLs on unmount.
+- Why: Reordering changes array order but does not invalidate preview object URLs, so revocation must be tied to removal, not any array update.
+- Impact: Cropper keeps rendering after reorder, removed photos are still removed from both cropper and thumbnail list, and blob URL cleanup remains bounded.
+- Revisit trigger: If previews move to persisted server URLs immediately after upload, simplify this logic and remove object URL lifecycle tracking.
+
+## [2026-04-09] Align edit hydration with canonical listing fields and save-on-finish behavior
+- Context: Listings created in the wizard could show canonical card price while edit hydration read only nested `listingData.pricing.rate`, causing publish gating to fail; `Finish` in create wizard could close without forcing a final save and lose last-step edits.
+- Decision: In `VendorListingEdit`, hydrate rate/unit and included bullets with canonical fallbacks (`priceCents`, `pricingUnit`, `whatsIncluded`) when nested listingData fields are absent; in `CreateListingWizard`, route `Finish` through `ensureListingSaved()` before close.
+- Why: Canonical and nested listing shapes coexist during migration, so edit hydration must tolerate both; finish actions should preserve in-progress vendor data.
+- Impact: Edit screen now reflects persisted price/included values from either source-of-truth shape, publish gating remains accurate, and finishing the create wizard persists current draft before exiting.
+- Revisit trigger: Once canonical-only listing payloads are enforced and nested compatibility fields are removed, simplify hydration to canonical fields only.
+
+## [2026-04-09] Remove subcategory control from edit listing UI
+- Context: Create Listing wizard does not expose a subcategory input, but Edit Listing still showed one, creating an inconsistent product surface and extra, non-MVP editing path.
+- Decision: Remove the Subcategory input block and related helper copy from `VendorListingEdit` classification section, leaving category-only controls in the UI.
+- Why: Edit flow should mirror create flow inputs and avoid exposing fields the create experience does not support.
+- Impact: Vendors can no longer edit subcategory from the current edit UI; backend/storage compatibility remains unchanged.
+- Revisit trigger: If subcategory is intentionally added to the create flow with validated taxonomy support, reintroduce it in edit with matching constraints.
+
+## [2026-04-10] Normalize listing logistics to explicit included/not-included states and add canonical takedown columns
+- Context: Listing detail cards rendered `Not configured yet` when vendors selected `No` for delivery/setup, takedown controls were venue-only in create/edit flows, and canonical DB columns existed for delivery/setup but not takedown (takedown lived only in `listing_data` JSON).
+- Decision: Update listing detail logistics labels to show explicit `not included` when false values are present, expose takedown controls for the same listing categories as setup (`Rental`, `Venue`, `Catering`) in create/edit forms, and add canonical `vendor_listings` columns (`takedown_offered`, `takedown_fee_enabled`, `takedown_fee_amount_cents`) with migration backfill from existing `listing_data`.
+- Why: Vendors need truthful logistics messaging when they choose `No`, and takedown should be first-class alongside delivery/setup for consistent persistence and downstream calculations.
+- Impact: Delivery/setup/takedown now persist and display with clearer semantics (`included` / `fee` / `not included`), and canonical listing rows now store all three logistics preferences instead of mixing canonical + JSON-only storage.
+- Revisit trigger: If logistics expands beyond fixed toggles into per-distance/per-time policy matrices, replace boolean+fee columns with a dedicated normalized logistics policy model.
+
+## [2026-04-10] Add optional dimensions inputs to create listing wizard
+- Context: Vendors needed a first-party place in create listing to capture physical dimensions (width/length/height) with unit selection, and no structured dimensions block existed in wizard state/payload.
+- Decision: Add a `Dimensions (optional)` section to `CreateListingWizard` basics step with width/length/height inputs and unit toggle (`inches`, `feet`, `meters`, `centimeters`), persist these values in wizard draft state, and include them in `listingData` payload as both nested `dimensions` and flat `dimension*` keys.
+- Why: Structured dimensions improve listing clarity for customers and remove the need to overload free-text description for basic measurements.
+- Impact: New listings created through the wizard now save dimensions alongside other listing data without requiring immediate canonical DB column changes.
+- Revisit trigger: If dimensions become part of filtering, shipping, or booking rules, promote them to canonical DB columns with validation constraints and index strategy.
+
+## [2026-04-10] Scope dimensions UI and persistence to rental listings only
+- Context: Product requirement clarified that dimensions should only appear for Rental listings, not Venue, Catering, or Service listings.
+- Decision: Gate dimensions UI render on `category === "Rental"` and clear/omit dimensions in payload when category changes to non-rental.
+- Why: Keeps create flow aligned with rental-first MVP scope and avoids collecting irrelevant dimensions on non-rental listing types.
+- Impact: Dimensions controls now show only for rentals, and non-rental listings save with `dimensions` fields unset.
+- Revisit trigger: If non-rental categories later require structured measurements, expand category gating with explicit per-category schema rules.
+
+## [2026-04-10] Add development-safe upload fallback when object storage env is missing
+- Context: Local dev photo uploads failed with `Missing OBJECT_STORAGE_BUCKET` when object storage credentials were not present in `.env`.
+- Decision: Keep object storage as the default upload path, but in non-production environments fall back to writing uploaded files to `server/uploads/*` when required object storage env vars are missing; add static `/uploads` serving in server bootstrap; add committed `.env.development.example` and object-storage keys to `.env.production.example`.
+- Why: This preserves launch-safe production behavior while unblocking local development previews without forcing every contributor to provision cloud object storage on day one.
+- Impact: Dev preview uploads work out of the box with local disk fallback, while production still requires full object storage configuration and continues to fail fast when missing.
+- Revisit trigger: If team standardizes on always-on dev cloud storage, remove local fallback and enforce required object storage vars across all environments.

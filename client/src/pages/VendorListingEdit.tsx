@@ -58,12 +58,6 @@ const LISTING_DESCRIPTION_MAX_CHARS = 1000;
 const LISTING_CATEGORY_OPTIONS = ["Rental", "Service", "Venue", "Catering"] as const;
 type ListingCategory = (typeof LISTING_CATEGORY_OPTIONS)[number];
 const SUBCATEGORY_MAX_CHARS = 120;
-const SUBCATEGORY_PLACEHOLDERS: Record<ListingCategory, string> = {
-  Rental: "e.g. Wood Chairs, Backdrop, Table Linens",
-  Service: "e.g. DJ, Day-of Coordinator, Makeup Artist",
-  Venue: "e.g. Barn Venue, Garden Venue, Industrial Venue",
-  Catering: "e.g. Taco Cart, Buffet Catering, Dessert Table",
-};
 
 function normalizeCategoryForEdit(value: unknown): ListingCategory | "" {
   const normalized = String(value ?? "").trim().toLowerCase();
@@ -126,6 +120,18 @@ function parseMoneyStringToOptionalNumber(value: unknown): number | null {
   if (!normalized) return null;
   const parsed = Number(normalized);
   return Number.isFinite(parsed) && parsed >= 0 ? parsed : null;
+}
+
+function toUniqueTrimmedStringList(value: unknown): string[] {
+  if (!Array.isArray(value)) return [];
+  return Array.from(
+    new Set(
+      value
+        .filter((item): item is string => typeof item === "string")
+        .map((item) => item.trim())
+        .filter((item) => item.length > 0),
+    ),
+  );
 }
 
 function normalizeIncludedBullet(raw: string): string {
@@ -319,6 +325,46 @@ export default function VendorListingEdit() {
     if (!listing) return;
 
     const ld = listing.listingData || {};
+    const canonicalListing = listing as AnyListing & {
+      whatsIncluded?: unknown;
+      priceCents?: unknown;
+      pricingUnit?: unknown;
+      minimumHours?: unknown;
+      deliveryOffered?: unknown;
+      deliveryFeeEnabled?: unknown;
+      deliveryFeeAmountCents?: unknown;
+      setupOffered?: unknown;
+      setupFeeEnabled?: unknown;
+      setupFeeAmountCents?: unknown;
+      takedownOffered?: unknown;
+      takedownFeeEnabled?: unknown;
+      takedownFeeAmountCents?: unknown;
+    };
+
+    const listingDataIncluded =
+      toUniqueTrimmedStringList(ld?.whatsIncluded).length > 0
+        ? toUniqueTrimmedStringList(ld?.whatsIncluded)
+        : toUniqueTrimmedStringList(ld?.includedItems).length > 0
+          ? toUniqueTrimmedStringList(ld?.includedItems)
+          : toUniqueTrimmedStringList(ld?.included);
+    const canonicalIncluded = toUniqueTrimmedStringList(canonicalListing?.whatsIncluded);
+    const hydratedIncluded = listingDataIncluded.length > 0 ? listingDataIncluded : canonicalIncluded;
+
+    const canonicalPriceCents = toFiniteNumber(canonicalListing?.priceCents);
+    const hydratedRate =
+      toFiniteNumber(ld?.pricing?.rate) ??
+      toFiniteNumber(ld?.rate) ??
+      toFiniteNumber(ld?.price) ??
+      (canonicalPriceCents != null ? canonicalPriceCents / 100 : null);
+    const hydratedPricingUnit =
+      (typeof ld?.pricingUnit === "string" && ld.pricingUnit.trim().length > 0
+        ? ld.pricingUnit
+        : typeof ld?.pricing?.unit === "string" && ld.pricing.unit.trim().length > 0
+          ? ld.pricing.unit
+          : typeof canonicalListing?.pricingUnit === "string" && canonicalListing.pricingUnit.trim().length > 0
+            ? canonicalListing.pricingUnit
+            : "per_day") as "per_day" | "per_hour";
+
     const rawPhotoNames: string[] = Array.isArray(ld?.photos?.names)
       ? ld.photos.names.filter((name: unknown): name is string => typeof name === "string")
       : [];
@@ -351,9 +397,7 @@ export default function VendorListingEdit() {
       // Title / Description
       listingTitle: normalizeListingTitle(String(ld.listingTitle || listing.title || "")),
       listingDescription: String(ld.listingDescription || "").slice(0, LISTING_DESCRIPTION_MAX_CHARS),
-      whatsIncluded: Array.isArray(ld.whatsIncluded)
-        ? ld.whatsIncluded.filter((item: unknown): item is string => typeof item === "string")
-        : [],
+      whatsIncluded: hydratedIncluded,
 
       // Rental Types (fallback to legacy propTypes)
       rentalTypes: Array.isArray(ld.rentalTypes)
@@ -368,11 +412,11 @@ export default function VendorListingEdit() {
 
       // Pricing (simple baseline; you can expand later)
       pricing: {
-        rate: ld?.pricing?.rate ?? "",
-        unit: ld?.pricing?.unit ?? "per_day",
+        rate: hydratedRate != null ? String(hydratedRate) : "",
+        unit: hydratedPricingUnit,
       },
-      pricingUnit: ld?.pricingUnit ?? ld?.pricing?.unit ?? "per_day",
-      minimumHours: ld?.minimumHours ?? "",
+      pricingUnit: hydratedPricingUnit,
+      minimumHours: ld?.minimumHours ?? canonicalListing?.minimumHours ?? "",
 
       // Photos (persist in ld.photos.names for now; also keep previews locally)
       photos: {
@@ -400,33 +444,45 @@ export default function VendorListingEdit() {
           Boolean(
             ld?.deliverySetup?.deliveryIncluded ??
               ld?.deliveryIncluded ??
-              ld?.deliveryOffered
+              ld?.deliveryOffered ??
+              canonicalListing?.deliveryOffered
           ),
         deliveryFeeEnabled:
-          Boolean(ld?.deliverySetup?.deliveryFeeEnabled ?? ld?.deliveryFeeEnabled),
+          Boolean(ld?.deliverySetup?.deliveryFeeEnabled ?? ld?.deliveryFeeEnabled ?? canonicalListing?.deliveryFeeEnabled),
         deliveryFeeAmount: toNumOrEmpty(
           ld?.deliverySetup?.deliveryFeeAmount ??
             ld?.deliveryFeeAmount ??
-            (ld?.deliveryFeeAmountCents != null ? Number(ld.deliveryFeeAmountCents) / 100 : "")
+            (ld?.deliveryFeeAmountCents != null ? Number(ld.deliveryFeeAmountCents) / 100 : null) ??
+            (canonicalListing?.deliveryFeeAmountCents != null ? Number(canonicalListing.deliveryFeeAmountCents) / 100 : null)
         ),
         setupIncluded:
           Boolean(
             ld?.deliverySetup?.setupIncluded ??
               ld?.setupIncluded ??
-              ld?.setupOffered
+              ld?.setupOffered ??
+              canonicalListing?.setupOffered
           ),
-        setupFeeEnabled: Boolean(ld?.deliverySetup?.setupFeeEnabled ?? ld?.setupFeeEnabled),
+        setupFeeEnabled: Boolean(ld?.deliverySetup?.setupFeeEnabled ?? ld?.setupFeeEnabled ?? canonicalListing?.setupFeeEnabled),
         setupFeeAmount: toNumOrEmpty(
           ld?.deliverySetup?.setupFeeAmount ??
             ld?.setupFeeAmount ??
-            (ld?.setupFeeAmountCents != null ? Number(ld.setupFeeAmountCents) / 100 : "")
+            (ld?.setupFeeAmountCents != null ? Number(ld.setupFeeAmountCents) / 100 : null) ??
+            (canonicalListing?.setupFeeAmountCents != null ? Number(canonicalListing.setupFeeAmountCents) / 100 : null)
         ),
-        takedownIncluded: Boolean(ld?.deliverySetup?.takedownIncluded ?? ld?.takedownIncluded ?? ld?.takedownOffered),
-        takedownFeeEnabled: Boolean(ld?.deliverySetup?.takedownFeeEnabled ?? ld?.takedownFeeEnabled),
+        takedownIncluded: Boolean(
+          ld?.deliverySetup?.takedownIncluded ??
+            ld?.takedownIncluded ??
+            ld?.takedownOffered ??
+            canonicalListing?.takedownOffered
+        ),
+        takedownFeeEnabled: Boolean(
+          ld?.deliverySetup?.takedownFeeEnabled ?? ld?.takedownFeeEnabled ?? canonicalListing?.takedownFeeEnabled
+        ),
         takedownFeeAmount: toNumOrEmpty(
           ld?.deliverySetup?.takedownFeeAmount ??
             ld?.takedownFeeAmount ??
-            (ld?.takedownFeeAmountCents != null ? Number(ld.takedownFeeAmountCents) / 100 : "")
+            (ld?.takedownFeeAmountCents != null ? Number(ld.takedownFeeAmountCents) / 100 : null) ??
+            (canonicalListing?.takedownFeeAmountCents != null ? Number(canonicalListing.takedownFeeAmountCents) / 100 : null)
         ),
       },
       serviceAreaMode: (ld?.serviceAreaMode || "radius") as ServiceAreaMode,
@@ -870,8 +926,8 @@ export default function VendorListingEdit() {
     const setupFeeEnabled = setupIncluded && Boolean(deliverySetupDraft?.setupFeeEnabled);
     const setupFeeAmount = setupFeeEnabled ? parseMoneyStringToOptionalNumber(deliverySetupDraft?.setupFeeAmount) : null;
 
-    const isVenueCategory = draft.category === "Venue";
-    const takedownIncluded = isVenueCategory && Boolean(deliverySetupDraft?.takedownIncluded);
+    const takedownSupportedCategory = draft.category === "Rental" || draft.category === "Venue" || draft.category === "Catering";
+    const takedownIncluded = takedownSupportedCategory && Boolean(deliverySetupDraft?.takedownIncluded);
     const takedownFeeEnabled = takedownIncluded && Boolean(deliverySetupDraft?.takedownFeeEnabled);
     const takedownFeeAmount = takedownFeeEnabled
       ? parseMoneyStringToOptionalNumber(deliverySetupDraft?.takedownFeeAmount)
@@ -1339,10 +1395,10 @@ export default function VendorListingEdit() {
                     <div className="space-y-4">
                       <div>
                         <div className="text-xl font-semibold">Listing Classification</div>
-                        <div className="text-sm text-muted-foreground">Category is required to publish. Subcategory is optional.</div>
+                        <div className="text-sm text-muted-foreground">Category is required to publish.</div>
                       </div>
 
-                      <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
+                      <div className="grid grid-cols-1 gap-4">
                         <div className="space-y-2">
                           <Label>Category</Label>
                           <Select
@@ -1370,25 +1426,6 @@ export default function VendorListingEdit() {
                           {!hasCategory && (
                             <div className="text-sm text-destructive">Category is required.</div>
                           )}
-                        </div>
-
-                        <div className="space-y-2">
-                          <Label>Subcategory (optional)</Label>
-                          <Input
-                            value={draft.subcategory ?? ""}
-                            onChange={(e) =>
-                              setDraft((d: any) => ({
-                                ...d,
-                                subcategory: e.target.value.slice(0, SUBCATEGORY_MAX_CHARS),
-                              }))
-                            }
-                            placeholder={
-                              hasCategory
-                                ? SUBCATEGORY_PLACEHOLDERS[draft.category as ListingCategory]
-                                : "e.g. Wood Chairs, Wedding DJ, Industrial Venue"
-                            }
-                            className={fieldSurfaceClass}
-                          />
                         </div>
                       </div>
                     </div>
@@ -1902,7 +1939,7 @@ export default function VendorListingEdit() {
                           </div>
                         )}
 
-                        {draft.category === "Venue" ? (
+                        {draft.category === "Rental" || draft.category === "Venue" || draft.category === "Catering" ? (
                           <>
                             <div className="flex items-center justify-between gap-6">
                               <Label>Do you offer takedown?</Label>

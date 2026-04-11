@@ -1,7 +1,32 @@
 import { PutObjectCommand, S3Client } from "@aws-sdk/client-s3";
 import crypto from "crypto";
 
-function getConfig() {
+const REQUIRED_OBJECT_STORAGE_VARS = [
+  "OBJECT_STORAGE_BUCKET",
+  "OBJECT_STORAGE_ENDPOINT",
+  "OBJECT_STORAGE_ACCESS_KEY_ID",
+  "OBJECT_STORAGE_SECRET_ACCESS_KEY",
+  "OBJECT_STORAGE_PUBLIC_BASE_URL",
+] as const;
+
+type ObjectStorageConfig = {
+  bucket: string;
+  endpoint: string;
+  accessKeyId: string;
+  secretAccessKey: string;
+  region: string;
+  publicBaseUrl: string;
+};
+
+function missingObjectStorageVars(): string[] {
+  return REQUIRED_OBJECT_STORAGE_VARS.filter((envKey) => !(process.env[envKey] || "").trim());
+}
+
+export function isObjectStorageConfigured(): boolean {
+  return missingObjectStorageVars().length === 0;
+}
+
+function getConfig(): ObjectStorageConfig {
   const bucket = process.env.OBJECT_STORAGE_BUCKET;
   const endpoint = process.env.OBJECT_STORAGE_ENDPOINT;
   const accessKeyId = process.env.OBJECT_STORAGE_ACCESS_KEY_ID;
@@ -9,13 +34,19 @@ function getConfig() {
   const region = process.env.OBJECT_STORAGE_REGION || "auto";
   const publicBaseUrl = process.env.OBJECT_STORAGE_PUBLIC_BASE_URL;
 
-  if (!bucket) throw new Error("Missing OBJECT_STORAGE_BUCKET");
-  if (!endpoint) throw new Error("Missing OBJECT_STORAGE_ENDPOINT");
-  if (!accessKeyId) throw new Error("Missing OBJECT_STORAGE_ACCESS_KEY_ID");
-  if (!secretAccessKey) throw new Error("Missing OBJECT_STORAGE_SECRET_ACCESS_KEY");
-  if (!publicBaseUrl) throw new Error("Missing OBJECT_STORAGE_PUBLIC_BASE_URL");
+  const missing = missingObjectStorageVars();
+  if (missing.length > 0) {
+    throw new Error(`Missing ${missing.join(", ")}`);
+  }
 
-  return { bucket, endpoint, accessKeyId, secretAccessKey, region, publicBaseUrl };
+  return {
+    bucket: bucket!,
+    endpoint: endpoint!,
+    accessKeyId: accessKeyId!,
+    secretAccessKey: secretAccessKey!,
+    region,
+    publicBaseUrl: publicBaseUrl!,
+  };
 }
 
 function buildClient() {
@@ -61,6 +92,7 @@ export async function uploadBufferToObjectStorage(params: {
 export function resolveStoredUploadPath(pathOrUrl?: string | null): string | null {
   if (!pathOrUrl) return null;
   if (/^https?:\/\//i.test(pathOrUrl)) return pathOrUrl;
+  if (!isObjectStorageConfigured()) return pathOrUrl;
 
   const { publicBaseUrl } = getConfig();
   const cleanBase = publicBaseUrl.replace(/\/$/, "");

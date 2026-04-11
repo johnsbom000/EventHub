@@ -363,6 +363,9 @@ export class MemStorage implements IStorage {
       setupOffered: insert.setupOffered ?? false,
       setupFeeEnabled: insert.setupFeeEnabled ?? false,
       setupFeeAmountCents: insert.setupFeeAmountCents ?? null,
+      takedownOffered: insert.takedownOffered ?? false,
+      takedownFeeEnabled: insert.takedownFeeEnabled ?? false,
+      takedownFeeAmountCents: insert.takedownFeeAmountCents ?? null,
       photos: insert.photos ?? [],
 
       // required; must not be undefined

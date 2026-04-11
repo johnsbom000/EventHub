@@ -22,6 +22,10 @@ if (process.env.NODE_ENV !== "production") {
 }
 
 const app = express();
+const uploadsDir = path.resolve(__dirname, "./uploads");
+
+// Dev/local fallback for listing/shop uploads when object storage is not configured.
+app.use("/uploads", express.static(uploadsDir));
 
 function normalizeOrigin(value: string): string {
   try {

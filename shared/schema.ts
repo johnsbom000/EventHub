@@ -334,6 +334,9 @@ export const vendorListings = pgTable("vendor_listings", {
   setupOffered: boolean("setup_offered").notNull().default(false),
   setupFeeEnabled: boolean("setup_fee_enabled").notNull().default(false),
   setupFeeAmountCents: integer("setup_fee_amount_cents"),
+  takedownOffered: boolean("takedown_offered").notNull().default(false),
+  takedownFeeEnabled: boolean("takedown_fee_enabled").notNull().default(false),
+  takedownFeeAmountCents: integer("takedown_fee_amount_cents"),
   photos: text("photos").array().notNull().default(sql`'{}'`),
   listingData: jsonb("listing_data"), // Complete listing wizard form data
   createdAt: timestamp("created_at").defaultNow(),

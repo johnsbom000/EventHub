@@ -14,6 +14,8 @@ import {
 import mapboxgl from "mapbox-gl";
 import "mapbox-gl/dist/mapbox-gl.css";
 
+import { useAuth0 } from "@auth0/auth0-react";
+import AuthModal from "@/components/AuthModal";
 import Navigation from "@/components/Navigation";
 import { LocationPicker } from "@/components/LocationPicker";
 import { InlinePhotoEditor, type ListingPhotoCrop } from "@/components/listings/InlinePhotoEditor";
@@ -27,7 +29,7 @@ import { useToast } from "@/hooks/use-toast";
 import { getFreshAccessToken } from "@/lib/authToken";
 import { DEFAULT_COVER_RATIO, type CoverRatio } from "@/lib/listingPhotos";
 import { getPublishFailureToastContent } from "@/lib/publishFailureToast";
-import { apiRequest } from "@/lib/queryClient";
+import { apiRequest, getApiErrorStatus } from "@/lib/queryClient";
 import { resolveAssetUrl } from "@/lib/runtimeUrls";
 import { cn } from "@/lib/utils";
 import type { LocationResult } from "@/types/location";
@@ -41,6 +43,23 @@ const MAPBOX_TOKEN =
 const LISTING_TAG_KEY = "__listing__";
 const MIN_PHOTOS_FOR_PUBLISH = 3;
 const DESCRIPTION_MAX_CHARS = 1000;
+const CREATE_LISTING_STORAGE_KEY = "createListingWizard:v1";
+const AUTH_LOGIN_REQUIRED_ERROR = "AUTH_LOGIN_REQUIRED";
+const AUTH_REQUIRED_MESSAGE_PATTERNS = [
+  "login required",
+  "login_required",
+  "unauthorized",
+  "forbidden",
+  "not authenticated",
+  "authentication required",
+  "invalid token",
+  "jwt",
+  "missing authorization bearer token",
+  "no token provided",
+  "missing or invalid refresh token",
+  "consent required",
+  AUTH_LOGIN_REQUIRED_ERROR.toLowerCase(),
+];
 
 const CATEGORY_OPTIONS = [
   { value: "Rental", label: "Rental" },
@@ -55,6 +74,7 @@ type StepId = "basics" | "perfectFor" | "bookingPricing" | "serviceArea" | "logi
 type PricingUnit = "per_day" | "per_hour";
 type BookingType = "instant" | "request";
 type TravelFeeType = "flat" | "per_mile" | "per_hour";
+type DimensionUnit = "inches" | "feet" | "meters" | "centimeters";
 
 type ListingTag = { label: string; slug: string };
 
@@ -70,6 +90,10 @@ type ListingDraft = {
   pricingUnit: PricingUnit;
   rate: string;
   quantity: string;
+  dimensionUnit: DimensionUnit;
+  dimensionWidth: string;
+  dimensionLength: string;
+  dimensionHeight: string;
 
   serviceAreaMode: "radius";
   serviceRadiusMiles: number;
@@ -112,6 +136,10 @@ const DEFAULT_DRAFT: ListingDraft = {
   pricingUnit: "per_day",
   rate: "",
   quantity: "1",
+  dimensionUnit: "inches",
+  dimensionWidth: "",
+  dimensionLength: "",
+  dimensionHeight: "",
 
   serviceAreaMode: "radius",
   serviceRadiusMiles: 30,
@@ -183,6 +211,13 @@ const STEP_META: Record<
     description: "Publish-ready photos.",
   },
 };
+
+const DIMENSION_UNIT_OPTIONS: Array<{ value: DimensionUnit; label: string }> = [
+  { value: "inches", label: "Inches" },
+  { value: "feet", label: "Feet" },
+  { value: "meters", label: "Meters" },
+  { value: "centimeters", label: "Centimeters" },
+];
 
 const PERFECT_FOR_EMOJI: Record<string, string> = {
   Weddings: "💍",
@@ -296,6 +331,20 @@ function normalizeTitleInput(raw: string, maxLen: number): string {
   return cleaned.replace(/(^|[\s/-])([a-z])/g, (_, prefix: string, char: string) => `${prefix}${char.toUpperCase()}`);
 }
 
+function normalizeDimensionInput(raw: unknown): string {
+  const cleaned = String(raw ?? "").replace(/[^\d.]/g, "");
+  if (!cleaned) return "";
+  const firstDot = cleaned.indexOf(".");
+  const normalized =
+    firstDot === -1 ? cleaned : `${cleaned.slice(0, firstDot + 1)}${cleaned.slice(firstDot + 1).replace(/\./g, "")}`;
+  return normalized.slice(0, 9);
+}
+
+function parseDimensionNumber(raw: string): number | null {
+  const value = Number(raw);
+  return Number.isFinite(value) && value > 0 ? value : null;
+}
+
 function toMoneyCents(raw: string): number | null {
   const value = Number(raw);
   if (!Number.isFinite(value) || value < 0) return null;
@@ -370,6 +419,164 @@ function isCategory(value: string): value is ListingCategory {
   return CATEGORY_OPTIONS.some((option) => option.value === value);
 }
 
+function isAuthRequiredError(error: unknown): boolean {
+  const status = getApiErrorStatus(error);
+  if (status === 401 || status === 403) return true;
+
+  const extractText = (value: unknown): string[] => {
+    if (typeof value === "string") return [value];
+    if (value instanceof Error) return [value.message];
+    if (!value || typeof value !== "object") return [];
+
+    const source = value as Record<string, unknown>;
+    const nestedResponse =
+      source.response && typeof source.response === "object"
+        ? ((source.response as Record<string, unknown>).data as Record<string, unknown> | undefined)
+        : undefined;
+
+    const candidates: unknown[] = [
+      source.message,
+      source.error,
+      source.description,
+      source.code,
+      source.error_description,
+      source.status,
+      source.statusCode,
+      nestedResponse?.message,
+      nestedResponse?.error,
+      nestedResponse?.description,
+      nestedResponse?.code,
+      nestedResponse?.status,
+      nestedResponse?.statusCode,
+      source?.response && typeof source.response === "object"
+        ? (source.response as Record<string, unknown>).status
+        : undefined,
+    ];
+
+    return candidates
+      .filter((candidate): candidate is string | number => typeof candidate === "string" || typeof candidate === "number")
+      .map((candidate) => String(candidate));
+  };
+
+  return extractText(error)
+    .map((value) => value.trim().toLowerCase())
+    .filter(Boolean)
+    .some((message) =>
+      AUTH_REQUIRED_MESSAGE_PATTERNS.some((pattern) => message.includes(pattern))
+    );
+}
+
+function normalizeStoredStepId(value: unknown): StepId {
+  if (typeof value !== "string") return "basics";
+  return STEPS.some((step) => step.id === value) ? (value as StepId) : "basics";
+}
+
+function sanitizeStoredDraft(value: unknown): ListingDraft {
+  const raw =
+    value && typeof value === "object" && !Array.isArray(value)
+      ? (value as Partial<ListingDraft>)
+      : ({} as Partial<ListingDraft>);
+
+  const category = typeof raw.category === "string" && isCategory(raw.category) ? raw.category : "";
+  const bookingType = raw.bookingType === "request" ? "request" : "instant";
+  const pricingUnit = raw.pricingUnit === "per_hour" ? "per_hour" : "per_day";
+  const storedDimensions =
+    (raw as any).dimensions && typeof (raw as any).dimensions === "object" && !Array.isArray((raw as any).dimensions)
+      ? ((raw as any).dimensions as Record<string, unknown>)
+      : null;
+  const dimensionUnit: DimensionUnit =
+    raw.dimensionUnit === "feet" || raw.dimensionUnit === "meters" || raw.dimensionUnit === "centimeters"
+      ? raw.dimensionUnit
+      : storedDimensions?.unit === "feet" || storedDimensions?.unit === "meters" || storedDimensions?.unit === "centimeters"
+        ? (storedDimensions.unit as DimensionUnit)
+      : "inches";
+  const dimensionWidth = normalizeDimensionInput(raw.dimensionWidth ?? storedDimensions?.width);
+  const dimensionLength = normalizeDimensionInput(raw.dimensionLength ?? storedDimensions?.length);
+  const dimensionHeight = normalizeDimensionInput(raw.dimensionHeight ?? storedDimensions?.height);
+  const travelFeeType = raw.travelFeeType === "per_mile" || raw.travelFeeType === "per_hour" ? raw.travelFeeType : "flat";
+  const serviceRadius = Number(raw.serviceRadiusMiles);
+  const serviceRadiusMiles =
+    Number.isFinite(serviceRadius) && serviceRadius > 0 ? serviceRadius : DEFAULT_DRAFT.serviceRadiusMiles;
+
+  const serviceCenter =
+    raw.serviceCenter &&
+    Number.isFinite(Number(raw.serviceCenter.lat)) &&
+    Number.isFinite(Number(raw.serviceCenter.lng))
+      ? { lat: Number(raw.serviceCenter.lat), lng: Number(raw.serviceCenter.lng) }
+      : null;
+
+  const serviceLocation =
+    raw.serviceLocation &&
+    typeof raw.serviceLocation === "object" &&
+    Number.isFinite(Number((raw.serviceLocation as any).lat)) &&
+    Number.isFinite(Number((raw.serviceLocation as any).lng))
+      ? (raw.serviceLocation as LocationResult)
+      : null;
+
+  const photoNames = Array.isArray(raw.photoNames)
+    ? raw.photoNames.filter((name): name is string => typeof name === "string" && name.trim().length > 0)
+    : [];
+
+  const photoCropsByName =
+    raw.photoCropsByName && typeof raw.photoCropsByName === "object" && !Array.isArray(raw.photoCropsByName)
+      ? (raw.photoCropsByName as Record<string, ListingPhotoCrop>)
+      : {};
+
+  return {
+    ...DEFAULT_DRAFT,
+    ...raw,
+    category,
+    bookingType,
+    pricingUnit,
+    dimensionUnit,
+    dimensionWidth,
+    dimensionLength,
+    dimensionHeight,
+    travelFeeType,
+    serviceAreaMode: "radius",
+    serviceRadiusMiles,
+    serviceCenter,
+    serviceLocation,
+    photoNames,
+    photoPreviews: [], // Blob URLs are session-scoped and invalid after refresh/redirect.
+    photoCropsByName,
+  };
+}
+
+function readStoredWizardState():
+  | {
+      currentStep: StepId;
+      maxStepReached: number;
+      listingId: string | null;
+      draft: ListingDraft;
+    }
+  | null {
+  if (typeof window === "undefined") return null;
+
+  try {
+    const raw = window.localStorage.getItem(CREATE_LISTING_STORAGE_KEY);
+    if (!raw) return null;
+    const parsed = JSON.parse(raw) as Record<string, unknown>;
+    const currentStep = normalizeStoredStepId(parsed.currentStep);
+    const maxStepValue = Math.floor(Number(parsed.maxStepReached));
+    const maxStepReached =
+      Number.isFinite(maxStepValue) && maxStepValue >= 0 && maxStepValue < STEPS.length
+        ? maxStepValue
+        : 0;
+    const listingId =
+      typeof parsed.listingId === "string" && parsed.listingId.trim().length > 0 ? parsed.listingId.trim() : null;
+
+    return {
+      currentStep,
+      maxStepReached,
+      listingId,
+      draft: sanitizeStoredDraft(parsed.draft),
+    };
+  } catch {
+    return null;
+  }
+}
+
 function ToggleGroup({
   value,
   onChange,
@@ -420,27 +627,33 @@ export type CreateListingWizardProps = {
 };
 
 export function CreateListingWizard({ onClose }: CreateListingWizardProps) {
+  const restoredWizardState = useMemo(() => readStoredWizardState(), []);
   const { toast } = useToast();
+  const { isAuthenticated } = useAuth0();
 
   const { data: me } = useQuery({ queryKey: ["/api/vendor/me"] });
   const { data: vendorProfile } = useQuery({ queryKey: ["/api/vendor/profile"] });
 
   const vendorType = ((me as any)?.vendorType || "unspecified") as string;
 
-  const [currentStep, setCurrentStep] = useState<StepId>("basics");
-  const [maxStepReached, setMaxStepReached] = useState(0);
-  const [draft, setDraft] = useState<ListingDraft>(DEFAULT_DRAFT);
-  const [listingId, setListingId] = useState<string | null>(null);
+  const [currentStep, setCurrentStep] = useState<StepId>(restoredWizardState?.currentStep ?? "basics");
+  const [maxStepReached, setMaxStepReached] = useState(restoredWizardState?.maxStepReached ?? 0);
+  const [draft, setDraft] = useState<ListingDraft>(restoredWizardState?.draft ?? DEFAULT_DRAFT);
+  const [listingId, setListingId] = useState<string | null>(restoredWizardState?.listingId ?? null);
+  const [authModalOpen, setAuthModalOpen] = useState(false);
 
   const [tagInput, setTagInput] = useState("");
   const [includedInput, setIncludedInput] = useState("");
 
   const [isPublishing, setIsPublishing] = useState(false);
   const [isSavingDraft, setIsSavingDraft] = useState(false);
+  const [isFinishing, setIsFinishing] = useState(false);
   const [attemptedStepAdvance, setAttemptedStepAdvance] = useState<Partial<Record<StepId, boolean>>>({});
 
   const createRequestedRef = useRef(false);
   const pendingPayloadRef = useRef<any | null>(null);
+  const authPromptShownRef = useRef(false);
+  const activePhotoPreviewsRef = useRef<string[]>([]);
 
   const fileInputRef = useRef<HTMLInputElement | null>(null);
 
@@ -490,8 +703,62 @@ export function CreateListingWizard({ onClose }: CreateListingWizardProps) {
     [center],
   );
 
+  const persistDraftState = () => {
+    if (typeof window === "undefined") return;
+
+    const payload = {
+      currentStep,
+      maxStepReached,
+      listingId,
+      draft: {
+        ...draft,
+        photoPreviews: [],
+      },
+    };
+    window.localStorage.setItem(CREATE_LISTING_STORAGE_KEY, JSON.stringify(payload));
+  };
+
+  const clearDraftState = () => {
+    if (typeof window === "undefined") return;
+    window.localStorage.removeItem(CREATE_LISTING_STORAGE_KEY);
+  };
+
+  const promptForSessionRecovery = (description = "Please sign in again to continue where you left off.") => {
+    setAuthModalOpen(true);
+    if (!authPromptShownRef.current) {
+      toast({
+        title: "Session expired",
+        description,
+        variant: "destructive",
+      });
+      authPromptShownRef.current = true;
+    }
+  };
+
+  const handleAuthRequired = (error: unknown, description?: string): boolean => {
+    if (!isAuthRequiredError(error)) return false;
+    promptForSessionRecovery(description);
+    return true;
+  };
+
+  useEffect(() => {
+    const currentIndex = STEPS.findIndex((step) => step.id === currentStep);
+    if (currentIndex < 0) return;
+    setMaxStepReached((previous) => Math.max(previous, currentIndex));
+  }, [currentStep]);
+
+  useEffect(() => {
+    const timer = window.setTimeout(() => {
+      persistDraftState();
+    }, 250);
+    return () => window.clearTimeout(timer);
+  }, [currentStep, draft, listingId, maxStepReached]);
+
   const createDraftMutation = useMutation({
     mutationFn: async () => {
+      if (!isAuthenticated) {
+        throw new Error(AUTH_LOGIN_REQUIRED_ERROR);
+      }
       const res = await apiRequest("POST", "/api/vendor/listings", { listingData: {} });
       const json = await res.json();
       if (!res.ok) throw new Error(json?.error || "Failed to create draft");
@@ -509,6 +776,9 @@ export function CreateListingWizard({ onClose }: CreateListingWizardProps) {
     },
     onError: (error: any) => {
       createRequestedRef.current = false;
+      if (handleAuthRequired(error, "Please sign in to keep editing your listing.")) {
+        return;
+      }
       toast({
         title: "Unable to create draft",
         description: error?.message || "Please try again.",
@@ -519,10 +789,16 @@ export function CreateListingWizard({ onClose }: CreateListingWizardProps) {
 
   const updateDraftMutation = useMutation({
     mutationFn: async ({ id, payload }: { id: string; payload: any }) => {
+      if (!isAuthenticated) {
+        throw new Error(AUTH_LOGIN_REQUIRED_ERROR);
+      }
       const res = await apiRequest("PATCH", `/api/vendor/listings/${id}`, { listingData: payload });
       const json = await res.json();
       if (!res.ok) throw new Error(json?.error || "Failed to update listing");
       return json;
+    },
+    onError: (error: any) => {
+      handleAuthRequired(error, "Please sign in to keep editing your listing.");
     },
   });
 
@@ -531,7 +807,8 @@ export function CreateListingWizard({ onClose }: CreateListingWizardProps) {
   const showTravelSection = draft.category === "Service" || draft.category === "Catering";
   const showDeliverySection = draft.category === "Rental" || draft.category === "Catering";
   const showSetupSection = draft.category === "Rental" || draft.category === "Venue" || draft.category === "Catering";
-  const showTakedownSection = draft.category === "Venue";
+  const showTakedownSection = draft.category === "Rental" || draft.category === "Venue" || draft.category === "Catering";
+  const showDimensionsSection = draft.category === "Rental";
   const bookingTypeRequired = draft.category === "Service" || draft.category === "Venue" || draft.category === "Catering";
 
   const listingTags = useMemo(() => draft.tagsByPropType[LISTING_TAG_KEY] ?? [], [draft.tagsByPropType]);
@@ -562,6 +839,9 @@ export function CreateListingWizard({ onClose }: CreateListingWizardProps) {
     const quantity = parsePositiveInt(draft.quantity);
     const priceNumber = Number(draft.rate);
     const price = Number.isFinite(priceNumber) ? priceNumber : null;
+    const dimensionWidth = showDimensionsSection ? parseDimensionNumber(draft.dimensionWidth) : null;
+    const dimensionLength = showDimensionsSection ? parseDimensionNumber(draft.dimensionLength) : null;
+    const dimensionHeight = showDimensionsSection ? parseDimensionNumber(draft.dimensionHeight) : null;
     const instantBookEnabled = draft.category === "Rental" ? true : draft.bookingType === "instant";
 
     const centerLat = draft.serviceCenter?.lat ?? draft.serviceLocation?.lat ?? null;
@@ -590,6 +870,18 @@ export function CreateListingWizard({ onClose }: CreateListingWizardProps) {
       priceCents: price != null ? Math.round(price * 100) : null,
 
       quantity: draft.category === "Rental" ? quantity : null,
+      dimensions: showDimensionsSection
+        ? {
+            unit: draft.dimensionUnit,
+            width: dimensionWidth,
+            length: dimensionLength,
+            height: dimensionHeight,
+          }
+        : null,
+      dimensionUnit: showDimensionsSection ? draft.dimensionUnit : null,
+      dimensionWidth,
+      dimensionLength,
+      dimensionHeight,
 
       serviceAreaMode: "radius",
       serviceRadiusMiles: Number(draft.serviceRadiusMiles),
@@ -662,7 +954,7 @@ export function CreateListingWizard({ onClose }: CreateListingWizardProps) {
         count: draft.videoNames.length,
       },
     };
-  }, [draft, listingTags, showDeliverySection, showSetupSection, showTakedownSection, showTravelSection, vendorType]);
+  }, [draft, listingTags, showDeliverySection, showDimensionsSection, showSetupSection, showTakedownSection, showTravelSection, vendorType]);
 
   const staticMapPreviewUrl = useMemo(() => {
     if (!center) return null;
@@ -762,12 +1054,18 @@ export function CreateListingWizard({ onClose }: CreateListingWizardProps) {
   }, [vendorProfile, draft.serviceCenter, draft.serviceLocation]);
 
   useEffect(() => {
+    if (!isAuthenticated) return;
+
     const hasMeaningfulData =
       Boolean(draft.category) ||
       draft.listingTitle.trim().length > 0 ||
       draft.listingDescription.trim().length > 0 ||
       draft.photoNames.length > 0 ||
-      Number(draft.rate) > 0;
+      Number(draft.rate) > 0 ||
+      (showDimensionsSection &&
+        (parseDimensionNumber(draft.dimensionWidth) != null ||
+          parseDimensionNumber(draft.dimensionLength) != null ||
+          parseDimensionNumber(draft.dimensionHeight) != null));
 
     if (!hasMeaningfulData) return;
 
@@ -791,7 +1089,9 @@ export function CreateListingWizard({ onClose }: CreateListingWizardProps) {
     buildListingPayload,
     createDraftMutation,
     draft,
+    isAuthenticated,
     listingId,
+    showDimensionsSection,
     updateDraftMutation,
   ]);
 
@@ -966,10 +1266,24 @@ export function CreateListingWizard({ onClose }: CreateListingWizardProps) {
   }, [center, centerFeatureCollection, circleFeature, draft.serviceRadiusMiles, isMapReady, radiusFeatureCollection]);
 
   useEffect(() => {
-    return () => {
-      draft.photoPreviews.forEach((url) => URL.revokeObjectURL(url));
-    };
+    const nextPreviews = draft.photoPreviews.filter((url): url is string => typeof url === "string" && url.length > 0);
+    const nextPreviewSet = new Set(nextPreviews);
+
+    activePhotoPreviewsRef.current.forEach((url) => {
+      if (!nextPreviewSet.has(url)) {
+        URL.revokeObjectURL(url);
+      }
+    });
+
+    activePhotoPreviewsRef.current = nextPreviews;
   }, [draft.photoPreviews]);
+
+  useEffect(() => {
+    return () => {
+      activePhotoPreviewsRef.current.forEach((url) => URL.revokeObjectURL(url));
+      activePhotoPreviewsRef.current = [];
+    };
+  }, []);
 
   const addTag = (raw: string) => {
     const normalized = normalizeTag(raw);
@@ -1048,19 +1362,32 @@ export function CreateListingWizard({ onClose }: CreateListingWizardProps) {
   };
 
   async function uploadListingPhoto(file: File): Promise<UploadedListingPhoto> {
+    if (!isAuthenticated) {
+      throw new Error(AUTH_LOGIN_REQUIRED_ERROR);
+    }
     const token = await getFreshAccessToken();
+    if (!token) {
+      throw new Error(AUTH_LOGIN_REQUIRED_ERROR);
+    }
     const formData = new FormData();
     formData.append("photo", file);
 
     const response = await fetch("/api/uploads/listing-photo", {
       method: "POST",
-      headers: token ? { Authorization: `Bearer ${token}` } : undefined,
+      headers: { Authorization: `Bearer ${token}` },
       body: formData,
       credentials: "include",
     });
 
     if (!response.ok) {
       const errorText = (await response.text()) || response.statusText;
+      if (
+        response.status === 401 ||
+        response.status === 403 ||
+        errorText.toLowerCase().includes("missing authorization bearer token")
+      ) {
+        throw new Error(AUTH_LOGIN_REQUIRED_ERROR);
+      }
       throw new Error(`${response.status}: ${errorText}`);
     }
 
@@ -1168,11 +1495,13 @@ export function CreateListingWizard({ onClose }: CreateListingWizardProps) {
         };
       });
 
-      toast({
-        title: "Photo upload failed",
-        description: error?.message || "Please try again.",
-        variant: "destructive",
-      });
+      if (!handleAuthRequired(error, "Please sign in to continue uploading photos.")) {
+        toast({
+          title: "Photo upload failed",
+          description: error?.message || "Please try again.",
+          variant: "destructive",
+        });
+      }
     }
 
     if (fileInputRef.current) fileInputRef.current.value = "";
@@ -1257,13 +1586,26 @@ export function CreateListingWizard({ onClose }: CreateListingWizardProps) {
     setCurrentStep(previousStep.id);
   };
 
+  const handleCloseWizard = () => {
+    clearDraftState();
+    onClose();
+  };
+
   const ensureListingSaved = async (): Promise<string | null> => {
+    if (!isAuthenticated) {
+      throw new Error(AUTH_LOGIN_REQUIRED_ERROR);
+    }
+
     const hasMeaningfulData =
       Boolean(draft.category) ||
       draft.listingTitle.trim().length > 0 ||
       draft.listingDescription.trim().length > 0 ||
       Number(draft.rate) > 0 ||
-      draft.photoNames.length > 0;
+      draft.photoNames.length > 0 ||
+      (showDimensionsSection &&
+        (parseDimensionNumber(draft.dimensionWidth) != null ||
+          parseDimensionNumber(draft.dimensionLength) != null ||
+          parseDimensionNumber(draft.dimensionHeight) != null));
 
     if (!hasMeaningfulData) return null;
 
@@ -1293,8 +1635,11 @@ export function CreateListingWizard({ onClose }: CreateListingWizardProps) {
           : "Add listing details, then save your draft.",
       });
 
-      if (savedId) onClose();
+      if (savedId) handleCloseWizard();
     } catch (error: any) {
+      if (handleAuthRequired(error, "Please sign in to continue saving your listing draft.")) {
+        return;
+      }
       toast({
         title: "Save failed",
         description: error?.message || "Unable to save draft.",
@@ -1302,6 +1647,31 @@ export function CreateListingWizard({ onClose }: CreateListingWizardProps) {
       });
     } finally {
       setIsSavingDraft(false);
+    }
+  };
+
+  const handleFinish = async () => {
+    setIsFinishing(true);
+    try {
+      const savedId = await ensureListingSaved();
+      if (savedId) {
+        toast({
+          title: "Draft saved",
+          description: "Your listing draft is saved. You can come back anytime.",
+        });
+      }
+      handleCloseWizard();
+    } catch (error: any) {
+      if (handleAuthRequired(error, "Please sign in to continue and keep your listing draft.")) {
+        return;
+      }
+      toast({
+        title: "Unable to finish",
+        description: error?.message || "Unable to save your draft before exiting.",
+        variant: "destructive",
+      });
+    } finally {
+      setIsFinishing(false);
     }
   };
 
@@ -1329,8 +1699,11 @@ export function CreateListingWizard({ onClose }: CreateListingWizardProps) {
         title: "Listing published",
         description: "Your listing is now live.",
       });
-      onClose();
+      handleCloseWizard();
     } catch (error) {
+      if (handleAuthRequired(error, "Please sign in to continue publishing your listing.")) {
+        return;
+      }
       const publishError = getPublishFailureToastContent(error);
       toast({
         title: publishError.title,
@@ -1343,6 +1716,7 @@ export function CreateListingWizard({ onClose }: CreateListingWizardProps) {
   };
 
   const isLastStep = stepIndex === STEPS.length - 1;
+  const isBusy = isSavingDraft || isPublishing || isFinishing;
   const showBasicsValidation = Boolean(attemptedStepAdvance.basics);
   const showBookingPricingValidation = Boolean(attemptedStepAdvance.bookingPricing);
   const showServiceAreaValidation = Boolean(attemptedStepAdvance.serviceArea);
@@ -1350,6 +1724,15 @@ export function CreateListingWizard({ onClose }: CreateListingWizardProps) {
   return (
     <div className="swap-dashboard-whites flex h-screen w-full flex-col bg-[#ffffff]">
       <Navigation vendorDashboardAligned />
+      <AuthModal
+        open={authModalOpen}
+        onOpenChange={(open) => {
+          setAuthModalOpen(open);
+          if (!open) {
+            authPromptShownRef.current = false;
+          }
+        }}
+      />
 
       <div className="flex min-h-0 flex-1">
         <div className="w-24 shrink-0 border-r border-[rgba(74,106,125,0.22)] bg-[#ffffff] dark:bg-[#ffffff]">
@@ -1437,6 +1820,9 @@ export function CreateListingWizard({ onClose }: CreateListingWizardProps) {
                             ...prev,
                             category: option.value,
                             bookingType: option.value === "Rental" ? "instant" : prev.bookingType,
+                            dimensionWidth: option.value === "Rental" ? prev.dimensionWidth : "",
+                            dimensionLength: option.value === "Rental" ? prev.dimensionLength : "",
+                            dimensionHeight: option.value === "Rental" ? prev.dimensionHeight : "",
                           }))
                         }
                         className={[
@@ -1494,6 +1880,81 @@ export function CreateListingWizard({ onClose }: CreateListingWizardProps) {
                 <div className="text-xs text-muted-foreground">{draft.listingDescription.length}/{DESCRIPTION_MAX_CHARS}</div>
                 {showBasicsValidation && !hasDescription ? <p className="text-sm text-destructive">Description is required.</p> : null}
               </div>
+
+              {showDimensionsSection ? (
+                <div className="space-y-4">
+                  <div className="space-y-1">
+                    <Label className="text-base font-semibold">Dimensions (optional)</Label>
+                    <p className="text-sm text-muted-foreground">
+                      Add item measurements to help customers understand scale.
+                    </p>
+                  </div>
+
+                  <div className="flex flex-wrap gap-2">
+                    {DIMENSION_UNIT_OPTIONS.map((option) => (
+                      <Button
+                        key={option.value}
+                        type="button"
+                        size="sm"
+                        variant={draft.dimensionUnit === option.value ? "default" : "outline"}
+                        onClick={() => setDraft((prev) => ({ ...prev, dimensionUnit: option.value }))}
+                      >
+                        {option.label}
+                      </Button>
+                    ))}
+                  </div>
+
+                  <div className="grid gap-3 sm:grid-cols-3">
+                    <div className="space-y-2">
+                      <Label htmlFor="dimension-width">Width</Label>
+                      <Input
+                        id="dimension-width"
+                        inputMode="decimal"
+                        placeholder="e.g. 24"
+                        value={draft.dimensionWidth}
+                        onChange={(event) =>
+                          setDraft((prev) => ({
+                            ...prev,
+                            dimensionWidth: normalizeDimensionInput(event.target.value),
+                          }))
+                        }
+                      />
+                    </div>
+
+                    <div className="space-y-2">
+                      <Label htmlFor="dimension-length">Length</Label>
+                      <Input
+                        id="dimension-length"
+                        inputMode="decimal"
+                        placeholder="e.g. 36"
+                        value={draft.dimensionLength}
+                        onChange={(event) =>
+                          setDraft((prev) => ({
+                            ...prev,
+                            dimensionLength: normalizeDimensionInput(event.target.value),
+                          }))
+                        }
+                      />
+                    </div>
+
+                    <div className="space-y-2">
+                      <Label htmlFor="dimension-height">Height</Label>
+                      <Input
+                        id="dimension-height"
+                        inputMode="decimal"
+                        placeholder="e.g. 18"
+                        value={draft.dimensionHeight}
+                        onChange={(event) =>
+                          setDraft((prev) => ({
+                            ...prev,
+                            dimensionHeight: normalizeDimensionInput(event.target.value),
+                          }))
+                        }
+                      />
+                    </div>
+                  </div>
+                </div>
+              ) : null}
 
               <div className="space-y-3">
                 <Label className="text-base font-semibold">What's Included</Label>
@@ -1849,7 +2310,7 @@ export function CreateListingWizard({ onClose }: CreateListingWizardProps) {
             <header className="space-y-3">
               <h1 className="text-5xl font-semibold tracking-tight">Logistics</h1>
               <p className="text-base text-muted-foreground">
-                Configure travel, delivery, and setup behavior. Applicable fees are included in checkout totals.
+                Configure travel, delivery, setup, and takedown behavior. Applicable fees are included in checkout totals.
               </p>
             </header>
 
@@ -2225,7 +2686,7 @@ export function CreateListingWizard({ onClose }: CreateListingWizardProps) {
               type="button"
               variant="outline"
               onClick={goBack}
-              disabled={stepIndex === 0}
+              disabled={stepIndex === 0 || isBusy}
               className="min-h-[2.7rem] px-6 font-sans text-[1.2rem] font-medium"
             >
               Back
@@ -2234,7 +2695,7 @@ export function CreateListingWizard({ onClose }: CreateListingWizardProps) {
               type="button"
               variant="outline"
               onClick={handleSaveDraft}
-              disabled={isSavingDraft || isPublishing}
+              disabled={isBusy}
               className="min-h-[2.7rem] px-6 font-sans text-[1.2rem] font-medium"
             >
               {isSavingDraft ? "Saving..." : "Save Draft"}
@@ -2246,17 +2707,17 @@ export function CreateListingWizard({ onClose }: CreateListingWizardProps) {
               <Button
                 type="button"
                 variant="outline"
-                onClick={onClose}
-                disabled={isPublishing}
+                onClick={handleFinish}
+                disabled={isBusy}
                 className="min-h-[2.7rem] px-6 font-sans text-[1.2rem] font-medium"
               >
-                Finish
+                {isFinishing ? "Finishing..." : "Finish"}
               </Button>
             ) : (
               <Button
                 type="button"
                 onClick={goNext}
-                disabled={isPublishing}
+                disabled={isBusy}
                 className="min-h-[2.7rem] px-6 font-sans text-[1.2rem] font-medium"
               >
                 Continue
@@ -2267,7 +2728,7 @@ export function CreateListingWizard({ onClose }: CreateListingWizardProps) {
               <Button
                 type="button"
                 onClick={handlePublish}
-                disabled={isPublishing}
+                disabled={isBusy}
                 className="min-h-[2.7rem] px-6 font-sans text-[1.2rem] font-medium"
               >
                 {isPublishing ? "Publishing..." : "Publish"}

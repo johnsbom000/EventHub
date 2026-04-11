@@ -294,33 +294,33 @@ export default function ListingDetailPage() {
         ]),
       );
 
-      const deliveryIncluded =
+      const deliveryIncludedValue =
         parseBooleanLike(raw?.deliveryOffered) ??
-        parseBooleanLike(ld?.deliveryOffered ?? ld?.deliveryIncluded) ??
-        false;
-      const setupIncluded =
+        parseBooleanLike(ld?.deliveryOffered ?? ld?.deliveryIncluded);
+      const setupIncludedValue =
         parseBooleanLike(raw?.setupOffered) ??
-        parseBooleanLike(ld?.setupOffered ?? ld?.setupIncluded) ??
-        false;
-      const takedownIncluded =
+        parseBooleanLike(ld?.setupOffered ?? ld?.setupIncluded);
+      const takedownIncludedValue =
         parseBooleanLike(raw?.takedownOffered) ??
-        parseBooleanLike(ld?.takedownOffered ?? ld?.takedownIncluded) ??
-        false;
+        parseBooleanLike(ld?.takedownOffered ?? ld?.takedownIncluded);
+      const deliveryIncluded = deliveryIncludedValue === true;
+      const setupIncluded = setupIncludedValue === true;
+      const takedownIncluded = takedownIncludedValue === true;
       const deliveryFeeCents = toFiniteNumber(raw?.deliveryFeeAmountCents);
       const setupFeeCents = toFiniteNumber(raw?.setupFeeAmountCents);
       const takedownFeeCents = toFiniteNumber(raw?.takedownFeeAmountCents);
-      const deliveryFeeEnabled =
+      const deliveryFeeEnabledValue =
         parseBooleanLike(raw?.deliveryFeeEnabled) ??
-        parseBooleanLike(ld?.deliveryFeeEnabled) ??
-        false;
-      const setupFeeEnabled =
+        parseBooleanLike(ld?.deliveryFeeEnabled);
+      const setupFeeEnabledValue =
         parseBooleanLike(raw?.setupFeeEnabled) ??
-        parseBooleanLike(ld?.setupFeeEnabled) ??
-        false;
-      const takedownFeeEnabled =
+        parseBooleanLike(ld?.setupFeeEnabled);
+      const takedownFeeEnabledValue =
         parseBooleanLike(raw?.takedownFeeEnabled) ??
-        parseBooleanLike(ld?.takedownFeeEnabled) ??
-        false;
+        parseBooleanLike(ld?.takedownFeeEnabled);
+      const deliveryFeeEnabled = deliveryFeeEnabledValue === true;
+      const setupFeeEnabled = setupFeeEnabledValue === true;
+      const takedownFeeEnabled = takedownFeeEnabledValue === true;
       const deliveryFeeAmountRaw = ld?.deliveryFeeAmount;
       const setupFeeAmountRaw = ld?.setupFeeAmount;
       const takedownFeeAmountRaw = ld?.takedownFeeAmount;
@@ -332,21 +332,27 @@ export default function ListingDetailPage() {
       const deliveryLabel =
         deliveryFeeEnabled
           ? `Delivery fee: ${money(deliveryFeeAmount) ?? "Applies"}`
-          : deliveryIncluded
+          : deliveryIncludedValue === true
             ? "Delivery included"
+            : deliveryIncludedValue === false
+              ? "Delivery not included"
             : "Not configured yet";
 
       const setupLabel =
         setupFeeEnabled
           ? `Setup fee: ${money(setupFeeAmount) ?? "Applies"}`
-          : setupIncluded
+          : setupIncludedValue === true
             ? "Setup included"
+            : setupIncludedValue === false
+              ? "Setup not included"
             : "Not configured yet";
       const takedownLabel =
         takedownFeeEnabled
           ? `Takedown fee: ${money(takedownFeeAmount) ?? "Applies"}`
-          : takedownIncluded
+          : takedownIncludedValue === true
             ? "Takedown included"
+            : takedownIncludedValue === false
+              ? "Takedown not included"
             : "Not configured yet";
 
       return {

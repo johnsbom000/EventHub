@@ -33,9 +33,16 @@ import { z } from "zod";
 import { db } from "./db";
 import { eq, and, or, ne, isNull, inArray, sql as drizzleSql, count, sum, gte, lte, desc, asc } from "drizzle-orm";
 import multer from "multer";
+import { promises as fs } from "fs";
 import path from "path";
 import { sendBookingConfirmationEmail } from "./email";
-import { uploadBufferToObjectStorage, makeObjectKey, resolveStoredUploadPath, type UploadFolder } from "./lib/objectStorage";
+import {
+  uploadBufferToObjectStorage,
+  makeObjectKey,
+  resolveStoredUploadPath,
+  isObjectStorageConfigured,
+  type UploadFolder,
+} from "./lib/objectStorage";
 import {
   computeChatRetentionExpiry,
   deleteStreamBookingChannel,
@@ -1141,6 +1148,9 @@ function buildCanonicalListingColumns(input: {
     setupOffered?: unknown;
     setupFeeEnabled?: unknown;
     setupFeeAmountCents?: unknown;
+    takedownOffered?: unknown;
+    takedownFeeEnabled?: unknown;
+    takedownFeeAmountCents?: unknown;
     photos?: unknown;
   };
   classification: {
@@ -1233,6 +1243,21 @@ function buildCanonicalListingColumns(input: {
     parseMoneyToCents(listingData?.setupFeeAmount) ??
     parseIntegerValue(existing?.setupFeeAmountCents);
 
+  const takedownOffered =
+    parseBooleanInput(listingData?.takedownOffered) ??
+    parseBooleanInput(listingData?.takedownIncluded) ??
+    parseBooleanInput(existing?.takedownOffered) ??
+    false;
+  const takedownFeeEnabledRaw =
+    parseBooleanInput(listingData?.takedownFeeEnabled) ??
+    parseBooleanInput(existing?.takedownFeeEnabled) ??
+    false;
+  const takedownFeeEnabled = takedownOffered ? takedownFeeEnabledRaw : false;
+  const takedownFeeAmountCentsRaw =
+    parseIntegerValue(listingData?.takedownFeeAmountCents) ??
+    parseMoneyToCents(listingData?.takedownFeeAmount) ??
+    parseIntegerValue(existing?.takedownFeeAmountCents);
+
   const travelOffered =
     parseBooleanInput(listingData?.travelOffered) ??
     parseBooleanInput(existing?.travelOffered) ??
@@ -1315,6 +1340,9 @@ function buildCanonicalListingColumns(input: {
     setupOffered,
     setupFeeEnabled,
     setupFeeAmountCents: setupFeeEnabled ? setupFeeAmountCentsRaw ?? null : null,
+    takedownOffered,
+    takedownFeeEnabled,
+    takedownFeeAmountCents: takedownFeeEnabled ? takedownFeeAmountCentsRaw ?? null : null,
     photos,
   };
 }
@@ -4231,11 +4259,17 @@ async function persistUploadedImage(buffer: Buffer, dir: string): Promise<{ file
   const contentTypeMap = { jpg: "image/jpeg", png: "image/png", webp: "image/webp" } as const;
   const folder = path.basename(dir) as UploadFolder;
   const key = makeObjectKey(folder, `image.${format}`);
+  const filename = key.split("/").pop()!;
+
+  if (!isObjectStorageConfigured() && process.env.NODE_ENV !== "production") {
+    await fs.mkdir(dir, { recursive: true });
+    await fs.writeFile(path.join(dir, filename), buffer);
+    return { filename, format };
+  }
 
   await uploadBufferToObjectStorage({ buffer, key, contentType: contentTypeMap[format] });
 
   // Return just the base filename so callers can build /uploads/<folder>/<filename> as before
-  const filename = key.split("/").pop()!;
   return { filename, format };
 }
 
@@ -6440,6 +6474,9 @@ app.post(
             setupOffered: existingListing?.setupOffered,
             setupFeeEnabled: (existingListing as any)?.setupFeeEnabled,
             setupFeeAmountCents: existingListing?.setupFeeAmountCents,
+            takedownOffered: (existingListing as any)?.takedownOffered,
+            takedownFeeEnabled: (existingListing as any)?.takedownFeeEnabled,
+            takedownFeeAmountCents: (existingListing as any)?.takedownFeeAmountCents,
             photos: existingListing?.photos,
           },
           classification: canonicalClassification,
@@ -6573,6 +6610,9 @@ app.post(
           setupOffered: existingListing?.setupOffered,
           setupFeeEnabled: (existingListing as any)?.setupFeeEnabled,
           setupFeeAmountCents: existingListing?.setupFeeAmountCents,
+          takedownOffered: (existingListing as any)?.takedownOffered,
+          takedownFeeEnabled: (existingListing as any)?.takedownFeeEnabled,
+          takedownFeeAmountCents: (existingListing as any)?.takedownFeeAmountCents,
           photos: existingListing?.photos,
         },
         classification: canonicalClassification,
@@ -6960,6 +7000,9 @@ app.post(
           setupOffered: vendorListings.setupOffered,
           setupFeeEnabled: vendorListings.setupFeeEnabled,
           setupFeeAmountCents: vendorListings.setupFeeAmountCents,
+          takedownOffered: vendorListings.takedownOffered,
+          takedownFeeEnabled: vendorListings.takedownFeeEnabled,
+          takedownFeeAmountCents: vendorListings.takedownFeeAmountCents,
           photos: vendorListings.photos,
           listingData: vendorListings.listingData,
           serviceType: vendorProfiles.serviceType,
@@ -7180,6 +7223,9 @@ app.post(
           setupOffered: vendorListings.setupOffered,
           setupFeeEnabled: vendorListings.setupFeeEnabled,
           setupFeeAmountCents: vendorListings.setupFeeAmountCents,
+          takedownOffered: vendorListings.takedownOffered,
+          takedownFeeEnabled: vendorListings.takedownFeeEnabled,
+          takedownFeeAmountCents: vendorListings.takedownFeeAmountCents,
           photos: vendorListings.photos,
           listingData: vendorListings.listingData,
 
@@ -7279,6 +7325,9 @@ app.post(
           setupOffered: vendorListings.setupOffered,
           setupFeeEnabled: vendorListings.setupFeeEnabled,
           setupFeeAmountCents: vendorListings.setupFeeAmountCents,
+          takedownOffered: vendorListings.takedownOffered,
+          takedownFeeEnabled: vendorListings.takedownFeeEnabled,
+          takedownFeeAmountCents: vendorListings.takedownFeeAmountCents,
           photos: vendorListings.photos,
           listingData: vendorListings.listingData,
 
@@ -10084,6 +10133,9 @@ app.post(
           setupOffered: vendorListings.setupOffered,
           setupFeeEnabled: vendorListings.setupFeeEnabled,
           setupFeeAmountCents: vendorListings.setupFeeAmountCents,
+          takedownOffered: vendorListings.takedownOffered,
+          takedownFeeEnabled: vendorListings.takedownFeeEnabled,
+          takedownFeeAmountCents: vendorListings.takedownFeeAmountCents,
           listingData: vendorListings.listingData,
           profileServiceType: vendorProfiles.serviceType,
           profileOperatingTimezone: vendorProfiles.operatingTimezone,
@@ -10292,9 +10344,16 @@ app.post(
           setupOffered: listingRow.setupOffered,
           setupFeeEnabled: listingRow.setupFeeEnabled,
           setupFeeAmountCents: listingRow.setupFeeAmountCents,
-          takedownOffered: (listingDataAny as any)?.takedownOffered ?? (listingDataAny as any)?.takedownIncluded,
-          takedownFeeEnabled: (listingDataAny as any)?.takedownFeeEnabled,
+          takedownOffered:
+            typeof listingRow.takedownOffered === "boolean"
+              ? listingRow.takedownOffered
+              : (listingDataAny as any)?.takedownOffered ?? (listingDataAny as any)?.takedownIncluded,
+          takedownFeeEnabled:
+            typeof listingRow.takedownFeeEnabled === "boolean"
+              ? listingRow.takedownFeeEnabled
+              : (listingDataAny as any)?.takedownFeeEnabled,
           takedownFeeAmountCents:
+            parseIntegerValue((listingRow as any)?.takedownFeeAmountCents) ??
             parseIntegerValue((listingDataAny as any)?.takedownFeeAmountCents) ??
             parseMoneyToCents((listingDataAny as any)?.takedownFeeAmount),
           travelOffered: listingRow.travelOffered,
