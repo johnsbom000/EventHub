@@ -628,6 +628,16 @@ export type CreateListingWizardProps = {
 
 export function CreateListingWizard({ onClose }: CreateListingWizardProps) {
   const restoredWizardState = useMemo(() => readStoredWizardState(), []);
+
+  // Show a resume prompt when a non-empty draft exists from a previous session.
+  const hasSavedDraft = restoredWizardState !== null && (
+    restoredWizardState.listingId !== null ||
+    restoredWizardState.maxStepReached > 0 ||
+    restoredWizardState.draft.listingTitle.trim().length > 0 ||
+    restoredWizardState.draft.photoNames.length > 0
+  );
+  const [showResumePrompt, setShowResumePrompt] = useState(hasSavedDraft);
+
   const { toast } = useToast();
   const { isAuthenticated } = useAuth0();
 
@@ -647,7 +657,6 @@ export function CreateListingWizard({ onClose }: CreateListingWizardProps) {
 
   const [isPublishing, setIsPublishing] = useState(false);
   const [isSavingDraft, setIsSavingDraft] = useState(false);
-  const [isFinishing, setIsFinishing] = useState(false);
   const [attemptedStepAdvance, setAttemptedStepAdvance] = useState<Partial<Record<StepId, boolean>>>({});
 
   const createRequestedRef = useRef(false);
@@ -1634,8 +1643,7 @@ export function CreateListingWizard({ onClose }: CreateListingWizardProps) {
           ? "Your listing draft is saved. You can come back anytime."
           : "Add listing details, then save your draft.",
       });
-
-      if (savedId) handleCloseWizard();
+      handleCloseWizard();
     } catch (error: any) {
       if (handleAuthRequired(error, "Please sign in to continue saving your listing draft.")) {
         return;
@@ -1650,42 +1658,40 @@ export function CreateListingWizard({ onClose }: CreateListingWizardProps) {
     }
   };
 
-  const handleFinish = async () => {
-    setIsFinishing(true);
-    try {
-      const savedId = await ensureListingSaved();
-      if (savedId) {
-        toast({
-          title: "Draft saved",
-          description: "Your listing draft is saved. You can come back anytime.",
-        });
-      }
-      handleCloseWizard();
-    } catch (error: any) {
-      if (handleAuthRequired(error, "Please sign in to continue and keep your listing draft.")) {
-        return;
-      }
-      toast({
-        title: "Unable to finish",
-        description: error?.message || "Unable to save your draft before exiting.",
-        variant: "destructive",
-      });
-    } finally {
-      setIsFinishing(false);
-    }
-  };
-
   const handlePublish = async () => {
     if (!publishReady) return;
     setIsPublishing(true);
 
+    // Step 1: save. Errors here are save errors, not publish errors.
+    let id: string | null = null;
+    try {
+      id = await ensureListingSaved();
+      if (!id) {
+        toast({
+          title: "Nothing to publish",
+          description: "Please complete the required fields before publishing.",
+          variant: "destructive",
+        });
+        setIsPublishing(false);
+        return;
+      }
+    } catch (saveError) {
+      if (handleAuthRequired(saveError, "Please sign in to continue publishing your listing.")) {
+        setIsPublishing(false);
+        return;
+      }
+      toast({
+        title: "Save failed",
+        description: (saveError as any)?.message || "Unable to save before publishing.",
+        variant: "destructive",
+      });
+      setIsPublishing(false);
+      return;
+    }
+
+    // Step 2: publish.
     try {
       const payload = buildListingPayload;
-      const id = await ensureListingSaved();
-      if (!id) {
-        throw new Error("Please complete the required fields before publishing.");
-      }
-
       const response = await apiRequest("PATCH", `/api/vendor/listings/${id}/publish`, {
         listingData: payload,
       });
@@ -1716,7 +1722,7 @@ export function CreateListingWizard({ onClose }: CreateListingWizardProps) {
   };
 
   const isLastStep = stepIndex === STEPS.length - 1;
-  const isBusy = isSavingDraft || isPublishing || isFinishing;
+  const isBusy = isSavingDraft || isPublishing;
   const showBasicsValidation = Boolean(attemptedStepAdvance.basics);
   const showBookingPricingValidation = Boolean(attemptedStepAdvance.bookingPricing);
   const showServiceAreaValidation = Boolean(attemptedStepAdvance.serviceArea);
@@ -1733,6 +1739,41 @@ export function CreateListingWizard({ onClose }: CreateListingWizardProps) {
           }
         }}
       />
+
+      {showResumePrompt && (
+        <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/40 backdrop-blur-sm">
+          <div className="mx-4 w-full max-w-sm rounded-2xl border border-[rgba(74,106,125,0.22)] bg-[#ffffff] p-6 shadow-xl">
+            <h2 className="text-lg font-semibold text-[#16222d]">Resume your listing?</h2>
+            <p className="mt-1.5 text-sm text-muted-foreground">
+              You have an unfinished listing draft from a previous session.
+            </p>
+            <div className="mt-5 flex gap-3">
+              <Button
+                type="button"
+                variant="outline"
+                className="flex-1"
+                onClick={() => {
+                  clearDraftState();
+                  setCurrentStep("basics");
+                  setMaxStepReached(0);
+                  setDraft(DEFAULT_DRAFT);
+                  setListingId(null);
+                  setShowResumePrompt(false);
+                }}
+              >
+                Start fresh
+              </Button>
+              <Button
+                type="button"
+                className="flex-1"
+                onClick={() => setShowResumePrompt(false)}
+              >
+                Resume
+              </Button>
+            </div>
+          </div>
+        </div>
+      )}
 
       <div className="flex min-h-0 flex-1">
         <div className="w-24 shrink-0 border-r border-[rgba(74,106,125,0.22)] bg-[#ffffff] dark:bg-[#ffffff]">
@@ -2691,15 +2732,6 @@ export function CreateListingWizard({ onClose }: CreateListingWizardProps) {
             >
               Back
             </Button>
-            <Button
-              type="button"
-              variant="outline"
-              onClick={handleSaveDraft}
-              disabled={isBusy}
-              className="min-h-[2.7rem] px-6 font-sans text-[1.2rem] font-medium"
-            >
-              {isSavingDraft ? "Saving..." : "Save Draft"}
-            </Button>
           </div>
 
           <div className="flex items-center gap-2">
@@ -2707,11 +2739,11 @@ export function CreateListingWizard({ onClose }: CreateListingWizardProps) {
               <Button
                 type="button"
                 variant="outline"
-                onClick={handleFinish}
+                onClick={handleSaveDraft}
                 disabled={isBusy}
                 className="min-h-[2.7rem] px-6 font-sans text-[1.2rem] font-medium"
               >
-                {isFinishing ? "Finishing..." : "Finish"}
+                {isSavingDraft ? "Saving..." : "Save Draft"}
               </Button>
             ) : (
               <Button
