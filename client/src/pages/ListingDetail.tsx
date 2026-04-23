@@ -1,7 +1,7 @@
 import React, { useEffect, useState } from "react";
 import { useLocation, useRoute } from "wouter";
 import { useQuery } from "@tanstack/react-query";
-import { ChevronLeft, MapPin, Star, CheckCircle, Truck, Wrench, X } from "lucide-react";
+import { ChevronLeft, MapPin, Star, CheckCircle, XCircle, Truck, Wrench, X } from "lucide-react";
 import { useAuth0 } from "@auth0/auth0-react";
 import { format } from "date-fns";
 import {
@@ -294,6 +294,13 @@ export default function ListingDetailPage() {
         ]),
       );
 
+      const notIncluded = Array.from(
+        new Set([
+          ...toUniqueStringList(raw?.whatsNotIncluded),
+          ...toUniqueStringList(ld?.whatsNotIncluded),
+        ]),
+      );
+
       const deliveryIncludedValue =
         parseBooleanLike(raw?.deliveryOffered) ??
         parseBooleanLike(ld?.deliveryOffered ?? ld?.deliveryIncluded);
@@ -373,6 +380,7 @@ export default function ListingDetailPage() {
         instantBookEnabled,
         availableQuantity,
         included,
+        notIncluded,
         tags,
         logistics: {
           deliveryIncluded,
@@ -603,7 +611,7 @@ export default function ListingDetailPage() {
 
           <div className="border-t border-border" />
 
-          {/* What's Included */}
+          {/* What’s Included */}
           <section className="space-y-3">
             <h2 className="text-xl font-semibold">What’s Included</h2>
             {Array.isArray(data.included) && data.included.length > 0 ? (
@@ -619,6 +627,23 @@ export default function ListingDetailPage() {
               <p className="text-muted-foreground">Not configured yet</p>
             )}
           </section>
+
+          {Array.isArray(data.notIncluded) && data.notIncluded.length > 0 ? (
+            <>
+              <div className="border-t border-border" />
+              <section className="space-y-3">
+                <h2 className="text-xl font-semibold">What’s Not Included</h2>
+                <ul className="grid grid-cols-1 sm:grid-cols-2 gap-2">
+                  {data.notIncluded.slice(0, 10).map((item: string, i: number) => (
+                    <li key={i} className="flex items-start gap-2 text-sm text-muted-foreground">
+                      <XCircle className="w-4 h-4 mt-0.5 text-muted-foreground" />
+                      <span>{item}</span>
+                    </li>
+                  ))}
+                </ul>
+              </section>
+            </>
+          ) : null}
 
           <div className="border-t border-border" />
 

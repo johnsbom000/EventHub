@@ -162,7 +162,7 @@ const PAYOUT_RELEASE_MODE = "auto_24h_hold";
 const STRIPE_FEE_ESTIMATE_PERCENT = 0.029;
 const STRIPE_FEE_ESTIMATE_FIXED_CENTS = 30;
 const VENDOR_ABSORBS_STRIPE_FEES = false;
-const AUTO_PAYOUT_INTERVAL_MS = 30 * 1000;
+const AUTO_PAYOUT_INTERVAL_MS = 10 * 60 * 1000; // 10 minutes
 const MIN_LISTING_PHOTO_COUNT = 3;
 const LISTING_DESCRIPTION_MAX_CHARS = 1000;
 const LISTING_SUBCATEGORY_MAX_CHARS = 120;
@@ -940,7 +940,7 @@ function normalizeProfileNameText(value: unknown, maxLen = 120): string {
 
   const cleaned = value
     .replace(/[’]/g, "'")
-    .replace(/[^a-zA-Z0-9\s']/g, " ")
+    .replace(/[^a-zA-Z0-9\s'&]/g, " ")
     .replace(/\s+/g, " ")
     .trim()
     .slice(0, maxLen);
@@ -1125,6 +1125,7 @@ function buildCanonicalListingColumns(input: {
     title?: unknown;
     description?: unknown;
     whatsIncluded?: unknown;
+    whatsNotIncluded?: unknown;
     tags?: unknown;
     popularFor?: unknown;
     instantBookEnabled?: unknown;
@@ -1308,6 +1309,10 @@ function buildCanonicalListingColumns(input: {
       toUniqueTrimmedStringList(listingData?.whatsIncluded ?? listingData?.includedItems ?? listingData?.included).length > 0
         ? toUniqueTrimmedStringList(listingData?.whatsIncluded ?? listingData?.includedItems ?? listingData?.included)
         : toUniqueTrimmedStringList(existing?.whatsIncluded),
+    whatsNotIncluded:
+      toUniqueTrimmedStringList(listingData?.whatsNotIncluded).length > 0
+        ? toUniqueTrimmedStringList(listingData?.whatsNotIncluded)
+        : toUniqueTrimmedStringList(existing?.whatsNotIncluded),
     tags: toCanonicalTagList(listingData).length > 0 ? toCanonicalTagList(listingData) : toUniqueTrimmedStringList(existing?.tags),
     popularFor:
       toUniqueTrimmedStringList(listingData?.popularFor).length > 0
@@ -2002,7 +2007,11 @@ async function processSinglePayoutCandidate(params: {
 }
 
 async function runAutoPayoutTick() {
-  if (autoPayoutTickInFlight) return;
+  await runAutoPayoutTickWithResult();
+}
+
+async function runAutoPayoutTickWithResult(): Promise<boolean> {
+  if (autoPayoutTickInFlight) return false;
   autoPayoutTickInFlight = true;
   try {
     await expireStalePendingBookings();
@@ -2030,8 +2039,10 @@ async function runAutoPayoutTick() {
         dryRun: false,
       });
     }
+    return false;
   } catch (error) {
     console.error("auto payout tick failed:", error);
+    return true;
   } finally {
     autoPayoutTickInFlight = false;
   }
@@ -2041,11 +2052,26 @@ function startAutoPayoutWorker() {
   if (autoPayoutWorkerStarted) return;
   autoPayoutWorkerStarted = true;
 
-  // Kick once on start so recently elapsed windows release without waiting for first interval.
+  let currentInterval = AUTO_PAYOUT_INTERVAL_MS;
+  const MAX_BACKOFF_MS = 60 * 60 * 1000; // 1 hour max backoff
+
+  const schedule = () => {
+    const t = setTimeout(async () => {
+      const hadError = await runAutoPayoutTickWithResult();
+      if (hadError) {
+        currentInterval = Math.min(currentInterval * 2, MAX_BACKOFF_MS);
+        console.warn(`[auto-payout] DB error — backing off to ${Math.round(currentInterval / 60000)}m`);
+      } else {
+        currentInterval = AUTO_PAYOUT_INTERVAL_MS;
+      }
+      schedule();
+    }, currentInterval);
+    t.unref?.();
+  };
+
+  // Kick once on start, then begin the backoff-aware schedule.
   void runAutoPayoutTick();
-  setInterval(() => {
-    void runAutoPayoutTick();
-  }, AUTO_PAYOUT_INTERVAL_MS);
+  schedule();
 }
 
 async function expireStalePendingBookings() {
@@ -4291,7 +4317,27 @@ export async function registerRoutes(app: Express): Promise<Server> {
     );
   }
 
-  const runPendingExpiryCleanup = async () => {
+  let expiryBackoffMs = 5 * 60 * 1000; // start at 5 min
+  const EXPIRY_MAX_BACKOFF_MS = 60 * 60 * 1000; // 1 hour max
+
+  const scheduleExpiryCleanup = () => {
+    const t = setTimeout(async () => {
+      try {
+        const expiredCount = await expireStalePendingBookings();
+        if (expiredCount > 0) {
+          console.log(`[booking expiry] expired stale pending bookings: ${expiredCount}`);
+        }
+        expiryBackoffMs = 5 * 60 * 1000; // reset on success
+      } catch (error: any) {
+        console.warn("[booking expiry] cleanup failed:", error?.message || error);
+        expiryBackoffMs = Math.min(expiryBackoffMs * 2, EXPIRY_MAX_BACKOFF_MS);
+      }
+      scheduleExpiryCleanup();
+    }, expiryBackoffMs);
+    t.unref();
+  };
+
+  void (async () => {
     try {
       const expiredCount = await expireStalePendingBookings();
       if (expiredCount > 0) {
@@ -4299,11 +4345,10 @@ export async function registerRoutes(app: Express): Promise<Server> {
       }
     } catch (error: any) {
       console.warn("[booking expiry] cleanup failed:", error?.message || error);
+      expiryBackoffMs = Math.min(expiryBackoffMs * 2, EXPIRY_MAX_BACKOFF_MS);
     }
-  };
-  void runPendingExpiryCleanup();
-  const pendingExpiryTimer = setInterval(runPendingExpiryCleanup, 5 * 60 * 1000);
-  pendingExpiryTimer.unref();
+    scheduleExpiryCleanup();
+  })();
 
   if (isStreamChatConfigured()) {
     const runChatCleanup = async () => {
@@ -5659,7 +5704,7 @@ app.post(
       const normalizedProfileName = normalizeProfileNameText(onboardingData.businessName, 120);
       if (normalizedProfileName.length < 2) {
         return res.status(400).json({
-          error: "Business profile name is invalid. Use letters, numbers, spaces, and apostrophes only.",
+          error: "Business profile name is invalid. Use letters, numbers, spaces, apostrophes, and ampersands only.",
         });
       }
 
@@ -5776,8 +5821,16 @@ app.post(
         if (!profileBuffer) {
           return res.status(400).json({ error: "Invalid profile photo format." });
         }
-        const persistedProfilePhoto = await persistUploadedImage(profileBuffer, vendorShopUploadsDir);
-        shopProfileImageUrl = `/uploads/vendor-shops/${persistedProfilePhoto.filename}`;
+        try {
+          const persistedProfilePhoto = await persistUploadedImage(profileBuffer, vendorShopUploadsDir);
+          shopProfileImageUrl = `/uploads/vendor-shops/${persistedProfilePhoto.filename}`;
+        } catch (uploadError: any) {
+          console.error("[onboarding/complete] profile photo upload failed:", uploadError?.message || uploadError);
+          return res.status(500).json({
+            error: "Failed to save profile photo. Please remove the photo and try again, or contact support.",
+            detail: uploadError?.message || "Upload failed",
+          });
+        }
       }
 
       if (shopCoverPhotoDataUrl) {
@@ -5785,9 +5838,17 @@ app.post(
         if (!coverBuffer) {
           return res.status(400).json({ error: "Invalid cover photo format." });
         }
-        const persistedCoverPhoto = await persistUploadedImage(coverBuffer, vendorShopUploadsDir);
-        shopCoverImageUrl = `/uploads/vendor-shops/${persistedCoverPhoto.filename}`;
-        shopCoverImagePosition = { x: 0, y: 0 };
+        try {
+          const persistedCoverPhoto = await persistUploadedImage(coverBuffer, vendorShopUploadsDir);
+          shopCoverImageUrl = `/uploads/vendor-shops/${persistedCoverPhoto.filename}`;
+          shopCoverImagePosition = { x: 0, y: 0 };
+        } catch (uploadError: any) {
+          console.error("[onboarding/complete] cover photo upload failed:", uploadError?.message || uploadError);
+          return res.status(500).json({
+            error: "Failed to save cover photo. Please remove the photo and try again, or contact support.",
+            detail: uploadError?.message || "Upload failed",
+          });
+        }
       }
       const showBusinessPhoneToCustomers = Boolean(onboardingData.showBusinessPhoneToCustomers);
       const showBusinessEmailToCustomers = Boolean(onboardingData.showBusinessEmailToCustomers);
@@ -6043,7 +6104,7 @@ app.post(
         if (!normalized || normalized.length < 2) {
           return res.status(400).json({
             error: "Validation failed",
-            details: [{ message: "profileName is invalid. Use letters, numbers, spaces, and apostrophes only." }],
+            details: [{ message: "profileName is invalid. Use letters, numbers, spaces, apostrophes, and ampersands only." }],
           });
         }
         updates.profileName = normalized;
@@ -6451,6 +6512,7 @@ app.post(
             title: existingListing?.title,
             description: existingListing?.description,
             whatsIncluded: existingListing?.whatsIncluded,
+            whatsNotIncluded: existingListing?.whatsNotIncluded,
             tags: existingListing?.tags,
             popularFor: existingListing?.popularFor,
             instantBookEnabled: existingListing?.instantBookEnabled,
@@ -6587,6 +6649,7 @@ app.post(
           title: existingListing?.title,
           description: existingListing?.description,
           whatsIncluded: existingListing?.whatsIncluded,
+          whatsNotIncluded: existingListing?.whatsNotIncluded,
           tags: existingListing?.tags,
           popularFor: existingListing?.popularFor,
           instantBookEnabled: existingListing?.instantBookEnabled,
@@ -6977,6 +7040,7 @@ app.post(
           title: vendorListings.title,
           description: vendorListings.description,
           whatsIncluded: vendorListings.whatsIncluded,
+          whatsNotIncluded: vendorListings.whatsNotIncluded,
           tags: vendorListings.tags,
           popularFor: vendorListings.popularFor,
           instantBookEnabled: vendorListings.instantBookEnabled,
@@ -7200,6 +7264,7 @@ app.post(
           subcategory: vendorListings.subcategory,
           description: vendorListings.description,
           whatsIncluded: vendorListings.whatsIncluded,
+          whatsNotIncluded: vendorListings.whatsNotIncluded,
           tags: vendorListings.tags,
           popularFor: vendorListings.popularFor,
           instantBookEnabled: vendorListings.instantBookEnabled,
@@ -7302,6 +7367,7 @@ app.post(
           subcategory: vendorListings.subcategory,
           description: vendorListings.description,
           whatsIncluded: vendorListings.whatsIncluded,
+          whatsNotIncluded: vendorListings.whatsNotIncluded,
           tags: vendorListings.tags,
           popularFor: vendorListings.popularFor,
           instantBookEnabled: vendorListings.instantBookEnabled,

@@ -311,6 +311,7 @@ export const vendorListings = pgTable("vendor_listings", {
   title: text("title"),
   description: text("description"),
   whatsIncluded: text("whats_included").array().notNull().default(sql`'{}'`),
+  whatsNotIncluded: text("whats_not_included").array().notNull().default(sql`'{}'`),
   tags: text("tags").array().notNull().default(sql`'{}'`),
   popularFor: text("popular_for").array().notNull().default(sql`'{}'`),
   instantBookEnabled: boolean("instant_book_enabled").notNull().default(false),

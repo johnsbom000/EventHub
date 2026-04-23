@@ -180,7 +180,7 @@ function buildServiceAddress(street: string, city: string, state: string, zip: s
 function normalizeProfileNameInput(value: string) {
   const cleaned = (value || "")
     .replace(/[’]/g, "'")
-    .replace(/[^a-zA-Z0-9\s']/g, " ")
+    .replace(/[^a-zA-Z0-9\s'&]/g, " ")
     .replace(/\s+/g, " ")
     .trim()
     .slice(0, 120);

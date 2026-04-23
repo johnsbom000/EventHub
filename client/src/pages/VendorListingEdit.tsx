@@ -26,6 +26,7 @@ import {
   DEFAULT_COVER_RATIO,
   type CoverRatio,
   normalizeCoverRatio,
+  normalizePhotoToUrl,
 } from "@/lib/listingPhotos";
 import { InlinePhotoEditor, type ListingPhotoCrop } from "@/components/listings/InlinePhotoEditor";
 import { getPublishFailureToastContent } from "@/lib/publishFailureToast";
@@ -319,6 +320,7 @@ export default function VendorListingEdit() {
   // ---- Draft state (this is what we edit inline) ----
   const [draft, setDraft] = useState<any>(null);
   const [includedInput, setIncludedInput] = useState("");
+  const [notIncludedInput, setNotIncludedInput] = useState("");
 
   // Init draft once listing is loaded
   useEffect(() => {
@@ -327,6 +329,7 @@ export default function VendorListingEdit() {
     const ld = listing.listingData || {};
     const canonicalListing = listing as AnyListing & {
       whatsIncluded?: unknown;
+      whatsNotIncluded?: unknown;
       priceCents?: unknown;
       pricingUnit?: unknown;
       minimumHours?: unknown;
@@ -349,6 +352,10 @@ export default function VendorListingEdit() {
           : toUniqueTrimmedStringList(ld?.included);
     const canonicalIncluded = toUniqueTrimmedStringList(canonicalListing?.whatsIncluded);
     const hydratedIncluded = listingDataIncluded.length > 0 ? listingDataIncluded : canonicalIncluded;
+
+    const listingDataNotIncluded = toUniqueTrimmedStringList(ld?.whatsNotIncluded);
+    const canonicalNotIncluded = toUniqueTrimmedStringList(canonicalListing?.whatsNotIncluded);
+    const hydratedNotIncluded = listingDataNotIncluded.length > 0 ? listingDataNotIncluded : canonicalNotIncluded;
 
     const canonicalPriceCents = toFiniteNumber(canonicalListing?.priceCents);
     const hydratedRate =
@@ -398,6 +405,7 @@ export default function VendorListingEdit() {
       listingTitle: normalizeListingTitle(String(ld.listingTitle || listing.title || "")),
       listingDescription: String(ld.listingDescription || "").slice(0, LISTING_DESCRIPTION_MAX_CHARS),
       whatsIncluded: hydratedIncluded,
+      whatsNotIncluded: hydratedNotIncluded,
 
       // Rental Types (fallback to legacy propTypes)
       rentalTypes: Array.isArray(ld.rentalTypes)
@@ -431,7 +439,10 @@ export default function VendorListingEdit() {
       _photoPreviewsByName: orderedPhotoNames.reduce(
         (acc: Record<string, string>, name: string) => {
           const isHeic = String(name).toLowerCase().endsWith(".heic") || String(name).toLowerCase().endsWith(".heif");
-          if (!isHeic) acc[name] = resolveAssetUrl(`/uploads/listings/${name}`);
+          if (!isHeic) {
+            const url = normalizePhotoToUrl(name);
+            if (url) acc[name] = url;
+          }
           return acc;
         },
         {}
@@ -569,6 +580,37 @@ export default function VendorListingEdit() {
       return {
         ...d,
         whatsIncluded: (Array.isArray(d.whatsIncluded) ? d.whatsIncluded : []).filter(
+          (item: string) => item !== itemToRemove
+        ),
+      };
+    });
+  };
+
+  const addNotIncludedItem = (raw: string) => {
+    const normalized = normalizeIncludedBullet(raw);
+    if (!normalized) return;
+
+    setDraft((d: any) => {
+      if (!d) return d;
+      const existing = Array.isArray(d.whatsNotIncluded) ? d.whatsNotIncluded : [];
+      const hasDuplicate = existing.some((item: string) => item.toLowerCase() === normalized.toLowerCase());
+      if (hasDuplicate || existing.length >= 20) return d;
+
+      return {
+        ...d,
+        whatsNotIncluded: [...existing, normalized],
+      };
+    });
+
+    setNotIncludedInput("");
+  };
+
+  const removeNotIncludedItem = (itemToRemove: string) => {
+    setDraft((d: any) => {
+      if (!d) return d;
+      return {
+        ...d,
+        whatsNotIncluded: (Array.isArray(d.whatsNotIncluded) ? d.whatsNotIncluded : []).filter(
           (item: string) => item !== itemToRemove
         ),
       };
@@ -713,7 +755,7 @@ export default function VendorListingEdit() {
 
         // move preview mapping temp -> real filename
         delete map[tempName];
-        map[u.filename] = resolveAssetUrl(`/uploads/listings/${u.filename}`);
+        map[u.filename] = normalizePhotoToUrl(u.url || u.filename) ?? resolveAssetUrl(`/uploads/listings/${u.filename}`);
         if (nextCropsByName[tempName]) {
           nextCropsByName[u.filename] = nextCropsByName[tempName];
           delete nextCropsByName[tempName];
@@ -943,6 +985,7 @@ export default function VendorListingEdit() {
       listingTitle: normalizeListingTitle(String(draft.listingTitle ?? "")),
       listingDescription: draft.listingDescription,
       whatsIncluded: Array.isArray(draft.whatsIncluded) ? draft.whatsIncluded : [],
+      whatsNotIncluded: Array.isArray(draft.whatsNotIncluded) ? draft.whatsNotIncluded : [],
       rentalTypes: draft.rentalTypes,
       propTypes: draft.rentalTypes, // legacy compatibility for existing listing readers
       quantitiesByPropType: draft.quantitiesByPropType,
@@ -1517,6 +1560,64 @@ export default function VendorListingEdit() {
                             onClick={() => addIncludedItem(includedInput)}
                             className={
                               includedInput.trim().length > 0
+                                ? "bg-primary text-primary-foreground hover:bg-primary/90"
+                                : "bg-muted text-muted-foreground"
+                            }
+                          >
+                            Add to listing
+                          </Button>
+                        </div>
+
+                        <div className="text-xs text-muted-foreground">
+                          Rules: Each bullet is capitalized, ends without a period, and duplicates are prevented.
+                        </div>
+                      </div>
+
+                      <div className="space-y-3">
+                        <Label>What&apos;s Not Included</Label>
+
+                        {(Array.isArray(draft.whatsNotIncluded) ? draft.whatsNotIncluded : []).length > 0 && (
+                          <ul className="space-y-1">
+                            {(Array.isArray(draft.whatsNotIncluded) ? draft.whatsNotIncluded : []).map((item: string) => (
+                              <li key={item} className="flex items-center justify-between rounded-md border px-3 py-2 text-sm">
+                                <span className="flex items-start gap-2">
+                                  <span aria-hidden>•</span>
+                                  <span>{item}</span>
+                                </span>
+                                <button
+                                  type="button"
+                                  className="text-muted-foreground hover:text-foreground"
+                                  onClick={() => removeNotIncludedItem(item)}
+                                  aria-label={`Remove ${item}`}
+                                >
+                                  ×
+                                </button>
+                              </li>
+                            ))}
+                          </ul>
+                        )}
+
+                        <div className="flex gap-2">
+                          <Input
+                            value={notIncludedInput}
+                            onChange={(e) => setNotIncludedInput(e.target.value)}
+                            placeholder="Type a not-included item…"
+                            className={fieldSurfaceClass}
+                            spellCheck={true}
+                            autoCorrect="on"
+                            onKeyDown={(e) => {
+                              if (e.key === "Enter") {
+                                e.preventDefault();
+                                addNotIncludedItem(notIncludedInput);
+                              }
+                            }}
+                          />
+                          <Button
+                            type="button"
+                            disabled={notIncludedInput.trim().length === 0}
+                            onClick={() => addNotIncludedItem(notIncludedInput)}
+                            className={
+                              notIncludedInput.trim().length > 0
                                 ? "bg-primary text-primary-foreground hover:bg-primary/90"
                                 : "bg-muted text-muted-foreground"
                             }
