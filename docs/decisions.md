@@ -1,6 +1,6 @@
 # Event Hub Decisions Log
 
-Last updated: April 1, 2026
+Last updated: April 22, 2026
 
 ## Purpose
 This file tracks decisions that affect product scope, architecture, and launch tradeoffs.
@@ -13,6 +13,15 @@ Template for new entries:
 - Why:
 - Impact:
 - Revisit trigger:
+
+---
+
+## [2026-04-22] Allow ampersands in vendor business/profile names
+- Context: Vendor business names could include apostrophes but stripped `&`, causing names like `A & B` to be transformed during onboarding/profile edits and potentially saved incorrectly.
+- Decision: Expand business/profile name normalization rules in onboarding UI, vendor profile editors, and backend profile normalization to allow `&` alongside existing letters/numbers/spaces/apostrophes.
+- Why: This preserves real-world business names without broadening validation beyond the existing MVP-safe character policy.
+- Impact: Business name inputs now accept and persist ampersands consistently across onboarding, My Hub, Vendor Dashboard, and backend validation paths.
+- Revisit trigger: If launch feedback shows additional common legal name characters are needed, centralize allowed-character policy in one shared validator and expand with explicit tests.
 
 ---
 
@@ -4226,3 +4235,38 @@ Template for new entries:
 - Why: This preserves launch-safe production behavior while unblocking local development previews without forcing every contributor to provision cloud object storage on day one.
 - Impact: Dev preview uploads work out of the box with local disk fallback, while production still requires full object storage configuration and continues to fail fast when missing.
 - Revisit trigger: If team standardizes on always-on dev cloud storage, remove local fallback and enforce required object storage vars across all environments.
+
+## [2026-04-10] Replace Create Listing `Finish` action with right-side `Save Draft`
+- Context: Product requested removing `Finish` and moving `Save Draft` into that same right-side final-step slot so the action is explicit about saving and exiting.
+- Decision: Remove `Finish` button/state handling from `CreateListingWizard`, remove the left-side duplicate `Save Draft` footer action, and render `Save Draft` in the former `Finish` position on the final step.
+- Why: Reduces CTA redundancy/confusion and clarifies that exiting from the final step should happen through draft save semantics.
+- Impact: Final-step footer now shows `Save Draft` + `Publish`; `Save Draft` performs the save attempt and closes the wizard.
+- Revisit trigger: If product wants save-and-exit from all steps again, add a persistent secondary save control in a consistent footer slot across steps.
+
+## [2026-04-10] Prevent listing photo remove click from triggering page jump in editor grids
+- Context: Clicking the `X` remove control in listing photo grids could jump the page to the top, breaking rapid multi-photo deletion workflow.
+- Decision: In shared `InlinePhotoEditor` tile UI, replace nested interactive button structure (`button` inside `button`) with a single selectable container + child remove button, and explicitly stop/remove pointer and mouse down propagation on the `X` control before remove action.
+- Why: Nested interactive controls are invalid HTML and pointer events from remove controls can leak into parent drag/select handlers, causing unintended scroll/interaction side effects.
+- Impact: Removing a photo keeps viewport position stable and the remaining tiles reflow left immediately, enabling fast repeated remove clicks.
+- Revisit trigger: If photo grid interaction model changes away from drag/select tiles, keep remove-control event isolation to prevent regressions.
+
+## [2026-04-10] Eliminate transient null photo selection on delete to prevent cropper remount scroll jump
+- Context: Deleting the currently selected photo in `InlinePhotoEditor` caused selection to become invalid for one render, temporarily setting `selectedPhoto` to `null` and unmounting/remounting the cropper block, which produced scroll jump behavior during rapid delete.
+- Decision: Move selection-recovery logic to `useLayoutEffect` with previous-index fallback so selection is repaired before paint when `photoIds` changes after delete.
+- Why: Pre-paint selection repair prevents transient cropper unmount/remount and keeps in-place visual continuity while photos shift left.
+- Impact: Repeated `X` deletion now stays anchored in place, with next thumbnail shifting naturally and no top jump caused by temporary editor collapse.
+- Revisit trigger: If photo editor is refactored to controlled selection from parent, keep pre-paint validity guarantees to avoid null-selection frame regressions.
+
+## [2026-04-10] Rename media step labels to `Photos` and remove deferred-video notice
+- Context: Product requested removing `& Videos` terminology from listing media UX and removing the inline deferred-video TODO message.
+- Decision: Update Create Listing wizard media step title + page heading from `Photos & Videos` to `Photos`, and remove the deferred video uploads info box from that step.
+- Why: Current launch scope supports photos only; UI copy should match available functionality without TODO-oriented vendor-facing text.
+- Impact: Vendors now see `Photos` labels only, and the media step no longer includes the deferred video notice block.
+- Revisit trigger: If video uploads are introduced, re-add user-facing video guidance with production-ready copy tied to actual capability.
+
+## [2026-04-10] Force draft row creation when vendor clicks `Save Draft` in listing wizard
+- Context: `Save Draft` could exit the wizard without creating a listing row when no fields met the existing "meaningful data" threshold, which prevented vendors from seeing a draft in Listings after exit.
+- Decision: Add a `forceCreate` option to wizard save helper and call it from `Save Draft`, so the action always creates/updates a draft record before navigating away.
+- Why: `Save Draft` should be a deterministic persistence + exit action, not a conditional no-op based on data threshold heuristics.
+- Impact: Clicking `Save Draft` now reliably writes a draft listing record and exits to Listings where the draft is visible.
+- Revisit trigger: If product later wants to block empty drafts, enforce a minimal draft schema requirement in UI and API rather than silent save skipping.

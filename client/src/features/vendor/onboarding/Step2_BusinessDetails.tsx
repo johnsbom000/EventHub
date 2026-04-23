@@ -74,7 +74,7 @@ function parseFromLabel(label: string): {
 function normalizeBusinessNameInput(value: string): string {
   const raw = (value || "")
     .replace(/[’]/g, "'")
-    .replace(/[^a-zA-Z0-9\s']/g, " ");
+    .replace(/[^a-zA-Z0-9\s'&]/g, " ");
 
   const hasTrailingSpace = /\s$/.test(raw);
 

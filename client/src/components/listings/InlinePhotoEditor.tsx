@@ -1,4 +1,4 @@
-import { type MouseEvent as ReactMouseEvent, useEffect, useMemo, useRef, useState } from "react";
+import { type MouseEvent as ReactMouseEvent, useEffect, useLayoutEffect, useMemo, useRef, useState } from "react";
 import Cropper, { type Area, type Point } from "react-easy-crop";
 import "react-easy-crop/react-easy-crop.css";
 import { DndContext, KeyboardSensor, PointerSensor, closestCenter, useSensor, useSensors, type DragEndEvent } from "@dnd-kit/core";
@@ -91,8 +91,7 @@ function SortablePhotoTile({
 
   return (
     <div ref={setNodeRef} style={style}>
-      <button
-        type="button"
+      <div
         className={[
           "relative w-full overflow-hidden rounded-lg border bg-muted text-left",
           isSelected ? "ring-2 ring-primary border-primary" : "",
@@ -110,14 +109,23 @@ function SortablePhotoTile({
         <button
           type="button"
           className="absolute right-2 top-2 inline-flex h-6 w-6 items-center justify-center rounded-full bg-black/70 text-white hover:bg-black"
+          onPointerDown={(event) => {
+            event.preventDefault();
+            event.stopPropagation();
+          }}
+          onMouseDown={(event) => {
+            event.preventDefault();
+            event.stopPropagation();
+          }}
           onClick={(e) => {
+            e.preventDefault();
             e.stopPropagation();
             onRemove();
           }}
         >
           <X className="h-3.5 w-3.5" />
         </button>
-      </button>
+      </div>
     </div>
   );
 }
@@ -135,11 +143,33 @@ export function InlinePhotoEditor({
 }: InlinePhotoEditorProps) {
   const photoIds = useMemo(() => photos.map((p) => p.id), [photos]);
   const [selectedPhotoId, setSelectedPhotoId] = useState<string | null>(photoIds[0] ?? null);
+  const previousPhotoIdsRef = useRef<string[]>(photoIds);
 
-  useEffect(() => {
-    if (!selectedPhotoId || !photoIds.includes(selectedPhotoId)) {
-      setSelectedPhotoId(photoIds[0] ?? null);
+  // Keep selection valid before paint so deleting the selected tile doesn't briefly
+  // unmount the cropper block (which causes visible scroll jumps).
+  useLayoutEffect(() => {
+    const previousPhotoIds = previousPhotoIdsRef.current;
+
+    if (selectedPhotoId && photoIds.includes(selectedPhotoId)) {
+      previousPhotoIdsRef.current = photoIds;
+      return;
     }
+
+    if (!photoIds.length) {
+      if (selectedPhotoId !== null) setSelectedPhotoId(null);
+      previousPhotoIdsRef.current = photoIds;
+      return;
+    }
+
+    const previousSelectedIndex = selectedPhotoId ? previousPhotoIds.indexOf(selectedPhotoId) : -1;
+    const fallbackIndex = previousSelectedIndex >= 0 ? Math.min(previousSelectedIndex, photoIds.length - 1) : 0;
+    const nextSelectedPhotoId = photoIds[fallbackIndex] ?? photoIds[0] ?? null;
+
+    if (nextSelectedPhotoId !== selectedPhotoId) {
+      setSelectedPhotoId(nextSelectedPhotoId);
+    }
+
+    previousPhotoIdsRef.current = photoIds;
   }, [photoIds, selectedPhotoId]);
 
   const selectedIndex = selectedPhotoId ? photoIds.indexOf(selectedPhotoId) : -1;

@@ -29,7 +29,7 @@ import { useToast } from "@/hooks/use-toast";
 import { getFreshAccessToken } from "@/lib/authToken";
 import { DEFAULT_COVER_RATIO, type CoverRatio } from "@/lib/listingPhotos";
 import { getPublishFailureToastContent } from "@/lib/publishFailureToast";
-import { apiRequest, getApiErrorStatus } from "@/lib/queryClient";
+import { apiRequest, getApiErrorStatus, queryClient } from "@/lib/queryClient";
 import { resolveAssetUrl } from "@/lib/runtimeUrls";
 import { cn } from "@/lib/utils";
 import type { LocationResult } from "@/types/location";
@@ -83,6 +83,7 @@ type ListingDraft = {
   listingTitle: string;
   listingDescription: string;
   whatsIncluded: string[];
+  whatsNotIncluded: string[];
   tagsByPropType: Record<string, ListingTag[]>;
   popularFor: string[];
 
@@ -129,6 +130,7 @@ const DEFAULT_DRAFT: ListingDraft = {
   listingTitle: "",
   listingDescription: "",
   whatsIncluded: [],
+  whatsNotIncluded: [],
   tagsByPropType: {},
   popularFor: [],
 
@@ -176,7 +178,7 @@ const STEPS: Array<{ id: StepId; title: string }> = [
   { id: "bookingPricing", title: "Booking & Pricing" },
   { id: "serviceArea", title: "Service Area" },
   { id: "logistics", title: "Logistics" },
-  { id: "media", title: "Photos & Videos" },
+  { id: "media", title: "Photos" },
 ];
 
 const STEP_META: Record<
@@ -654,6 +656,7 @@ export function CreateListingWizard({ onClose }: CreateListingWizardProps) {
 
   const [tagInput, setTagInput] = useState("");
   const [includedInput, setIncludedInput] = useState("");
+  const [notIncludedInput, setNotIncludedInput] = useState("");
 
   const [isPublishing, setIsPublishing] = useState(false);
   const [isSavingDraft, setIsSavingDraft] = useState(false);
@@ -864,6 +867,7 @@ export function CreateListingWizard({ onClose }: CreateListingWizardProps) {
       listingDescription: draft.listingDescription.trim(),
       description: draft.listingDescription.trim(),
       whatsIncluded: draft.whatsIncluded,
+      whatsNotIncluded: draft.whatsNotIncluded,
       tagsByPropType: {
         ...(draft.tagsByPropType || {}),
         [LISTING_TAG_KEY]: listingTags,
@@ -1349,6 +1353,27 @@ export function CreateListingWizard({ onClose }: CreateListingWizardProps) {
     }));
   };
 
+  const addNotIncludedItem = (raw: string) => {
+    const normalized = normalizeIncludedBullet(raw);
+    if (!normalized) return;
+
+    setDraft((prev) => {
+      const existing = prev.whatsNotIncluded ?? [];
+      if (existing.some((item) => item.toLowerCase() === normalized.toLowerCase())) return prev;
+      if (existing.length >= 20) return prev;
+      return { ...prev, whatsNotIncluded: [...existing, normalized] };
+    });
+
+    setNotIncludedInput("");
+  };
+
+  const removeNotIncludedItem = (item: string) => {
+    setDraft((prev) => ({
+      ...prev,
+      whatsNotIncluded: prev.whatsNotIncluded.filter((value) => value !== item),
+    }));
+  };
+
   const togglePerfectFor = (option: string) => {
     setDraft((prev) => {
       const selected = prev.popularFor.includes(option);
@@ -1600,10 +1625,11 @@ export function CreateListingWizard({ onClose }: CreateListingWizardProps) {
     onClose();
   };
 
-  const ensureListingSaved = async (): Promise<string | null> => {
+  const ensureListingSaved = async (options?: { forceCreate?: boolean }): Promise<string | null> => {
     if (!isAuthenticated) {
       throw new Error(AUTH_LOGIN_REQUIRED_ERROR);
     }
+    const forceCreate = Boolean(options?.forceCreate);
 
     const hasMeaningfulData =
       Boolean(draft.category) ||
@@ -1616,7 +1642,7 @@ export function CreateListingWizard({ onClose }: CreateListingWizardProps) {
           parseDimensionNumber(draft.dimensionLength) != null ||
           parseDimensionNumber(draft.dimensionHeight) != null));
 
-    if (!hasMeaningfulData) return null;
+    if (!hasMeaningfulData && !forceCreate) return null;
 
     const payload = buildListingPayload;
 
@@ -1636,12 +1662,14 @@ export function CreateListingWizard({ onClose }: CreateListingWizardProps) {
   const handleSaveDraft = async () => {
     setIsSavingDraft(true);
     try {
-      const savedId = await ensureListingSaved();
+      const savedId = await ensureListingSaved({ forceCreate: true });
+      if (!savedId) {
+        throw new Error("Unable to create draft.");
+      }
+      await queryClient.invalidateQueries({ queryKey: ["/api/vendor/listings"] });
       toast({
-        title: savedId ? "Draft saved" : "Nothing to save yet",
-        description: savedId
-          ? "Your listing draft is saved. You can come back anytime."
-          : "Add listing details, then save your draft.",
+        title: "Draft saved",
+        description: "Your listing draft is saved. You can come back anytime.",
       });
       handleCloseWizard();
     } catch (error: any) {
@@ -1701,6 +1729,7 @@ export function CreateListingWizard({ onClose }: CreateListingWizardProps) {
         throw new Error(typeof result === "string" ? result : JSON.stringify(result));
       }
 
+      await queryClient.invalidateQueries({ queryKey: ["/api/vendor/listings"] });
       toast({
         title: "Listing published",
         description: "Your listing is now live.",
@@ -2045,6 +2074,60 @@ export function CreateListingWizard({ onClose }: CreateListingWizardProps) {
                     variant="outline"
                     disabled={includedInput.trim().length === 0}
                     onClick={() => addIncludedItem(includedInput)}
+                  >
+                    Add
+                  </Button>
+                </div>
+              </div>
+
+              <div className="space-y-3">
+                <Label className="text-base font-semibold">What's Not Included</Label>
+                <p className="text-sm text-muted-foreground">
+                  Help customers understand what falls outside this listing — e.g. "Gratuity", "Travel outside 30 miles", "Additional staff".
+                </p>
+
+                {draft.whatsNotIncluded.length > 0 ? (
+                  <ul className="flex flex-wrap gap-2">
+                    {draft.whatsNotIncluded.map((item) => (
+                      <li
+                        key={item}
+                        className="inline-flex items-center gap-2 rounded-lg border border-border px-3 py-2 text-sm"
+                      >
+                        <span className="flex items-start gap-2">
+                          <span aria-hidden>•</span>
+                          <span>{item}</span>
+                        </span>
+                        <button
+                          type="button"
+                          className="text-muted-foreground hover:text-foreground"
+                          onClick={() => removeNotIncludedItem(item)}
+                          aria-label={`Remove ${item}`}
+                        >
+                          x
+                        </button>
+                      </li>
+                    ))}
+                  </ul>
+                ) : null}
+
+                <div className="flex gap-2">
+                  <Input
+                    value={notIncludedInput}
+                    spellCheck={true}
+                    autoCorrect="on"
+                    placeholder="What's not included?"
+                    onChange={(event) => setNotIncludedInput(event.target.value)}
+                    onKeyDown={(event) => {
+                      if (event.key !== "Enter") return;
+                      event.preventDefault();
+                      addNotIncludedItem(notIncludedInput);
+                    }}
+                  />
+                  <Button
+                    type="button"
+                    variant="outline"
+                    disabled={notIncludedInput.trim().length === 0}
+                    onClick={() => addNotIncludedItem(notIncludedInput)}
                   >
                     Add
                   </Button>
@@ -2662,7 +2745,7 @@ export function CreateListingWizard({ onClose }: CreateListingWizardProps) {
         {currentStep === "media" && (
           <div className="mx-auto w-full max-w-[53rem] space-y-8">
             <header className="space-y-3">
-              <h1 className="text-5xl font-semibold tracking-tight">Photos & Videos</h1>
+              <h1 className="text-5xl font-semibold tracking-tight">Photos</h1>
               <p className="text-base text-muted-foreground">
                 Add at least 3 photos to publish. Drafts can be saved with fewer photos.
               </p>
@@ -2709,10 +2792,6 @@ export function CreateListingWizard({ onClose }: CreateListingWizardProps) {
                 </p>
               ) : null}
 
-              <div className="rounded-xl border border-border bg-muted/20 p-4 text-sm text-muted-foreground">
-                Video uploads are deferred for launch safety in this pass. TODO: add dedicated MP4/MOV upload endpoint and
-                duration/size validation before enabling vendor video uploads.
-              </div>
             </Card>
           </div>
         )}
@@ -2735,15 +2814,38 @@ export function CreateListingWizard({ onClose }: CreateListingWizardProps) {
           </div>
 
           <div className="flex items-center gap-2">
+            <Button
+              type="button"
+              variant="outline"
+              onClick={handleSaveDraft}
+              disabled={isBusy}
+              className="min-h-[2.7rem] px-6 font-sans text-[1.2rem] font-medium"
+            >
+              {isSavingDraft ? "Saving..." : "Save Draft"}
+            </Button>
+
             {isLastStep ? (
               <Button
                 type="button"
-                variant="outline"
-                onClick={handleSaveDraft}
-                disabled={isBusy}
+                onClick={handlePublish}
+                disabled={isBusy || !publishReady}
+                title={
+                  !publishReady
+                    ? [
+                        !hasCategory && "Select a category.",
+                        !hasTitle && "Add a title.",
+                        !hasDescription && "Add a description.",
+                        !hasPrice && "Set a price.",
+                        !hasLocation && "Set a service area.",
+                        !hasMinPhotos && `Upload at least ${MIN_PHOTOS_FOR_PUBLISH} photos.`,
+                      ]
+                        .filter(Boolean)
+                        .join(" ")
+                    : undefined
+                }
                 className="min-h-[2.7rem] px-6 font-sans text-[1.2rem] font-medium"
               >
-                {isSavingDraft ? "Saving..." : "Save Draft"}
+                {isPublishing ? "Publishing..." : "Publish"}
               </Button>
             ) : (
               <Button
@@ -2755,17 +2857,6 @@ export function CreateListingWizard({ onClose }: CreateListingWizardProps) {
                 Continue
               </Button>
             )}
-
-            {isLastStep && publishReady ? (
-              <Button
-                type="button"
-                onClick={handlePublish}
-                disabled={isBusy}
-                className="min-h-[2.7rem] px-6 font-sans text-[1.2rem] font-medium"
-              >
-                {isPublishing ? "Publishing..." : "Publish"}
-              </Button>
-            ) : null}
           </div>
         </div>
       </div>

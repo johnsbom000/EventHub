@@ -340,6 +340,7 @@ export class MemStorage implements IStorage {
       title: insert.title ?? null,
       description: insert.description ?? null,
       whatsIncluded: insert.whatsIncluded ?? [],
+      whatsNotIncluded: insert.whatsNotIncluded ?? [],
       tags: insert.tags ?? [],
       popularFor: insert.popularFor ?? [],
       instantBookEnabled: insert.instantBookEnabled ?? false,
