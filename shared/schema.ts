@@ -420,6 +420,7 @@ export const bookings = pgTable("bookings", {
   cancelledAt: timestamp("cancelled_at"),
   confirmedAt: timestamp("confirmed_at"),
   completedAt: timestamp("completed_at"),
+  reviewPromptSent: boolean("review_prompt_sent").notNull().default(false),
   createdAt: timestamp("created_at").defaultNow(),
   updatedAt: timestamp("updated_at").defaultNow(),
 });
