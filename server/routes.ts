@@ -21,6 +21,8 @@ import {
   rentalTypes,
   stripeWebhookEvents,
   vendorVacationBlocks,
+  planningBoards,
+  boardSavedListings,
 } from "@shared/schema";
 import {
   hashPassword,
@@ -36,7 +38,13 @@ import { eq, and, or, ne, isNull, inArray, sql as drizzleSql, count, sum, gte, l
 import multer from "multer";
 import { promises as fs } from "fs";
 import path from "path";
-import { sendBookingConfirmationEmail } from "./email";
+import {
+  sendBookingConfirmationEmail,
+  sendBookingConfirmedEmail,
+  sendBookingCancelledEmail,
+  sendNewMessageEmail,
+  sendReviewPromptEmail,
+} from "./email";
 import {
   uploadBufferToObjectStorage,
   makeObjectKey,
@@ -4429,6 +4437,90 @@ export async function registerRoutes(app: Express): Promise<Server> {
     verificationTimer.unref();
   }
 
+  // ── Daily review prompt job ──────────────────────────────────────────────
+  // Runs once per day. Sends a review request to customers whose event date
+  // was at least 48 hours ago and have not yet received a prompt.
+  const REVIEW_PROMPT_INTERVAL_MS = 24 * 60 * 60 * 1000; // 24 hours
+
+  const runReviewPromptJob = async () => {
+    try {
+      const serverUrl = (process.env.SERVER_URL || "http://localhost:5001").replace(/\/$/, "");
+      const cutoff = new Date(Date.now() - 48 * 60 * 60 * 1000);
+      const cutoffDate = cutoff.toISOString().split("T")[0]; // YYYY-MM-DD
+
+      const rows: any = await db.execute(drizzleSql`
+        select
+          b.id             as "bookingId",
+          b.event_date     as "eventDate",
+          coalesce(b.listing_title_snapshot, '') as "listingTitle",
+          u.email          as "customerEmail",
+          u.name           as "customerName",
+          va.business_name as "vendorName"
+        from bookings b
+        join users u           on u.id  = b.customer_id
+        join vendor_accounts va on va.id = b.vendor_account_id
+        where b.review_prompt_sent = false
+          and b.status not in ('cancelled', 'failed', 'expired')
+          and b.event_date <= ${cutoffDate}
+        limit 200
+      `);
+
+      const eligible = extractRows<{
+        bookingId: string;
+        eventDate: string;
+        listingTitle: string;
+        customerEmail: string;
+        customerName: string;
+        vendorName: string;
+      }>(rows);
+
+      if (eligible.length === 0) return;
+
+      let sent = 0;
+      for (const row of eligible) {
+        try {
+          if (row.customerEmail) {
+            await sendReviewPromptEmail(row.customerEmail, {
+              customerName: row.customerName || "Customer",
+              vendorName: row.vendorName || "Vendor",
+              eventDate: row.eventDate,
+              listingTitle: row.listingTitle || "your booking",
+              bookingId: row.bookingId,
+              serverUrl,
+            });
+          }
+          await db.execute(drizzleSql`
+            update bookings set review_prompt_sent = true where id = ${row.bookingId}
+          `);
+          sent++;
+        } catch (rowError: any) {
+          console.warn(
+            "[review prompt] failed for booking %s: %s",
+            row.bookingId,
+            rowError?.message || rowError
+          );
+        }
+      }
+
+      if (sent > 0) {
+        console.log("[review prompt] sent %d review prompt(s)", sent);
+      }
+    } catch (error: any) {
+      console.warn("[review prompt] job failed:", error?.message || error);
+    }
+  };
+
+  // Run once shortly after startup (staggered to avoid cold-start pile-up),
+  // then every 24 hours.
+  const reviewPromptStartTimer = setTimeout(() => {
+    void runReviewPromptJob();
+    const reviewPromptTimer = setInterval(() => {
+      void runReviewPromptJob();
+    }, REVIEW_PROMPT_INTERVAL_MS);
+    reviewPromptTimer.unref();
+  }, 5 * 60 * 1000); // 5 min after startup
+  reviewPromptStartTimer.unref();
+
   const listingUpload = multer({
     storage: multer.memoryStorage(),
     limits: { fileSize: 10 * 1024 * 1024 }, // 10MB
@@ -8536,6 +8628,99 @@ app.post(
 
       await syncBookingToGoogleCalendarSafely(updated.id, "/api/vendor/bookings/:id google-sync");
 
+      // Send confirmed/cancelled emails to both parties
+      if (nextStatus === "confirmed" || nextStatus === "cancelled") {
+        void (async () => {
+          try {
+            const serverUrl = (process.env.SERVER_URL || "http://localhost:5001").replace(/\/$/, "");
+            const emailRows: any = await db.execute(drizzleSql`
+              select
+                u.email  as "customerEmail",
+                u.name   as "customerName",
+                va.email as "vendorEmail",
+                va.business_name as "vendorName",
+                b.event_date as "eventDate",
+                coalesce(b.listing_title_snapshot, '') as "listingTitle",
+                b.total_amount as "totalAmount"
+              from bookings b
+              join users u on u.id = b.customer_id
+              join vendor_accounts va on va.id = b.vendor_account_id
+              where b.id = ${bookingId}
+              limit 1
+            `);
+            const info = extractRows<{
+              customerEmail: string;
+              customerName: string;
+              vendorEmail: string;
+              vendorName: string;
+              eventDate: string;
+              listingTitle: string;
+              totalAmount: number;
+            }>(emailRows)[0];
+
+            if (!info) return;
+
+            const sharedParams = {
+              eventDate: info.eventDate,
+              listingTitle: info.listingTitle || "your booking",
+              serverUrl,
+            };
+
+            const tasks: Promise<any>[] = [];
+
+            if (nextStatus === "confirmed") {
+              if (info.customerEmail) {
+                tasks.push(
+                  sendBookingConfirmedEmail(info.customerEmail, {
+                    ...sharedParams,
+                    recipientName: info.customerName || "Customer",
+                    counterpartName: info.vendorName || "Vendor",
+                    totalAmountCents: info.totalAmount || 0,
+                    role: "customer",
+                  })
+                );
+              }
+              if (info.vendorEmail) {
+                tasks.push(
+                  sendBookingConfirmedEmail(info.vendorEmail, {
+                    ...sharedParams,
+                    recipientName: info.vendorName || "Vendor",
+                    counterpartName: info.customerName || "Customer",
+                    totalAmountCents: info.totalAmount || 0,
+                    role: "vendor",
+                  })
+                );
+              }
+            } else {
+              if (info.customerEmail) {
+                tasks.push(
+                  sendBookingCancelledEmail(info.customerEmail, {
+                    ...sharedParams,
+                    recipientName: info.customerName || "Customer",
+                    counterpartName: info.vendorName || "Vendor",
+                    role: "customer",
+                  })
+                );
+              }
+              if (info.vendorEmail) {
+                tasks.push(
+                  sendBookingCancelledEmail(info.vendorEmail, {
+                    ...sharedParams,
+                    recipientName: info.vendorName || "Vendor",
+                    counterpartName: info.customerName || "Customer",
+                    role: "vendor",
+                  })
+                );
+              }
+            }
+
+            await Promise.allSettled(tasks);
+          } catch (emailError: any) {
+            console.warn("[booking status email] failed:", emailError?.message || emailError);
+          }
+        })();
+      }
+
       return res.json({
         id: updated.id,
         status: updated.status,
@@ -8822,6 +9007,128 @@ app.post(
       });
     } catch (error: any) {
       return respondWithInternalServerError(req, res, error);
+    }
+  });
+
+  // ── Stream Chat webhook — new message email notifications ────────────────
+  // Configure this URL in the Stream Chat dashboard:
+  //   https://dashboard.getstream.io → App → Webhooks → add /api/webhooks/stream
+  app.post("/api/webhooks/stream", async (req, res) => {
+    try {
+      if (!isStreamChatConfigured()) {
+        return res.status(200).json({ ok: true }); // Acknowledge silently when not configured
+      }
+
+      const signature = String(req.headers["x-signature"] || "").trim();
+      if (!signature) {
+        return res.status(400).json({ error: "Missing x-signature header" });
+      }
+
+      // Verify webhook signature using raw body (same pattern as Stripe webhook)
+      const { StreamChat } = await import("stream-chat");
+      const apiKey = (process.env.STREAM_API_KEY || "").trim();
+      const apiSecret = (process.env.STREAM_API_SECRET || "").trim();
+      const client = StreamChat.getInstance(apiKey, apiSecret);
+
+      const rawBody =
+        (req as any).rawBody instanceof Buffer
+          ? (req as any).rawBody.toString("utf8")
+          : JSON.stringify(req.body || {});
+
+      const isValid = client.verifyWebhook(rawBody, signature);
+      if (!isValid) {
+        return res.status(400).json({ error: "Invalid webhook signature" });
+      }
+
+      const event = req.body as {
+        type?: string;
+        message?: { text?: string; user?: { id?: string } };
+        channel_id?: string;
+        channel_type?: string;
+      };
+
+      // Only act on new messages in booking channels
+      if (
+        event.type !== "message.new" ||
+        event.channel_type !== "messaging" ||
+        !String(event.channel_id || "").startsWith("booking_")
+      ) {
+        return res.status(200).json({ ok: true });
+      }
+
+      const bookingId = String(event.channel_id || "").replace(/^booking_/, "");
+      if (!bookingId) {
+        return res.status(200).json({ ok: true });
+      }
+
+      const senderStreamUserId = String(event.message?.user?.id || "");
+      const messageText = String(event.message?.text || "").trim();
+
+      // Determine who sent the message so we can email the other party
+      const senderIsCustomer = senderStreamUserId.startsWith("customer_");
+      const senderIsVendor = senderStreamUserId.startsWith("vendor_");
+      if (!senderIsCustomer && !senderIsVendor) {
+        return res.status(200).json({ ok: true });
+      }
+
+      void (async () => {
+        try {
+          const serverUrl = (process.env.SERVER_URL || "http://localhost:5001").replace(/\/$/, "");
+          const emailRows: any = await db.execute(drizzleSql`
+            select
+              u.email     as "customerEmail",
+              u.name      as "customerName",
+              va.email    as "vendorEmail",
+              va.business_name as "vendorName",
+              b.event_date as "eventDate"
+            from bookings b
+            join users u  on u.id  = b.customer_id
+            join vendor_accounts va on va.id = b.vendor_account_id
+            where b.id = ${bookingId}
+            limit 1
+          `);
+          const info = extractRows<{
+            customerEmail: string;
+            customerName: string;
+            vendorEmail: string;
+            vendorName: string;
+            eventDate: string;
+          }>(emailRows)[0];
+
+          if (!info) return;
+
+          if (senderIsCustomer && info.vendorEmail) {
+            // Customer sent — notify vendor
+            await sendNewMessageEmail(info.vendorEmail, {
+              recipientName: info.vendorName || "Vendor",
+              senderName: info.customerName || "Customer",
+              eventDate: info.eventDate,
+              messagePreview: messageText,
+              serverUrl,
+              bookingId,
+              recipientRole: "vendor",
+            });
+          } else if (senderIsVendor && info.customerEmail) {
+            // Vendor sent — notify customer
+            await sendNewMessageEmail(info.customerEmail, {
+              recipientName: info.customerName || "Customer",
+              senderName: info.vendorName || "Vendor",
+              eventDate: info.eventDate,
+              messagePreview: messageText,
+              serverUrl,
+              bookingId,
+              recipientRole: "customer",
+            });
+          }
+        } catch (emailError: any) {
+          console.warn("[stream webhook email] failed:", emailError?.message || emailError);
+        }
+      })();
+
+      return res.status(200).json({ ok: true });
+    } catch (error: any) {
+      console.warn("[stream webhook] error:", error?.message || error);
+      return res.status(200).json({ ok: true }); // Always 200 to prevent Stream Chat retries
     }
   });
 
@@ -12282,6 +12589,185 @@ app.post(
 
   await ensureBookingDisputesTable();
   startAutoPayoutWorker();
+
+  // ── Planning Boards ────────────────────────────────────────────────────────
+  // All routes require a logged-in customer.
+
+  // GET /api/boards — list boards for the authenticated customer
+  app.get("/api/boards", requireCustomerAnyAuth, async (req, res) => {
+    try {
+      const customerAuth = await resolveCustomerAuthFromRequest(req, { createIfMissing: false });
+      if (!customerAuth?.id) return res.status(401).json({ error: "Authentication required" });
+
+      const boards = await db
+        .select({
+          id: planningBoards.id,
+          name: planningBoards.name,
+          createdAt: planningBoards.createdAt,
+          savedCount: count(boardSavedListings.id),
+        })
+        .from(planningBoards)
+        .leftJoin(boardSavedListings, eq(boardSavedListings.boardId, planningBoards.id))
+        .where(eq(planningBoards.customerId, customerAuth.id))
+        .groupBy(planningBoards.id, planningBoards.name, planningBoards.createdAt)
+        .orderBy(desc(planningBoards.createdAt));
+
+      return res.json(boards);
+    } catch (err: any) {
+      return respondWithInternalServerError(req, res, err);
+    }
+  });
+
+  // POST /api/boards — create a new board
+  app.post("/api/boards", requireCustomerAnyAuth, async (req, res) => {
+    try {
+      const customerAuth = await resolveCustomerAuthFromRequest(req, { createIfMissing: true });
+      if (!customerAuth?.id) return res.status(401).json({ error: "Authentication required" });
+
+      const name = typeof req.body?.name === "string" ? req.body.name.trim() : "";
+      if (!name) return res.status(400).json({ error: "name is required" });
+      if (name.length > 120) return res.status(400).json({ error: "name must be 120 characters or fewer" });
+
+      const [board] = await db
+        .insert(planningBoards)
+        .values({ customerId: customerAuth.id, name })
+        .returning();
+
+      return res.status(201).json(board);
+    } catch (err: any) {
+      return respondWithInternalServerError(req, res, err);
+    }
+  });
+
+  // DELETE /api/boards/:id — delete a board (owner only)
+  app.delete("/api/boards/:id", requireCustomerAnyAuth, async (req, res) => {
+    try {
+      const customerAuth = await resolveCustomerAuthFromRequest(req, { createIfMissing: false });
+      if (!customerAuth?.id) return res.status(401).json({ error: "Authentication required" });
+
+      const boardId = req.params.id?.trim();
+      if (!boardId) return res.status(400).json({ error: "Board id required" });
+
+      const [existing] = await db
+        .select({ id: planningBoards.id, customerId: planningBoards.customerId })
+        .from(planningBoards)
+        .where(eq(planningBoards.id, boardId))
+        .limit(1);
+
+      if (!existing) return res.status(404).json({ error: "Board not found" });
+      if (existing.customerId !== customerAuth.id) return res.status(403).json({ error: "Forbidden" });
+
+      await db.delete(planningBoards).where(eq(planningBoards.id, boardId));
+      return res.status(204).send();
+    } catch (err: any) {
+      return respondWithInternalServerError(req, res, err);
+    }
+  });
+
+  // GET /api/boards/:id/listings — list saved listings for a board
+  app.get("/api/boards/:id/listings", requireCustomerAnyAuth, async (req, res) => {
+    try {
+      const customerAuth = await resolveCustomerAuthFromRequest(req, { createIfMissing: false });
+      if (!customerAuth?.id) return res.status(401).json({ error: "Authentication required" });
+
+      const boardId = req.params.id?.trim();
+      if (!boardId) return res.status(400).json({ error: "Board id required" });
+
+      const [board] = await db
+        .select({ id: planningBoards.id, customerId: planningBoards.customerId, name: planningBoards.name })
+        .from(planningBoards)
+        .where(eq(planningBoards.id, boardId))
+        .limit(1);
+
+      if (!board) return res.status(404).json({ error: "Board not found" });
+      if (board.customerId !== customerAuth.id) return res.status(403).json({ error: "Forbidden" });
+
+      const rows = await db
+        .select({
+          savedAt: boardSavedListings.savedAt,
+          listing: vendorListings,
+        })
+        .from(boardSavedListings)
+        .innerJoin(vendorListings, eq(vendorListings.id, boardSavedListings.listingId))
+        .where(eq(boardSavedListings.boardId, boardId))
+        .orderBy(desc(boardSavedListings.savedAt));
+
+      return res.json({
+        board: { id: board.id, name: board.name },
+        listings: rows.map((r) => ({ ...r.listing, savedAt: r.savedAt })),
+      });
+    } catch (err: any) {
+      return respondWithInternalServerError(req, res, err);
+    }
+  });
+
+  // POST /api/boards/:id/listings — save a listing to a board
+  app.post("/api/boards/:id/listings", requireCustomerAnyAuth, async (req, res) => {
+    try {
+      const customerAuth = await resolveCustomerAuthFromRequest(req, { createIfMissing: false });
+      if (!customerAuth?.id) return res.status(401).json({ error: "Authentication required" });
+
+      const boardId = req.params.id?.trim();
+      const listingId = typeof req.body?.listingId === "string" ? req.body.listingId.trim() : "";
+      if (!boardId) return res.status(400).json({ error: "Board id required" });
+      if (!listingId) return res.status(400).json({ error: "listingId is required" });
+
+      const [board] = await db
+        .select({ customerId: planningBoards.customerId })
+        .from(planningBoards)
+        .where(eq(planningBoards.id, boardId))
+        .limit(1);
+
+      if (!board) return res.status(404).json({ error: "Board not found" });
+      if (board.customerId !== customerAuth.id) return res.status(403).json({ error: "Forbidden" });
+
+      // Upsert — ignore conflict on (board_id, listing_id)
+      const [saved] = await db
+        .insert(boardSavedListings)
+        .values({ boardId, listingId })
+        .onConflictDoNothing()
+        .returning();
+
+      return res.status(201).json(saved ?? { boardId, listingId });
+    } catch (err: any) {
+      return respondWithInternalServerError(req, res, err);
+    }
+  });
+
+  // DELETE /api/boards/:id/listings/:listingId — remove a listing from a board
+  app.delete("/api/boards/:id/listings/:listingId", requireCustomerAnyAuth, async (req, res) => {
+    try {
+      const customerAuth = await resolveCustomerAuthFromRequest(req, { createIfMissing: false });
+      if (!customerAuth?.id) return res.status(401).json({ error: "Authentication required" });
+
+      const boardId = req.params.id?.trim();
+      const listingId = req.params.listingId?.trim();
+      if (!boardId || !listingId) return res.status(400).json({ error: "Board id and listing id required" });
+
+      const [board] = await db
+        .select({ customerId: planningBoards.customerId })
+        .from(planningBoards)
+        .where(eq(planningBoards.id, boardId))
+        .limit(1);
+
+      if (!board) return res.status(404).json({ error: "Board not found" });
+      if (board.customerId !== customerAuth.id) return res.status(403).json({ error: "Forbidden" });
+
+      await db
+        .delete(boardSavedListings)
+        .where(
+          and(
+            eq(boardSavedListings.boardId, boardId),
+            eq(boardSavedListings.listingId, listingId),
+          ),
+        );
+
+      return res.status(204).send();
+    } catch (err: any) {
+      return respondWithInternalServerError(req, res, err);
+    }
+  });
+  // ── End Planning Boards ────────────────────────────────────────────────────
 
   const httpServer = createServer(app);
   return httpServer;

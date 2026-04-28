@@ -1,9 +1,12 @@
-import { useEffect, useMemo, useState } from "react";
+import { useEffect, useMemo, useRef, useState } from "react";
 import { Card } from "@/components/ui/card";
 import { Dialog, DialogContent, DialogTitle } from "@/components/ui/dialog";
 import type { ListingPublic } from "@/types/listing";
 import { useLocation } from "wouter";
-import { ArrowUpRight, Link2, Mail, MessageCircle, Share2 } from "lucide-react";
+import { ArrowUpRight, Bookmark, Check, Link2, Mail, MessageCircle, Plus, Share2 } from "lucide-react";
+import { useAuth0 } from "@auth0/auth0-react";
+import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
+import { apiRequest } from "@/lib/queryClient";
 import {
   coverRatioToAspectRatio,
   getCoverPhotoIndex,
@@ -29,6 +32,133 @@ function ShareSquareIcon() {
       <path d="m8.5 6.8 3.5-3.3 3.5 3.3" />
       <path d="M6.4 10.2v8.4c0 1.1.9 2 2 2h7.2c1.1 0 2-.9 2-2v-8.4" />
     </svg>
+  );
+}
+
+interface Board {
+  id: string;
+  name: string;
+  savedCount: number;
+}
+
+function BoardSelectorPopover({
+  listingId,
+  onClose,
+}: {
+  listingId: string;
+  onClose: () => void;
+}) {
+  const qc = useQueryClient();
+  const [newBoardName, setNewBoardName] = useState("");
+  const [showCreate, setShowCreate] = useState(false);
+  const inputRef = useRef<HTMLInputElement>(null);
+
+  const { data: boards = [], isLoading } = useQuery<Board[]>({
+    queryKey: ["/api/boards"],
+    retry: false,
+  });
+
+  const saveMutation = useMutation({
+    mutationFn: async (boardId: string) => {
+      await apiRequest("POST", `/api/boards/${boardId}/listings`, { listingId });
+    },
+    onSuccess: () => {
+      qc.invalidateQueries({ queryKey: ["/api/boards"] });
+      onClose();
+    },
+  });
+
+  const createAndSaveMutation = useMutation({
+    mutationFn: async (name: string) => {
+      const res = await apiRequest("POST", "/api/boards", { name });
+      const board: Board = await res.json();
+      await apiRequest("POST", `/api/boards/${board.id}/listings`, { listingId });
+    },
+    onSuccess: () => {
+      qc.invalidateQueries({ queryKey: ["/api/boards"] });
+      onClose();
+    },
+  });
+
+  const handleCreate = () => {
+    const trimmed = newBoardName.trim();
+    if (!trimmed) return;
+    createAndSaveMutation.mutate(trimmed);
+  };
+
+  useEffect(() => {
+    if (showCreate) inputRef.current?.focus();
+  }, [showCreate]);
+
+  return (
+    <div className="absolute bottom-full right-0 z-50 mb-2 w-56 rounded-2xl border border-[rgba(74,106,125,0.18)] bg-white shadow-lg dark:bg-[#22303c]">
+      <p className="border-b border-[rgba(74,106,125,0.12)] px-4 py-2.5 text-[0.8rem] font-semibold uppercase tracking-wide text-[#4a6a7d]">
+        Save to board
+      </p>
+
+      {isLoading ? (
+        <p className="px-4 py-3 text-sm text-muted-foreground">Loading…</p>
+      ) : (
+        <ul className="max-h-48 overflow-y-auto">
+          {boards.map((board) => (
+            <li key={board.id}>
+              <button
+                type="button"
+                onClick={() => saveMutation.mutate(board.id)}
+                disabled={saveMutation.isPending}
+                className="flex w-full items-center gap-2 px-4 py-2.5 text-left text-sm text-[#2a3a42] transition hover:bg-[rgba(74,106,125,0.08)] dark:text-[#f5f0e8]"
+              >
+                <Bookmark className="h-3.5 w-3.5 shrink-0 text-[#4a6a7d]" />
+                <span className="truncate">{board.name}</span>
+                <span className="ml-auto shrink-0 text-xs text-muted-foreground">
+                  {board.savedCount}
+                </span>
+              </button>
+            </li>
+          ))}
+
+          {boards.length === 0 && !showCreate && (
+            <li className="px-4 py-2.5 text-sm text-muted-foreground">No boards yet</li>
+          )}
+        </ul>
+      )}
+
+      {showCreate ? (
+        <div className="border-t border-[rgba(74,106,125,0.12)] px-3 py-2.5">
+          <input
+            ref={inputRef}
+            type="text"
+            value={newBoardName}
+            onChange={(e) => setNewBoardName(e.target.value)}
+            onKeyDown={(e) => {
+              if (e.key === "Enter") handleCreate();
+              if (e.key === "Escape") setShowCreate(false);
+            }}
+            placeholder="Board name"
+            className="w-full rounded-lg border border-[rgba(74,106,125,0.24)] bg-transparent px-3 py-1.5 text-sm outline-none focus:border-[#e07a6a] dark:text-[#f5f0e8]"
+            maxLength={120}
+          />
+          <button
+            type="button"
+            onClick={handleCreate}
+            disabled={!newBoardName.trim() || createAndSaveMutation.isPending}
+            className="mt-2 flex w-full items-center justify-center gap-1.5 rounded-lg bg-[#e07a6a] px-3 py-1.5 text-sm font-medium text-white disabled:opacity-50"
+          >
+            <Check className="h-3.5 w-3.5" />
+            Create &amp; save
+          </button>
+        </div>
+      ) : (
+        <button
+          type="button"
+          onClick={() => setShowCreate(true)}
+          className="flex w-full items-center gap-2 border-t border-[rgba(74,106,125,0.12)] px-4 py-2.5 text-sm font-medium text-[#e07a6a] transition hover:bg-[rgba(224,122,106,0.06)]"
+        >
+          <Plus className="h-3.5 w-3.5" />
+          New board
+        </button>
+      )}
+    </div>
   );
 }
 
@@ -65,6 +195,8 @@ export default function ListingCard({
   const [shareOpen, setShareOpen] = useState(false);
   const [shareFeedback, setShareFeedback] = useState("");
   const [coverLoadFailed, setCoverLoadFailed] = useState(false);
+  const [boardPopoverOpen, setBoardPopoverOpen] = useState(false);
+  const { isAuthenticated } = useAuth0();
   const listingAny = listing as any;
 
   const title = listingAny.title ?? listingAny.listingData?.listingTitle ?? listing.serviceType ?? "Service";
@@ -202,19 +334,43 @@ export default function ListingCard({
                 <ArrowUpRight className={primaryActionIconClasses} />
                 {primaryActionLabel}
               </button>
-              <button
-                type="button"
-                onClick={(e) => {
-                  e.stopPropagation();
-                  setShareFeedback("");
-                  setShareOpen(true);
-                }}
-                className="inline-flex h-11 w-11 items-center justify-center text-white/95 transition-colors hover:text-white focus-visible:text-white"
-                aria-label="Share listing"
-                data-testid={`button-share-listing-${listingId ?? "unknown"}`}
-              >
-                <ShareSquareIcon />
-              </button>
+              <div className="flex items-center gap-1">
+                {isAuthenticated && listingId ? (
+                  <div className="relative">
+                    <button
+                      type="button"
+                      onClick={(e) => {
+                        e.stopPropagation();
+                        setBoardPopoverOpen((v) => !v);
+                      }}
+                      className="inline-flex h-11 w-11 items-center justify-center text-white/95 transition-colors hover:text-[#e07a6a] focus-visible:text-[#e07a6a]"
+                      aria-label="Save to board"
+                      data-testid={`button-save-listing-${listingId ?? "unknown"}`}
+                    >
+                      <Bookmark className="h-[26px] w-[26px]" />
+                    </button>
+                    {boardPopoverOpen && (
+                      <BoardSelectorPopover
+                        listingId={listingId}
+                        onClose={() => setBoardPopoverOpen(false)}
+                      />
+                    )}
+                  </div>
+                ) : null}
+                <button
+                  type="button"
+                  onClick={(e) => {
+                    e.stopPropagation();
+                    setShareFeedback("");
+                    setShareOpen(true);
+                  }}
+                  className="inline-flex h-11 w-11 items-center justify-center text-white/95 transition-colors hover:text-white focus-visible:text-white"
+                  aria-label="Share listing"
+                  data-testid={`button-share-listing-${listingId ?? "unknown"}`}
+                >
+                  <ShareSquareIcon />
+                </button>
+              </div>
             </div>
 
           </div>

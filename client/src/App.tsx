@@ -35,6 +35,8 @@ import NotFound from "@/pages/not-found";
 import AuthTest from "@/pages/AuthTest";
 import ListingDetail from "@/pages/ListingDetail";
 import Checkout from "@/pages/Checkout";
+import PlanningBoards from "@/pages/PlanningBoards";
+import PlanningBoardDetail from "@/pages/PlanningBoardDetail";
 
 function Router() {
   return (
@@ -46,6 +48,8 @@ function Router() {
         {/* Customer */}
         <Route path="/dashboard" component={CustomerDashboard} />
         <Route path="/dashboard/:section" component={CustomerDashboard} />
+        <Route path="/boards" component={PlanningBoards} />
+        <Route path="/boards/:boardId" component={PlanningBoardDetail} />
         <Route path="/browse" component={BrowseVendors} />
         <Route path="/listing/:id" component={ListingDetail} />
         <Route path="/checkout/:listingId" component={Checkout} />

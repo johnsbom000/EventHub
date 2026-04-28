@@ -421,6 +421,7 @@ export const bookings = pgTable("bookings", {
   cancelledAt: timestamp("cancelled_at"),
   confirmedAt: timestamp("confirmed_at"),
   completedAt: timestamp("completed_at"),
+  reviewPromptSent: boolean("review_prompt_sent").notNull().default(false),
   createdAt: timestamp("created_at").defaultNow(),
   updatedAt: timestamp("updated_at").defaultNow(),
 });
@@ -802,3 +803,34 @@ export const rentalTypes = pgTable("rental_types", {
   sortOrder: integer("sort_order").default(0).notNull(),
   createdAt: timestamp("created_at").defaultNow().notNull(),
 });
+
+// Planning Boards — customer-created boards for saving vendor listings
+export const planningBoards = pgTable("planning_boards", {
+  id: varchar("id").primaryKey().default(sql`gen_random_uuid()`),
+  customerId: varchar("customer_id").notNull().references(() => users.id),
+  name: text("name").notNull(),
+  createdAt: timestamp("created_at", { withTimezone: true }).defaultNow().notNull(),
+});
+
+export const boardSavedListings = pgTable(
+  "board_saved_listings",
+  {
+    id: varchar("id").primaryKey().default(sql`gen_random_uuid()`),
+    boardId: varchar("board_id")
+      .notNull()
+      .references(() => planningBoards.id, { onDelete: "cascade" }),
+    listingId: varchar("listing_id")
+      .notNull()
+      .references(() => vendorListings.id),
+    savedAt: timestamp("saved_at", { withTimezone: true }).defaultNow().notNull(),
+  },
+  (table) => ({
+    uniqueBoardListing: uniqueIndex("board_saved_listings_board_listing_unique").on(
+      table.boardId,
+      table.listingId,
+    ),
+  }),
+);
+
+export type PlanningBoard = typeof planningBoards.$inferSelect;
+export type BoardSavedListing = typeof boardSavedListings.$inferSelect;
