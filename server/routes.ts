@@ -1286,10 +1286,19 @@ function buildCanonicalListingColumns(input: {
     parseBooleanInput(existing?.pickupOffered) ??
     pickupCategoryDefault;
 
-  const photoNames = toUniqueTrimmedStringList(listingData?.photos?.names);
-  const photoUrls = toUniqueTrimmedStringList(listingData?.photos?.urls);
-  const photoFallback = toUniqueTrimmedStringList(Array.isArray(listingData?.photos) ? listingData?.photos : []);
-  const existingPhotos = toUniqueTrimmedStringList(existing?.photos);
+  // Normalize a photo entry to a canonical storage path (/uploads/listings/uuid.jpg).
+  // Bare filenames (e.g. "uuid.jpg") are a legacy artifact from before storagePath was
+  // returned by the upload endpoint. Full paths and absolute URLs pass through unchanged.
+  const normalizePhotoStoragePath = (p: string): string => {
+    if (!p) return p;
+    if (p.startsWith("/uploads/") || /^https?:\/\//i.test(p)) return p;
+    return `/uploads/listings/${p}`;
+  };
+
+  const photoNames = toUniqueTrimmedStringList(listingData?.photos?.names).map(normalizePhotoStoragePath);
+  const photoUrls = toUniqueTrimmedStringList(listingData?.photos?.urls).map(normalizePhotoStoragePath);
+  const photoFallback = toUniqueTrimmedStringList(Array.isArray(listingData?.photos) ? listingData?.photos : []).map(normalizePhotoStoragePath);
+  const existingPhotos = toUniqueTrimmedStringList(existing?.photos).map(normalizePhotoStoragePath);
   const photos =
     photoNames.length > 0 ? photoNames : photoUrls.length > 0 ? photoUrls : photoFallback.length > 0 ? photoFallback : existingPhotos;
 
@@ -4450,8 +4459,9 @@ app.post(
       return res.status(400).json({ error: error?.message || "Invalid upload" });
     }
 
-    const url = resolveStoredUploadPath(`/uploads/listings/${persisted.filename}`) ?? `/uploads/listings/${persisted.filename}`;
-    return res.json({ url, filename: persisted.filename });
+    const storagePath = `/uploads/listings/${persisted.filename}`;
+    const url = resolveStoredUploadPath(storagePath) ?? storagePath;
+    return res.json({ url, filename: persisted.filename, storagePath });
   }
 );
 
@@ -4483,8 +4493,9 @@ app.post(
         return res.status(400).json({ error: error?.message || "Invalid upload" });
       }
 
-      const url = resolveStoredUploadPath(`/uploads/vendor-shops/${persisted.filename}`) ?? `/uploads/vendor-shops/${persisted.filename}`;
-      return res.json({ url, filename: persisted.filename });
+      const storagePath = `/uploads/vendor-shops/${persisted.filename}`;
+      const url = resolveStoredUploadPath(storagePath) ?? storagePath;
+      return res.json({ url, filename: persisted.filename, storagePath });
     }
   );
 

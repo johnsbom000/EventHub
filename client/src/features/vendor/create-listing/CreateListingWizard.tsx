@@ -27,7 +27,7 @@ import { Slider } from "@/components/ui/slider";
 import { Textarea } from "@/components/ui/textarea";
 import { useToast } from "@/hooks/use-toast";
 import { getFreshAccessToken } from "@/lib/authToken";
-import { DEFAULT_COVER_RATIO, type CoverRatio } from "@/lib/listingPhotos";
+import { DEFAULT_COVER_RATIO, normalizePhotoToUrl, type CoverRatio } from "@/lib/listingPhotos";
 import { getPublishFailureToastContent } from "@/lib/publishFailureToast";
 import { apiRequest, getApiErrorStatus, queryClient } from "@/lib/queryClient";
 import { resolveAssetUrl } from "@/lib/runtimeUrls";
@@ -44,6 +44,7 @@ const LISTING_TAG_KEY = "__listing__";
 const MIN_PHOTOS_FOR_PUBLISH = 3;
 const DESCRIPTION_MAX_CHARS = 1000;
 const CREATE_LISTING_STORAGE_KEY = "createListingWizard:v1";
+const TEMP_UPLOADING_PHOTO_PREFIX = "__uploading__-";
 const AUTH_LOGIN_REQUIRED_ERROR = "AUTH_LOGIN_REQUIRED";
 const AUTH_REQUIRED_MESSAGE_PATTERNS = [
   "login required",
@@ -359,6 +360,14 @@ function parsePositiveInt(raw: string): number {
   return value;
 }
 
+function isPersistedPhotoName(value: unknown): value is string {
+  return (
+    typeof value === "string" &&
+    value.trim().length > 0 &&
+    !value.startsWith(TEMP_UPLOADING_PHOTO_PREFIX)
+  );
+}
+
 function makeCircleGeoJSON(
   center: { lat: number; lng: number },
   radiusMiles: number,
@@ -417,10 +426,6 @@ function boundsFromCircleFeature(feature: any) {
   return new mapboxgl.LngLatBounds([minLng, minLat], [maxLng, maxLat]);
 }
 
-function isCategory(value: string): value is ListingCategory {
-  return CATEGORY_OPTIONS.some((option) => option.value === value);
-}
-
 function isAuthRequiredError(error: unknown): boolean {
   const status = getApiErrorStatus(error);
   if (status === 401 || status === 403) return true;
@@ -466,117 +471,6 @@ function isAuthRequiredError(error: unknown): boolean {
     .some((message) =>
       AUTH_REQUIRED_MESSAGE_PATTERNS.some((pattern) => message.includes(pattern))
     );
-}
-
-function normalizeStoredStepId(value: unknown): StepId {
-  if (typeof value !== "string") return "basics";
-  return STEPS.some((step) => step.id === value) ? (value as StepId) : "basics";
-}
-
-function sanitizeStoredDraft(value: unknown): ListingDraft {
-  const raw =
-    value && typeof value === "object" && !Array.isArray(value)
-      ? (value as Partial<ListingDraft>)
-      : ({} as Partial<ListingDraft>);
-
-  const category = typeof raw.category === "string" && isCategory(raw.category) ? raw.category : "";
-  const bookingType = raw.bookingType === "request" ? "request" : "instant";
-  const pricingUnit = raw.pricingUnit === "per_hour" ? "per_hour" : "per_day";
-  const storedDimensions =
-    (raw as any).dimensions && typeof (raw as any).dimensions === "object" && !Array.isArray((raw as any).dimensions)
-      ? ((raw as any).dimensions as Record<string, unknown>)
-      : null;
-  const dimensionUnit: DimensionUnit =
-    raw.dimensionUnit === "feet" || raw.dimensionUnit === "meters" || raw.dimensionUnit === "centimeters"
-      ? raw.dimensionUnit
-      : storedDimensions?.unit === "feet" || storedDimensions?.unit === "meters" || storedDimensions?.unit === "centimeters"
-        ? (storedDimensions.unit as DimensionUnit)
-      : "inches";
-  const dimensionWidth = normalizeDimensionInput(raw.dimensionWidth ?? storedDimensions?.width);
-  const dimensionLength = normalizeDimensionInput(raw.dimensionLength ?? storedDimensions?.length);
-  const dimensionHeight = normalizeDimensionInput(raw.dimensionHeight ?? storedDimensions?.height);
-  const travelFeeType = raw.travelFeeType === "per_mile" || raw.travelFeeType === "per_hour" ? raw.travelFeeType : "flat";
-  const serviceRadius = Number(raw.serviceRadiusMiles);
-  const serviceRadiusMiles =
-    Number.isFinite(serviceRadius) && serviceRadius > 0 ? serviceRadius : DEFAULT_DRAFT.serviceRadiusMiles;
-
-  const serviceCenter =
-    raw.serviceCenter &&
-    Number.isFinite(Number(raw.serviceCenter.lat)) &&
-    Number.isFinite(Number(raw.serviceCenter.lng))
-      ? { lat: Number(raw.serviceCenter.lat), lng: Number(raw.serviceCenter.lng) }
-      : null;
-
-  const serviceLocation =
-    raw.serviceLocation &&
-    typeof raw.serviceLocation === "object" &&
-    Number.isFinite(Number((raw.serviceLocation as any).lat)) &&
-    Number.isFinite(Number((raw.serviceLocation as any).lng))
-      ? (raw.serviceLocation as LocationResult)
-      : null;
-
-  const photoNames = Array.isArray(raw.photoNames)
-    ? raw.photoNames.filter((name): name is string => typeof name === "string" && name.trim().length > 0)
-    : [];
-
-  const photoCropsByName =
-    raw.photoCropsByName && typeof raw.photoCropsByName === "object" && !Array.isArray(raw.photoCropsByName)
-      ? (raw.photoCropsByName as Record<string, ListingPhotoCrop>)
-      : {};
-
-  return {
-    ...DEFAULT_DRAFT,
-    ...raw,
-    category,
-    bookingType,
-    pricingUnit,
-    dimensionUnit,
-    dimensionWidth,
-    dimensionLength,
-    dimensionHeight,
-    travelFeeType,
-    serviceAreaMode: "radius",
-    serviceRadiusMiles,
-    serviceCenter,
-    serviceLocation,
-    photoNames,
-    photoPreviews: [], // Blob URLs are session-scoped and invalid after refresh/redirect.
-    photoCropsByName,
-  };
-}
-
-function readStoredWizardState():
-  | {
-      currentStep: StepId;
-      maxStepReached: number;
-      listingId: string | null;
-      draft: ListingDraft;
-    }
-  | null {
-  if (typeof window === "undefined") return null;
-
-  try {
-    const raw = window.localStorage.getItem(CREATE_LISTING_STORAGE_KEY);
-    if (!raw) return null;
-    const parsed = JSON.parse(raw) as Record<string, unknown>;
-    const currentStep = normalizeStoredStepId(parsed.currentStep);
-    const maxStepValue = Math.floor(Number(parsed.maxStepReached));
-    const maxStepReached =
-      Number.isFinite(maxStepValue) && maxStepValue >= 0 && maxStepValue < STEPS.length
-        ? maxStepValue
-        : 0;
-    const listingId =
-      typeof parsed.listingId === "string" && parsed.listingId.trim().length > 0 ? parsed.listingId.trim() : null;
-
-    return {
-      currentStep,
-      maxStepReached,
-      listingId,
-      draft: sanitizeStoredDraft(parsed.draft),
-    };
-  } catch {
-    return null;
-  }
 }
 
 function ToggleGroup({
@@ -629,17 +523,6 @@ export type CreateListingWizardProps = {
 };
 
 export function CreateListingWizard({ onClose }: CreateListingWizardProps) {
-  const restoredWizardState = useMemo(() => readStoredWizardState(), []);
-
-  // Show a resume prompt when a non-empty draft exists from a previous session.
-  const hasSavedDraft = restoredWizardState !== null && (
-    restoredWizardState.listingId !== null ||
-    restoredWizardState.maxStepReached > 0 ||
-    restoredWizardState.draft.listingTitle.trim().length > 0 ||
-    restoredWizardState.draft.photoNames.length > 0
-  );
-  const [showResumePrompt, setShowResumePrompt] = useState(hasSavedDraft);
-
   const { toast } = useToast();
   const { isAuthenticated } = useAuth0();
 
@@ -648,10 +531,10 @@ export function CreateListingWizard({ onClose }: CreateListingWizardProps) {
 
   const vendorType = ((me as any)?.vendorType || "unspecified") as string;
 
-  const [currentStep, setCurrentStep] = useState<StepId>(restoredWizardState?.currentStep ?? "basics");
-  const [maxStepReached, setMaxStepReached] = useState(restoredWizardState?.maxStepReached ?? 0);
-  const [draft, setDraft] = useState<ListingDraft>(restoredWizardState?.draft ?? DEFAULT_DRAFT);
-  const [listingId, setListingId] = useState<string | null>(restoredWizardState?.listingId ?? null);
+  const [currentStep, setCurrentStep] = useState<StepId>("basics");
+  const [maxStepReached, setMaxStepReached] = useState(0);
+  const [draft, setDraft] = useState<ListingDraft>(DEFAULT_DRAFT);
+  const [listingId, setListingId] = useState<string | null>(null);
   const [authModalOpen, setAuthModalOpen] = useState(false);
 
   const [tagInput, setTagInput] = useState("");
@@ -664,6 +547,11 @@ export function CreateListingWizard({ onClose }: CreateListingWizardProps) {
 
   const createRequestedRef = useRef(false);
   const pendingPayloadRef = useRef<any | null>(null);
+  const pendingPayloadKeyRef = useRef<string | null>(null);
+  const lastSuccessfulAutosaveKeyRef = useRef<string | null>(null);
+  const blockedAutosaveKeyRef = useRef<string | null>(null);
+  const saveInFlightRef = useRef(false);
+  const publishInFlightRef = useRef(false);
   const authPromptShownRef = useRef(false);
   const activePhotoPreviewsRef = useRef<string[]>([]);
 
@@ -673,6 +561,11 @@ export function CreateListingWizard({ onClose }: CreateListingWizardProps) {
   const mapRef = useRef<mapboxgl.Map | null>(null);
   const [isMapReady, setIsMapReady] = useState(false);
   const [mapError, setMapError] = useState<string | null>(null);
+
+  useEffect(() => {
+    if (typeof window === "undefined") return;
+    window.localStorage.removeItem(CREATE_LISTING_STORAGE_KEY);
+  }, []);
 
   const center = useMemo(() => {
     if (draft.serviceLocation) {
@@ -715,26 +608,6 @@ export function CreateListingWizard({ onClose }: CreateListingWizardProps) {
     [center],
   );
 
-  const persistDraftState = () => {
-    if (typeof window === "undefined") return;
-
-    const payload = {
-      currentStep,
-      maxStepReached,
-      listingId,
-      draft: {
-        ...draft,
-        photoPreviews: [],
-      },
-    };
-    window.localStorage.setItem(CREATE_LISTING_STORAGE_KEY, JSON.stringify(payload));
-  };
-
-  const clearDraftState = () => {
-    if (typeof window === "undefined") return;
-    window.localStorage.removeItem(CREATE_LISTING_STORAGE_KEY);
-  };
-
   const promptForSessionRecovery = (description = "Please sign in again to continue where you left off.") => {
     setAuthModalOpen(true);
     if (!authPromptShownRef.current) {
@@ -759,15 +632,8 @@ export function CreateListingWizard({ onClose }: CreateListingWizardProps) {
     setMaxStepReached((previous) => Math.max(previous, currentIndex));
   }, [currentStep]);
 
-  useEffect(() => {
-    const timer = window.setTimeout(() => {
-      persistDraftState();
-    }, 250);
-    return () => window.clearTimeout(timer);
-  }, [currentStep, draft, listingId, maxStepReached]);
-
   const createDraftMutation = useMutation({
-    mutationFn: async () => {
+    mutationFn: async (_variables?: { source?: "autosave" | "manual" }) => {
       if (!isAuthenticated) {
         throw new Error(AUTH_LOGIN_REQUIRED_ERROR);
       }
@@ -780,27 +646,46 @@ export function CreateListingWizard({ onClose }: CreateListingWizardProps) {
       const id = payload?.id || payload?.data?.id;
       if (!id) return;
       setListingId(id);
+      createRequestedRef.current = false;
+      pendingPayloadKeyRef.current = null;
+      void queryClient.invalidateQueries({ queryKey: ["/api/vendor/listings"] });
 
       if (pendingPayloadRef.current) {
-        updateDraftMutation.mutate({ id, payload: pendingPayloadRef.current });
+        updateDraftMutation.mutate({ id, payload: pendingPayloadRef.current, source: "autosave" });
         pendingPayloadRef.current = null;
       }
     },
-    onError: (error: any) => {
+    onError: (error: any, variables) => {
+      const shouldToast = blockedAutosaveKeyRef.current !== pendingPayloadKeyRef.current;
       createRequestedRef.current = false;
+      if (pendingPayloadKeyRef.current) {
+        blockedAutosaveKeyRef.current = pendingPayloadKeyRef.current;
+      }
       if (handleAuthRequired(error, "Please sign in to keep editing your listing.")) {
         return;
       }
-      toast({
-        title: "Unable to create draft",
-        description: error?.message || "Please try again.",
-        variant: "destructive",
-      });
+      if (variables?.source !== "autosave") {
+        return;
+      }
+      if (shouldToast) {
+        toast({
+          title: "Unable to create draft",
+          description: error?.message || "Please try again.",
+          variant: "destructive",
+        });
+      }
     },
   });
 
   const updateDraftMutation = useMutation({
-    mutationFn: async ({ id, payload }: { id: string; payload: any }) => {
+    mutationFn: async ({
+      id,
+      payload,
+    }: {
+      id: string;
+      payload: any;
+      source?: "autosave" | "manual";
+    }) => {
       if (!isAuthenticated) {
         throw new Error(AUTH_LOGIN_REQUIRED_ERROR);
       }
@@ -809,8 +694,33 @@ export function CreateListingWizard({ onClose }: CreateListingWizardProps) {
       if (!res.ok) throw new Error(json?.error || "Failed to update listing");
       return json;
     },
-    onError: (error: any) => {
-      handleAuthRequired(error, "Please sign in to keep editing your listing.");
+    onSuccess: (_data, variables) => {
+      const payloadKey = JSON.stringify(variables.payload ?? {});
+      lastSuccessfulAutosaveKeyRef.current = payloadKey;
+      if (blockedAutosaveKeyRef.current === payloadKey) {
+        blockedAutosaveKeyRef.current = null;
+      }
+    },
+    onError: (error: any, variables) => {
+      if (handleAuthRequired(error, "Please sign in to keep editing your listing.")) {
+        return;
+      }
+      if (variables.source !== "autosave") {
+        return;
+      }
+
+      const payloadKey = JSON.stringify(variables.payload ?? {});
+      const shouldToast = blockedAutosaveKeyRef.current !== payloadKey;
+      blockedAutosaveKeyRef.current = payloadKey;
+      if (shouldToast) {
+        toast({
+          title: "Auto-save failed",
+          description:
+            error?.message ||
+            "Unable to sync this draft right now. Keep editing, then try Save Draft again.",
+          variant: "destructive",
+        });
+      }
     },
   });
 
@@ -825,6 +735,10 @@ export function CreateListingWizard({ onClose }: CreateListingWizardProps) {
 
   const listingTags = useMemo(() => draft.tagsByPropType[LISTING_TAG_KEY] ?? [], [draft.tagsByPropType]);
   const helperText = CATEGORY_HELPER_TEXT[toHelperCategory(draft.category)];
+  const persistedPhotoNames = useMemo(
+    () => draft.photoNames.filter((name) => isPersistedPhotoName(name)),
+    [draft.photoNames],
+  );
 
   const hasCategory = Boolean(draft.category);
   const hasTitle = draft.listingTitle.trim().length > 0;
@@ -835,7 +749,7 @@ export function CreateListingWizard({ onClose }: CreateListingWizardProps) {
     Number.isFinite(Number(draft.serviceCenter?.lat)) &&
     Number.isFinite(Number(draft.serviceCenter?.lng)) &&
     Number(draft.serviceRadiusMiles) > 0;
-  const hasMinPhotos = draft.photoNames.length >= MIN_PHOTOS_FOR_PUBLISH;
+  const hasMinPhotos = persistedPhotoNames.length >= MIN_PHOTOS_FOR_PUBLISH;
   const hasValidQuantity = draft.category !== "Rental" || parsePositiveInt(draft.quantity) > 0;
 
   const publishReady = hasCategory && hasTitle && hasDescription && hasPrice && hasLocation && hasMinPhotos;
@@ -955,9 +869,9 @@ export function CreateListingWizard({ onClose }: CreateListingWizardProps) {
           : null,
 
       photos: {
-        count: draft.photoNames.length,
-        names: draft.photoNames,
-        coverPhotoName: draft.photoNames[0] ?? null,
+        count: persistedPhotoNames.length,
+        names: persistedPhotoNames,
+        coverPhotoName: persistedPhotoNames[0] ?? null,
         coverPhotoIndex: 0,
         coverPhotoRatio: draft.coverPhotoRatio,
         cropsByName: draft.photoCropsByName,
@@ -967,7 +881,17 @@ export function CreateListingWizard({ onClose }: CreateListingWizardProps) {
         count: draft.videoNames.length,
       },
     };
-  }, [draft, listingTags, showDeliverySection, showDimensionsSection, showSetupSection, showTakedownSection, showTravelSection, vendorType]);
+  }, [
+    draft,
+    listingTags,
+    persistedPhotoNames,
+    showDeliverySection,
+    showDimensionsSection,
+    showSetupSection,
+    showTakedownSection,
+    showTravelSection,
+    vendorType,
+  ]);
 
   const staticMapPreviewUrl = useMemo(() => {
     if (!center) return null;
@@ -1005,6 +929,17 @@ export function CreateListingWizard({ onClose }: CreateListingWizardProps) {
     );
     return `https://api.mapbox.com/styles/v1/mapbox/streets-v12/static/geojson(${staticOverlay})/auto/1200x700?padding=56,56,56,56&access_token=${MAPBOX_TOKEN}`;
   }, [center, draft.serviceRadiusMiles]);
+
+  const hasMeaningfulData =
+    Boolean(draft.category) ||
+    draft.listingTitle.trim().length > 0 ||
+    draft.listingDescription.trim().length > 0 ||
+    persistedPhotoNames.length > 0 ||
+    Number(draft.rate) > 0 ||
+    (showDimensionsSection &&
+      (parseDimensionNumber(draft.dimensionWidth) != null ||
+        parseDimensionNumber(draft.dimensionLength) != null ||
+        parseDimensionNumber(draft.dimensionHeight) != null));
 
   useEffect(() => {
     if (!vendorProfile) return;
@@ -1067,45 +1002,39 @@ export function CreateListingWizard({ onClose }: CreateListingWizardProps) {
   }, [vendorProfile, draft.serviceCenter, draft.serviceLocation]);
 
   useEffect(() => {
-    if (!isAuthenticated) return;
-
-    const hasMeaningfulData =
-      Boolean(draft.category) ||
-      draft.listingTitle.trim().length > 0 ||
-      draft.listingDescription.trim().length > 0 ||
-      draft.photoNames.length > 0 ||
-      Number(draft.rate) > 0 ||
-      (showDimensionsSection &&
-        (parseDimensionNumber(draft.dimensionWidth) != null ||
-          parseDimensionNumber(draft.dimensionLength) != null ||
-          parseDimensionNumber(draft.dimensionHeight) != null));
-
-    if (!hasMeaningfulData) return;
+    if (!isAuthenticated || !hasMeaningfulData) return;
+    if (isSavingDraft || isPublishing) return;
 
     const payload = buildListingPayload;
+    const payloadKey = JSON.stringify(payload);
+    if (lastSuccessfulAutosaveKeyRef.current === payloadKey) return;
+    if (blockedAutosaveKeyRef.current === payloadKey) return;
 
     if (!listingId) {
       pendingPayloadRef.current = payload;
+      pendingPayloadKeyRef.current = payloadKey;
       if (!createRequestedRef.current) {
         createRequestedRef.current = true;
-        createDraftMutation.mutate();
+        createDraftMutation.mutate({ source: "autosave" });
       }
       return;
     }
 
     const timer = setTimeout(() => {
-      updateDraftMutation.mutate({ id: listingId, payload });
+      updateDraftMutation.mutate({ id: listingId, payload, source: "autosave" });
     }, 1200);
 
     return () => clearTimeout(timer);
   }, [
     buildListingPayload,
-    createDraftMutation,
-    draft,
+    createDraftMutation.isPending,
+    createDraftMutation.mutate,
+    hasMeaningfulData,
     isAuthenticated,
+    isPublishing,
+    isSavingDraft,
     listingId,
-    showDimensionsSection,
-    updateDraftMutation,
+    updateDraftMutation.mutate,
   ]);
 
   useEffect(() => {
@@ -1465,7 +1394,7 @@ export function CreateListingWizard({ onClose }: CreateListingWizardProps) {
 
     const tempEntries = acceptedFiles.map((file) => {
       const ext = (file.name.split(".").pop() || "jpg").toLowerCase();
-      const tempName = `__uploading__-${Date.now()}-${Math.random().toString(16).slice(2)}.${ext}`;
+      const tempName = `${TEMP_UPLOADING_PHOTO_PREFIX}${Date.now()}-${Math.random().toString(16).slice(2)}.${ext}`;
       return {
         file,
         tempName,
@@ -1488,10 +1417,11 @@ export function CreateListingWizard({ onClose }: CreateListingWizardProps) {
 
         uploaded.forEach((result, index) => {
           const tempName = tempEntries[index].tempName;
-          nextPhotoNames = nextPhotoNames.map((name) => (name === tempName ? result.filename : name));
+          const persistedName = result.storagePath ?? result.filename;
+          nextPhotoNames = nextPhotoNames.map((name) => (name === tempName ? persistedName : name));
 
           if (nextCropsByName[tempName]) {
-            nextCropsByName[result.filename] = nextCropsByName[tempName];
+            nextCropsByName[persistedName] = nextCropsByName[tempName];
             delete nextCropsByName[tempName];
           }
         });
@@ -1621,7 +1551,7 @@ export function CreateListingWizard({ onClose }: CreateListingWizardProps) {
   };
 
   const handleCloseWizard = () => {
-    clearDraftState();
+    void queryClient.invalidateQueries({ queryKey: ["/api/vendor/listings"] });
     onClose();
   };
 
@@ -1631,35 +1561,29 @@ export function CreateListingWizard({ onClose }: CreateListingWizardProps) {
     }
     const forceCreate = Boolean(options?.forceCreate);
 
-    const hasMeaningfulData =
-      Boolean(draft.category) ||
-      draft.listingTitle.trim().length > 0 ||
-      draft.listingDescription.trim().length > 0 ||
-      Number(draft.rate) > 0 ||
-      draft.photoNames.length > 0 ||
-      (showDimensionsSection &&
-        (parseDimensionNumber(draft.dimensionWidth) != null ||
-          parseDimensionNumber(draft.dimensionLength) != null ||
-          parseDimensionNumber(draft.dimensionHeight) != null));
-
     if (!hasMeaningfulData && !forceCreate) return null;
 
     const payload = buildListingPayload;
+    const payloadKey = JSON.stringify(payload);
+    blockedAutosaveKeyRef.current = null;
 
     let nextListingId = listingId;
 
     if (!nextListingId) {
-      const created = await createDraftMutation.mutateAsync();
+      const created = await createDraftMutation.mutateAsync({ source: "manual" });
       nextListingId = created?.id || created?.data?.id;
       if (!nextListingId) throw new Error("Failed to create listing draft");
       setListingId(nextListingId);
     }
 
-    await updateDraftMutation.mutateAsync({ id: nextListingId, payload });
+    await updateDraftMutation.mutateAsync({ id: nextListingId, payload, source: "manual" });
+    lastSuccessfulAutosaveKeyRef.current = payloadKey;
     return nextListingId;
   };
 
   const handleSaveDraft = async () => {
+    if (saveInFlightRef.current || isSavingDraft || isPublishing) return;
+    saveInFlightRef.current = true;
     setIsSavingDraft(true);
     try {
       const savedId = await ensureListingSaved({ forceCreate: true });
@@ -1683,11 +1607,13 @@ export function CreateListingWizard({ onClose }: CreateListingWizardProps) {
       });
     } finally {
       setIsSavingDraft(false);
+      saveInFlightRef.current = false;
     }
   };
 
   const handlePublish = async () => {
-    if (!publishReady) return;
+    if (!publishReady || publishInFlightRef.current || isSavingDraft || isPublishing) return;
+    publishInFlightRef.current = true;
     setIsPublishing(true);
 
     // Step 1: save. Errors here are save errors, not publish errors.
@@ -1701,11 +1627,13 @@ export function CreateListingWizard({ onClose }: CreateListingWizardProps) {
           variant: "destructive",
         });
         setIsPublishing(false);
+        publishInFlightRef.current = false;
         return;
       }
     } catch (saveError) {
       if (handleAuthRequired(saveError, "Please sign in to continue publishing your listing.")) {
         setIsPublishing(false);
+        publishInFlightRef.current = false;
         return;
       }
       toast({
@@ -1714,6 +1642,7 @@ export function CreateListingWizard({ onClose }: CreateListingWizardProps) {
         variant: "destructive",
       });
       setIsPublishing(false);
+      publishInFlightRef.current = false;
       return;
     }
 
@@ -1747,6 +1676,7 @@ export function CreateListingWizard({ onClose }: CreateListingWizardProps) {
       });
     } finally {
       setIsPublishing(false);
+      publishInFlightRef.current = false;
     }
   };
 
@@ -1768,41 +1698,6 @@ export function CreateListingWizard({ onClose }: CreateListingWizardProps) {
           }
         }}
       />
-
-      {showResumePrompt && (
-        <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/40 backdrop-blur-sm">
-          <div className="mx-4 w-full max-w-sm rounded-2xl border border-[rgba(74,106,125,0.22)] bg-[#ffffff] p-6 shadow-xl">
-            <h2 className="text-lg font-semibold text-[#16222d]">Resume your listing?</h2>
-            <p className="mt-1.5 text-sm text-muted-foreground">
-              You have an unfinished listing draft from a previous session.
-            </p>
-            <div className="mt-5 flex gap-3">
-              <Button
-                type="button"
-                variant="outline"
-                className="flex-1"
-                onClick={() => {
-                  clearDraftState();
-                  setCurrentStep("basics");
-                  setMaxStepReached(0);
-                  setDraft(DEFAULT_DRAFT);
-                  setListingId(null);
-                  setShowResumePrompt(false);
-                }}
-              >
-                Start fresh
-              </Button>
-              <Button
-                type="button"
-                className="flex-1"
-                onClick={() => setShowResumePrompt(false)}
-              >
-                Resume
-              </Button>
-            </div>
-          </div>
-        </div>
-      )}
 
       <div className="flex min-h-0 flex-1">
         <div className="w-24 shrink-0 border-r border-[rgba(74,106,125,0.22)] bg-[#ffffff] dark:bg-[#ffffff]">
@@ -2775,7 +2670,10 @@ export function CreateListingWizard({ onClose }: CreateListingWizardProps) {
                 photos={draft.photoNames.map((name, index) => ({
                   id: name,
                   name,
-                  src: draft.photoPreviews[index] || resolveAssetUrl(`/uploads/listings/${name}`),
+                  src:
+                    draft.photoPreviews[index] ||
+                    normalizePhotoToUrl(name) ||
+                    resolveAssetUrl(`/uploads/listings/${name}`),
                 }))}
                 coverRatio={draft.coverPhotoRatio}
                 cropsByPhotoId={draft.photoCropsByName}
