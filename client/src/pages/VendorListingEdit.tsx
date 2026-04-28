@@ -59,6 +59,15 @@ const LISTING_DESCRIPTION_MAX_CHARS = 1000;
 const LISTING_CATEGORY_OPTIONS = ["Rental", "Service", "Venue", "Catering"] as const;
 type ListingCategory = (typeof LISTING_CATEGORY_OPTIONS)[number];
 const SUBCATEGORY_MAX_CHARS = 120;
+const TEMP_UPLOADING_PHOTO_PREFIX = "__uploading__-";
+
+function isPersistedPhotoName(value: unknown): value is string {
+  return (
+    typeof value === "string" &&
+    value.trim().length > 0 &&
+    !value.startsWith(TEMP_UPLOADING_PHOTO_PREFIX)
+  );
+}
 
 function normalizeCategoryForEdit(value: unknown): ListingCategory | "" {
   const normalized = String(value ?? "").trim().toLowerCase();
@@ -342,6 +351,7 @@ export default function VendorListingEdit() {
       takedownOffered?: unknown;
       takedownFeeEnabled?: unknown;
       takedownFeeAmountCents?: unknown;
+      photos?: unknown;
     };
 
     const listingDataIncluded =
@@ -372,9 +382,31 @@ export default function VendorListingEdit() {
             ? canonicalListing.pricingUnit
             : "per_day") as "per_day" | "per_hour";
 
-    const rawPhotoNames: string[] = Array.isArray(ld?.photos?.names)
-      ? ld.photos.names.filter((name: unknown): name is string => typeof name === "string")
+    const listingDataPhotoNames = toUniqueTrimmedStringList(ld?.photos?.names);
+    const listingDataPhotoUrls = toUniqueTrimmedStringList(ld?.photos?.urls);
+    const listingDataPhotoFallback = Array.isArray(ld?.photos)
+      ? ld.photos
+          .map((item: unknown) => {
+            if (typeof item === "string") return item.trim();
+            if (item && typeof item === "object") {
+              const objectItem = item as Record<string, unknown>;
+              if (typeof objectItem.url === "string") return objectItem.url.trim();
+              if (typeof objectItem.filename === "string") return objectItem.filename.trim();
+              if (typeof objectItem.name === "string") return objectItem.name.trim();
+            }
+            return "";
+          })
+          .filter((value: string) => value.length > 0)
       : [];
+    const canonicalPhotoNames = toUniqueTrimmedStringList(canonicalListing?.photos);
+    const rawPhotoNames: string[] = Array.from(
+      new Set([
+        ...listingDataPhotoNames,
+        ...listingDataPhotoUrls,
+        ...listingDataPhotoFallback,
+        ...canonicalPhotoNames,
+      ]),
+    );
     const storedCoverIndex = Number(ld?.photos?.coverPhotoIndex);
     const safeStoredCoverIndex =
       Number.isInteger(storedCoverIndex) && storedCoverIndex >= 0 && storedCoverIndex < rawPhotoNames.length
@@ -749,15 +781,16 @@ export default function VendorListingEdit() {
       uploaded.forEach((u, i) => {
         const tempName = tempEntries[i].tempName;
         const blobPreview = map[tempName];
+        const persistedName = u.storagePath ?? u.filename;
 
-        // swap temp -> real filename
-        nextNames = nextNames.map((n) => (n === tempName ? u.filename : n));
+        // swap temp -> canonical storage path
+        nextNames = nextNames.map((n) => (n === tempName ? persistedName : n));
 
-        // move preview mapping temp -> real filename
+        // move preview mapping temp -> canonical storage path
         delete map[tempName];
-        map[u.filename] = normalizePhotoToUrl(u.url || u.filename) ?? resolveAssetUrl(`/uploads/listings/${u.filename}`);
+        map[persistedName] = normalizePhotoToUrl(u.url || persistedName) ?? resolveAssetUrl(`/uploads/listings/${u.filename}`);
         if (nextCropsByName[tempName]) {
-          nextCropsByName[u.filename] = nextCropsByName[tempName];
+          nextCropsByName[persistedName] = nextCropsByName[tempName];
           delete nextCropsByName[tempName];
         }
 
@@ -950,12 +983,27 @@ export default function VendorListingEdit() {
 
   const hasPricing =
     pricingRate !== null && pricingRate !== undefined && `${pricingRate}`.trim() !== "";
-  const photoCount = Array.isArray(draft?.photos?.names) ? draft.photos.names.length : 0;
+  const persistedPhotoNames = Array.isArray(draft?.photos?.names)
+    ? draft.photos.names.filter((name: unknown): name is string => isPersistedPhotoName(name))
+    : [];
+  const photoCount = persistedPhotoNames.length;
   const hasMinimumPhotos = photoCount >= MIN_LISTING_PHOTO_COUNT;
   const canPublish = hasCategory && hasTitle && hasDescription && hasPricing && hasMinimumPhotos;
 
   const buildPersistPayload = () => {
     if (!draft) return null;
+    const safePhotoNames = Array.isArray(draft?.photos?.names)
+      ? draft.photos.names.filter((name: unknown): name is string => isPersistedPhotoName(name))
+      : [];
+    const rawPhotoCropsByName =
+      draft?.photos?.cropsByName && typeof draft.photos.cropsByName === "object"
+        ? (draft.photos.cropsByName as Record<string, ListingPhotoCrop>)
+        : {};
+    const safePhotoNameSet = new Set(safePhotoNames);
+    const safePhotoCropsByName = Object.fromEntries(
+      Object.entries(rawPhotoCropsByName).filter(([name]) => safePhotoNameSet.has(name)),
+    ) as Record<string, ListingPhotoCrop>;
+
     const deliverySetupDraft =
       draft?.deliverySetup && typeof draft.deliverySetup === "object" ? draft.deliverySetup : {};
     const deliveryIncluded = Boolean(deliverySetupDraft?.deliveryIncluded);
@@ -998,18 +1046,12 @@ export default function VendorListingEdit() {
       pricingUnit: draft.pricingUnit ?? draft.pricing?.unit ?? "per_day",
       minimumHours: draft.minimumHours,
       photos: {
-        names: Array.isArray(draft?.photos?.names) ? draft.photos.names : [],
-        count: Array.isArray(draft?.photos?.names) ? draft.photos.names.length : 0,
-        coverPhotoIndex: Array.isArray(draft?.photos?.names) && draft.photos.names.length > 0 ? 0 : 0,
+        names: safePhotoNames,
+        count: safePhotoNames.length,
+        coverPhotoIndex: safePhotoNames.length > 0 ? 0 : 0,
         coverPhotoRatio: normalizePhotoCoverRatio(draft?.photos?.coverPhotoRatio ?? DEFAULT_COVER_RATIO),
-        coverPhotoName:
-          Array.isArray(draft?.photos?.names) && draft.photos.names.length > 0
-            ? draft.photos.names[0] ?? null
-            : null,
-        cropsByName:
-          draft?.photos?.cropsByName && typeof draft.photos.cropsByName === "object"
-            ? draft.photos.cropsByName
-            : {},
+        coverPhotoName: safePhotoNames.length > 0 ? safePhotoNames[0] ?? null : null,
+        cropsByName: safePhotoCropsByName,
       },
       deliveryIncluded,
       deliveryOffered: deliveryIncluded,
@@ -1345,7 +1387,9 @@ export default function VendorListingEdit() {
   const photoNames: string[] = Array.isArray(draft?.photos?.names) ? draft.photos.names : [];
   const coverPhotoRatio = normalizePhotoCoverRatio(draft?.photos?.coverPhotoRatio ?? DEFAULT_COVER_RATIO);
   const getPhotoPreviewSrc = (name: string) =>
-    draft?._photoPreviewsByName?.[name] || resolveAssetUrl(`/uploads/listings/${name}`);
+    draft?._photoPreviewsByName?.[name] ||
+    normalizePhotoToUrl(name) ||
+    resolveAssetUrl(`/uploads/listings/${name}`);
   const inlinePhotos = photoNames.map((name) => ({
     id: name,
     name,
