@@ -20,6 +20,7 @@ import {
   bookingDisputes,
   rentalTypes,
   stripeWebhookEvents,
+  vendorVacationBlocks,
 } from "@shared/schema";
 import {
   hashPassword,
@@ -4670,6 +4671,7 @@ app.post(
         hasAnyVendorProfiles,
         hasActiveVendorProfile,
         needsNewVendorProfileOnboarding,
+        shopActive: account.shopActive ?? true,
         __marker: "vendor_me_route_hit",
       });
     } catch (error: any) {
@@ -7260,6 +7262,104 @@ app.post(
     }
   });
 
+  // ── Vendor Availability: Vacation Blocks & Shop Status ─────────────────────
+
+  // GET /api/vendor/vacation-blocks  — list vendor's vacation blocks
+  app.get("/api/vendor/vacation-blocks", ...requireVendorAuth0, async (req, res) => {
+    try {
+      const vendorAuth = (req as any).vendorAuth;
+      const rows = await db
+        .select()
+        .from(vendorVacationBlocks)
+        .where(eq(vendorVacationBlocks.vendorId, vendorAuth.id))
+        .orderBy(asc(vendorVacationBlocks.startDate));
+      return res.json(rows);
+    } catch (error: any) {
+      logRouteError("/api/vendor/vacation-blocks GET", error);
+      return res.status(500).json({ error: "Unable to load vacation blocks" });
+    }
+  });
+
+  // POST /api/vendor/vacation-blocks  — create a vacation block
+  app.post("/api/vendor/vacation-blocks", ...requireVendorAuth0, async (req, res) => {
+    try {
+      const vendorAuth = (req as any).vendorAuth;
+      const { startDate, endDate } = req.body;
+
+      const datePattern = /^\d{4}-\d{2}-\d{2}$/;
+      if (
+        typeof startDate !== "string" || !datePattern.test(startDate) ||
+        typeof endDate !== "string" || !datePattern.test(endDate)
+      ) {
+        return res.status(400).json({ error: "startDate and endDate are required in YYYY-MM-DD format" });
+      }
+      if (endDate < startDate) {
+        return res.status(400).json({ error: "endDate must be on or after startDate" });
+      }
+
+      const [block] = await db
+        .insert(vendorVacationBlocks)
+        .values({ vendorId: vendorAuth.id, startDate, endDate })
+        .returning();
+      return res.status(201).json(block);
+    } catch (error: any) {
+      logRouteError("/api/vendor/vacation-blocks POST", error);
+      return res.status(500).json({ error: "Unable to create vacation block" });
+    }
+  });
+
+  // DELETE /api/vendor/vacation-blocks/:id  — delete a vacation block
+  app.delete("/api/vendor/vacation-blocks/:id", ...requireVendorAuth0, async (req, res) => {
+    try {
+      const vendorAuth = (req as any).vendorAuth;
+      const blockId = String(req.params.id || "").trim();
+
+      const deleted = await db
+        .delete(vendorVacationBlocks)
+        .where(
+          and(
+            eq(vendorVacationBlocks.id, blockId),
+            eq(vendorVacationBlocks.vendorId, vendorAuth.id)
+          )
+        )
+        .returning({ id: vendorVacationBlocks.id });
+
+      if (deleted.length === 0) {
+        return res.status(404).json({ error: "Vacation block not found" });
+      }
+      return res.json({ deleted: deleted[0].id });
+    } catch (error: any) {
+      logRouteError("/api/vendor/vacation-blocks/:id DELETE", error);
+      return res.status(500).json({ error: "Unable to delete vacation block" });
+    }
+  });
+
+  // PATCH /api/vendor/shop-status  — toggle shop open/closed
+  app.patch("/api/vendor/shop-status", ...requireVendorAuth0, async (req, res) => {
+    try {
+      const vendorAuth = (req as any).vendorAuth;
+      const { shopActive } = req.body;
+
+      if (typeof shopActive !== "boolean") {
+        return res.status(400).json({ error: "shopActive must be a boolean" });
+      }
+
+      const updated = await db
+        .update(vendorAccounts)
+        .set({ shopActive })
+        .where(eq(vendorAccounts.id, vendorAuth.id))
+        .returning({ id: vendorAccounts.id, shopActive: vendorAccounts.shopActive });
+
+      if (updated.length === 0) {
+        return res.status(404).json({ error: "Vendor account not found" });
+      }
+      return res.json({ shopActive: updated[0].shopActive });
+    } catch (error: any) {
+      logRouteError("/api/vendor/shop-status PATCH", error);
+      return res.status(500).json({ error: "Unable to update shop status" });
+    }
+  });
+
   // Public Listings (guest browsing)
   // Returns only active listings. No auth.
   app.get("/api/listings/public", async (req, res) => {
@@ -7318,7 +7418,8 @@ app.post(
           and(
             eq(vendorListings.status, "active"),
             eq(vendorProfiles.active, true),
-            eq(vendorAccounts.active, true)
+            eq(vendorAccounts.active, true),
+            eq(vendorAccounts.shopActive, true)
           )
         );
       const compliantListings = listings.filter(
@@ -7413,6 +7514,7 @@ app.post(
           vendorId: vendorAccounts.id,
           vendorName: vendorAccounts.businessName,
           vendorOnlineProfiles: vendorProfiles.onlineProfiles,
+          shopActive: vendorAccounts.shopActive,
         })
         .from(vendorListings)
         .innerJoin(vendorProfiles, eq(vendorListings.profileId, vendorProfiles.id))
@@ -7516,11 +7618,26 @@ app.post(
       } catch (err) {
         console.warn("listing_traffic insert failed", err);
       }
+      // Fetch vendor vacation blocks so the listing detail page can show inline warnings
+      const vacationBlocks = listing.vendorId
+        ? await db
+            .select({
+              id: vendorVacationBlocks.id,
+              startDate: vendorVacationBlocks.startDate,
+              endDate: vendorVacationBlocks.endDate,
+            })
+            .from(vendorVacationBlocks)
+            .where(eq(vendorVacationBlocks.vendorId, listing.vendorId))
+            .orderBy(asc(vendorVacationBlocks.startDate))
+        : [];
+
       return res.json({
         ...listing,
         rating,
         reviewCount,
         reviews: publishedReviews,
+        shopActive: listing.shopActive ?? true,
+        vacationBlocks,
       });
     } catch (error: any) {
       logRouteError("/api/listings/public/:id", error);
@@ -10242,6 +10359,7 @@ app.post(
           stripeOnboardingComplete: vendorAccounts.stripeOnboardingComplete,
           googleConnectionStatus: vendorAccounts.googleConnectionStatus,
           googleCalendarId: vendorAccounts.googleCalendarId,
+          shopActive: vendorAccounts.shopActive,
         })
         .from(vendorAccounts)
         .where(and(eq(vendorAccounts.id, listingRow.accountId), eq(vendorAccounts.active, true)))
@@ -10258,6 +10376,40 @@ app.post(
           error: "This vendor cannot accept payments yet. Please choose another listing.",
           code: "vendor_payment_not_ready",
         });
+      }
+
+      // Block if vendor has closed their shop
+      if (vendorAccount.shopActive === false) {
+        return res.status(409).json({
+          error: "This vendor's shop is currently closed and not accepting bookings.",
+          code: "shop_closed",
+        });
+      }
+
+      // Block if requested date falls inside a vacation block
+      const eventDateStr = String(data.eventDate || "").trim().slice(0, 10);
+      if (eventDateStr) {
+        const vacationConflict = await db
+          .select({ id: vendorVacationBlocks.id, startDate: vendorVacationBlocks.startDate, endDate: vendorVacationBlocks.endDate })
+          .from(vendorVacationBlocks)
+          .where(
+            and(
+              eq(vendorVacationBlocks.vendorId, vendorAccount.id),
+              lte(vendorVacationBlocks.startDate, eventDateStr),
+              gte(vendorVacationBlocks.endDate, eventDateStr)
+            )
+          )
+          .limit(1);
+
+        if (vacationConflict.length > 0) {
+          const block = vacationConflict[0];
+          return res.status(409).json({
+            error: `This vendor is unavailable from ${block.startDate} to ${block.endDate}. Please choose a different date.`,
+            code: "vacation_block_conflict",
+            conflictStart: block.startDate,
+            conflictEnd: block.endDate,
+          });
+        }
       }
 
       const listingDataAny = (listingRow.listingData ?? {}) as any;

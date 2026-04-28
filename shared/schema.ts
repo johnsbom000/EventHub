@@ -231,6 +231,7 @@ export const vendorAccounts = pgTable(
     googleTokenExpiresAt: timestamp("google_token_expires_at"),
     googleCalendarId: text("google_calendar_id"),
     googleConnectionStatus: text("google_connection_status").notNull().default("disconnected"),
+    shopActive: boolean("shop_active").notNull().default(true),
     deletedAt: timestamp("deleted_at"),
     createdAt: timestamp("created_at").defaultNow(),
   },
@@ -772,6 +773,25 @@ export type InsertStripeWebhookEvent = z.infer<typeof insertStripeWebhookEventSc
 export type StripeWebhookEvent = typeof stripeWebhookEvents.$inferSelect;
 
 export type RentalType = typeof rentalTypes.$inferSelect;
+
+// Vendor Vacation Blocks (date ranges when vendor is away)
+export const vendorVacationBlocks = pgTable("vendor_vacation_blocks", {
+  id: varchar("id").primaryKey().default(sql`gen_random_uuid()`),
+  vendorId: varchar("vendor_id")
+    .notNull()
+    .references(() => vendorAccounts.id, { onDelete: "cascade" }),
+  startDate: text("start_date").notNull(), // YYYY-MM-DD
+  endDate: text("end_date").notNull(),     // YYYY-MM-DD
+  createdAt: timestamp("created_at", { withTimezone: true }).defaultNow().notNull(),
+});
+
+export const insertVendorVacationBlockSchema = createInsertSchema(vendorVacationBlocks).omit({
+  id: true,
+  createdAt: true,
+});
+
+export type InsertVendorVacationBlock = z.infer<typeof insertVendorVacationBlockSchema>;
+export type VendorVacationBlock = typeof vendorVacationBlocks.$inferSelect;
 
 // Rental Types (DB-backed canonical prop/rental types)
 export const rentalTypes = pgTable("rental_types", {

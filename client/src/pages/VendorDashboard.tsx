@@ -46,6 +46,13 @@ type VendorMe = {
   hasAnyVendorProfiles?: boolean | null;
   hasActiveVendorProfile?: boolean | null;
   needsNewVendorProfileOnboarding?: boolean | null;
+  shopActive?: boolean | null;
+};
+
+type VacationBlock = {
+  id: string;
+  startDate: string;
+  endDate: string;
 };
 
 type VendorStats = {
@@ -463,6 +470,26 @@ export default function VendorDashboard() {
   const [selectedListingIdByGoogleEventId, setSelectedListingIdByGoogleEventId] = useState<Record<string, string>>({});
   const [googleEventMappingErrorMessage, setGoogleEventMappingErrorMessage] = useState<string | null>(null);
   const [googleBookingRepairMessage, setGoogleBookingRepairMessage] = useState<string | null>(null);
+  // Availability state
+  const [vacationStart, setVacationStart] = useState("");
+  const [vacationEnd, setVacationEnd] = useState("");
+  const [vacationFormError, setVacationFormError] = useState<string | null>(null);
+  const [isShopShutdownDialogOpen, setIsShopShutdownDialogOpen] = useState(false);
+  // Vacation blocks query
+  const {
+    data: vacationBlocks = [],
+    isLoading: isVacationBlocksLoading,
+  } = useQuery<VacationBlock[]>({
+    queryKey: ["/api/vendor/vacation-blocks"],
+    enabled: isAuthenticated,
+    queryFn: async () => {
+      const token = await getAccessTokenSilently({ authorizationParams: { audience: "https://eventhub-api" } });
+      const res = await fetch("/api/vendor/vacation-blocks", { headers: { Authorization: `Bearer ${token}` } });
+      if (!res.ok) return [];
+      return res.json();
+    },
+  });
+
   const vendorProfiles = Array.isArray(vendorProfilesData?.profiles) ? vendorProfilesData.profiles : [];
   const activeProfileId =
     (typeof vendorProfile?.activeProfileId === "string" ? vendorProfile.activeProfileId : null) ||
@@ -683,6 +710,73 @@ export default function VendorDashboard() {
       qc.invalidateQueries({ queryKey: ["/api/vendor/profiles"] });
     },
   });
+
+  // Vacation block mutations
+  const addVacationBlockMutation = useMutation({
+    mutationFn: async ({ startDate, endDate }: { startDate: string; endDate: string }) => {
+      const token = await getAccessTokenSilently({ authorizationParams: { audience: "https://eventhub-api" } });
+      const res = await fetch("/api/vendor/vacation-blocks", {
+        method: "POST",
+        headers: { "Content-Type": "application/json", Authorization: `Bearer ${token}` },
+        body: JSON.stringify({ startDate, endDate }),
+      });
+      if (!res.ok) {
+        const text = await res.text().catch(() => "");
+        throw new Error(text || `Failed (${res.status})`);
+      }
+      return res.json();
+    },
+    onSuccess: () => {
+      qc.invalidateQueries({ queryKey: ["/api/vendor/vacation-blocks"] });
+      setVacationStart("");
+      setVacationEnd("");
+      setVacationFormError(null);
+    },
+    onError: (error: any) => {
+      setVacationFormError(error?.message || "Unable to add vacation block.");
+    },
+  });
+
+  const deleteVacationBlockMutation = useMutation({
+    mutationFn: async (blockId: string) => {
+      const token = await getAccessTokenSilently({ authorizationParams: { audience: "https://eventhub-api" } });
+      const res = await fetch(`/api/vendor/vacation-blocks/${blockId}`, {
+        method: "DELETE",
+        headers: { Authorization: `Bearer ${token}` },
+      });
+      if (!res.ok) throw new Error(`Failed (${res.status})`);
+      return res.json();
+    },
+    onSuccess: () => {
+      qc.invalidateQueries({ queryKey: ["/api/vendor/vacation-blocks"] });
+    },
+    onError: (error: any) => {
+      toast({ title: "Unable to delete vacation block", description: error?.message, variant: "destructive" });
+    },
+  });
+
+  const toggleShopStatusMutation = useMutation({
+    mutationFn: async (shopActive: boolean) => {
+      const token = await getAccessTokenSilently({ authorizationParams: { audience: "https://eventhub-api" } });
+      const res = await fetch("/api/vendor/shop-status", {
+        method: "PATCH",
+        headers: { "Content-Type": "application/json", Authorization: `Bearer ${token}` },
+        body: JSON.stringify({ shopActive }),
+      });
+      if (!res.ok) throw new Error(`Failed (${res.status})`);
+      return res.json();
+    },
+    onSuccess: () => {
+      qc.invalidateQueries({ queryKey: ["/api/vendor/me"] });
+      setIsShopShutdownDialogOpen(false);
+      toast({ title: "Shop status updated" });
+    },
+    onError: (error: any) => {
+      toast({ title: "Unable to update shop status", description: error?.message, variant: "destructive" });
+    },
+  });
+
+  const shopActive = vendorAccount?.shopActive !== false; // default true
 
   const selectGoogleCalendarMutation = useMutation({
     mutationFn: async (calendarId: string) => {
@@ -1813,6 +1907,179 @@ export default function VendorDashboard() {
 
           </div>
         </section>
+
+        {/* ── Availability ─────────────────────────────────────────────────── */}
+        <section className="px-5 py-4">
+          <h2 className="font-heading text-[20px] leading-none tracking-tight">Availability</h2>
+          <p className="mt-3 text-sm text-muted-foreground">
+            Control when customers can book you. Closed shops and vacation dates are enforced at checkout.
+          </p>
+
+          {/* Shop Shutdown panel */}
+          <div className={cn(
+            "mt-6 rounded-lg border p-4",
+            shopActive
+              ? "border-[rgba(74,106,125,0.22)]"
+              : "border-destructive/40 bg-destructive/5"
+          )}>
+            <div className="flex items-start justify-between gap-4">
+              <div>
+                <h3 className="font-medium">
+                  Shop Status:{" "}
+                  <span className={shopActive ? "text-green-600 dark:text-green-400" : "text-destructive"}>
+                    {shopActive ? "Open" : "Closed"}
+                  </span>
+                </h3>
+                <p className="mt-1 text-sm text-muted-foreground">
+                  {shopActive
+                    ? "Your shop is accepting bookings."
+                    : "Your shop is closed. Customers cannot book any of your listings."}
+                </p>
+              </div>
+              <Button
+                variant={shopActive ? "outline" : "default"}
+                onClick={() => {
+                  if (shopActive) {
+                    setIsShopShutdownDialogOpen(true);
+                  } else {
+                    toggleShopStatusMutation.mutate(true);
+                  }
+                }}
+                disabled={toggleShopStatusMutation.isPending}
+              >
+                {toggleShopStatusMutation.isPending
+                  ? "Updating..."
+                  : shopActive
+                  ? "Close Shop"
+                  : "Reopen Shop"}
+              </Button>
+            </div>
+            {!shopActive && (
+              <div className="mt-3 rounded-md bg-destructive/10 border border-destructive/20 px-3 py-2 text-sm text-destructive">
+                Warning: Your shop is closed. All listings show as unavailable to customers.
+              </div>
+            )}
+          </div>
+
+          {/* Vacation Mode panel */}
+          <div className="mt-6 rounded-lg border border-[rgba(74,106,125,0.22)] p-4">
+            <h3 className="font-medium">Vacation Blocks</h3>
+            <p className="mt-1 text-sm text-muted-foreground">
+              Block out date ranges when you are away. Bookings on blocked dates will be rejected.
+            </p>
+
+            <div className="mt-4 grid grid-cols-1 gap-3 sm:grid-cols-[1fr_1fr_auto] sm:items-end">
+              <div className="space-y-1">
+                <label className="text-sm font-medium">Start Date</label>
+                <input
+                  type="date"
+                  value={vacationStart}
+                  min={new Date().toISOString().split("T")[0]}
+                  onChange={(e) => { setVacationStart(e.target.value); setVacationFormError(null); }}
+                  className="w-full rounded-md border border-border bg-background px-3 py-2 text-sm"
+                />
+              </div>
+              <div className="space-y-1">
+                <label className="text-sm font-medium">End Date</label>
+                <input
+                  type="date"
+                  value={vacationEnd}
+                  min={vacationStart || new Date().toISOString().split("T")[0]}
+                  onChange={(e) => { setVacationEnd(e.target.value); setVacationFormError(null); }}
+                  className="w-full rounded-md border border-border bg-background px-3 py-2 text-sm"
+                />
+              </div>
+              <Button
+                onClick={() => {
+                  if (!vacationStart || !vacationEnd) {
+                    setVacationFormError("Both start and end dates are required.");
+                    return;
+                  }
+                  if (vacationEnd < vacationStart) {
+                    setVacationFormError("End date must be on or after start date.");
+                    return;
+                  }
+                  addVacationBlockMutation.mutate({ startDate: vacationStart, endDate: vacationEnd });
+                }}
+                disabled={addVacationBlockMutation.isPending}
+              >
+                {addVacationBlockMutation.isPending ? "Adding..." : "Add Block"}
+              </Button>
+            </div>
+
+            {vacationFormError && (
+              <p className="mt-2 text-sm text-destructive">{vacationFormError}</p>
+            )}
+
+            <div className="mt-4">
+              {isVacationBlocksLoading ? (
+                <div className="text-sm text-muted-foreground">Loading...</div>
+              ) : vacationBlocks.length === 0 ? (
+                <div className="rounded-lg border border-[rgba(74,106,125,0.22)] p-4 text-sm text-muted-foreground">
+                  No vacation blocks set.
+                </div>
+              ) : (
+                <div className="space-y-2">
+                  {vacationBlocks.map((block) => (
+                    <div
+                      key={block.id}
+                      className="flex items-center justify-between rounded-lg border border-[rgba(74,106,125,0.22)] px-4 py-2"
+                    >
+                      <span className="text-sm">
+                        {block.startDate} → {block.endDate}
+                      </span>
+                      <Button
+                        variant="ghost"
+                        size="sm"
+                        className="text-destructive hover:text-destructive"
+                        onClick={() => deleteVacationBlockMutation.mutate(block.id)}
+                        disabled={deleteVacationBlockMutation.isPending && deleteVacationBlockMutation.variables === block.id}
+                      >
+                        Remove
+                      </Button>
+                    </div>
+                  ))}
+                </div>
+              )}
+            </div>
+          </div>
+        </section>
+
+        {/* Shop Shutdown confirmation dialog */}
+        <Dialog open={isShopShutdownDialogOpen} onOpenChange={setIsShopShutdownDialogOpen}>
+          <DialogContent className="sm:max-w-md">
+            <DialogHeader>
+              <DialogTitle>Close your shop?</DialogTitle>
+              <DialogDescription>
+                While closed, customers will see a "Currently unavailable" notice on all your listings and
+                cannot place bookings.
+              </DialogDescription>
+            </DialogHeader>
+            <div className="rounded-md border border-destructive/35 bg-destructive/10 p-3 text-sm text-muted-foreground">
+              <ul className="list-disc space-y-1 pl-5">
+                <li>All existing bookings are unaffected.</li>
+                <li>You can reopen your shop at any time from this dashboard.</li>
+                <li>Your listings remain active — they will reappear when you reopen.</li>
+              </ul>
+            </div>
+            <DialogFooter className="gap-2 sm:justify-end">
+              <Button
+                variant="outline"
+                onClick={() => setIsShopShutdownDialogOpen(false)}
+                disabled={toggleShopStatusMutation.isPending}
+              >
+                Cancel
+              </Button>
+              <Button
+                variant="destructive"
+                onClick={() => toggleShopStatusMutation.mutate(false)}
+                disabled={toggleShopStatusMutation.isPending}
+              >
+                {toggleShopStatusMutation.isPending ? "Closing..." : "Close Shop"}
+              </Button>
+            </DialogFooter>
+          </DialogContent>
+        </Dialog>
 
         <Dialog
           open={isAccountSettingsDialogOpen}

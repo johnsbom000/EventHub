@@ -362,6 +362,10 @@ export default function ListingDetailPage() {
               ? "Takedown not included"
             : "Not configured yet";
 
+      const shopActive = raw?.shopActive !== false; // default true
+      const vacationBlocks: Array<{ id: string; startDate: string; endDate: string }> =
+        Array.isArray(raw?.vacationBlocks) ? raw.vacationBlocks : [];
+
       return {
         id: raw?.id ?? listingId,
         vendorId: raw?.vendorId ?? null,
@@ -391,6 +395,8 @@ export default function ListingDetailPage() {
           takedownLabel,
           radiusMiles,
         },
+        shopActive,
+        vacationBlocks,
       };
     },
   });
@@ -765,24 +771,34 @@ export default function ListingDetailPage() {
 
         {/* Right sticky reservation card */}
         <aside id="reservation-card" className="lg:sticky lg:top-8">
-          <ReservationCard
-            listingId={data.id}
-            vendorId={data.vendorId}
-            price={data.price}
-            pricingUnit={data.pricingUnit}
-            instantBookEnabled={Boolean(data.instantBookEnabled)}
-            availableQuantity={Number(data.availableQuantity) || 1}
-            onStartCheckout={({ listingId, eventDate, quantity }) => {
-              setLocation(
-                `/checkout/${listingId}?date=${encodeURIComponent(eventDate)}&quantity=${encodeURIComponent(String(quantity))}`,
-              );
-            }}
-          />
+          {data.shopActive === false ? (
+            <div className="rounded-2xl border border-border bg-muted/40 p-6 text-center space-y-2">
+              <div className="text-lg font-semibold text-muted-foreground">Currently unavailable</div>
+              <p className="text-sm text-muted-foreground">
+                This vendor's shop is temporarily closed. Check back later or explore other vendors.
+              </p>
+            </div>
+          ) : (
+            <ReservationCard
+              listingId={data.id}
+              vendorId={data.vendorId}
+              price={data.price}
+              pricingUnit={data.pricingUnit}
+              instantBookEnabled={Boolean(data.instantBookEnabled)}
+              availableQuantity={Number(data.availableQuantity) || 1}
+              vacationBlocks={data.vacationBlocks ?? []}
+              onStartCheckout={({ listingId, eventDate, quantity }) => {
+                setLocation(
+                  `/checkout/${listingId}?date=${encodeURIComponent(eventDate)}&quantity=${encodeURIComponent(String(quantity))}`,
+                );
+              }}
+            />
+          )}
         </aside>
       </div>
 
       {/* Mobile sticky Book Now bar */}
-      {data.price && (
+      {data.price && data.shopActive !== false && (
         <div className="fixed bottom-0 left-0 right-0 z-40 flex items-center justify-between border-t border-border bg-background px-4 py-3 lg:hidden">
           <div>
             <span className="text-lg font-bold text-foreground">{money(data.price)}</span>
@@ -863,6 +879,7 @@ function ReservationCard({
   pricingUnit,
   instantBookEnabled,
   availableQuantity,
+  vacationBlocks,
   onStartCheckout,
 }: {
   listingId: string;
@@ -871,12 +888,17 @@ function ReservationCard({
   pricingUnit: string;
   instantBookEnabled: boolean;
   availableQuantity: number;
+  vacationBlocks: Array<{ id: string; startDate: string; endDate: string }>;
   onStartCheckout: (params: { listingId: string; vendorId: string; eventDate: string; quantity: number }) => void;
 }) {
   const [date, setDate] = useState("");
   const [quantity, setQuantity] = useState(1);
   const [isRouting, setIsRouting] = useState(false);
   const [bookingError, setBookingError] = useState<string | null>(null);
+
+  const vacationConflict = date
+    ? vacationBlocks.find((b) => date >= b.startDate && date <= b.endDate) ?? null
+    : null;
 
   const { isAuthenticated, loginWithRedirect } = useAuth0();
 
@@ -893,7 +915,8 @@ function ReservationCard({
     Boolean(vendorId) &&
     quantity >= 1 &&
     quantity <= normalizedAvailableQuantity &&
-    !isRouting;
+    !isRouting &&
+    !vacationConflict;
 
   async function handleBookNow() {
     setBookingError(null);
@@ -958,8 +981,16 @@ function ReservationCard({
             value={date}
             onChange={(e) => setDate(e.target.value)}
             min={new Date().toISOString().split("T")[0]}
-            className="w-full rounded-md border border-border bg-background px-3 py-2 text-sm"
+            className={[
+              "w-full rounded-md border bg-background px-3 py-2 text-sm",
+              vacationConflict ? "border-destructive" : "border-border",
+            ].join(" ")}
           />
+          {vacationConflict && (
+            <p className="mt-1 text-xs text-destructive">
+              Vendor is unavailable {vacationConflict.startDate} – {vacationConflict.endDate}. Choose a different date.
+            </p>
+          )}
         </div>
 
         {normalizedAvailableQuantity > 1 ? (
