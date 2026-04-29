@@ -35,7 +35,13 @@ import { eq, and, or, ne, isNull, inArray, sql as drizzleSql, count, sum, gte, l
 import multer from "multer";
 import { promises as fs } from "fs";
 import path from "path";
-import { sendBookingConfirmationEmail } from "./email";
+import {
+  sendBookingConfirmationEmail,
+  sendBookingConfirmedEmail,
+  sendBookingCancelledEmail,
+  sendNewMessageEmail,
+  sendReviewPromptEmail,
+} from "./email";
 import {
   uploadBufferToObjectStorage,
   makeObjectKey,
@@ -4428,6 +4434,87 @@ export async function registerRoutes(app: Express): Promise<Server> {
     verificationTimer.unref();
   }
 
+  // ── Daily review prompt job ──────────────────────────────────────────────
+  // Sends a review request to customers whose event date was ≥48h ago and
+  // who have not yet received a review prompt (review_prompt_sent = false).
+  const REVIEW_PROMPT_INTERVAL_MS = 24 * 60 * 60 * 1000; // 24 hours
+
+  const runReviewPromptJob = async () => {
+    try {
+      const serverUrl = (process.env.SERVER_URL || "http://localhost:5001").replace(/\/$/, "");
+      const cutoff = new Date(Date.now() - 48 * 60 * 60 * 1000);
+      const cutoffDate = cutoff.toISOString().split("T")[0]; // YYYY-MM-DD
+
+      const rows: any = await db.execute(drizzleSql`
+        select
+          b.id             as "bookingId",
+          b.event_date     as "eventDate",
+          coalesce(b.listing_title_snapshot, '') as "listingTitle",
+          u.email          as "customerEmail",
+          u.name           as "customerName",
+          va.business_name as "vendorName"
+        from bookings b
+        join users u           on u.id  = b.customer_id
+        join vendor_accounts va on va.id = b.vendor_account_id
+        where b.review_prompt_sent = false
+          and b.status not in ('cancelled', 'failed', 'expired')
+          and b.event_date <= ${cutoffDate}
+        limit 200
+      `);
+
+      const eligible = extractRows<{
+        bookingId: string;
+        eventDate: string;
+        listingTitle: string;
+        customerEmail: string;
+        customerName: string;
+        vendorName: string;
+      }>(rows);
+
+      if (eligible.length === 0) return;
+
+      let sent = 0;
+      for (const row of eligible) {
+        try {
+          if (row.customerEmail) {
+            await sendReviewPromptEmail(row.customerEmail, {
+              customerName: row.customerName || "Customer",
+              vendorName: row.vendorName || "Vendor",
+              eventDate: row.eventDate,
+              listingTitle: row.listingTitle || "your booking",
+              bookingId: row.bookingId,
+              serverUrl,
+            });
+          }
+          await db.execute(drizzleSql`
+            update bookings set review_prompt_sent = true where id = ${row.bookingId}
+          `);
+          sent++;
+        } catch (rowError: any) {
+          console.warn(
+            "[review prompt] failed for booking %s: %s",
+            row.bookingId,
+            rowError?.message || rowError
+          );
+        }
+      }
+
+      if (sent > 0) {
+        console.log("[review prompt] sent %d review prompt(s)", sent);
+      }
+    } catch (error: any) {
+      console.warn("[review prompt] job failed:", error?.message || error);
+    }
+  };
+
+  // Stagger 5 min after startup, then every 24 hours.
+  const reviewPromptStartTimer = setTimeout(() => {
+    void runReviewPromptJob();
+    const reviewPromptTimer = setInterval(() => void runReviewPromptJob(), REVIEW_PROMPT_INTERVAL_MS);
+    reviewPromptTimer.unref();
+  }, 5 * 60 * 1000);
+  reviewPromptStartTimer.unref();
+
   const listingUpload = multer({
     storage: multer.memoryStorage(),
     limits: { fileSize: 10 * 1024 * 1024 }, // 10MB
@@ -8419,6 +8506,99 @@ app.post(
 
       await syncBookingToGoogleCalendarSafely(updated.id, "/api/vendor/bookings/:id google-sync");
 
+      // Send confirmed/cancelled emails to both parties (fire-and-forget)
+      if (nextStatus === "confirmed" || nextStatus === "cancelled") {
+        void (async () => {
+          try {
+            const serverUrl = (process.env.SERVER_URL || "http://localhost:5001").replace(/\/$/, "");
+            const emailRows: any = await db.execute(drizzleSql`
+              select
+                u.email  as "customerEmail",
+                u.name   as "customerName",
+                va.email as "vendorEmail",
+                va.business_name as "vendorName",
+                b.event_date as "eventDate",
+                coalesce(b.listing_title_snapshot, '') as "listingTitle",
+                b.total_amount as "totalAmount"
+              from bookings b
+              join users u on u.id = b.customer_id
+              join vendor_accounts va on va.id = b.vendor_account_id
+              where b.id = ${bookingId}
+              limit 1
+            `);
+            const info = extractRows<{
+              customerEmail: string;
+              customerName: string;
+              vendorEmail: string;
+              vendorName: string;
+              eventDate: string;
+              listingTitle: string;
+              totalAmount: number;
+            }>(emailRows)[0];
+
+            if (!info) return;
+
+            const sharedParams = {
+              eventDate: info.eventDate,
+              listingTitle: info.listingTitle || "your booking",
+              serverUrl,
+            };
+
+            const tasks: Promise<any>[] = [];
+
+            if (nextStatus === "confirmed") {
+              if (info.customerEmail) {
+                tasks.push(
+                  sendBookingConfirmedEmail(info.customerEmail, {
+                    ...sharedParams,
+                    recipientName: info.customerName || "Customer",
+                    counterpartName: info.vendorName || "Vendor",
+                    totalAmountCents: info.totalAmount || 0,
+                    role: "customer",
+                  })
+                );
+              }
+              if (info.vendorEmail) {
+                tasks.push(
+                  sendBookingConfirmedEmail(info.vendorEmail, {
+                    ...sharedParams,
+                    recipientName: info.vendorName || "Vendor",
+                    counterpartName: info.customerName || "Customer",
+                    totalAmountCents: info.totalAmount || 0,
+                    role: "vendor",
+                  })
+                );
+              }
+            } else {
+              if (info.customerEmail) {
+                tasks.push(
+                  sendBookingCancelledEmail(info.customerEmail, {
+                    ...sharedParams,
+                    recipientName: info.customerName || "Customer",
+                    counterpartName: info.vendorName || "Vendor",
+                    role: "customer",
+                  })
+                );
+              }
+              if (info.vendorEmail) {
+                tasks.push(
+                  sendBookingCancelledEmail(info.vendorEmail, {
+                    ...sharedParams,
+                    recipientName: info.vendorName || "Vendor",
+                    counterpartName: info.customerName || "Customer",
+                    role: "vendor",
+                  })
+                );
+              }
+            }
+
+            await Promise.allSettled(tasks);
+          } catch (emailError: any) {
+            console.warn("[booking status email] failed:", emailError?.message || emailError);
+          }
+        })();
+      }
+
       return res.json({
         id: updated.id,
         status: updated.status,
@@ -8705,6 +8885,125 @@ app.post(
       });
     } catch (error: any) {
       return respondWithInternalServerError(req, res, error);
+    }
+  });
+
+  // ── Stream Chat webhook — new message email notifications ────────────────
+  // Configure this URL in the Stream Chat dashboard:
+  //   https://dashboard.getstream.io → App → Webhooks → add /api/webhooks/stream
+  app.post("/api/webhooks/stream", async (req, res) => {
+    try {
+      if (!isStreamChatConfigured()) {
+        return res.status(200).json({ ok: true }); // Acknowledge silently when not configured
+      }
+
+      const signature = String(req.headers["x-signature"] || "").trim();
+      if (!signature) {
+        return res.status(400).json({ error: "Missing x-signature header" });
+      }
+
+      // Verify webhook signature using raw body (same pattern as Stripe webhook)
+      const { StreamChat } = await import("stream-chat");
+      const apiKey = (process.env.STREAM_API_KEY || "").trim();
+      const apiSecret = (process.env.STREAM_API_SECRET || "").trim();
+      const client = StreamChat.getInstance(apiKey, apiSecret);
+
+      const rawBody =
+        (req as any).rawBody instanceof Buffer
+          ? (req as any).rawBody.toString("utf8")
+          : JSON.stringify(req.body || {});
+
+      const isValid = client.verifyWebhook(rawBody, signature);
+      if (!isValid) {
+        return res.status(400).json({ error: "Invalid webhook signature" });
+      }
+
+      const event = req.body as {
+        type?: string;
+        message?: { text?: string; user?: { id?: string } };
+        channel_id?: string;
+        channel_type?: string;
+      };
+
+      // Only act on new messages in booking channels
+      if (
+        event.type !== "message.new" ||
+        event.channel_type !== "messaging" ||
+        !String(event.channel_id || "").startsWith("booking_")
+      ) {
+        return res.status(200).json({ ok: true });
+      }
+
+      const bookingId = String(event.channel_id || "").replace(/^booking_/, "");
+      if (!bookingId) {
+        return res.status(200).json({ ok: true });
+      }
+
+      const senderStreamUserId = String(event.message?.user?.id || "");
+      const messageText = String(event.message?.text || "").trim();
+
+      const senderIsCustomer = senderStreamUserId.startsWith("customer_");
+      const senderIsVendor = senderStreamUserId.startsWith("vendor_");
+      if (!senderIsCustomer && !senderIsVendor) {
+        return res.status(200).json({ ok: true });
+      }
+
+      void (async () => {
+        try {
+          const serverUrl = (process.env.SERVER_URL || "http://localhost:5001").replace(/\/$/, "");
+          const emailRows: any = await db.execute(drizzleSql`
+            select
+              u.email     as "customerEmail",
+              u.name      as "customerName",
+              va.email    as "vendorEmail",
+              va.business_name as "vendorName",
+              b.event_date as "eventDate"
+            from bookings b
+            join users u  on u.id  = b.customer_id
+            join vendor_accounts va on va.id = b.vendor_account_id
+            where b.id = ${bookingId}
+            limit 1
+          `);
+          const info = extractRows<{
+            customerEmail: string;
+            customerName: string;
+            vendorEmail: string;
+            vendorName: string;
+            eventDate: string;
+          }>(emailRows)[0];
+
+          if (!info) return;
+
+          if (senderIsCustomer && info.vendorEmail) {
+            await sendNewMessageEmail(info.vendorEmail, {
+              recipientName: info.vendorName || "Vendor",
+              senderName: info.customerName || "Customer",
+              eventDate: info.eventDate,
+              messagePreview: messageText,
+              serverUrl,
+              bookingId,
+              recipientRole: "vendor",
+            });
+          } else if (senderIsVendor && info.customerEmail) {
+            await sendNewMessageEmail(info.customerEmail, {
+              recipientName: info.customerName || "Customer",
+              senderName: info.vendorName || "Vendor",
+              eventDate: info.eventDate,
+              messagePreview: messageText,
+              serverUrl,
+              bookingId,
+              recipientRole: "customer",
+            });
+          }
+        } catch (emailError: any) {
+          console.warn("[stream webhook email] failed:", emailError?.message || emailError);
+        }
+      })();
+
+      return res.status(200).json({ ok: true });
+    } catch (error: any) {
+      console.warn("[stream webhook] error:", error?.message || error);
+      return res.status(200).json({ ok: true }); // Always 200 to prevent Stream Chat retries
     }
   });
 

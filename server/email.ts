@@ -1,3 +1,8 @@
+import { bookingConfirmedTemplate, type BookingConfirmedParams } from "./emails/bookingConfirmed";
+import { bookingCancelledTemplate, type BookingCancelledParams } from "./emails/bookingCancelled";
+import { newMessageTemplate, type NewMessageParams } from "./emails/newMessage";
+import { reviewPromptTemplate, type ReviewPromptParams } from "./emails/reviewPrompt";
+
 type BookingConfirmationEmailParams = {
   to: string;
   recipientName: string;
@@ -20,13 +25,21 @@ function centsToUsd(amountCents: number): string {
   }).format((amountCents || 0) / 100);
 }
 
-export async function sendBookingConfirmationEmail(
-  params: BookingConfirmationEmailParams
-): Promise<EmailResult> {
-  const apiKey = process.env.RESEND_API_KEY;
-  const from = process.env.RESEND_FROM_EMAIL;
+function resendConfig(): { apiKey: string; from: string } | null {
+  const apiKey = (process.env.RESEND_API_KEY || "").trim();
+  const from = (process.env.RESEND_FROM_EMAIL || "").trim();
+  if (!apiKey || !from) return null;
+  return { apiKey, from };
+}
 
-  if (!apiKey || !from) {
+async function sendViaResend(params: {
+  to: string;
+  subject: string;
+  html: string;
+  text?: string;
+}): Promise<EmailResult> {
+  const cfg = resendConfig();
+  if (!cfg) {
     return {
       sent: false,
       skipped: true,
@@ -34,6 +47,40 @@ export async function sendBookingConfirmationEmail(
     };
   }
 
+  const body: Record<string, unknown> = {
+    from: cfg.from,
+    to: [params.to],
+    subject: params.subject,
+    html: params.html,
+  };
+  if (params.text) body.text = params.text;
+
+  const resp = await fetch("https://api.resend.com/emails", {
+    method: "POST",
+    headers: {
+      Authorization: `Bearer ${cfg.apiKey}`,
+      "Content-Type": "application/json",
+    },
+    body: JSON.stringify(body),
+  });
+
+  if (!resp.ok) {
+    const text = await resp.text().catch(() => "");
+    return {
+      sent: false,
+      skipped: false,
+      reason: text || `Resend returned ${resp.status}`,
+    };
+  }
+
+  return { sent: true, skipped: false };
+}
+
+// ── Existing function (unchanged) ──────────────────────────────────────────
+
+export async function sendBookingConfirmationEmail(
+  params: BookingConfirmationEmailParams
+): Promise<EmailResult> {
   const roleLine =
     params.role === "customer"
       ? `Your booking request with ${params.counterpartName} has been created.`
@@ -55,28 +102,39 @@ export async function sendBookingConfirmationEmail(
     </div>
   `;
 
-  const resp = await fetch("https://api.resend.com/emails", {
-    method: "POST",
-    headers: {
-      Authorization: `Bearer ${apiKey}`,
-      "Content-Type": "application/json",
-    },
-    body: JSON.stringify({
-      from,
-      to: [params.to],
-      subject,
-      html,
-    }),
-  });
+  return sendViaResend({ to: params.to, subject, html });
+}
 
-  if (!resp.ok) {
-    const text = await resp.text().catch(() => "");
-    return {
-      sent: false,
-      skipped: false,
-      reason: text || `Resend returned ${resp.status}`,
-    };
-  }
+// ── New send functions ─────────────────────────────────────────────────────
 
-  return { sent: true, skipped: false };
+export async function sendBookingConfirmedEmail(
+  to: string,
+  params: BookingConfirmedParams
+): Promise<EmailResult> {
+  const { subject, html, text } = bookingConfirmedTemplate(params);
+  return sendViaResend({ to, subject, html, text });
+}
+
+export async function sendBookingCancelledEmail(
+  to: string,
+  params: BookingCancelledParams
+): Promise<EmailResult> {
+  const { subject, html, text } = bookingCancelledTemplate(params);
+  return sendViaResend({ to, subject, html, text });
+}
+
+export async function sendNewMessageEmail(
+  to: string,
+  params: NewMessageParams
+): Promise<EmailResult> {
+  const { subject, html, text } = newMessageTemplate(params);
+  return sendViaResend({ to, subject, html, text });
+}
+
+export async function sendReviewPromptEmail(
+  to: string,
+  params: ReviewPromptParams
+): Promise<EmailResult> {
+  const { subject, html, text } = reviewPromptTemplate(params);
+  return sendViaResend({ to, subject, html, text });
 }
