@@ -1,12 +1,12 @@
-import { useEffect, useMemo, useRef, useState } from "react";
+import { useEffect, useMemo, useState } from "react";
 import { Card } from "@/components/ui/card";
 import { Dialog, DialogContent, DialogTitle } from "@/components/ui/dialog";
 import type { ListingPublic } from "@/types/listing";
 import { useLocation } from "wouter";
-import { ArrowUpRight, Check, Heart, Link2, Mail, MessageCircle, Plus, Share2 } from "lucide-react";
+import { ArrowUpRight, Heart, Link2, Mail, MessageCircle, Share2 } from "lucide-react";
 import { useAuth0 } from "@auth0/auth0-react";
-import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
-import { apiRequest } from "@/lib/queryClient";
+import { useQuery } from "@tanstack/react-query";
+import HeartBoardPopover from "@/components/HeartBoardPopover";
 import {
   coverRatioToAspectRatio,
   getCoverPhotoIndex,
@@ -32,162 +32,6 @@ function ShareSquareIcon() {
       <path d="m8.5 6.8 3.5-3.3 3.5 3.3" />
       <path d="M6.4 10.2v8.4c0 1.1.9 2 2 2h7.2c1.1 0 2-.9 2-2v-8.4" />
     </svg>
-  );
-}
-
-// ── Board / event types ────────────────────────────────────────────────────
-
-interface BoardWithMembership {
-  id: string;
-  name: string;
-  savedCount: number;
-  hasSaved: boolean;
-}
-
-// ── Pinterest-style heart popover ──────────────────────────────────────────
-
-function HeartBoardPopover({
-  listingId,
-  onClose,
-}: {
-  listingId: string;
-  onClose: () => void;
-}) {
-  const popoverRef = useRef<HTMLDivElement>(null);
-  const inputRef = useRef<HTMLInputElement>(null);
-  const qc = useQueryClient();
-  const [newName, setNewName] = useState("");
-  const [showCreate, setShowCreate] = useState(false);
-
-  // Close when user clicks outside the popover
-  useEffect(() => {
-    function handle(e: MouseEvent) {
-      if (popoverRef.current && !popoverRef.current.contains(e.target as Node)) {
-        onClose();
-      }
-    }
-    document.addEventListener("mousedown", handle);
-    return () => document.removeEventListener("mousedown", handle);
-  }, [onClose]);
-
-  useEffect(() => {
-    if (showCreate) inputRef.current?.focus();
-  }, [showCreate]);
-
-  const { data: boards = [], isLoading } = useQuery<BoardWithMembership[]>({
-    queryKey: [`/api/boards/for-listing/${listingId}`],
-    retry: false,
-  });
-
-  const invalidate = () => {
-    qc.invalidateQueries({ queryKey: [`/api/boards/for-listing/${listingId}`] });
-    qc.invalidateQueries({ queryKey: ["/api/boards/saved-ids"] });
-    qc.invalidateQueries({ queryKey: ["/api/boards"] });
-    // Invalidate board detail queries so the planning section refreshes
-    boards.forEach((b) => {
-      qc.invalidateQueries({ queryKey: [`/api/boards/${b.id}/listings`] });
-    });
-  };
-
-  const toggleMutation = useMutation({
-    mutationFn: async ({ boardId, hasSaved }: { boardId: string; hasSaved: boolean }) => {
-      if (hasSaved) {
-        await apiRequest("DELETE", `/api/boards/${boardId}/listings/${listingId}`);
-      } else {
-        await apiRequest("POST", `/api/boards/${boardId}/listings`, { listingId });
-      }
-    },
-    onSuccess: invalidate,
-  });
-
-  const createAndSaveMutation = useMutation({
-    mutationFn: async (name: string) => {
-      const res = await apiRequest("POST", "/api/boards", { name });
-      const board = await res.json();
-      await apiRequest("POST", `/api/boards/${board.id}/listings`, { listingId });
-    },
-    onSuccess: () => {
-      invalidate();
-      setNewName("");
-      setShowCreate(false);
-    },
-  });
-
-  return (
-    <div
-      ref={popoverRef}
-      onClick={(e) => e.stopPropagation()}
-      className="absolute bottom-full right-0 z-50 mb-2 w-52 overflow-hidden rounded-2xl border border-[rgba(74,106,125,0.18)] bg-white shadow-xl dark:bg-[#22303c]"
-    >
-      <p className="border-b border-[rgba(74,106,125,0.1)] px-3.5 py-2 text-[0.7rem] font-semibold uppercase tracking-wider text-[#4a6a7d]">
-        Save to event
-      </p>
-
-      {isLoading ? (
-        <p className="px-3.5 py-3 text-sm text-[#4a6a7d]/60">Loading…</p>
-      ) : boards.length === 0 && !showCreate ? (
-        <p className="px-3.5 py-3 text-sm text-[#4a6a7d]/60">No events yet</p>
-      ) : (
-        <ul className="max-h-44 overflow-y-auto py-1">
-          {boards.map((board) => (
-            <li key={board.id}>
-              <button
-                type="button"
-                onClick={() => toggleMutation.mutate({ boardId: board.id, hasSaved: board.hasSaved })}
-                disabled={toggleMutation.isPending}
-                className="flex w-full items-center gap-2.5 px-3.5 py-2 text-left text-sm transition hover:bg-[rgba(74,106,125,0.07)] disabled:opacity-60"
-              >
-                <span
-                  className={`flex h-4 w-4 shrink-0 items-center justify-center rounded-full border transition-colors ${
-                    board.hasSaved
-                      ? "border-[#e07a6a] bg-[#e07a6a]"
-                      : "border-[rgba(74,106,125,0.35)]"
-                  }`}
-                >
-                  {board.hasSaved && <Check className="h-2.5 w-2.5 text-white" />}
-                </span>
-                <span className="truncate text-[#2a3a42] dark:text-[#f5f0e8]">{board.name}</span>
-              </button>
-            </li>
-          ))}
-        </ul>
-      )}
-
-      {showCreate ? (
-        <div className="border-t border-[rgba(74,106,125,0.1)] px-3 py-2.5">
-          <input
-            ref={inputRef}
-            type="text"
-            value={newName}
-            onChange={(e) => setNewName(e.target.value)}
-            onKeyDown={(e) => {
-              if (e.key === "Enter" && newName.trim()) createAndSaveMutation.mutate(newName.trim());
-              if (e.key === "Escape") setShowCreate(false);
-            }}
-            placeholder="Event name"
-            maxLength={120}
-            className="w-full rounded-lg border border-[rgba(74,106,125,0.24)] bg-transparent px-2.5 py-1.5 text-sm outline-none focus:border-[#e07a6a] dark:text-[#f5f0e8]"
-          />
-          <button
-            type="button"
-            onClick={() => { if (newName.trim()) createAndSaveMutation.mutate(newName.trim()); }}
-            disabled={!newName.trim() || createAndSaveMutation.isPending}
-            className="mt-2 w-full rounded-lg bg-[#e07a6a] py-1.5 text-sm font-medium text-white disabled:opacity-50"
-          >
-            Create &amp; save
-          </button>
-        </div>
-      ) : (
-        <button
-          type="button"
-          onClick={() => setShowCreate(true)}
-          className="flex w-full items-center gap-2.5 border-t border-[rgba(74,106,125,0.1)] px-3.5 py-2.5 text-sm font-medium text-[#e07a6a] transition hover:bg-[rgba(224,122,106,0.06)]"
-        >
-          <Plus className="h-3.5 w-3.5" />
-          New event
-        </button>
-      )}
-    </div>
   );
 }
 
@@ -366,6 +210,33 @@ export default function ListingCard({
 
             <div className="pointer-events-none absolute inset-0 bg-[#1a2530]/0 transition-colors duration-300 group-hover:bg-[#1a2530]/45 group-focus-within:bg-[#1a2530]/45" />
 
+            {/* Persistent top-right heart — always visible for authenticated users */}
+            {isAuthenticated && listingId ? (
+              <div className="absolute right-2 top-2 z-10">
+                <button
+                  type="button"
+                  onClick={(e) => {
+                    e.stopPropagation();
+                    setHeartOpen((v) => !v);
+                  }}
+                  className="flex h-8 w-8 items-center justify-center rounded-full bg-white/75 shadow backdrop-blur-sm transition hover:bg-white/95"
+                  aria-label={isSaved ? "Saved to event" : "Save to event"}
+                >
+                  <Heart
+                    className={`h-4 w-4 transition-colors ${
+                      isSaved ? "fill-[#e07a6a] text-[#e07a6a]" : "text-[#4a6a7d]/70 hover:text-[#e07a6a]"
+                    }`}
+                  />
+                </button>
+                {heartOpen && (
+                  <HeartBoardPopover
+                    listingId={listingId}
+                    onClose={() => setHeartOpen(false)}
+                  />
+                )}
+              </div>
+            ) : null}
+
             <div className="absolute inset-x-3 bottom-3 flex items-center justify-between opacity-0 transition-opacity duration-300 group-hover:opacity-100 group-focus-within:opacity-100">
               <button
                 type="button"
@@ -380,52 +251,20 @@ export default function ListingCard({
                 {primaryActionLabel}
               </button>
 
-              <div className="flex items-center gap-0.5">
-                {/* Heart / save-to-event button — authenticated only */}
-                {isAuthenticated && listingId ? (
-                  <div className="relative">
-                    <button
-                      type="button"
-                      onClick={(e) => {
-                        e.stopPropagation();
-                        setHeartOpen((v) => !v);
-                      }}
-                      className="inline-flex h-11 w-11 items-center justify-center transition-colors"
-                      aria-label={isSaved ? "Saved to event" : "Save to event"}
-                      data-testid={`button-save-listing-${listingId ?? "unknown"}`}
-                    >
-                      <Heart
-                        className={`h-[26px] w-[26px] transition-colors ${
-                          isSaved
-                            ? "fill-[#e07a6a] text-[#e07a6a]"
-                            : "text-white/90 hover:fill-[#e07a6a] hover:text-[#e07a6a]"
-                        }`}
-                      />
-                    </button>
-                    {heartOpen && (
-                      <HeartBoardPopover
-                        listingId={listingId}
-                        onClose={() => setHeartOpen(false)}
-                      />
-                    )}
-                  </div>
-                ) : null}
-
-                {/* Share button */}
-                <button
-                  type="button"
-                  onClick={(e) => {
-                    e.stopPropagation();
-                    setShareFeedback("");
-                    setShareOpen(true);
-                  }}
-                  className="inline-flex h-11 w-11 items-center justify-center text-white/95 transition-colors hover:text-white focus-visible:text-white"
-                  aria-label="Share listing"
-                  data-testid={`button-share-listing-${listingId ?? "unknown"}`}
-                >
-                  <ShareSquareIcon />
-                </button>
-              </div>
+              {/* Share button */}
+              <button
+                type="button"
+                onClick={(e) => {
+                  e.stopPropagation();
+                  setShareFeedback("");
+                  setShareOpen(true);
+                }}
+                className="inline-flex h-11 w-11 items-center justify-center text-white/95 transition-colors hover:text-white focus-visible:text-white"
+                aria-label="Share listing"
+                data-testid={`button-share-listing-${listingId ?? "unknown"}`}
+              >
+                <ShareSquareIcon />
+              </button>
             </div>
           </div>
         </Card>

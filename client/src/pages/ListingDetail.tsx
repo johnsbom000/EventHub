@@ -1,7 +1,8 @@
 import React, { useEffect, useState } from "react";
 import { useLocation, useRoute } from "wouter";
 import { useQuery } from "@tanstack/react-query";
-import { ChevronLeft, MapPin, Star, CheckCircle, XCircle, Truck, Wrench, X } from "lucide-react";
+import HeartBoardPopover from "@/components/HeartBoardPopover";
+import { ChevronLeft, Heart, MapPin, Star, CheckCircle, XCircle, Truck, Wrench, X } from "lucide-react";
 import { useAuth0 } from "@auth0/auth0-react";
 import { format } from "date-fns";
 import {
@@ -174,6 +175,7 @@ export default function ListingDetailPage() {
   const listingId = params?.id;
 
   const [galleryOpen, setGalleryOpen] = useState(false);
+  const [heartOpen, setHeartOpen] = useState(false);
 
   const { data, isLoading, error } = useQuery<any>({
     queryKey: ["/api/listings/public", listingId],
@@ -438,14 +440,39 @@ export default function ListingDetailPage() {
 
   return (
     <div className="no-global-scale max-w-6xl mx-auto px-4 sm:px-6 lg:px-8 py-8 pb-24 lg:pb-8">
-      {/* Back */}
-      <button
-        onClick={() => setLocation("/browse")}
-        className="flex items-center text-muted-foreground hover:text-foreground mb-6"
-      >
-        <ChevronLeft className="w-5 h-5 mr-1" />
-        Back to results
-      </button>
+      {/* Back + heart */}
+      <div className="flex items-center gap-3 mb-6">
+        <button
+          onClick={() => setLocation("/browse")}
+          className="flex items-center text-muted-foreground hover:text-foreground"
+        >
+          <ChevronLeft className="w-5 h-5 mr-1" />
+          Back
+        </button>
+
+        {isAuthenticated && listingId ? (
+          <div className="relative">
+            <button
+              type="button"
+              onClick={() => setHeartOpen((v) => !v)}
+              className="flex h-8 w-8 items-center justify-center rounded-full border border-[rgba(74,106,125,0.2)] bg-white shadow-sm transition hover:bg-[rgba(224,122,106,0.06)]"
+              aria-label={isSaved ? "Saved to event" : "Save to event"}
+            >
+              <Heart
+                className={`h-4 w-4 transition-colors ${
+                  isSaved ? "fill-[#e07a6a] text-[#e07a6a]" : "text-[#4a6a7d]/60 hover:text-[#e07a6a]"
+                }`}
+              />
+            </button>
+            {heartOpen && (
+              <HeartBoardPopover
+                listingId={listingId}
+                onClose={() => setHeartOpen(false)}
+              />
+            )}
+          </div>
+        ) : null}
+      </div>
 
       {/* Photo collage (Airbnb-style) */}
       <div className="relative">
@@ -901,6 +928,14 @@ function ReservationCard({
     : null;
 
   const { isAuthenticated, loginWithRedirect } = useAuth0();
+
+  const { data: savedIdsData } = useQuery<{ listingIds: string[] }>({
+    queryKey: ["/api/boards/saved-ids"],
+    enabled: isAuthenticated,
+    retry: false,
+    staleTime: 30_000,
+  });
+  const isSaved = Boolean(listingId && savedIdsData?.listingIds.includes(listingId));
 
   const priceText = money(price);
   const unitText = formatPricingUnit(pricingUnit);
