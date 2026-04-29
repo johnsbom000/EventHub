@@ -212,7 +212,7 @@ type GoogleEventMappingContext = {
   >;
 };
 
-function createGoogleOauthState(vendorAccountId: string) {
+function createGoogleOauthState(vendorAccountId: string, returnTo = "/vendor/dashboard") {
   const secret = (process.env.JWT_SECRET || "").trim();
   if (!secret) {
     throw new Error("Missing JWT_SECRET environment variable");
@@ -221,6 +221,7 @@ function createGoogleOauthState(vendorAccountId: string) {
   const encodedPayload = Buffer.from(
     JSON.stringify({
       vendorAccountId,
+      returnTo,
       issuedAt: Date.now(),
       nonce: crypto.randomUUID(),
     }),
@@ -264,6 +265,7 @@ function parseGoogleOauthState(rawState: string) {
   try {
     const parsed = JSON.parse(Buffer.from(encodedPayload, "base64url").toString("utf8")) as {
       vendorAccountId?: string;
+      returnTo?: string;
       issuedAt?: number;
     };
 
@@ -280,7 +282,12 @@ function parseGoogleOauthState(rawState: string) {
       return null;
     }
 
-    return { vendorAccountId: parsed.vendorAccountId.trim() };
+    // Only allow safe relative vendor paths to prevent open redirects
+    const rawReturnTo = typeof parsed.returnTo === "string" ? parsed.returnTo.trim() : "";
+    const safeReturnTo =
+      rawReturnTo.startsWith("/vendor/") ? rawReturnTo : "/vendor/dashboard";
+
+    return { vendorAccountId: parsed.vendorAccountId.trim(), returnTo: safeReturnTo };
   } catch {
     return null;
   }
@@ -3974,12 +3981,18 @@ async function safelyBackfillCustomerEmail(params: {
   userId: string;
   currentEmail: string;
   nextEmail?: string;
+  /** When true, allows replacing a real email with the Auth0 token email.
+   *  Only pass this when the user was matched by auth0_sub — a strong identity proof. */
+  allowRealEmailReplacement?: boolean;
 }) {
   const currentEmail = params.currentEmail.trim().toLowerCase();
   const nextEmail = normalizeIdentityEmailCandidate(params.nextEmail);
   if (!nextEmail || nextEmail === currentEmail) return currentEmail;
 
-  const canRepair = isSyntheticAuth0LocalEmail(currentEmail) || !currentEmail;
+  const canRepair =
+    isSyntheticAuth0LocalEmail(currentEmail) ||
+    !currentEmail ||
+    params.allowRealEmailReplacement === true;
   if (!canRepair) return currentEmail;
 
   const conflict = await db
@@ -4133,6 +4146,8 @@ async function resolveCustomerAuthFromRequest(
           userId: resolvedUserId,
           currentEmail: resolvedUserEmail,
           nextEmail: resolvedEmail,
+          // We proved identity via auth0_sub — trust the Auth0 token email as authoritative.
+          allowRealEmailReplacement: true,
         });
 
         return {
@@ -5049,7 +5064,9 @@ app.post(
         return res.status(404).json({ error: "Vendor account not found for this Auth0 user" });
       }
 
-      state = createGoogleOauthState(vendorAccount.id);
+      const rawReturnTo = typeof req.query.returnTo === "string" ? req.query.returnTo.trim() : "";
+      const returnTo = rawReturnTo.startsWith("/vendor/") ? rawReturnTo : "/vendor/dashboard";
+      state = createGoogleOauthState(vendorAccount.id, returnTo);
     } catch (error: any) {
       console.error("Google OAuth start auth failed:", error?.message || error);
       return res.status(401).json({ error: "Invalid Auth0 token" });
@@ -5094,6 +5111,7 @@ app.post(
     ).trim();
     const appUrl = (process.env.APP_URL || "http://localhost:5173").trim().replace(/\/+$/, "");
     const parsedState = parseGoogleOauthState(state);
+    const returnPath = parsedState?.returnTo || "/vendor/dashboard";
 
     if (!parsedState?.vendorAccountId) {
       return res.redirect(`${appUrl}/vendor/dashboard?google_calendar=error`);
@@ -5112,7 +5130,7 @@ app.post(
 
       const vendorAccount = vendorRows[0];
       if (!vendorAccount) {
-        return res.redirect(`${appUrl}/vendor/dashboard?google_calendar=error`);
+        return res.redirect(`${appUrl}${returnPath}?google_calendar=error`);
       }
 
       const tokenResponse = await fetch("https://oauth2.googleapis.com/token", {
@@ -5134,7 +5152,7 @@ app.post(
           .update(vendorAccounts)
           .set({ googleConnectionStatus: "error" })
           .where(eq(vendorAccounts.id, vendorAccount.id));
-        return res.redirect(`${appUrl}/vendor/dashboard?google_calendar=error`);
+        return res.redirect(`${appUrl}${returnPath}?google_calendar=error`);
       }
 
       const tokens = (await tokenResponse.json()) as {
@@ -5151,7 +5169,7 @@ app.post(
           .update(vendorAccounts)
           .set({ googleConnectionStatus: "error" })
           .where(eq(vendorAccounts.id, vendorAccount.id));
-        return res.redirect(`${appUrl}/vendor/dashboard?google_calendar=error`);
+        return res.redirect(`${appUrl}${returnPath}?google_calendar=error`);
       }
 
       const refreshToken =
@@ -5185,10 +5203,10 @@ app.post(
         })
         .where(eq(vendorAccounts.id, vendorAccount.id));
 
-      return res.redirect(`${appUrl}/vendor/dashboard?google_calendar=connected`);
+      return res.redirect(`${appUrl}${returnPath}?google_calendar=connected`);
     } catch (error: any) {
       console.error("Google OAuth callback error:", error?.message || error);
-      return res.redirect(`${appUrl}/vendor/dashboard?google_calendar=error`);
+      return res.redirect(`${appUrl}${returnPath}?google_calendar=error`);
     }
   });
 
@@ -7389,10 +7407,37 @@ app.post(
         return res.status(400).json({ error: "endDate must be on or after startDate" });
       }
 
-      const [block] = await db
-        .insert(vendorVacationBlocks)
-        .values({ vendorId: vendorAuth.id, startDate, endDate })
-        .returning();
+      const insertBlock = async () =>
+        db
+          .insert(vendorVacationBlocks)
+          .values({ id: crypto.randomUUID(), vendorId: vendorAuth.id, startDate, endDate })
+          .returning();
+
+      let blockRows;
+      try {
+        blockRows = await insertBlock();
+      } catch (error: any) {
+        if (typeof error?.code === "string" && error.code === "42P01") {
+          await db.execute(drizzleSql`
+            create table if not exists vendor_vacation_blocks (
+              id          varchar primary key default gen_random_uuid(),
+              vendor_id   varchar not null references vendor_accounts(id) on delete cascade,
+              start_date  text not null,
+              end_date    text not null,
+              created_at  timestamp with time zone not null default now()
+            );
+          `);
+          await db.execute(drizzleSql`
+            create index if not exists idx_vendor_vacation_blocks_vendor_id
+              on vendor_vacation_blocks (vendor_id);
+          `);
+          blockRows = await insertBlock();
+        } else {
+          throw error;
+        }
+      }
+
+      const [block] = blockRows;
       return res.status(201).json(block);
     } catch (error: any) {
       logRouteError("/api/vendor/vacation-blocks POST", error);
@@ -12592,6 +12637,66 @@ app.post(
 
   // ── Planning Boards ────────────────────────────────────────────────────────
   // All routes require a logged-in customer.
+
+  // GET /api/boards/saved-ids — flat list of all listing IDs the customer has saved
+  // (used client-side to fill the heart icon without fetching every board's details)
+  app.get("/api/boards/saved-ids", requireCustomerAnyAuth, async (req, res) => {
+    try {
+      const customerAuth = await resolveCustomerAuthFromRequest(req, { createIfMissing: false });
+      if (!customerAuth?.id) return res.status(401).json({ error: "Authentication required" });
+
+      const rows = await db
+        .select({ listingId: boardSavedListings.listingId })
+        .from(boardSavedListings)
+        .innerJoin(planningBoards, eq(planningBoards.id, boardSavedListings.boardId))
+        .where(eq(planningBoards.customerId, customerAuth.id));
+
+      return res.json({ listingIds: rows.map((r) => r.listingId) });
+    } catch (err: any) {
+      return respondWithInternalServerError(req, res, err);
+    }
+  });
+
+  // GET /api/boards/for-listing/:listingId — boards list with hasSaved flag for this listing
+  // (drives the popover checkmarks; registered before /:id routes to avoid Express capture)
+  app.get("/api/boards/for-listing/:listingId", requireCustomerAnyAuth, async (req, res) => {
+    try {
+      const customerAuth = await resolveCustomerAuthFromRequest(req, { createIfMissing: false });
+      if (!customerAuth?.id) return res.status(401).json({ error: "Authentication required" });
+
+      const listingId = req.params.listingId?.trim();
+      if (!listingId) return res.status(400).json({ error: "listingId required" });
+
+      const boards = await db
+        .select({
+          id: planningBoards.id,
+          name: planningBoards.name,
+          createdAt: planningBoards.createdAt,
+          savedCount: count(boardSavedListings.id),
+        })
+        .from(planningBoards)
+        .leftJoin(boardSavedListings, eq(boardSavedListings.boardId, planningBoards.id))
+        .where(eq(planningBoards.customerId, customerAuth.id))
+        .groupBy(planningBoards.id, planningBoards.name, planningBoards.createdAt)
+        .orderBy(desc(planningBoards.createdAt));
+
+      const savedRows = await db
+        .select({ boardId: boardSavedListings.boardId })
+        .from(boardSavedListings)
+        .innerJoin(planningBoards, eq(planningBoards.id, boardSavedListings.boardId))
+        .where(
+          and(
+            eq(planningBoards.customerId, customerAuth.id),
+            eq(boardSavedListings.listingId, listingId),
+          ),
+        );
+
+      const savedBoardIds = new Set(savedRows.map((r) => r.boardId));
+      return res.json(boards.map((b) => ({ ...b, hasSaved: savedBoardIds.has(b.id) })));
+    } catch (err: any) {
+      return respondWithInternalServerError(req, res, err);
+    }
+  });
 
   // GET /api/boards — list boards for the authenticated customer
   app.get("/api/boards", requireCustomerAnyAuth, async (req, res) => {

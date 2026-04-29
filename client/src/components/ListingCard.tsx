@@ -3,7 +3,7 @@ import { Card } from "@/components/ui/card";
 import { Dialog, DialogContent, DialogTitle } from "@/components/ui/dialog";
 import type { ListingPublic } from "@/types/listing";
 import { useLocation } from "wouter";
-import { ArrowUpRight, Bookmark, Check, Link2, Mail, MessageCircle, Plus, Share2 } from "lucide-react";
+import { ArrowUpRight, Check, Heart, Link2, Mail, MessageCircle, Plus, Share2 } from "lucide-react";
 import { useAuth0 } from "@auth0/auth0-react";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { apiRequest } from "@/lib/queryClient";
@@ -35,116 +35,145 @@ function ShareSquareIcon() {
   );
 }
 
-interface Board {
+// ── Board / event types ────────────────────────────────────────────────────
+
+interface BoardWithMembership {
   id: string;
   name: string;
   savedCount: number;
+  hasSaved: boolean;
 }
 
-function BoardSelectorPopover({
+// ── Pinterest-style heart popover ──────────────────────────────────────────
+
+function HeartBoardPopover({
   listingId,
   onClose,
 }: {
   listingId: string;
   onClose: () => void;
 }) {
-  const qc = useQueryClient();
-  const [newBoardName, setNewBoardName] = useState("");
-  const [showCreate, setShowCreate] = useState(false);
+  const popoverRef = useRef<HTMLDivElement>(null);
   const inputRef = useRef<HTMLInputElement>(null);
+  const qc = useQueryClient();
+  const [newName, setNewName] = useState("");
+  const [showCreate, setShowCreate] = useState(false);
 
-  const { data: boards = [], isLoading } = useQuery<Board[]>({
-    queryKey: ["/api/boards"],
-    retry: false,
-  });
-
-  const saveMutation = useMutation({
-    mutationFn: async (boardId: string) => {
-      await apiRequest("POST", `/api/boards/${boardId}/listings`, { listingId });
-    },
-    onSuccess: () => {
-      qc.invalidateQueries({ queryKey: ["/api/boards"] });
-      onClose();
-    },
-  });
-
-  const createAndSaveMutation = useMutation({
-    mutationFn: async (name: string) => {
-      const res = await apiRequest("POST", "/api/boards", { name });
-      const board: Board = await res.json();
-      await apiRequest("POST", `/api/boards/${board.id}/listings`, { listingId });
-    },
-    onSuccess: () => {
-      qc.invalidateQueries({ queryKey: ["/api/boards"] });
-      onClose();
-    },
-  });
-
-  const handleCreate = () => {
-    const trimmed = newBoardName.trim();
-    if (!trimmed) return;
-    createAndSaveMutation.mutate(trimmed);
-  };
+  // Close when user clicks outside the popover
+  useEffect(() => {
+    function handle(e: MouseEvent) {
+      if (popoverRef.current && !popoverRef.current.contains(e.target as Node)) {
+        onClose();
+      }
+    }
+    document.addEventListener("mousedown", handle);
+    return () => document.removeEventListener("mousedown", handle);
+  }, [onClose]);
 
   useEffect(() => {
     if (showCreate) inputRef.current?.focus();
   }, [showCreate]);
 
+  const { data: boards = [], isLoading } = useQuery<BoardWithMembership[]>({
+    queryKey: [`/api/boards/for-listing/${listingId}`],
+    retry: false,
+  });
+
+  const invalidate = () => {
+    qc.invalidateQueries({ queryKey: [`/api/boards/for-listing/${listingId}`] });
+    qc.invalidateQueries({ queryKey: ["/api/boards/saved-ids"] });
+    qc.invalidateQueries({ queryKey: ["/api/boards"] });
+    // Invalidate board detail queries so the planning section refreshes
+    boards.forEach((b) => {
+      qc.invalidateQueries({ queryKey: [`/api/boards/${b.id}/listings`] });
+    });
+  };
+
+  const toggleMutation = useMutation({
+    mutationFn: async ({ boardId, hasSaved }: { boardId: string; hasSaved: boolean }) => {
+      if (hasSaved) {
+        await apiRequest("DELETE", `/api/boards/${boardId}/listings/${listingId}`);
+      } else {
+        await apiRequest("POST", `/api/boards/${boardId}/listings`, { listingId });
+      }
+    },
+    onSuccess: invalidate,
+  });
+
+  const createAndSaveMutation = useMutation({
+    mutationFn: async (name: string) => {
+      const res = await apiRequest("POST", "/api/boards", { name });
+      const board = await res.json();
+      await apiRequest("POST", `/api/boards/${board.id}/listings`, { listingId });
+    },
+    onSuccess: () => {
+      invalidate();
+      setNewName("");
+      setShowCreate(false);
+    },
+  });
+
   return (
-    <div className="absolute bottom-full right-0 z-50 mb-2 w-56 rounded-2xl border border-[rgba(74,106,125,0.18)] bg-white shadow-lg dark:bg-[#22303c]">
-      <p className="border-b border-[rgba(74,106,125,0.12)] px-4 py-2.5 text-[0.8rem] font-semibold uppercase tracking-wide text-[#4a6a7d]">
-        Save to board
+    <div
+      ref={popoverRef}
+      onClick={(e) => e.stopPropagation()}
+      className="absolute bottom-full right-0 z-50 mb-2 w-52 overflow-hidden rounded-2xl border border-[rgba(74,106,125,0.18)] bg-white shadow-xl dark:bg-[#22303c]"
+    >
+      <p className="border-b border-[rgba(74,106,125,0.1)] px-3.5 py-2 text-[0.7rem] font-semibold uppercase tracking-wider text-[#4a6a7d]">
+        Save to event
       </p>
 
       {isLoading ? (
-        <p className="px-4 py-3 text-sm text-muted-foreground">Loading…</p>
+        <p className="px-3.5 py-3 text-sm text-[#4a6a7d]/60">Loading…</p>
+      ) : boards.length === 0 && !showCreate ? (
+        <p className="px-3.5 py-3 text-sm text-[#4a6a7d]/60">No events yet</p>
       ) : (
-        <ul className="max-h-48 overflow-y-auto">
+        <ul className="max-h-44 overflow-y-auto py-1">
           {boards.map((board) => (
             <li key={board.id}>
               <button
                 type="button"
-                onClick={() => saveMutation.mutate(board.id)}
-                disabled={saveMutation.isPending}
-                className="flex w-full items-center gap-2 px-4 py-2.5 text-left text-sm text-[#2a3a42] transition hover:bg-[rgba(74,106,125,0.08)] dark:text-[#f5f0e8]"
+                onClick={() => toggleMutation.mutate({ boardId: board.id, hasSaved: board.hasSaved })}
+                disabled={toggleMutation.isPending}
+                className="flex w-full items-center gap-2.5 px-3.5 py-2 text-left text-sm transition hover:bg-[rgba(74,106,125,0.07)] disabled:opacity-60"
               >
-                <Bookmark className="h-3.5 w-3.5 shrink-0 text-[#4a6a7d]" />
-                <span className="truncate">{board.name}</span>
-                <span className="ml-auto shrink-0 text-xs text-muted-foreground">
-                  {board.savedCount}
+                <span
+                  className={`flex h-4 w-4 shrink-0 items-center justify-center rounded-full border transition-colors ${
+                    board.hasSaved
+                      ? "border-[#e07a6a] bg-[#e07a6a]"
+                      : "border-[rgba(74,106,125,0.35)]"
+                  }`}
+                >
+                  {board.hasSaved && <Check className="h-2.5 w-2.5 text-white" />}
                 </span>
+                <span className="truncate text-[#2a3a42] dark:text-[#f5f0e8]">{board.name}</span>
               </button>
             </li>
           ))}
-
-          {boards.length === 0 && !showCreate && (
-            <li className="px-4 py-2.5 text-sm text-muted-foreground">No boards yet</li>
-          )}
         </ul>
       )}
 
       {showCreate ? (
-        <div className="border-t border-[rgba(74,106,125,0.12)] px-3 py-2.5">
+        <div className="border-t border-[rgba(74,106,125,0.1)] px-3 py-2.5">
           <input
             ref={inputRef}
             type="text"
-            value={newBoardName}
-            onChange={(e) => setNewBoardName(e.target.value)}
+            value={newName}
+            onChange={(e) => setNewName(e.target.value)}
             onKeyDown={(e) => {
-              if (e.key === "Enter") handleCreate();
+              if (e.key === "Enter" && newName.trim()) createAndSaveMutation.mutate(newName.trim());
               if (e.key === "Escape") setShowCreate(false);
             }}
-            placeholder="Board name"
-            className="w-full rounded-lg border border-[rgba(74,106,125,0.24)] bg-transparent px-3 py-1.5 text-sm outline-none focus:border-[#e07a6a] dark:text-[#f5f0e8]"
+            placeholder="Event name"
             maxLength={120}
+            className="w-full rounded-lg border border-[rgba(74,106,125,0.24)] bg-transparent px-2.5 py-1.5 text-sm outline-none focus:border-[#e07a6a] dark:text-[#f5f0e8]"
           />
           <button
             type="button"
-            onClick={handleCreate}
-            disabled={!newBoardName.trim() || createAndSaveMutation.isPending}
-            className="mt-2 flex w-full items-center justify-center gap-1.5 rounded-lg bg-[#e07a6a] px-3 py-1.5 text-sm font-medium text-white disabled:opacity-50"
+            onClick={() => { if (newName.trim()) createAndSaveMutation.mutate(newName.trim()); }}
+            disabled={!newName.trim() || createAndSaveMutation.isPending}
+            className="mt-2 w-full rounded-lg bg-[#e07a6a] py-1.5 text-sm font-medium text-white disabled:opacity-50"
           >
-            <Check className="h-3.5 w-3.5" />
             Create &amp; save
           </button>
         </div>
@@ -152,15 +181,17 @@ function BoardSelectorPopover({
         <button
           type="button"
           onClick={() => setShowCreate(true)}
-          className="flex w-full items-center gap-2 border-t border-[rgba(74,106,125,0.12)] px-4 py-2.5 text-sm font-medium text-[#e07a6a] transition hover:bg-[rgba(224,122,106,0.06)]"
+          className="flex w-full items-center gap-2.5 border-t border-[rgba(74,106,125,0.1)] px-3.5 py-2.5 text-sm font-medium text-[#e07a6a] transition hover:bg-[rgba(224,122,106,0.06)]"
         >
           <Plus className="h-3.5 w-3.5" />
-          New board
+          New event
         </button>
       )}
     </div>
   );
 }
+
+// ── ListingCard ────────────────────────────────────────────────────────────
 
 interface ListingCardProps {
   listing: ListingPublic;
@@ -195,7 +226,7 @@ export default function ListingCard({
   const [shareOpen, setShareOpen] = useState(false);
   const [shareFeedback, setShareFeedback] = useState("");
   const [coverLoadFailed, setCoverLoadFailed] = useState(false);
-  const [boardPopoverOpen, setBoardPopoverOpen] = useState(false);
+  const [heartOpen, setHeartOpen] = useState(false);
   const { isAuthenticated } = useAuth0();
   const listingAny = listing as any;
 
@@ -220,18 +251,26 @@ export default function ListingCard({
   const resolvedPrimaryActionPath = primaryActionPath ?? listingPath;
   const canOpenListingFromCard = !disableCardNavigation && Boolean(resolvedCardNavigationPath);
   const vendorId = String(
-    listingAny.vendorId ??
-      listingAny.accountId ??
-      listingAny.vendor?.id ??
-      ""
+    listingAny.vendorId ?? listingAny.accountId ?? listingAny.vendor?.id ?? ""
   ).trim();
   const vendorShopPath = vendorId ? `/shop/${vendorId}` : null;
-  const vendorShopLabel = String(listingAny.vendorName ?? listingAny.vendor?.businessName ?? "Vendor").trim() || "Vendor";
+  const vendorShopLabel =
+    String(listingAny.vendorName ?? listingAny.vendor?.businessName ?? "Vendor").trim() || "Vendor";
+
   const shareUrl = useMemo(() => {
     const fallbackPath = listingPath ?? "/";
     if (typeof window === "undefined") return fallbackPath;
     return `${window.location.origin}${fallbackPath}`;
   }, [listingPath]);
+
+  // Determine if this listing is saved to any board (drives heart fill state)
+  const { data: savedIdsData } = useQuery<{ listingIds: string[] }>({
+    queryKey: ["/api/boards/saved-ids"],
+    enabled: isAuthenticated,
+    retry: false,
+    staleTime: 30_000,
+  });
+  const isSaved = Boolean(listingId && savedIdsData?.listingIds.includes(listingId));
 
   const handleOpenListing = () => {
     if (!resolvedCardNavigationPath) return;
@@ -265,6 +304,7 @@ export default function ListingCard({
   const emailHref = `mailto:?subject=${encodeURIComponent(
     "Check out this EventHub listing"
   )}&body=${encodeURIComponent(`I found this on EventHub:\n${shareUrl}`)}`;
+
   const resolvedTitleSizeClass =
     titleSizeClassName ??
     (titleScale === "oneAndHalf"
@@ -283,7 +323,8 @@ export default function ListingCard({
     primaryActionScale === "plus15"
       ? "gap-[0.575rem] px-[1.15rem] py-[0.575rem] text-[1.16rem]"
       : "gap-2 px-4 py-2 text-[1.01rem]";
-  const primaryActionIconClasses = primaryActionScale === "plus15" ? "h-[1.15rem] w-[1.15rem]" : "h-4 w-4";
+  const primaryActionIconClasses =
+    primaryActionScale === "plus15" ? "h-[1.15rem] w-[1.15rem]" : "h-4 w-4";
 
   return (
     <>
@@ -293,12 +334,16 @@ export default function ListingCard({
         role={canOpenListingFromCard ? "link" : undefined}
         tabIndex={canOpenListingFromCard ? 0 : undefined}
         onClick={canOpenListingFromCard ? handleOpenListing : undefined}
-        onKeyDown={canOpenListingFromCard ? (e) => {
-          if (e.key === "Enter" || e.key === " ") {
-            e.preventDefault();
-            handleOpenListing();
-          }
-        } : undefined}
+        onKeyDown={
+          canOpenListingFromCard
+            ? (e) => {
+                if (e.key === "Enter" || e.key === " ") {
+                  e.preventDefault();
+                  handleOpenListing();
+                }
+              }
+            : undefined
+        }
       >
         <Card className="cursor-pointer overflow-hidden rounded-[12px] border-0 bg-white shadow-[0_4px_24px_rgba(74,106,125,0.10)] dark:bg-[#22303c]">
           <div className="relative overflow-hidden bg-muted">
@@ -334,29 +379,39 @@ export default function ListingCard({
                 <ArrowUpRight className={primaryActionIconClasses} />
                 {primaryActionLabel}
               </button>
-              <div className="flex items-center gap-1">
+
+              <div className="flex items-center gap-0.5">
+                {/* Heart / save-to-event button — authenticated only */}
                 {isAuthenticated && listingId ? (
                   <div className="relative">
                     <button
                       type="button"
                       onClick={(e) => {
                         e.stopPropagation();
-                        setBoardPopoverOpen((v) => !v);
+                        setHeartOpen((v) => !v);
                       }}
-                      className="inline-flex h-11 w-11 items-center justify-center text-white/95 transition-colors hover:text-[#e07a6a] focus-visible:text-[#e07a6a]"
-                      aria-label="Save to board"
+                      className="inline-flex h-11 w-11 items-center justify-center transition-colors"
+                      aria-label={isSaved ? "Saved to event" : "Save to event"}
                       data-testid={`button-save-listing-${listingId ?? "unknown"}`}
                     >
-                      <Bookmark className="h-[26px] w-[26px]" />
+                      <Heart
+                        className={`h-[26px] w-[26px] transition-colors ${
+                          isSaved
+                            ? "fill-[#e07a6a] text-[#e07a6a]"
+                            : "text-white/90 hover:fill-[#e07a6a] hover:text-[#e07a6a]"
+                        }`}
+                      />
                     </button>
-                    {boardPopoverOpen && (
-                      <BoardSelectorPopover
+                    {heartOpen && (
+                      <HeartBoardPopover
                         listingId={listingId}
-                        onClose={() => setBoardPopoverOpen(false)}
+                        onClose={() => setHeartOpen(false)}
                       />
                     )}
                   </div>
                 ) : null}
+
+                {/* Share button */}
                 <button
                   type="button"
                   onClick={(e) => {
@@ -372,7 +427,6 @@ export default function ListingCard({
                 </button>
               </div>
             </div>
-
           </div>
         </Card>
 
@@ -386,13 +440,13 @@ export default function ListingCard({
           >
             {title}
           </h3>
-          <p
-            className={`shrink-0 font-heading font-bold text-[#e07a6a] ${resolvedPriceSizeClass}`}
-          >
+          <p className={`shrink-0 font-heading font-bold text-[#e07a6a] ${resolvedPriceSizeClass}`}>
             {typeof priceValue === "number" ? (
               <>
                 ${priceValue.toLocaleString()}
-                {showPerHourSuffix ? <span className="text-[0.6em] font-bold"> / Hour</span> : null}
+                {showPerHourSuffix ? (
+                  <span className="text-[0.6em] font-bold"> / Hour</span>
+                ) : null}
               </>
             ) : (
               "—"
@@ -417,10 +471,15 @@ export default function ListingCard({
         ) : null}
       </div>
 
+      {/* Share dialog */}
       <Dialog open={shareOpen} onOpenChange={setShareOpen}>
         <DialogContent className="rounded-3xl border border-border bg-card p-6 sm:max-w-[540px]">
-          <DialogTitle className="text-center text-[1.74rem] font-semibold text-foreground">Share Listing</DialogTitle>
-          <p className="-mt-2 line-clamp-1 text-center text-[1.01rem] text-muted-foreground">{title}</p>
+          <DialogTitle className="text-center text-[1.74rem] font-semibold text-foreground">
+            Share Listing
+          </DialogTitle>
+          <p className="-mt-2 line-clamp-1 text-center text-[1.01rem] text-muted-foreground">
+            {title}
+          </p>
 
           <div className="mt-2 grid grid-cols-2 gap-3 sm:grid-cols-4">
             <button
@@ -431,31 +490,22 @@ export default function ListingCard({
               <Link2 className="h-5 w-5" />
               Copy link
             </button>
-
             <button
               type="button"
-              onClick={() => {
-                if (typeof window === "undefined") return;
-                window.location.href = smsHref;
-              }}
+              onClick={() => { if (typeof window !== "undefined") window.location.href = smsHref; }}
               className="flex flex-col items-center gap-2 rounded-2xl border border-border px-3 py-3 text-[1.01rem] font-medium text-foreground transition hover:bg-accent hover:text-accent-foreground"
             >
               <MessageCircle className="h-5 w-5" />
               Messages
             </button>
-
             <button
               type="button"
-              onClick={() => {
-                if (typeof window === "undefined") return;
-                window.location.href = emailHref;
-              }}
+              onClick={() => { if (typeof window !== "undefined") window.location.href = emailHref; }}
               className="flex flex-col items-center gap-2 rounded-2xl border border-border px-3 py-3 text-[1.01rem] font-medium text-foreground transition hover:bg-accent hover:text-accent-foreground"
             >
               <Mail className="h-5 w-5" />
               Email
             </button>
-
             <button
               type="button"
               onClick={async () => {
@@ -472,8 +522,12 @@ export default function ListingCard({
             </button>
           </div>
 
-          <div className="break-all rounded-2xl bg-background px-4 py-3 text-[1.01rem] text-muted-foreground">{shareUrl}</div>
-          {shareFeedback ? <p className="text-[1.01rem] font-medium text-primary">{shareFeedback}</p> : null}
+          <div className="break-all rounded-2xl bg-background px-4 py-3 text-[1.01rem] text-muted-foreground">
+            {shareUrl}
+          </div>
+          {shareFeedback ? (
+            <p className="text-[1.01rem] font-medium text-primary">{shareFeedback}</p>
+          ) : null}
         </DialogContent>
       </Dialog>
     </>
