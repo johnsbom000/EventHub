@@ -210,33 +210,6 @@ export default function ListingCard({
 
             <div className="pointer-events-none absolute inset-0 bg-[#1a2530]/0 transition-colors duration-300 group-hover:bg-[#1a2530]/45 group-focus-within:bg-[#1a2530]/45" />
 
-            {/* Persistent top-right heart — always visible for authenticated users */}
-            {isAuthenticated && listingId ? (
-              <div className="absolute right-2 top-2 z-10">
-                <button
-                  type="button"
-                  onClick={(e) => {
-                    e.stopPropagation();
-                    setHeartOpen((v) => !v);
-                  }}
-                  className="flex h-8 w-8 items-center justify-center rounded-full bg-white/75 shadow backdrop-blur-sm transition hover:bg-white/95"
-                  aria-label={isSaved ? "Saved to event" : "Save to event"}
-                >
-                  <Heart
-                    className={`h-4 w-4 transition-colors ${
-                      isSaved ? "fill-[#e07a6a] text-[#e07a6a]" : "text-[#4a6a7d]/70 hover:text-[#e07a6a]"
-                    }`}
-                  />
-                </button>
-                {heartOpen && (
-                  <HeartBoardPopover
-                    listingId={listingId}
-                    onClose={() => setHeartOpen(false)}
-                  />
-                )}
-              </div>
-            ) : null}
-
             <div className="absolute inset-x-3 bottom-3 flex items-center justify-between opacity-0 transition-opacity duration-300 group-hover:opacity-100 group-focus-within:opacity-100">
               <button
                 type="button"
@@ -268,6 +241,34 @@ export default function ListingCard({
             </div>
           </div>
         </Card>
+
+        {/* Heart — hover-only, no circle, outside overflow-hidden so popover renders freely */}
+        {isAuthenticated && listingId ? (
+          <div className="absolute right-2 top-2 z-20 opacity-0 transition-opacity duration-200 group-hover:opacity-100">
+            <button
+              type="button"
+              onClick={(e) => {
+                e.stopPropagation();
+                setHeartOpen((v) => !v);
+              }}
+              aria-label={isSaved ? "Saved to event" : "Save to event"}
+            >
+              <Heart
+                className={`h-5 w-5 drop-shadow transition-colors ${
+                  isSaved || heartOpen
+                    ? "fill-[#e07a6a] text-[#e07a6a]"
+                    : "fill-white/60 text-white"
+                }`}
+              />
+            </button>
+            {heartOpen && (
+              <HeartBoardPopover
+                listingId={listingId}
+                onClose={() => setHeartOpen(false)}
+              />
+            )}
+          </div>
+        ) : null}
 
         <div
           className={`flex items-start justify-between gap-3 px-1 ${
