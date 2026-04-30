@@ -244,17 +244,17 @@ export default function ListingCard({
 
         {/* Heart — hover-only, no circle, outside overflow-hidden so popover renders freely */}
         {isAuthenticated && listingId ? (
-          <div className="absolute right-2 top-2 z-20 opacity-0 transition-opacity duration-200 group-hover:opacity-100">
+          <div className="absolute right-3 top-3 z-20 opacity-0 transition-opacity duration-200 group-hover:opacity-100">
             <button
               type="button"
-              onClick={(e) => {
+              onMouseDown={(e) => {
                 e.stopPropagation();
                 setHeartOpen((v) => !v);
               }}
               aria-label={isSaved ? "Saved to event" : "Save to event"}
             >
               <Heart
-                className={`h-5 w-5 drop-shadow transition-colors ${
+                className={`h-7 w-7 drop-shadow-md transition-colors ${
                   isSaved || heartOpen
                     ? "fill-[#e07a6a] text-[#e07a6a]"
                     : "fill-white/60 text-white"

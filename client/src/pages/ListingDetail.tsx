@@ -176,6 +176,15 @@ export default function ListingDetailPage() {
 
   const [galleryOpen, setGalleryOpen] = useState(false);
   const [heartOpen, setHeartOpen] = useState(false);
+  const { isAuthenticated } = useAuth0();
+
+  const { data: savedIdsData } = useQuery<{ listingIds: string[] }>({
+    queryKey: ["/api/boards/saved-ids"],
+    enabled: isAuthenticated,
+    retry: false,
+    staleTime: 30_000,
+  });
+  const isSaved = Boolean(listingId && savedIdsData?.listingIds.includes(listingId));
 
   const { data, isLoading, error } = useQuery<any>({
     queryKey: ["/api/listings/public", listingId],
@@ -454,13 +463,14 @@ export default function ListingDetailPage() {
           <div className="relative">
             <button
               type="button"
-              onClick={() => setHeartOpen((v) => !v)}
-              className="flex h-8 w-8 items-center justify-center rounded-full border border-[rgba(74,106,125,0.2)] bg-white shadow-sm transition hover:bg-[rgba(224,122,106,0.06)]"
+              onMouseDown={() => setHeartOpen((v) => !v)}
               aria-label={isSaved ? "Saved to event" : "Save to event"}
             >
               <Heart
-                className={`h-4 w-4 transition-colors ${
-                  isSaved ? "fill-[#e07a6a] text-[#e07a6a]" : "text-[#4a6a7d]/60 hover:text-[#e07a6a]"
+                className={`h-5 w-5 transition-colors ${
+                  isSaved || heartOpen
+                    ? "fill-[#e07a6a] text-[#e07a6a]"
+                    : "text-[#4a6a7d]/60 hover:text-[#e07a6a]"
                 }`}
               />
             </button>
@@ -928,14 +938,6 @@ function ReservationCard({
     : null;
 
   const { isAuthenticated, loginWithRedirect } = useAuth0();
-
-  const { data: savedIdsData } = useQuery<{ listingIds: string[] }>({
-    queryKey: ["/api/boards/saved-ids"],
-    enabled: isAuthenticated,
-    retry: false,
-    staleTime: 30_000,
-  });
-  const isSaved = Boolean(listingId && savedIdsData?.listingIds.includes(listingId));
 
   const priceText = money(price);
   const unitText = formatPricingUnit(pricingUnit);
