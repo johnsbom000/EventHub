@@ -62,6 +62,8 @@ export const bookingDisputeStatusEnum = pgEnum("booking_dispute_status", [
   "resolved_refund",
   "resolved_payout",
 ]);
+export const messageSenderTypeEnum = pgEnum("message_sender_type", ["customer", "vendor"]);
+export const notificationRecipientTypeEnum = pgEnum("notification_recipient_type", ["customer", "vendor"]);
 
 export const users = pgTable(
   "users",
@@ -69,7 +71,6 @@ export const users = pgTable(
     id: varchar("id").primaryKey().default(sql`gen_random_uuid()`),
     name: text("name").notNull(),
     email: text("email").notNull().unique(),
-    password: text("password").notNull(),
     role: userRoleEnum("role").notNull().default("customer"),
     auth0Sub: text("auth0_sub"),
     displayName: text("display_name"),
@@ -88,7 +89,6 @@ export const users = pgTable(
 export const insertUserSchema = createInsertSchema(users).pick({
   name: true,
   email: true,
-  password: true,
 });
 
 export type InsertUser = z.infer<typeof insertUserSchema>;
@@ -190,13 +190,16 @@ export const events = pgTable("events", {
   cateringDetails: jsonb("catering_details").$type<CateringDetails | null>(),
   djDetails: jsonb("dj_details").$type<DJDetails | null>(),
   propDecorDetails: jsonb("prop_decor_details").$type<PropDecorDetails | null>(),
+  customerId: varchar("customer_id").references(() => users.id, { onDelete: "set null" }),
   createdAt: timestamp("created_at").defaultNow(),
+  updatedAt: timestamp("updated_at").defaultNow(),
 });
 
 export const insertEventSchema = createInsertSchema(events)
   .omit({
     id: true,
     createdAt: true,
+    updatedAt: true,
   })
   .extend({
     photographerDetails: photographerDetailsSchema.optional(),
@@ -219,7 +222,6 @@ export const vendorAccounts = pgTable(
     activeProfileId: varchar("active_profile_id"),
     email: text("email").notNull().unique(),
     auth0Sub: text("auth0_sub"), // Migration-window fallback for identity linking
-    password: text("password").notNull(),
     businessName: text("business_name").notNull(),
     stripeConnectId: text("stripe_connect_id"),
     stripeAccountType: text("stripe_account_type"), // 'express' or 'standard'
@@ -232,6 +234,9 @@ export const vendorAccounts = pgTable(
     googleCalendarId: text("google_calendar_id"),
     googleConnectionStatus: text("google_connection_status").notNull().default("disconnected"),
     shopActive: boolean("shop_active").notNull().default(true),
+    ownerFirstName: text("owner_first_name"),
+    ownerLastName: text("owner_last_name"),
+    ownerPhone: text("owner_phone"),
     deletedAt: timestamp("deleted_at"),
     createdAt: timestamp("created_at").defaultNow(),
   },
@@ -306,7 +311,7 @@ export const vendorListings = pgTable("vendor_listings", {
   id: varchar("id").primaryKey().default(sql`gen_random_uuid()`),
   profileId: varchar("profile_id").references(() => vendorProfiles.id),
   accountId: varchar("account_id").references(() => vendorAccounts.id).notNull(),
-  status: text("status").notNull().default("draft"), // draft, pending, active, inactive
+  status: listingStatusEnum("status").notNull().default("draft"),
   category: text("category"),
   subcategory: text("subcategory"),
   title: text("title"),
@@ -548,10 +553,10 @@ export const messages = pgTable("messages", {
   id: varchar("id").primaryKey().default(sql`gen_random_uuid()`),
   bookingId: varchar("booking_id").references(() => bookings.id).notNull(),
   senderId: varchar("sender_id").notNull(), // can be customer or vendor
-  senderType: text("sender_type").notNull(), // 'customer' or 'vendor'
+  senderType: messageSenderTypeEnum("sender_type").notNull(),
   content: text("content").notNull(),
   attachments: text("attachments").array().default(sql`'{}'`), // URLs to uploaded files
-  read: boolean("read").default(false),
+  read: boolean("read").default(false).notNull(),
   createdAt: timestamp("created_at").defaultNow(),
 });
 
@@ -599,16 +604,14 @@ export const payments = pgTable("payments", {
   stripeChargeId: text("stripe_charge_id"),
   stripeTransferId: text("stripe_transfer_id"), // transfer to vendor via Stripe Connect
   stripeConnectedAccountId: text("stripe_connected_account_id"),
-  amount: integer("amount").notNull(), // in cents
-  platformFee: integer("platform_fee").notNull(),
-  vendorPayout: integer("vendor_payout").notNull(),
+  // `amount` = per-transaction charge (e.g. deposit). NOT the same as totalAmount (booking total).
+  amount: integer("amount").notNull(),
   totalAmount: integer("total_amount"),
   platformFeeAmount: integer("platform_fee_amount"),
   vendorGrossAmount: integer("vendor_gross_amount"),
   vendorNetPayoutAmount: integer("vendor_net_payout_amount"),
   stripeProcessingFeeEstimate: integer("stripe_processing_fee_estimate"),
   actualStripeFeeAmount: integer("actual_stripe_fee_amount"),
-  refundedAmount: integer("refunded_amount").default(0),
   disputeStatus: text("dispute_status"),
   payoutStatus: payoutStatusEnum("payout_status").notNull().default("not_ready"),
   payoutEligibleAt: timestamp("payout_eligible_at"),
@@ -637,12 +640,12 @@ export type Payment = typeof payments.$inferSelect;
 export const notifications = pgTable("notifications", {
   id: varchar("id").primaryKey().default(sql`gen_random_uuid()`),
   recipientId: varchar("recipient_id").notNull(), // vendor or customer ID
-  recipientType: text("recipient_type").notNull(), // 'vendor' or 'customer'
+  recipientType: notificationRecipientTypeEnum("recipient_type").notNull(),
   type: notificationTypeEnum("type").notNull(),
   title: text("title").notNull(),
   message: text("message").notNull(),
   link: text("link"), // URL to relevant page
-  read: boolean("read").default(false),
+  read: boolean("read").default(false).notNull(),
   createdAt: timestamp("created_at").defaultNow(),
 });
 
@@ -661,7 +664,9 @@ export const reviewReplies = pgTable("review_replies", {
   // ✅ migrated from legacy vendors -> vendor_accounts
   vendorAccountId: varchar("vendor_account_id").references(() => vendorAccounts.id),
 
-  reviewIndex: integer("review_index").notNull(), // index in vendor.reviews array (legacy concept; ok for now)
+  // DEPRECATED: use listingReviewId FK instead; kept until backfill is confirmed
+  reviewIndex: integer("review_index").notNull(),
+  listingReviewId: varchar("listing_review_id").references(() => listingReviews.id, { onDelete: "cascade" }),
   reply: text("reply").notNull(),
   createdAt: timestamp("created_at").defaultNow(),
 });
@@ -763,6 +768,7 @@ export const stripeWebhookEvents = pgTable("stripe_webhook_events", {
   livemode: boolean("livemode").notNull().default(false),
   payload: jsonb("payload").notNull().default(sql`'{}'::jsonb`),
   processedAt: timestamp("processed_at").defaultNow().notNull(),
+  expiresAt: timestamp("expires_at").notNull().default(sql`now() + interval '90 days'`),
 });
 
 export const insertStripeWebhookEventSchema = createInsertSchema(stripeWebhookEvents).omit({
@@ -821,7 +827,7 @@ export const boardSavedListings = pgTable(
       .references(() => planningBoards.id, { onDelete: "cascade" }),
     listingId: varchar("listing_id")
       .notNull()
-      .references(() => vendorListings.id),
+      .references(() => vendorListings.id, { onDelete: "cascade" }),
     savedAt: timestamp("saved_at", { withTimezone: true }).defaultNow().notNull(),
   },
   (table) => ({
@@ -832,5 +838,17 @@ export const boardSavedListings = pgTable(
   }),
 );
 
+export const insertPlanningBoardSchema = createInsertSchema(planningBoards).omit({
+  id: true,
+  createdAt: true,
+});
+
+export const insertBoardSavedListingSchema = createInsertSchema(boardSavedListings).omit({
+  id: true,
+  savedAt: true,
+});
+
 export type PlanningBoard = typeof planningBoards.$inferSelect;
 export type BoardSavedListing = typeof boardSavedListings.$inferSelect;
+export type InsertPlanningBoard = z.infer<typeof insertPlanningBoardSchema>;
+export type InsertBoardSavedListing = z.infer<typeof insertBoardSavedListingSchema>;
