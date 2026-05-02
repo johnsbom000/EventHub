@@ -73,6 +73,7 @@ export function verifyAuth0Token(token: string): Promise<Auth0Payload> {
  */
 type UserInfoProfile = {
   email?: string;
+  email_verified?: boolean;
   name?: string;
   nickname?: string;
   given_name?: string;
@@ -136,16 +137,26 @@ export async function requireAuth0(req: Request, res: Response, next: NextFuncti
       family_name: payload.family_name,
     };
 
-    // Fallback: resolve missing profile claims via /userinfo
-    if (!auth0.email || !auth0.name || !auth0.given_name || !auth0.family_name || !auth0.nickname) {
+    // Fallback: resolve missing profile claims via /userinfo.
+    // Also fetch when email_verified is undefined — API-audience access tokens
+    // often omit it, but /userinfo always includes it.
+    if (!auth0.email || auth0.email_verified === undefined || !auth0.name || !auth0.given_name || !auth0.family_name || !auth0.nickname) {
       const userInfo = await fetchUserInfoProfile(token);
       if (userInfo) {
         if (!auth0.email && userInfo.email) auth0.email = userInfo.email;
+        if (auth0.email_verified === undefined && userInfo.email_verified !== undefined) auth0.email_verified = userInfo.email_verified;
         if (!auth0.name && userInfo.name) auth0.name = userInfo.name;
         if (!auth0.nickname && userInfo.nickname) auth0.nickname = userInfo.nickname;
         if (!auth0.given_name && userInfo.given_name) auth0.given_name = userInfo.given_name;
         if (!auth0.family_name && userInfo.family_name) auth0.family_name = userInfo.family_name;
       }
+    }
+
+    // Reject unverified email addresses on email-bearing tokens.
+    // This prevents an attacker from creating an Auth0 account with someone
+    // else's email (unverified) and hitting the email-based account fallback.
+    if (auth0.email && auth0.email_verified !== true) {
+      return res.status(403).json({ error: "Email address must be verified before accessing this resource" });
     }
 
     // Attach to request for downstream middleware/routes
