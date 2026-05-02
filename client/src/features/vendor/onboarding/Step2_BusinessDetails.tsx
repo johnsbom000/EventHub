@@ -238,7 +238,7 @@ export default function Step2_BusinessDetails({
               {addressError ? (
                 <p className="text-sm text-destructive">{addressError}</p>
               ) : (
-                <p className="text-xs text-muted-foreground">
+                <p className="text-sm text-muted-foreground">
                   Tip: pick from the dropdown so we can verify the address.
                 </p>
               )}
@@ -324,7 +324,7 @@ export default function Step2_BusinessDetails({
                 </div>
               </>
             ) : (
-              <p className="text-xs text-muted-foreground">
+              <p className="text-sm text-muted-foreground">
                 Select a business address above to auto-fill street, city, state, and zip.
               </p>
             )}

@@ -623,9 +623,6 @@ export default function CustomerProfile({ customer }: CustomerProfileProps) {
         <h1 className="text-3xl font-bold" data-testid="text-profile-title">
           My profile
         </h1>
-        <p className="text-muted-foreground mt-1">
-          Complete your profile to help vendors understand your needs better
-        </p>
       </div>
 
       <Card className="rounded-xl border-0 bg-transparent shadow-none">
@@ -771,9 +768,6 @@ export default function CustomerProfile({ customer }: CustomerProfileProps) {
                   )}
                 </div>
               </div>
-              <p className="text-xs text-muted-foreground mt-3">
-                Drop one image here or upload one (PNG, JPG, WEBP, or GIF). Drag inside the circle to fit the photo. Saved photo stays under 2MB.
-              </p>
             </div>
           </div>
 
@@ -786,7 +780,7 @@ export default function CustomerProfile({ customer }: CustomerProfileProps) {
               className="mt-1.5"
               data-testid="input-email"
             />
-            <p className="text-xs text-muted-foreground mt-1">
+            <p className="text-sm text-muted-foreground mt-1">
               Email cannot be changed
             </p>
           </div>

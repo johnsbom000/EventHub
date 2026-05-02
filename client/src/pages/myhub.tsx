@@ -36,9 +36,7 @@ const SHOP_PHOTO_QUALITIES = [0.9, 0.82, 0.74, 0.66, 0.58];
 const SHOP_PHOTO_OUTPUT_SIZE = 512;
 const SHOP_PHOTO_EDITOR_PREVIEW_SIZE = 64;
 const SHOP_PHOTO_MODAL_PREVIEW_SIZE = 224;
-const VENDOR_HUB_COVER_MIN_HEIGHT = 280;
-const VENDOR_HUB_COVER_MAX_HEIGHT = 520;
-const VENDOR_HUB_COVER_VW_MULTIPLIER = 0.42;
+const VENDOR_HUB_COVER_FIXED_HEIGHT = 450;
 const COVER_PHOTO_MODAL_PREVIEW_WIDTH = 500;
 
 type ShopPhotoPosition = {
@@ -143,16 +141,13 @@ function normalizeOptionalNonNegativeIntString(value: string): string {
   return toNonNegativeIntString(trimmed);
 }
 
-function getVendorHubCoverHeightForViewport(viewportWidth: number): number {
-  const width = Math.max(1, viewportWidth);
-  const preferred = width * VENDOR_HUB_COVER_VW_MULTIPLIER;
-  return clamp(preferred, VENDOR_HUB_COVER_MIN_HEIGHT, VENDOR_HUB_COVER_MAX_HEIGHT);
-}
-
 function getVendorHubCoverAspectRatioForViewport(viewportWidth: number): number {
   const width = Math.max(1, viewportWidth);
-  const height = getVendorHubCoverHeightForViewport(width);
-  return width / Math.max(1, height);
+  return width / VENDOR_HUB_COVER_FIXED_HEIGHT;
+}
+
+function isCoverPhotoSourceLargeEnoughForVendorHub(source: ShopPhotoSource): boolean {
+  return source.height >= VENDOR_HUB_COVER_FIXED_HEIGHT;
 }
 
 function parsePhotoPosition(value: unknown): ShopPhotoPosition {
@@ -224,6 +219,10 @@ function readFileAsDataUrl(file: File): Promise<string> {
 function loadImage(src: string): Promise<HTMLImageElement> {
   return new Promise((resolve, reject) => {
     const image = new Image();
+    // Do NOT set crossOrigin here. Storage URLs (S3, GCS, etc.) often lack the
+    // CORS headers required by the anonymous mode, which would cause every
+    // persisted-URL load to fail. crossOrigin is only needed when drawing to a
+    // canvas, and all canvas paths in this file receive data URLs (same-origin).
     image.onload = () => resolve(image);
     image.onerror = () => reject(new Error("Unable to load image"));
     image.src = src;
@@ -336,14 +335,21 @@ async function optimizeShopPhoto(file: File): Promise<ShopPhotoSource> {
 }
 
 async function createShopPhotoSourceFromSrc(src: string): Promise<ShopPhotoSource> {
-  const image = await loadImage(src);
-  const canvas = trimTransparentCanvas(buildResizedCanvas(image));
-  const normalizedSrc = encodeCanvasForTarget(canvas, SHOP_PHOTO_TARGET_BYTES);
-  return {
-    src: normalizedSrc,
-    width: canvas.width,
-    height: canvas.height,
-  };
+  try {
+    const image = await loadImage(src);
+    return {
+      src,
+      width: image.naturalWidth || image.width,
+      height: image.naturalHeight || image.height,
+    };
+  } catch {
+    // loadImage can fail when the resolved URL doesn't match where the file
+    // actually lives (e.g. CDN vs. API-server path in production). Return a
+    // source with the URL and safe fallback dimensions so the <img> element in
+    // JSX can still render the thumbnail — <img> uses no-CORS mode and will
+    // succeed even when loadImage cannot reach the same URL.
+    return { src, width: SHOP_PHOTO_OUTPUT_SIZE, height: SHOP_PHOTO_OUTPUT_SIZE };
+  }
 }
 
 async function buildCroppedShopPhotoDataUrl(
@@ -389,6 +395,11 @@ async function uploadShopPhotoDataUrl(dataUrl: string): Promise<string> {
   const payload = await response.json().catch(() => ({}));
   if (!response.ok) {
     throw new Error(payload?.error || `Upload failed (${response.status})`);
+  }
+
+  const nextStoragePath = asTrimmedString(payload?.storagePath);
+  if (nextStoragePath) {
+    return nextStoragePath;
   }
 
   const nextUrl = asTrimmedString(payload?.url);
@@ -579,9 +590,19 @@ export default function MyHub() {
   const persistedLikesDislikes = asTrimmedString(onlineProfiles.likesDislikes);
   const persistedHomeState = asTrimmedString(onlineProfiles.homeState);
   const persistedFunFacts = asTrimmedString(onlineProfiles.funFacts);
-  const persistedProfileImageUrl = resolveAssetUrl(asTrimmedString(onlineProfiles.shopProfileImageUrl));
-  const persistedCoverImageUrl = resolveAssetUrl(asTrimmedString(onlineProfiles.shopCoverImageUrl));
-  const persistedCoverPhotoPosition = parsePhotoPosition(onlineProfiles.shopCoverImagePosition);
+  const persistedProfileImagePath =
+    asTrimmedString(onlineProfiles.shopProfileImageStoragePath) ||
+    asTrimmedString(onlineProfiles.shopProfileImageUrl) ||
+    asTrimmedString(onlineProfiles.profileImageUrl);
+  const persistedCoverImagePath =
+    asTrimmedString(onlineProfiles.shopCoverImageStoragePath) ||
+    asTrimmedString(onlineProfiles.shopCoverImageUrl) ||
+    asTrimmedString(onlineProfiles.coverImageUrl);
+  const persistedProfileImageUrl = resolveAssetUrl(persistedProfileImagePath);
+  const persistedCoverImageUrl = resolveAssetUrl(persistedCoverImagePath);
+  const persistedCoverPhotoPosition = parsePhotoPosition(
+    onlineProfiles.shopCoverImagePosition ?? onlineProfiles.coverImagePosition
+  );
 
   useEffect(() => {
     setBusinessNameDraft(persistedProfileBusinessName);
@@ -657,7 +678,9 @@ export default function MyHub() {
       })
       .catch(() => {
         if (cancelled) return;
-        setShopPhotoSource(null);
+        // createShopPhotoSourceFromSrc no longer rejects, but guard anyway.
+        // Fall back to showing the URL directly; the <img> element handles it.
+        setShopPhotoSource({ src: persistedProfileImageUrl, width: SHOP_PHOTO_OUTPUT_SIZE, height: SHOP_PHOTO_OUTPUT_SIZE });
         setShopPhotoPosition({ x: 0, y: 0 });
         setShopPhotoScale(1);
         setShopPhotoDirty(false);
@@ -694,8 +717,11 @@ export default function MyHub() {
       })
       .catch(() => {
         if (cancelled) return;
-        setCoverPhotoSource(null);
-        setCoverPhotoPosition({ x: 0, y: 0 });
+        // createShopPhotoSourceFromSrc no longer rejects, but guard anyway.
+        // Fall back to showing the URL directly with a landscape default so the
+        // cover thumbnail renders — <img> handles loading without CORS restrictions.
+        setCoverPhotoSource({ src: persistedCoverImageUrl, width: 1920, height: 1080 });
+        setCoverPhotoPosition(persistedCoverPhotoPosition);
         setCoverPhotoNeedsUpload(false);
         setCoverPhotoDirty(false);
       });
@@ -725,7 +751,6 @@ export default function MyHub() {
       city: String((listing as any)?.city ?? ""),
       travelMode: "travel-to-guests",
       serviceRadius: 0,
-      photos: [] as any,
       serviceDescription: "",
       offerings: [] as any,
       businessHours: [] as any,
@@ -756,7 +781,6 @@ export default function MyHub() {
     if (!asTrimmedString(serviceAreaDraft)) return "Service area is required.";
     if (!asTrimmedString(inBusinessSinceYearDraft)) return "In business since year is required.";
     if (!asTrimmedString(eventsServedBaselineDraft)) return "Events served is required.";
-    if (!shopPhotoSource) return "Profile photo is required.";
     return "";
   };
 
@@ -773,7 +797,6 @@ export default function MyHub() {
     serviceAreaDraft,
     inBusinessSinceYearDraft,
     eventsServedBaselineDraft,
-    shopPhotoSource,
   ]);
 
   const saveShopPhotoMutation = useMutation({
@@ -781,11 +804,6 @@ export default function MyHub() {
       if (!vendorProfile) {
         throw new Error("Vendor profile not found. Please complete onboarding first.");
       }
-
-      const existingOnlineProfiles =
-        vendorProfile.onlineProfiles && typeof vendorProfile.onlineProfiles === "object"
-          ? (vendorProfile.onlineProfiles as Record<string, unknown>)
-          : {};
 
       const token = await getFreshAccessToken();
       const profileResponse = await fetch("/api/vendor/profile", {
@@ -797,8 +815,9 @@ export default function MyHub() {
         },
         body: JSON.stringify({
           onlineProfiles: {
-            ...existingOnlineProfiles,
+            shopProfileImageStoragePath: nextShopProfileImageUrl,
             shopProfileImageUrl: nextShopProfileImageUrl,
+            profileImageUrl: nextShopProfileImageUrl,
           },
         }),
       });
@@ -840,6 +859,72 @@ export default function MyHub() {
     },
   });
 
+  const saveCoverPhotoMutation = useMutation({
+    mutationFn: async ({
+      nextCoverImageUrl,
+      nextCoverPosition,
+    }: {
+      nextCoverImageUrl: string;
+      nextCoverPosition: ShopPhotoPosition | null;
+    }) => {
+      if (!vendorProfile) {
+        throw new Error("Vendor profile not found. Please complete onboarding first.");
+      }
+
+      const token = await getFreshAccessToken();
+      const profileResponse = await fetch("/api/vendor/profile", {
+        method: "PATCH",
+        credentials: "include",
+        headers: {
+          "Content-Type": "application/json",
+          ...(token ? { Authorization: `Bearer ${token}` } : {}),
+        },
+        body: JSON.stringify({
+          onlineProfiles: {
+            shopCoverImageStoragePath: nextCoverImageUrl,
+            shopCoverImageUrl: nextCoverImageUrl,
+            coverImageUrl: nextCoverImageUrl,
+            coverImagePosition: nextCoverPosition,
+            shopCoverImagePosition: nextCoverPosition,
+          },
+        }),
+      });
+
+      if (!profileResponse.ok) {
+        const payload = await profileResponse.json().catch(() => ({} as Record<string, unknown>));
+        const details = Array.isArray((payload as any)?.details) ? (payload as any).details : [];
+        const firstDetail = details.find((detail: any) => typeof detail?.message === "string")?.message;
+        throw new Error(firstDetail || String((payload as any)?.error || `Failed to update cover photo (${profileResponse.status})`));
+      }
+
+      return { nextCoverImageUrl };
+    },
+    onSuccess: async ({ nextCoverImageUrl }) => {
+      setCoverPhotoDirty(false);
+      setCoverPhotoNeedsUpload(false);
+      setCoverEditorRequiresUpload(false);
+      if (!nextCoverImageUrl) {
+        setCoverPhotoSource(null);
+        setCoverPhotoPosition({ x: 0, y: 0 });
+      }
+
+      await Promise.all([
+        queryClient.invalidateQueries({ queryKey: ["/api/vendor/me"] }),
+        queryClient.invalidateQueries({ queryKey: ["/api/vendor/profile"] }),
+        queryClient.invalidateQueries({ queryKey: ["/api/vendor/profiles"] }),
+        queryClient.invalidateQueries({ queryKey: ["/api/vendors/public/shop", vendorId] }),
+        queryClient.invalidateQueries({ queryKey: ["/api/listings/public"] }),
+      ]);
+    },
+    onError: (error: any) => {
+      toast({
+        title: "Could not update cover photo",
+        description: error?.message || "Please try again.",
+        variant: "destructive",
+      });
+    },
+  });
+
   const saveMutation = useMutation({
     mutationFn: async () => {
       const nextBusinessName = asTrimmedString(businessNameDraft);
@@ -852,8 +937,8 @@ export default function MyHub() {
         throw new Error("Vendor profile not found. Please complete onboarding first.");
       }
 
-      let nextShopProfileImageUrl = persistedProfileImageUrl;
-      let nextShopCoverImageUrl = persistedCoverImageUrl;
+      let nextShopProfileImageUrl = persistedProfileImagePath;
+      let nextShopCoverImageUrl = persistedCoverImagePath;
       let nextShopCoverImagePosition: ShopPhotoPosition | null = persistedCoverPhotoPosition;
 
       if (shopPhotoDirty) {
@@ -890,13 +975,37 @@ export default function MyHub() {
         }
       }
 
-      const existingOnlineProfiles =
-        vendorProfile.onlineProfiles && typeof vendorProfile.onlineProfiles === "object"
-          ? (vendorProfile.onlineProfiles as Record<string, unknown>)
-          : {};
       const normalizedSpecialties = normalizeSpecialtiesInput(specialtiesDraft);
       const eventsServedBaseline = toNonNegativeIntString(eventsServedBaselineDraft);
       const normalizedServiceRadius = normalizeOptionalNonNegativeIntString(serviceRadiusMilesDraft);
+      const onlineProfilesUpdate: Record<string, unknown> = {
+        profileBusinessName: nextBusinessName,
+        aboutBusiness: asTrimmedString(aboutBusinessDraft),
+        aboutOwner: asTrimmedString(aboutOwnerDraft),
+        shopTagline: asTrimmedString(taglineDraft),
+        serviceAreaLabel: asTrimmedString(serviceAreaDraft),
+        inBusinessSinceYear: asTrimmedString(inBusinessSinceYearDraft),
+        specialties: normalizedSpecialties,
+        eventsServedBaseline: Number(eventsServedBaseline),
+        hobbies: serializeHobbyList(hobbiesDraft),
+        likesDislikes: asTrimmedString(likesDislikesDraft),
+        homeState: asTrimmedString(homeStateDraft),
+        funFacts: asTrimmedString(funFactsDraft),
+      };
+
+      if (shopPhotoDirty) {
+        onlineProfilesUpdate.shopProfileImageStoragePath = nextShopProfileImageUrl;
+        onlineProfilesUpdate.shopProfileImageUrl = nextShopProfileImageUrl;
+        onlineProfilesUpdate.profileImageUrl = nextShopProfileImageUrl;
+      }
+
+      if (coverPhotoDirty) {
+        onlineProfilesUpdate.shopCoverImageStoragePath = nextShopCoverImageUrl;
+        onlineProfilesUpdate.shopCoverImageUrl = nextShopCoverImageUrl;
+        onlineProfilesUpdate.coverImageUrl = nextShopCoverImageUrl;
+        onlineProfilesUpdate.coverImagePosition = nextShopCoverImagePosition;
+        onlineProfilesUpdate.shopCoverImagePosition = nextShopCoverImagePosition;
+      }
 
       const token = await getFreshAccessToken();
       const profileResponse = await fetch("/api/vendor/profile", {
@@ -910,24 +1019,7 @@ export default function MyHub() {
           profileName: nextBusinessName,
           serviceDescription: asTrimmedString(aboutBusinessDraft),
           serviceRadius: normalizedServiceRadius ? Number(normalizedServiceRadius) : null,
-          onlineProfiles: {
-            ...existingOnlineProfiles,
-            profileBusinessName: nextBusinessName,
-            aboutBusiness: asTrimmedString(aboutBusinessDraft),
-            aboutOwner: asTrimmedString(aboutOwnerDraft),
-            shopTagline: asTrimmedString(taglineDraft),
-            serviceAreaLabel: asTrimmedString(serviceAreaDraft),
-            inBusinessSinceYear: asTrimmedString(inBusinessSinceYearDraft),
-            specialties: normalizedSpecialties,
-            eventsServedBaseline: Number(eventsServedBaseline),
-            hobbies: serializeHobbyList(hobbiesDraft),
-            likesDislikes: asTrimmedString(likesDislikesDraft),
-            homeState: asTrimmedString(homeStateDraft),
-            funFacts: asTrimmedString(funFactsDraft),
-            shopProfileImageUrl: nextShopProfileImageUrl,
-            shopCoverImageUrl: nextShopCoverImageUrl,
-            ...(coverPhotoDirty ? { shopCoverImagePosition: nextShopCoverImagePosition } : {}),
-          },
+          onlineProfiles: onlineProfilesUpdate,
         }),
       });
 
@@ -1057,6 +1149,65 @@ export default function MyHub() {
     }
   };
 
+  const persistCoverPhoto = async (
+    nextSource: ShopPhotoSource | null,
+    nextPosition: ShopPhotoPosition,
+    needsUpload: boolean,
+  ) => {
+    if (saveMutation.isPending || saveCoverPhotoMutation.isPending || isUploadingPhoto || isPreparingCoverPhoto) return;
+    if (!vendorProfile) {
+      toast({
+        title: "Could not save cover photo",
+        description: "Vendor profile not found. Please complete onboarding first.",
+        variant: "destructive",
+      });
+      return;
+    }
+
+    const previousSource = coverPhotoSource;
+    const previousPosition = coverPhotoPosition;
+    const previousNeedsUpload = coverPhotoNeedsUpload;
+
+    setCoverPhotoSource(nextSource);
+    setCoverPhotoPosition(nextPosition);
+    setCoverPhotoDirty(false);
+    setCoverPhotoNeedsUpload(false);
+    setCoverEditorRequiresUpload(false);
+    closeCoverPhotoEditor(false);
+
+    setIsUploadingPhoto(true);
+    try {
+      let nextCoverImageUrl = persistedCoverImagePath;
+      if (nextSource) {
+        if (needsUpload) {
+          if (estimateDataUrlBytes(nextSource.src) > MAX_SHOP_PHOTO_BYTES) {
+            toast({
+              title: "Image too large",
+              description: "Optimized cover photo must be 2MB or less.",
+              variant: "destructive",
+            });
+            throw new Error("Optimized cover photo must be 2MB or less.");
+          }
+          nextCoverImageUrl = await uploadShopPhotoDataUrl(nextSource.src);
+        }
+      } else {
+        nextCoverImageUrl = "";
+      }
+
+      const nextCoverPosition = nextSource
+        ? { x: clamp(nextPosition.x, -1, 1), y: clamp(nextPosition.y, -1, 1) }
+        : null;
+
+      await saveCoverPhotoMutation.mutateAsync({ nextCoverImageUrl, nextCoverPosition });
+    } catch {
+      setCoverPhotoSource(previousSource);
+      setCoverPhotoPosition(previousPosition);
+      setCoverPhotoNeedsUpload(previousNeedsUpload);
+    } finally {
+      setIsUploadingPhoto(false);
+    }
+  };
+
   const handleShopPhotoFile = async (file: File) => {
     if (!ACCEPTED_SHOP_PHOTO_TYPES.has(file.type)) {
       toast({
@@ -1128,6 +1279,14 @@ export default function MyHub() {
     try {
       setIsPreparingCoverPhoto(true);
       const optimized = await optimizeShopPhoto(file);
+      if (!isCoverPhotoSourceLargeEnoughForVendorHub(optimized)) {
+        toast({
+          title: "Cover photo too small",
+          description: `Cover photo height must be at least ${VENDOR_HUB_COVER_FIXED_HEIGHT}px.`,
+          variant: "destructive",
+        });
+        return;
+      }
       if (estimateDataUrlBytes(optimized.src) > MAX_SHOP_PHOTO_BYTES) {
         toast({
           title: "Image too large",
@@ -1289,12 +1448,7 @@ export default function MyHub() {
 
   const applyCoverPhotoEditorChanges = () => {
     if (!editorCoverPhotoSource) return;
-    setCoverPhotoSource(editorCoverPhotoSource);
-    setCoverPhotoPosition(editorCoverPhotoPosition);
-    setCoverPhotoNeedsUpload((prev) => prev || coverEditorRequiresUpload);
-    setCoverEditorRequiresUpload(false);
-    setCoverPhotoDirty(true);
-    closeCoverPhotoEditor(false);
+    void persistCoverPhoto(editorCoverPhotoSource, editorCoverPhotoPosition, coverEditorRequiresUpload);
   };
 
   const renderShopPhotoCircle = ({
@@ -1450,9 +1604,6 @@ export default function MyHub() {
         <div className="grid gap-3 lg:grid-cols-3 lg:items-end">
           <div className="lg:col-span-2">
             <h1 className="text-3xl font-bold text-foreground">My Hub</h1>
-            <p className="text-sm text-muted-foreground">
-              This is your public storefront page. Private contact details are never shown.
-            </p>
           </div>
 
           <div className="flex flex-wrap items-center gap-2 lg:flex-nowrap lg:justify-between">
@@ -1481,7 +1632,7 @@ export default function MyHub() {
 
         <div className="grid gap-6 lg:grid-cols-3">
           <section className="space-y-4 lg:col-span-2">
-            <h2 className="text-2xl font-semibold text-foreground lg:text-[2rem]">Active Listings</h2>
+            <h2 className="text-2xl font-semibold text-foreground">Active Listings</h2>
             {isListingsLoading ? (
               <Card>
                 <CardContent className="py-8 text-sm text-muted-foreground">Loading listings...</CardContent>
@@ -1508,6 +1659,7 @@ export default function MyHub() {
                     titleSizeClassName="text-[1.518rem] md:text-[2.6875rem]"
                     priceSizeClassName="text-[1.932rem] leading-none md:text-[3.0625rem] md:leading-none"
                     titleFont="heading"
+                    showHeartIcon={false}
                     showVendorShopButton={false}
                     cardNavigationPath={`/vendor/listings/${listing.id}`}
                     primaryActionLabel="Edit Listing"
@@ -1628,14 +1780,7 @@ export default function MyHub() {
                           variant="ghost"
                           className="text-[#4A6A7D] hover:text-[#4A6A7D]"
                           onClick={() => {
-                            setCoverPhotoSource(null);
-                            setCoverPhotoPosition({ x: 0, y: 0 });
-                            setEditorCoverPhotoSource(null);
-                            setEditorCoverPhotoPosition({ x: 0, y: 0 });
-                            setCoverPhotoNeedsUpload(false);
-                            setCoverEditorRequiresUpload(false);
-                            setIsCoverPhotoEditorOpen(false);
-                            setCoverPhotoDirty(true);
+                            void persistCoverPhoto(null, { x: 0, y: 0 }, false);
                           }}
                           disabled={saveMutation.isPending || isPreparingCoverPhoto || isUploadingPhoto}
                         >
@@ -1644,9 +1789,6 @@ export default function MyHub() {
                         </Button>
                       ) : null}
                     </div>
-                    <p className="mt-2 text-xs text-muted-foreground">
-                      Recommended wide image for the top hero section. Drag to reposition after upload.
-                    </p>
                   </div>
                 </div>
 
@@ -1728,9 +1870,6 @@ export default function MyHub() {
                         ) : null}
                       </div>
                     </div>
-                    <p className="mt-3 text-xs text-muted-foreground">
-                      Upload one image and drag to reposition inside the circle. Saved image stays under 2MB.
-                    </p>
                   </div>
                 </div>
 
@@ -1801,9 +1940,6 @@ export default function MyHub() {
                     placeholder="0"
                     disabled={isProfileLoading || saveMutation.isPending}
                   />
-                  <p className="text-xs text-muted-foreground">
-                    Enter how many events you have served so far and we will calculate from here.
-                  </p>
                 </div>
 
                 <div className="space-y-2">
@@ -1871,9 +2007,6 @@ export default function MyHub() {
                   />
                 </div>
 
-                <p className="text-xs text-muted-foreground">
-                  Customer-facing contact details like email and phone are hidden on this page.
-                </p>
               </CardContent>
             </Card>
           </aside>

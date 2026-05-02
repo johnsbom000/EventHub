@@ -87,7 +87,7 @@ function StatsCard({ title, value, description, icon }: StatsCardProps) {
       <CardContent>
         <div className="text-2xl font-bold">{value}</div>
         {description && (
-          <p className="text-xs text-muted-foreground">{description}</p>
+          <p className="text-sm text-muted-foreground">{description}</p>
         )}
       </CardContent>
     </Card>
@@ -290,26 +290,26 @@ export default function AdminDashboard() {
                     <div className="flex flex-wrap items-center justify-between gap-2">
                       <p className="font-medium">
                         {row.displayName}{" "}
-                        <span className="text-xs uppercase text-muted-foreground">({row.actorType})</span>
+                        <span className="text-sm uppercase text-muted-foreground">({row.actorType})</span>
                       </p>
                       <p className="text-sm font-semibold">{row.flagCount} flags</p>
                     </div>
                     {row.email ? (
-                      <p className="text-xs text-muted-foreground">{row.email}</p>
+                      <p className="text-sm text-muted-foreground">{row.email}</p>
                     ) : null}
-                    <p className="mt-1 text-xs text-muted-foreground">
+                    <p className="mt-1 text-sm text-muted-foreground">
                       Last flagged:{" "}
                       {row.lastFlaggedAt
                         ? new Date(row.lastFlaggedAt).toLocaleString()
                         : "unknown"}
                     </p>
                     {row.latestReason ? (
-                      <p className="mt-1 text-xs text-muted-foreground">
+                      <p className="mt-1 text-sm text-muted-foreground">
                         Latest reason: {row.latestReason}
                       </p>
                     ) : null}
                     {row.latestSampleText ? (
-                      <p className="mt-2 rounded bg-muted px-2 py-1 text-xs">
+                      <p className="mt-2 rounded bg-muted px-2 py-1 text-sm">
                         {row.latestSampleText}
                       </p>
                     ) : null}

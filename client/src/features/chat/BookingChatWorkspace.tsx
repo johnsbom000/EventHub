@@ -437,8 +437,8 @@ export function BookingChatWorkspace({ role }: { role: Role }) {
                     </Badge>
                   ) : null}
                 </div>
-                <p className="text-xs text-muted-foreground">{formatDate(group.eventDate)}</p>
-                <p className="mt-1 text-xs text-muted-foreground">
+                <p className="text-sm text-muted-foreground">{formatDate(group.eventDate)}</p>
+                <p className="mt-1 text-sm text-muted-foreground">
                   {group.conversations.length} vendor conversation
                   {group.conversations.length === 1 ? "" : "s"}
                 </p>
@@ -463,7 +463,7 @@ export function BookingChatWorkspace({ role }: { role: Role }) {
               {role === "customer" && selectedEvent ? (
                 <div className="mb-2 rounded-lg bg-muted/60 px-3 py-2">
                   <p className="truncate text-sm font-medium">{selectedEvent.eventTitle}</p>
-                  <p className="text-xs text-muted-foreground">{formatDate(selectedEvent.eventDate)}</p>
+                  <p className="text-sm text-muted-foreground">{formatDate(selectedEvent.eventDate)}</p>
                 </div>
               ) : null}
               {visibleConversations.map((conversation) => {
@@ -496,14 +496,14 @@ export function BookingChatWorkspace({ role }: { role: Role }) {
                       </Badge>
                     </div>
                   </div>
-                  <p className="truncate text-xs text-muted-foreground">
+                  <p className="truncate text-sm text-muted-foreground">
                     {conversation.eventTitle || "Booking chat"}
                   </p>
-                  <p className="mt-1 text-xs text-muted-foreground">
+                  <p className="mt-1 text-sm text-muted-foreground">
                     {formatDate(conversation.eventDate)}
                   </p>
                   {conversation.expired && (
-                    <p className="mt-1 text-xs font-medium text-destructive">Expired</p>
+                    <p className="mt-1 text-sm font-medium text-destructive">Expired</p>
                   )}
                 </button>
               );
@@ -552,7 +552,7 @@ export function BookingChatWorkspace({ role }: { role: Role }) {
           </CardContent>
         ) : (
           <CardContent className="flex min-h-0 flex-1 flex-col p-0">
-            <div className="flex items-start gap-3 border-b border-cyan-200 bg-gradient-to-r from-cyan-50 to-blue-50 px-4 py-3 text-xs text-cyan-900">
+            <div className="flex items-start gap-3 border-b border-cyan-200 bg-gradient-to-r from-cyan-50 to-blue-50 px-4 py-3 text-sm text-cyan-900">
               <ShieldAlert className="mt-0.5 h-4 w-4 shrink-0 text-cyan-700" />
               <p className="leading-relaxed">
                 {bootstrapMutation.data?.policyWarning ||

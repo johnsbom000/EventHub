@@ -3,7 +3,7 @@ import React, { useState } from "react";
 import { Card } from "@/components/ui/card";
 import { Button } from "@/components/ui/button";
 import { Badge } from "@/components/ui/badge";
-import { Plus, Edit, MapPin, Eye } from "lucide-react";
+import { Plus, Edit, Eye } from "lucide-react";
 import { CreateListingWizard } from "@/features/vendor/create-listing/CreateListingWizard";
 import { useQuery, useMutation } from "@tanstack/react-query";
 import { queryClient } from "@/lib/queryClient";
@@ -19,6 +19,29 @@ import {
 } from "@/lib/listingPhotos";
 
 type AnyListing = any;
+const asTrimmedString = (value: unknown): string => (typeof value === "string" ? value.trim() : "");
+
+const buildPublishPayloadFromListing = (listing: AnyListing) => {
+  const listingDataSource =
+    listing?.listingData && typeof listing.listingData === "object" && !Array.isArray(listing.listingData)
+      ? listing.listingData
+      : {};
+  const listingDescription =
+    asTrimmedString(listingDataSource?.listingDescription) ||
+    asTrimmedString(listingDataSource?.description) ||
+    asTrimmedString(listingDataSource?.serviceDescription) ||
+    asTrimmedString(listing?.description);
+
+  return {
+    title: asTrimmedString(listing?.title) || asTrimmedString(listingDataSource?.listingTitle) || undefined,
+    listingData: {
+      ...listingDataSource,
+      listingDescription: listingDescription || undefined,
+      description: listingDescription || undefined,
+      serviceDescription: listingDescription || undefined,
+    },
+  };
+};
 
 export default function VendorListings() {
   const [showCreateWizard, setShowCreateWizard] = useState(false);
@@ -85,47 +108,67 @@ export default function VendorListings() {
     deleteMutation.mutate(listingId);
   };
 
+  const publishMutation = useMutation({
+    mutationFn: async (listing: AnyListing) => {
+      const listingId = String(listing?.id || "").trim();
+      if (!listingId) throw new Error("Missing listing id");
+      const response = await apiRequest(
+        "PATCH",
+        `/api/vendor/listings/${listingId}/publish`,
+        buildPublishPayloadFromListing(listing)
+      );
+      const payload = await response.json().catch(() => null);
+      if (!response.ok) {
+        const reasons = Array.isArray(payload?.reasons) ? payload.reasons.join(" ") : "";
+        throw new Error(reasons || payload?.error || "Unable to publish listing");
+      }
+      return payload;
+    },
+    onSuccess: () => {
+      queryClient.invalidateQueries({ queryKey: ["/api/vendor/listings"] });
+      toast({
+        title: "Listing Published",
+        description: "This listing is now live for customers.",
+      });
+    },
+    onError: (error: any) => {
+      toast({
+        title: "Publish failed",
+        description: error?.message || "Unable to publish listing.",
+        variant: "destructive",
+      });
+    },
+  });
+
+  const unpublishMutation = useMutation({
+    mutationFn: async (listingId: string) => {
+      const response = await apiRequest("PATCH", `/api/vendor/listings/${listingId}/unpublish`, {});
+      const payload = await response.json().catch(() => null);
+      if (!response.ok) throw new Error(payload?.error || "Unable to unpublish listing");
+      return payload;
+    },
+    onSuccess: () => {
+      queryClient.invalidateQueries({ queryKey: ["/api/vendor/listings"] });
+      toast({
+        title: "Listing Unpublished",
+        description: "This listing is now hidden from customers.",
+      });
+    },
+    onError: (error: any) => {
+      toast({
+        title: "Unpublish failed",
+        description: error?.message || "Unable to unpublish listing.",
+        variant: "destructive",
+      });
+    },
+  });
+
   const ListingCardRow = ({ listing }: { listing: AnyListing }) => {
     const title =
       listing?.title ??
       listing?.listingData?.listingTitle ??
       listing?.listingData?.serviceType ??
       "Untitled Listing";
-
-    const category = String(listing?.category || listing?.listingData?.category || "").trim();
-    const hasCategory = category.length > 0;
-
-    const sl =
-      (listing?.listingServiceCenterLabel
-        ? { label: listing.listingServiceCenterLabel }
-        : null) ??
-      listing?.listingData?.serviceLocation ??
-      listing?.listingData?.location ??
-      listing?.serviceLocation ??
-      listing?.location ??
-      null;
-
-    const location = (() => {
-      const city = sl?.city;
-      const region = sl?.region || sl?.state;
-
-      // Best case: structured city/region exists
-      if (typeof city === "string" && city.trim()) {
-        const c = city.trim();
-        const r = typeof region === "string" && region.trim() ? region.trim() : "";
-        return r ? `${c}, ${r}` : c;
-      }
-
-      // Fallback: derive from label like "Provo, UT, United States"
-      const label = typeof sl?.label === "string" ? sl.label.trim() : "";
-      if (label) {
-        const parts = label.split(",").map((p: string) => p.trim()).filter(Boolean);
-        if (parts.length >= 2) return `${parts[0]}, ${parts[1]}`;
-        return parts[0] || "Location not set";
-      }
-
-      return "Location not set";
-    })();
 
     const canonicalPriceCents =
       typeof listing?.priceCents === "number" && Number.isFinite(listing.priceCents) ? Math.round(listing.priceCents) : null;
@@ -150,6 +193,8 @@ export default function VendorListings() {
     const image = orderedPhotos[0] ?? null;
     const coverAspectRatio = coverRatioToAspectRatio(getCoverPhotoRatio(listing));
     const statusValue = String(listing?.status || "draft").trim();
+    const statusLower = statusValue.toLowerCase();
+    const isActive = statusLower === "active";
     const statusLabel = statusValue.length > 0
       ? `${statusValue.charAt(0).toUpperCase()}${statusValue.slice(1)}`
       : "Draft";
@@ -178,70 +223,82 @@ export default function VendorListings() {
               {statusLabel}
             </Badge>
           </div>
+
+          <button
+            type="button"
+            className="absolute top-3 right-3 z-10 inline-flex items-center gap-1 rounded-full border border-white/30 bg-white/80 px-2.5 py-1 text-sm font-medium text-[#2a3a42] shadow-sm backdrop-blur-sm opacity-0 group-hover:opacity-100 transition-opacity duration-150 hover:bg-white"
+            onClick={(e) => {
+              e.stopPropagation();
+              handleEditListing(listing.id);
+            }}
+            data-testid={`button-edit-${listing.id}`}
+            aria-label={`Edit ${title}`}
+          >
+            <Edit className="w-3.5 h-3.5" />
+            Edit
+          </button>
         </div>
 
         <div className="p-4">
-          <div className="flex items-start justify-between mb-2">
-            <div className="flex-1">
-              <h3 className="font-semibold text-[1.8rem] leading-tight mb-1 line-clamp-1" data-testid={`text-title-${listing.id}`}>
-                {title}
-              </h3>
-              <p className="text-sm text-muted-foreground">{hasCategory ? category : "Category not set"}</p>
-            </div>
-            <button
-              type="button"
-              className="ml-3 shrink-0 inline-flex items-center gap-1 rounded-full border border-border/70 bg-background/70 px-2.5 py-1 text-xs font-medium text-muted-foreground hover:text-foreground hover:border-border transition-colors"
-              onClick={(e) => {
-                e.stopPropagation();
-                handleEditListing(listing.id);
-              }}
-              data-testid={`button-edit-${listing.id}`}
-              aria-label={`Edit ${title}`}
-            >
-              <Edit className="w-3.5 h-3.5" />
-              Edit
-            </button>
+          <div className="mb-2 flex items-baseline gap-2">
+            <h3 className="font-semibold text-[1.8rem] leading-tight line-clamp-1 min-w-0 flex-1" data-testid={`text-title-${listing.id}`}>
+              {title}
+            </h3>
+            <span className="text-[2.3rem] shrink-0 font-heading font-bold text-[#e07a6a]">{price}</span>
           </div>
 
-          <div className="flex items-center gap-2 text-sm text-muted-foreground mb-3">
-            <MapPin className="w-4 h-4" />
-            <span>{location}</span>
-          </div>
-
-          <div className="flex items-center justify-between">
+          <div className="flex items-center justify-end gap-3 text-sm text-muted-foreground">
             <div className="flex items-center gap-1">
-              <span className="font-semibold text-[hsl(var(--secondary-accent))]">
-                {price}
-              </span>
+              <Eye className="w-4 h-4" />
+              <span>{listing?.views || 0}</span>
             </div>
-
-            <div className="flex items-center gap-3 text-sm text-muted-foreground">
-              <div className="flex items-center gap-1">
-                <Eye className="w-4 h-4" />
-                <span>{listing?.views || 0}</span>
-              </div>
-              <div className="flex items-center gap-1">
-                <span className="font-medium">{listing?.bookings || 0}</span>
-                <span>bookings</span>
-              </div>
+            <div className="flex items-center gap-1">
+              <span className="font-medium">{listing?.bookings || 0}</span>
+              <span>bookings</span>
             </div>
           </div>
 
-          <div className="grid grid-cols-2 gap-2 mt-4 pt-4 border-t border-t-[var(--dashboard-divider-blue)]">
-            <div />
-
+          <div className="mt-4 flex gap-2 border-t border-t-[var(--dashboard-divider-blue)] pt-4">
             <Button
               variant="outline"
-              className="w-full min-w-0 px-2"
+              className="min-w-0 flex-1 px-2 hover:border-destructive hover:bg-destructive hover:text-destructive-foreground"
               onClick={(e) => {
                 e.stopPropagation();
                 handleDeleteListing(listing.id);
               }}
               data-testid={`button-delete-${listing.id}`}
-              disabled={deleteMutation.isPending}
+              disabled={deleteMutation.isPending || publishMutation.isPending || unpublishMutation.isPending}
             >
-              {deleteMutation.isPending ? "Deleting..." : "Delete listing"}
+              {deleteMutation.isPending ? "Deleting..." : "Delete"}
             </Button>
+
+            {isActive ? (
+              <Button
+                variant="outline"
+                className="min-w-0 flex-1 px-2 hover:border-transparent hover:bg-[hsl(var(--secondary-accent))] hover:text-[hsl(var(--secondary-accent-foreground))]"
+                onClick={(e) => {
+                  e.stopPropagation();
+                  unpublishMutation.mutate(listing.id);
+                }}
+                data-testid={`button-unpublish-${listing.id}`}
+                disabled={deleteMutation.isPending || publishMutation.isPending || unpublishMutation.isPending}
+              >
+                {unpublishMutation.isPending ? "Unpublishing..." : "Unpublish"}
+              </Button>
+            ) : (
+              <Button
+                variant="outline"
+                className="min-w-0 flex-1 px-2 hover:bg-primary hover:text-primary-foreground hover:border-primary-border"
+                onClick={(e) => {
+                  e.stopPropagation();
+                  publishMutation.mutate(listing);
+                }}
+                data-testid={`button-publish-${listing.id}`}
+                disabled={deleteMutation.isPending || publishMutation.isPending || unpublishMutation.isPending}
+              >
+                {publishMutation.isPending ? "Publishing..." : "Publish"}
+              </Button>
+            )}
           </div>
         </div>
       </Card>
@@ -306,9 +363,6 @@ export default function VendorListings() {
               <h1 className="text-3xl font-bold mb-2" data-testid="text-page-title">
                 Listings Management
               </h1>
-              <p className="text-muted-foreground">
-                Create and manage your service listings, packages, and pricing
-              </p>
             </div>
 
             <Button

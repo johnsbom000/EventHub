@@ -306,7 +306,7 @@ export default function VendorListingEdit() {
   const mintActionButtonClass = "border-[#88bdb4] bg-[#9dd4cc] text-[#4a6a7d] hover:bg-[#8ec9c0]";
   const activeFillButtonClass = "bg-primary text-primary-foreground hover:bg-primary/90";
   const creamSectionCardClass = "p-6 bg-[#ffffff]";
-  const fieldSurfaceClass = "bg-[#ffffff]";
+  const fieldSurfaceClass = "bg-[#ffffff] text-sm";
 
   // Listing fetch
   const { data, isLoading, error } = useQuery({
@@ -337,6 +337,7 @@ export default function VendorListingEdit() {
 
     const ld = listing.listingData || {};
     const canonicalListing = listing as AnyListing & {
+      description?: unknown;
       whatsIncluded?: unknown;
       whatsNotIncluded?: unknown;
       priceCents?: unknown;
@@ -435,7 +436,9 @@ export default function VendorListingEdit() {
 
       // Title / Description
       listingTitle: normalizeListingTitle(String(ld.listingTitle || listing.title || "")),
-      listingDescription: String(ld.listingDescription || "").slice(0, LISTING_DESCRIPTION_MAX_CHARS),
+      listingDescription: String(
+        ld.listingDescription ?? ld.description ?? ld.serviceDescription ?? canonicalListing?.description ?? ""
+      ).slice(0, LISTING_DESCRIPTION_MAX_CHARS),
       whatsIncluded: hydratedIncluded,
       whatsNotIncluded: hydratedNotIncluded,
 
@@ -657,7 +660,9 @@ export default function VendorListingEdit() {
   const mapContainerRef = useRef<HTMLDivElement | null>(null);
   const mapRef = useRef<mapboxgl.Map | null>(null);
 
-  async function uploadListingPhoto(file: File): Promise<{ url: string; filename: string }> {
+  async function uploadListingPhoto(
+    file: File
+  ): Promise<{ url: string; filename: string; storagePath?: string }> {
     // IMPORTANT: For FormData uploads, do NOT use apiRequest() (it sets JSON headers)
     const token = await getFreshAccessToken();
     if (!token) throw new Error("Not authenticated");
@@ -1032,6 +1037,8 @@ export default function VendorListingEdit() {
       pricingMode: draft.pricingMode,
       listingTitle: normalizeListingTitle(String(draft.listingTitle ?? "")),
       listingDescription: draft.listingDescription,
+      description: draft.listingDescription,
+      serviceDescription: draft.listingDescription,
       whatsIncluded: Array.isArray(draft.whatsIncluded) ? draft.whatsIncluded : [],
       whatsNotIncluded: Array.isArray(draft.whatsNotIncluded) ? draft.whatsNotIncluded : [],
       rentalTypes: draft.rentalTypes,
@@ -1096,9 +1103,13 @@ export default function VendorListingEdit() {
       : null,
     };
 
+    const normalizedDescription = String(draft.listingDescription ?? "").trim();
     return {
       listingData: nextListingData,
       title: normalizeListingTitle(String(draft.listingTitle ?? "")) || listing?.title || "Untitled Listing",
+      description: normalizedDescription || undefined,
+      listingDescription: normalizedDescription || undefined,
+      serviceDescription: normalizedDescription || undefined,
     };
   };
 
@@ -1452,9 +1463,6 @@ export default function VendorListingEdit() {
             <div className="max-w-5xl mx-auto px-6 py-8">
               <div className="mb-6">
                 <h1 className="text-3xl font-bold">Edit listing</h1>
-                <p className="text-muted-foreground">
-                  Everything is editable here. This matches your Create Listing inputs, just in a clean 7-section layout.
-                </p>
               </div>
 
               {!listingId ? (
@@ -1482,7 +1490,6 @@ export default function VendorListingEdit() {
                     <div className="space-y-4">
                       <div>
                         <div className="text-xl font-semibold">Listing Classification</div>
-                        <div className="text-sm text-muted-foreground">Category is required to publish.</div>
                       </div>
 
                       <div className="grid grid-cols-1 gap-4">
@@ -1523,7 +1530,6 @@ export default function VendorListingEdit() {
                     <div className="space-y-4">
                       <div>
                         <div className="text-xl font-semibold">Title &amp; Description</div>
-                        <div className="text-sm text-muted-foreground">These fields are required to publish.</div>
                       </div>
 
                       <div className="space-y-2">
@@ -1556,7 +1562,7 @@ export default function VendorListingEdit() {
                           placeholder="Describe this listing…"
                           className={fieldSurfaceClass}
                         />
-                        <div className="text-xs text-muted-foreground">Max 1000 chars.</div>
+                        <div className="text-sm text-muted-foreground">Max 1000 chars.</div>
                       </div>
 
                       <div className="space-y-3">
@@ -1610,10 +1616,6 @@ export default function VendorListingEdit() {
                           >
                             Add to listing
                           </Button>
-                        </div>
-
-                        <div className="text-xs text-muted-foreground">
-                          Rules: Each bullet is capitalized, ends without a period, and duplicates are prevented.
                         </div>
                       </div>
 
@@ -1669,10 +1671,6 @@ export default function VendorListingEdit() {
                             Add to listing
                           </Button>
                         </div>
-
-                        <div className="text-xs text-muted-foreground">
-                          Rules: Each bullet is capitalized, ends without a period, and duplicates are prevented.
-                        </div>
                       </div>
                     </div>
                   </Card>
@@ -1683,7 +1681,6 @@ export default function VendorListingEdit() {
                       <div>
                         <div className="text-xl font-semibold">Popular For</div>
                         <div className="mt-2 flex flex-wrap items-center justify-between gap-3">
-                          <div className="text-sm text-muted-foreground">Optional. Select all that apply.</div>
                           <Button
                             type="button"
                             variant={allPopularForSelected ? "default" : "outline"}
@@ -1731,7 +1728,6 @@ export default function VendorListingEdit() {
                     <div className="space-y-4">
                       <div>
                         <div className="text-xl font-semibold">Pricing</div>
-                        <div className="text-sm text-muted-foreground">Rate is required to publish.</div>
                       </div>
 
                       <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
@@ -1864,9 +1860,6 @@ export default function VendorListingEdit() {
                     <div className="space-y-6">
                       <div>
                         <div className="text-xl font-semibold">Delivery / Setup</div>
-                        <div className="text-sm text-muted-foreground">
-                          Optional. Default comes from your vendor onboarding address, but you can override it per listing.
-                        </div>
                       </div>
 
                       <div className="space-y-2">
@@ -1928,10 +1921,6 @@ export default function VendorListingEdit() {
                             }}
                             disabled={!center}
                           />
-
-                          <p className="text-xs text-muted-foreground">
-                            Adjust in 15-mile increments. (Max 500 miles)
-                          </p>
 
                           <div className="relative rounded-xl border overflow-hidden h-64">
                             <div ref={mapContainerRef} className="relative z-10 w-full h-full" />
@@ -2160,7 +2149,7 @@ export default function VendorListingEdit() {
                         <div className="text-xl font-semibold">Status</div>
                         <div className="text-muted-foreground mt-1">
                           Current status: <span className="font-medium">{status}</span>
-                          <div className="text-xs mt-2">
+                          <div className="text-sm mt-2">
                             Publish is blocked until required fields are complete.
                           </div>
                         </div>
@@ -2183,7 +2172,7 @@ export default function VendorListingEdit() {
                         {!hasDescription ? " description," : ""}
                         {!hasPricing ? " pricing rate," : ""}
                         {!hasMinimumPhotos ? ` at least ${MIN_LISTING_PHOTO_COUNT} photos,` : ""}{" "}
-                        <span className="text-xs">(same gate everywhere)</span>
+                        <span className="text-sm">(same gate everywhere)</span>
                       </div>
                     ) : null}
                   </Card>

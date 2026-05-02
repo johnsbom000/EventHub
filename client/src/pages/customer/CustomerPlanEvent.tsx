@@ -12,9 +12,6 @@ export default function CustomerPlanEvent() {
         <h1 className="text-3xl font-bold" data-testid="text-plan-event-title">
           Plan a new event
         </h1>
-        <p className="text-muted-foreground mt-1">
-          Start by browsing available vendors.
-        </p>
       </div>
 
       <div className="h-px w-full bg-[var(--dashboard-divider-blue)]" aria-hidden />

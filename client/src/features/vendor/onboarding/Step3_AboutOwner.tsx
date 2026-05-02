@@ -25,30 +25,25 @@ const SHOP_PHOTO_OUTPUT_SIZE = 512;
 const PHOTO_EDITOR_MIN_SCALE = 1;
 const PHOTO_EDITOR_MAX_SCALE = 3;
 const PROFILE_EDITOR_PREVIEW_SIZE = 224;
-const VENDOR_HUB_COVER_MIN_HEIGHT = 280;
-const VENDOR_HUB_COVER_MAX_HEIGHT = 520;
-const VENDOR_HUB_COVER_VW_MULTIPLIER = 0.42;
+const VENDOR_HUB_COVER_FIXED_HEIGHT = 450;
 const COVER_EDITOR_PREVIEW_MAX_WIDTH = 560;
 const COVER_EDITOR_PREVIEW_MIN_WIDTH = 280;
 const COVER_EDITOR_PREVIEW_VIEWPORT_GUTTER = 96;
 const COVER_PHOTO_OUTPUT_WIDTH = 1600;
 
-function getVendorHubCoverHeightForViewport(viewportWidth: number): number {
-  const width = Math.max(1, viewportWidth);
-  const preferred = width * VENDOR_HUB_COVER_VW_MULTIPLIER;
-  return clamp(preferred, VENDOR_HUB_COVER_MIN_HEIGHT, VENDOR_HUB_COVER_MAX_HEIGHT);
-}
-
 function getVendorHubCoverAspectRatioForViewport(viewportWidth: number): number {
   const width = Math.max(1, viewportWidth);
-  const height = getVendorHubCoverHeightForViewport(width);
-  return width / Math.max(1, height);
+  return width / VENDOR_HUB_COVER_FIXED_HEIGHT;
 }
 
 function getCoverEditorPreviewWidthForViewport(viewportWidth: number): number {
   const width = Math.max(1, viewportWidth);
   const available = width - COVER_EDITOR_PREVIEW_VIEWPORT_GUTTER;
   return Math.round(clamp(available, COVER_EDITOR_PREVIEW_MIN_WIDTH, COVER_EDITOR_PREVIEW_MAX_WIDTH));
+}
+
+function isCoverPhotoSourceLargeEnoughForVendorHub(source: ShopPhotoSource): boolean {
+  return source.height >= VENDOR_HUB_COVER_FIXED_HEIGHT;
 }
 
 type ShopPhotoSource = {
@@ -289,6 +284,9 @@ async function buildCroppedShopPhotoDataUrl(
 
 interface Step3AboutOwnerProps {
   formData: {
+    ownerFirstName: string;
+    ownerLastName: string;
+    ownerPhone: string;
     aboutVendor: string;
     shopTagline: string;
     inBusinessSinceYear: string;
@@ -462,6 +460,14 @@ export default function Step3_AboutOwner({
     try {
       setIsPreparingCoverPhoto(true);
       const optimized = await optimizeShopPhoto(file);
+      if (!isCoverPhotoSourceLargeEnoughForVendorHub(optimized)) {
+        toast({
+          title: "Cover photo too small",
+          description: `Cover photo height must be at least ${VENDOR_HUB_COVER_FIXED_HEIGHT}px.`,
+          variant: "destructive",
+        });
+        return;
+      }
       setCoverEditorSource(optimized);
       setCoverEditorPosition({ x: 0, y: 0 });
       setCoverEditorScale(PHOTO_EDITOR_MIN_SCALE);
@@ -646,7 +652,7 @@ export default function Step3_AboutOwner({
             />
           </>
         ) : (
-          <div className="flex h-full w-full items-center justify-center text-xs text-muted-foreground">{emptyLabel}</div>
+          <div className="flex h-full w-full items-center justify-center text-sm text-muted-foreground">{emptyLabel}</div>
         )}
       </div>
     );
@@ -717,6 +723,50 @@ export default function Step3_AboutOwner({
       <div className="vendor-onboarding-step-content">
         <div className="grid gap-y-6 lg:grid-cols-[minmax(0,1.5fr)_3rem_minmax(430px,520px)] xl:grid-cols-[minmax(0,1.5fr)_4rem_minmax(430px,520px)] lg:items-start">
           <div className="space-y-4 rounded-2xl border border-[rgba(154,172,180,0.55)] bg-[#ffffff] p-6 lg:col-[1/2]">
+
+          {/* Personal identity — used when a vendor books other vendors */}
+          <div className="grid grid-cols-2 gap-4">
+            <div className="space-y-2">
+              <Label htmlFor="onboarding-owner-first-name">
+                First name <span className="text-destructive">*</span>
+              </Label>
+              <Input
+                id="onboarding-owner-first-name"
+                value={formData.ownerFirstName}
+                onChange={(e) => updateFormData({ ownerFirstName: e.target.value })}
+                placeholder="Jane"
+                autoComplete="given-name"
+              />
+            </div>
+            <div className="space-y-2">
+              <Label htmlFor="onboarding-owner-last-name">
+                Last name <span className="text-destructive">*</span>
+              </Label>
+              <Input
+                id="onboarding-owner-last-name"
+                value={formData.ownerLastName}
+                onChange={(e) => updateFormData({ ownerLastName: e.target.value })}
+                placeholder="Smith"
+                autoComplete="family-name"
+              />
+            </div>
+          </div>
+
+          <div className="space-y-2">
+            <Label htmlFor="onboarding-owner-phone">Personal phone <span className="text-muted-foreground font-normal">(optional)</span></Label>
+            <Input
+              id="onboarding-owner-phone"
+              type="tel"
+              value={formData.ownerPhone}
+              onChange={(e) => updateFormData({ ownerPhone: e.target.value })}
+              placeholder="(555) 000-0000"
+              autoComplete="tel"
+            />
+            <p className="text-[0.75rem] text-muted-foreground">
+              Only used to identify you when you book from other vendors — never shown publicly.
+            </p>
+          </div>
+
           <div className="space-y-2">
             <Label htmlFor="onboarding-about-owner">Tell your customers about yourself!</Label>
             <Textarea
@@ -783,7 +833,7 @@ export default function Step3_AboutOwner({
                     className="h-full w-full object-cover"
                   />
                 ) : (
-                  <span className="text-xs text-muted-foreground">No photo</span>
+                  <span className="text-sm text-muted-foreground">No photo</span>
                 )}
               </div>
 
@@ -839,7 +889,7 @@ export default function Step3_AboutOwner({
                 ) : null}
               </div>
             </div>
-            <p className="mt-2 text-xs text-muted-foreground">
+            <p className="mt-2 text-sm text-muted-foreground">
               This photo appears in My Hub and Vendor Hub as your profile image.
             </p>
           </div>
@@ -915,7 +965,7 @@ export default function Step3_AboutOwner({
                 ) : null}
               </div>
             </div>
-            <p className="mt-2 text-xs text-muted-foreground">
+            <p className="mt-2 text-sm text-muted-foreground">
               This image appears as the hero cover on your Vendor Hub.
             </p>
           </div>

@@ -195,7 +195,7 @@ export default function VendorShell({ children, onOpenAccountSettings }: VendorS
             data-testid="link-vendor-shell-home"
           >
             <BrandWordmark
-              className="text-[2.32rem]"
+              className="text-[1.625rem]"
               eventClassName="text-[#e07a6a] font-normal"
               hubClassName="text-[#4a6a7d] font-normal"
             />
@@ -234,7 +234,7 @@ export default function VendorShell({ children, onOpenAccountSettings }: VendorS
                 data-testid="dropdown-vendor-shell-menu"
               >
                 <DropdownMenuLabel>Vendor Account</DropdownMenuLabel>
-                <DropdownMenuLabel className="pt-0 text-xs font-normal text-muted-foreground">
+                <DropdownMenuLabel className="pt-0 text-sm font-normal text-muted-foreground">
                   Active: {activeProfileName}
                 </DropdownMenuLabel>
                 {vendorProfiles.length > 0 ? (
