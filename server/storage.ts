@@ -136,8 +136,6 @@ export class MemStorage implements IStorage {
       id,
       name: insertUser.name,
       email: insertUser.email,
-      password: insertUser.password,
-
       role: "customer",
       auth0Sub: null,
       displayName: null,
@@ -185,7 +183,6 @@ export class MemStorage implements IStorage {
       .insert(vendorAccounts)
       .values({
         email: insert.email,
-        password: insert.password,
         businessName: insert.businessName,
         userId: insert.userId ?? null,
         auth0Sub: insert.auth0Sub ?? null,
@@ -371,6 +368,9 @@ export class MemStorage implements IStorage {
 
       // required; must not be undefined
       listingData: insert.listingData ?? {},
+
+      violationRemoval: insert.violationRemoval ?? false,
+      pendingAdminReview: insert.pendingAdminReview ?? false,
     };
 
     this.vendorListings.set(id, listing);
@@ -451,6 +451,7 @@ export class MemStorage implements IStorage {
       depositPaidAt: insertBooking.depositPaidAt ?? null,
       finalPaymentStrategy: insertBooking.finalPaymentStrategy ?? null,
       status: insertBooking.status ?? "pending",
+      reviewPromptSent: insertBooking.reviewPromptSent ?? false,
       paymentStatus: insertBooking.paymentStatus ?? "pending",
       payoutStatus: insertBooking.payoutStatus ?? "not_ready",
       payoutEligibleAt: insertBooking.payoutEligibleAt ?? null,
@@ -594,15 +595,12 @@ export class MemStorage implements IStorage {
       stripeChargeId: insertPayment.stripeChargeId ?? null,
       status: insertPayment.status ?? "pending",
       amount: insertPayment.amount,
-      platformFee: insertPayment.platformFee,
-      vendorPayout: insertPayment.vendorPayout,
       totalAmount: insertPayment.totalAmount ?? null,
       platformFeeAmount: insertPayment.platformFeeAmount ?? null,
       vendorGrossAmount: insertPayment.vendorGrossAmount ?? null,
       vendorNetPayoutAmount: insertPayment.vendorNetPayoutAmount ?? null,
       stripeProcessingFeeEstimate: insertPayment.stripeProcessingFeeEstimate ?? null,
       actualStripeFeeAmount: insertPayment.actualStripeFeeAmount ?? null,
-      refundedAmount: insertPayment.refundedAmount ?? 0,
       disputeStatus: insertPayment.disputeStatus ?? null,
       payoutStatus: insertPayment.payoutStatus ?? "not_ready",
       payoutEligibleAt: insertPayment.payoutEligibleAt ?? null,
@@ -689,7 +687,7 @@ export class MemStorage implements IStorage {
       .where(
         and(
           eq(notifications.recipientId, recipientId),
-          eq(notifications.recipientType, recipientType)
+          eq(notifications.recipientType, recipientType as "customer" | "vendor")
         )
       )
       .orderBy(desc(notifications.createdAt));
@@ -709,7 +707,7 @@ export class MemStorage implements IStorage {
         and(
           eq(notifications.id, id),
           eq(notifications.recipientId, recipientId),
-          eq(notifications.recipientType, recipientType)
+          eq(notifications.recipientType, recipientType as "customer" | "vendor")
         )
       )
       .returning({ id: notifications.id });
@@ -727,6 +725,7 @@ export class MemStorage implements IStorage {
       id,
       ...insertReply,
       vendorAccountId: insertReply.vendorAccountId ?? null,
+      listingReviewId: insertReply.listingReviewId ?? null,
       createdAt: now,
     };
 

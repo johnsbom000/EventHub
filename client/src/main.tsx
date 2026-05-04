@@ -10,11 +10,8 @@ import { useAuth0 } from "@auth0/auth0-react";
 import { setTokenGetter } from "@/lib/authToken";
 import { installRuntimeFetchBaseUrl } from "@/lib/runtimeUrls";
 
-const THEME_STORAGE_KEY = "eventhub-theme";
 if (typeof window !== "undefined") {
   installRuntimeFetchBaseUrl();
-  window.localStorage.setItem(THEME_STORAGE_KEY, "light");
-  document.documentElement.classList.remove("dark");
   document.documentElement.style.colorScheme = "light";
 }
 
@@ -29,6 +26,18 @@ function isAuth0SecureOrigin(): boolean {
 }
 
 const AUTH0_SECURE_ORIGIN_ENABLED = isAuth0SecureOrigin();
+const AUTH0_DOMAIN = String(import.meta.env.VITE_AUTH0_DOMAIN || "").trim();
+const AUTH0_CLIENT_ID = String(import.meta.env.VITE_AUTH0_CLIENT_ID || "").trim();
+const AUTH0_CONFIGURED = AUTH0_DOMAIN.length > 0 && AUTH0_CLIENT_ID.length > 0;
+const AUTH0_MISSING_CONFIG_MESSAGE =
+  "Sign in is unavailable because Auth0 env is missing. Set VITE_AUTH0_DOMAIN and VITE_AUTH0_CLIENT_ID, then restart the client.";
+const AUTH0_DISABLED_MESSAGE = AUTH0_SECURE_ORIGIN_ENABLED
+  ? AUTH0_MISSING_CONFIG_MESSAGE
+  : INSECURE_PREVIEW_AUTH_MESSAGE;
+
+if (typeof window !== "undefined" && AUTH0_SECURE_ORIGIN_ENABLED && !AUTH0_CONFIGURED) {
+  console.error("[auth0] Missing VITE_AUTH0_DOMAIN or VITE_AUTH0_CLIENT_ID. Auth is disabled until these are set.");
+}
 
 const insecurePreviewAuth0ContextValue: Auth0ContextInterface = {
   ...initialContext,
@@ -40,13 +49,13 @@ const insecurePreviewAuth0ContextValue: Auth0ContextInterface = {
   getAccessTokenWithPopup: (async () => undefined) as any,
   getIdTokenClaims: (async () => undefined) as any,
   loginWithRedirect: (async () => {
-    throw new Error(INSECURE_PREVIEW_AUTH_MESSAGE);
+    throw new Error(AUTH0_DISABLED_MESSAGE);
   }) as any,
   loginWithPopup: (async () => {
-    throw new Error(INSECURE_PREVIEW_AUTH_MESSAGE);
+    throw new Error(AUTH0_DISABLED_MESSAGE);
   }) as any,
   connectAccountWithRedirect: (async () => {
-    throw new Error(INSECURE_PREVIEW_AUTH_MESSAGE);
+    throw new Error(AUTH0_DISABLED_MESSAGE);
   }) as any,
   logout: (async () => undefined) as any,
 };
@@ -125,20 +134,24 @@ const appContent = (
 root.render(
   <React.StrictMode>
     <ErrorBoundary>
-      {AUTH0_SECURE_ORIGIN_ENABLED ? (
+      {AUTH0_SECURE_ORIGIN_ENABLED && AUTH0_CONFIGURED ? (
         <Auth0Provider
-          domain="dev-u831fugzvigrqe8g.us.auth0.com"
-          clientId="gris26WuQ5P9me2vXPJBSuzKNpJrR5nW"
+          domain={AUTH0_DOMAIN}
+          clientId={AUTH0_CLIENT_ID}
           cacheLocation="localstorage"
-          useRefreshTokens={false}
+          useRefreshTokens={true}
           authorizationParams={{
             redirect_uri: window.location.origin,
             audience: "https://eventhub-api",
             scope: "openid profile email",
           }}
           onRedirectCallback={(appState) => {
-            const target = appState?.returnTo || window.location.pathname;
-            window.location.assign(target);
+            const target = appState?.returnTo || "/";
+            window.history.replaceState({}, document.title, target);
+            window.dispatchEvent(new PopStateEvent("popstate"));
+            // Clear the per-session admin check flag so the redirect fires
+            // again after a full logout+login cycle.
+            sessionStorage.removeItem("eh_admin_checked");
           }}
         >
           {appContent}

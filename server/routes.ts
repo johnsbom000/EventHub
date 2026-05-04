@@ -11,19 +11,24 @@ import {
   googleCalendarEventMappings,
   listingTraffic,
   users,
-  insertUserSchema,
   webTraffic,
   bookings,
   events,
   paymentSchedules,
   payments,
   bookingDisputes,
+  disputeAdminNotes,
   rentalTypes,
   stripeWebhookEvents,
+  vendorVacationBlocks,
+  planningBoards,
+  boardSavedListings,
+  circumventionFlags,
+  circumventionWarnings,
+  vendorSuspensions,
+  feedbackSubmissions,
 } from "@shared/schema";
 import {
-  hashPassword,
-  verifyToken,
   requireDualAuthAuth0,
   requireAdminAuth,
   resolveVendorAccountForAuth0Identity,
@@ -41,7 +46,10 @@ import {
   sendBookingCancelledEmail,
   sendNewMessageEmail,
   sendReviewPromptEmail,
+  sendCircumventionWarningEmail,
+  sendSuspensionEmail,
 } from "./email";
+import { checkContent, blockReasonSummary } from "./circumvention-detection";
 import {
   uploadBufferToObjectStorage,
   makeObjectKey,
@@ -83,6 +91,7 @@ import {
   DISPUTE_WINDOW_HOURS,
 } from "./payoutEligibility";
 import { decryptToken, encryptToken } from "./lib/tokenEncryption";
+import { createDbRateLimiter } from "./lib/dbRateLimiter";
 
 /**proxy: {
   "/api": {
@@ -181,7 +190,6 @@ let stripeWebhookTableReadyPromise: Promise<void> | null = null;
 let bookingDisputesTableReadyPromise: Promise<void> | null = null;
 let autoPayoutWorkerStarted = false;
 let autoPayoutTickInFlight = false;
-const IP_RATE_WINDOW_MS = 60 * 1000;
 
 type VendorProfileContext = {
   account: any;
@@ -209,7 +217,7 @@ type GoogleEventMappingContext = {
   >;
 };
 
-function createGoogleOauthState(vendorAccountId: string) {
+function createGoogleOauthState(vendorAccountId: string, returnTo = "/vendor/dashboard") {
   const secret = (process.env.JWT_SECRET || "").trim();
   if (!secret) {
     throw new Error("Missing JWT_SECRET environment variable");
@@ -218,6 +226,7 @@ function createGoogleOauthState(vendorAccountId: string) {
   const encodedPayload = Buffer.from(
     JSON.stringify({
       vendorAccountId,
+      returnTo,
       issuedAt: Date.now(),
       nonce: crypto.randomUUID(),
     }),
@@ -261,6 +270,7 @@ function parseGoogleOauthState(rawState: string) {
   try {
     const parsed = JSON.parse(Buffer.from(encodedPayload, "base64url").toString("utf8")) as {
       vendorAccountId?: string;
+      returnTo?: string;
       issuedAt?: number;
     };
 
@@ -277,7 +287,12 @@ function parseGoogleOauthState(rawState: string) {
       return null;
     }
 
-    return { vendorAccountId: parsed.vendorAccountId.trim() };
+    // Only allow safe relative vendor paths to prevent open redirects
+    const rawReturnTo = typeof parsed.returnTo === "string" ? parsed.returnTo.trim() : "";
+    const safeReturnTo =
+      rawReturnTo.startsWith("/vendor/") ? rawReturnTo : "/vendor/dashboard";
+
+    return { vendorAccountId: parsed.vendorAccountId.trim(), returnTo: safeReturnTo };
   } catch {
     return null;
   }
@@ -487,60 +502,90 @@ async function resolveActiveVendorProfile(req: any): Promise<VendorProfileContex
   return context;
 }
 
-type IpRateState = {
-  count: number;
-  resetAt: number;
-};
-
-function getRequestIp(req: any): string {
-  const forwarded = req.headers["x-forwarded-for"];
-  if (typeof forwarded === "string" && forwarded.trim().length > 0) {
-    return forwarded.split(",")[0]!.trim();
-  }
-  return (req.ip || req.socket?.remoteAddress || "unknown").toString();
-}
-
-function createIpRateLimiter(options: { label: string; maxPerMinute: number }) {
-  const state = new Map<string, IpRateState>();
-  const maxPerMinute = Math.max(1, Math.min(options.maxPerMinute, 100));
-
-  return (req: any, res: any, next: any) => {
-    const now = Date.now();
-    const ip = getRequestIp(req);
-    const key = `${options.label}:${ip}`;
-    const current = state.get(key);
-
-    if (!current || current.resetAt <= now) {
-      state.set(key, { count: 1, resetAt: now + IP_RATE_WINDOW_MS });
-      return next();
-    }
-
-    if (current.count >= maxPerMinute) {
-      const retryAfterSeconds = Math.max(1, Math.ceil((current.resetAt - now) / 1000));
-      res.setHeader("Retry-After", String(retryAfterSeconds));
-      return res.status(429).json({ error: "Too many requests. Please try again shortly." });
-    }
-
-    current.count += 1;
-    state.set(key, current);
-    return next();
-  };
-}
-
-const paymentRateLimiter = createIpRateLimiter({
+const paymentRateLimiter = createDbRateLimiter({
   label: "payments",
   maxPerMinute: 20,
 });
 
-const uploadRateLimiter = createIpRateLimiter({
+const uploadRateLimiter = createDbRateLimiter({
   label: "uploads",
   maxPerMinute: 30,
 });
 
-const bookingRateLimiter = createIpRateLimiter({
+const bookingRateLimiter = createDbRateLimiter({
   label: "bookings",
   maxPerMinute: 5,
 });
+
+const eventsRateLimiter = createDbRateLimiter({
+  label: "events",
+  maxPerMinute: 10,
+});
+
+const trackRateLimiter = createDbRateLimiter({
+  label: "track",
+  maxPerMinute: 60,
+});
+
+// Account creation and onboarding flows — tight limit to prevent scripted signups.
+const onboardingRateLimiter = createDbRateLimiter({
+  label: "onboarding",
+  maxPerMinute: 5,
+});
+
+// General vendor/customer profile and content mutations.
+const mutationRateLimiter = createDbRateLimiter({
+  label: "mutation",
+  maxPerMinute: 20,
+});
+
+// Reviews, disputes, and vendor replies — user-facing social actions.
+const socialRateLimiter = createDbRateLimiter({
+  label: "social",
+  maxPerMinute: 5,
+});
+
+// Chat bootstrap and moderation — slightly more generous than social.
+const messagingRateLimiter = createDbRateLimiter({
+  label: "messaging",
+  maxPerMinute: 15,
+});
+
+// Planning board saves/removes — frequent UX click action.
+const boardsRateLimiter = createDbRateLimiter({
+  label: "boards",
+  maxPerMinute: 30,
+});
+
+// Admin dashboard operations — admins are trusted but should not hammer the DB.
+const adminRateLimiter = createDbRateLimiter({
+  label: "admin",
+  maxPerMinute: 30,
+});
+
+// Maps GoogleCalendarConnectionError codes to safe user-facing messages.
+// Internal details (token strings, raw Google API responses) must not reach the client.
+const SAFE_GOOGLE_ERROR_MESSAGES: Record<string, string> = {
+  google_not_connected: "Google Calendar is not connected. Please reconnect in your settings.",
+  google_refresh_token_missing: "Google Calendar authorization has expired. Please reconnect.",
+  google_access_token_missing: "Unable to refresh Google Calendar access. Please reconnect.",
+  google_oauth_config_missing: "Google Calendar integration is not configured.",
+  google_calendar_not_selected: "No Google Calendar is selected. Please choose one in your settings.",
+  vendor_account_not_found: "Vendor account not found.",
+  booking_time_range_invalid: "Booking time range is invalid.",
+  booking_timezone_conversion_failed: "Booking date could not be converted to your timezone.",
+  booking_event_date_missing: "Booking is missing an event date.",
+  booking_event_date_invalid: "Booking event date is invalid.",
+  booking_event_datetime_invalid: "Booking event date or time is invalid.",
+  booking_event_datetime_timezone_invalid: "Booking date or time is invalid for your timezone.",
+  booking_event_datetime_conversion_failed: "Booking date could not be formatted for Google sync.",
+  google_booking_event_create_invalid: "Google Calendar returned an unexpected response when creating the event.",
+  google_calendar_create_invalid: "Google Calendar returned an unexpected response when creating the calendar.",
+};
+
+function safeGoogleErrorMessage(error: import("./google").GoogleCalendarConnectionError): string {
+  return SAFE_GOOGLE_ERROR_MESSAGES[error.code] ?? "A Google Calendar error occurred. Please try again.";
+}
 
 function logRouteError(route: string, error: unknown) {
   if (error instanceof Error) {
@@ -780,18 +825,6 @@ function normalizeListingCategory(value: unknown): ListingCategoryValue | null {
   return null;
 }
 
-function mapServiceTypeToListingCategory(serviceType: unknown): ListingCategoryValue {
-  const normalized = asTrimmedString(serviceType).toLowerCase().replace(/[_\s]+/g, "-");
-  if (!normalized) return "Services";
-
-  if (normalized === "prop-decor" || normalized === "prop-rental" || normalized === "rental" || normalized === "rentals") {
-    return "Rentals";
-  }
-  if (normalized === "venue" || normalized === "venues") return "Venues";
-  if (normalized === "catering") return "Catering";
-  return "Services";
-}
-
 function isInstantBookingCategory(category: ListingCategoryValue | null) {
   return category === "Rentals";
 }
@@ -799,11 +832,8 @@ function isInstantBookingCategory(category: ListingCategoryValue | null) {
 function resolveBookingLifecycleMode(input: {
   listingCategory?: unknown;
   listingInstantBookEnabled?: unknown;
-  fallbackServiceType?: unknown;
 }) {
-  const category =
-    normalizeListingCategory(input.listingCategory) ??
-    (input.fallbackServiceType ? mapServiceTypeToListingCategory(input.fallbackServiceType) : null);
+  const category = normalizeListingCategory(input.listingCategory);
   const explicitInstantBook = parseBooleanInput(input.listingInstantBookEnabled);
   const isInstantBooking = explicitInstantBook ?? isInstantBookingCategory(category);
 
@@ -823,9 +853,7 @@ function normalizeListingSubcategory(value: unknown): string | null {
 function normalizeListingClassification(
   listingDataRaw: unknown,
   options?: {
-    fallbackServiceType?: unknown;
     requireCategory?: boolean;
-    allowLegacyFallback?: boolean;
   }
 ): {
   listingData: Record<string, any>;
@@ -838,21 +866,7 @@ function normalizeListingClassification(
       ? ({ ...(listingDataRaw as Record<string, any>) } as Record<string, any>)
       : ({} as Record<string, any>);
 
-  let category =
-    normalizeListingCategory(listingData.category) ?? null;
-
-  const allowLegacyFallback = options?.allowLegacyFallback ?? true;
-
-  if (!category && allowLegacyFallback) {
-    const legacyListingType = asTrimmedString(listingData.vendorType) || asTrimmedString(listingData.serviceType);
-    if (legacyListingType) {
-      category = mapServiceTypeToListingCategory(legacyListingType);
-    }
-  }
-
-  if (!category && allowLegacyFallback && options?.fallbackServiceType) {
-    category = mapServiceTypeToListingCategory(options.fallbackServiceType);
-  }
+  const category = normalizeListingCategory(listingData.category) ?? null;
 
   const subcategory = normalizeListingSubcategory(listingData.subcategory);
 
@@ -870,42 +884,6 @@ function normalizeListingClassification(
   };
 }
 
-async function backfillListingCategoriesFromProfileType(accountId?: string): Promise<number> {
-  const accountFilterSql = accountId ? drizzleSql`and vl.account_id = ${accountId}` : drizzleSql``;
-
-  const result: any = await db.execute(drizzleSql`
-    with updated as (
-      update vendor_listings vl
-      set
-        listing_data = jsonb_set(
-          coalesce(vl.listing_data, '{}'::jsonb),
-          '{category}',
-          to_jsonb(
-            case
-              when lower(coalesce(vp.service_type, '')) in ('prop-decor', 'prop-rental', 'rental', 'rentals') then 'Rentals'
-              when lower(coalesce(vp.service_type, '')) in ('venue', 'venues') then 'Venues'
-              when lower(coalesce(vp.service_type, '')) = 'catering' then 'Catering'
-              else 'Services'
-            end
-          ),
-          true
-        ),
-        updated_at = now()
-      from vendor_profiles vp
-      where vp.id = vl.profile_id
-        and (
-          vl.listing_data is null
-          or nullif(btrim(coalesce(vl.listing_data ->> 'category', '')), '') is null
-        )
-        ${accountFilterSql}
-      returning vl.id
-    )
-    select count(*)::int as "count" from updated
-  `);
-
-  const rows = extractRows<{ count?: number | string }>(result);
-  return Number(rows[0]?.count || 0);
-}
 
 function toUniqueTrimmedStringList(value: unknown): string[] {
   if (!Array.isArray(value)) return [];
@@ -1026,7 +1004,9 @@ function clampListingDescriptions(listingDataRaw: unknown): unknown {
   const nextListingData: Record<string, any> = { ...listingData };
 
   nextListingData.listingTitle = normalizeTitleCaseText(nextListingData.listingTitle, 60);
+  nextListingData.description = clampDescriptionText(nextListingData.description);
   nextListingData.listingDescription = clampDescriptionText(nextListingData.listingDescription);
+  nextListingData.serviceDescription = clampDescriptionText(nextListingData.serviceDescription);
   nextListingData.tagsByPropType = normalizeTagsByPropType(nextListingData.tagsByPropType);
 
   const rawPerPropDetails = nextListingData.perPropDetails;
@@ -1307,6 +1287,12 @@ function buildCanonicalListingColumns(input: {
   const existingPhotos = toUniqueTrimmedStringList(existing?.photos).map(normalizePhotoStoragePath);
   const photos =
     photoNames.length > 0 ? photoNames : photoUrls.length > 0 ? photoUrls : photoFallback.length > 0 ? photoFallback : existingPhotos;
+  const resolvedDescription =
+    asTrimmedString(listingData?.description) ||
+    asTrimmedString(listingData?.listingDescription) ||
+    asTrimmedString(listingData?.serviceDescription) ||
+    asTrimmedString(existing?.description) ||
+    null;
 
   return {
     category: input.classification.category ?? normalizeListingCategory(existing?.category),
@@ -1316,10 +1302,7 @@ function buildCanonicalListingColumns(input: {
       normalizeListingTitleCandidate(listingData?.listingTitle) ??
       normalizeListingTitleCandidate(existing?.title) ??
       null,
-    description:
-      asTrimmedString(listingData?.description || listingData?.listingDescription) ||
-      asTrimmedString(existing?.description) ||
-      null,
+    description: resolvedDescription,
     whatsIncluded:
       toUniqueTrimmedStringList(listingData?.whatsIncluded ?? listingData?.includedItems ?? listingData?.included).length > 0
         ? toUniqueTrimmedStringList(listingData?.whatsIncluded ?? listingData?.includedItems ?? listingData?.included)
@@ -1370,9 +1353,7 @@ function buildCanonicalListingColumns(input: {
 function resolveCanonicalListingCategory(listingDataRaw: unknown, canonicalCategory?: unknown): ListingCategoryValue | null {
   return (
     normalizeListingCategory(canonicalCategory) ??
-    normalizeListingClassification(listingDataRaw, {
-      allowLegacyFallback: false,
-    }).category
+    normalizeListingClassification(listingDataRaw).category
   );
 }
 
@@ -1685,10 +1666,8 @@ type LockedPaymentPayoutContext = {
   payoutEligibleAt: Date | null;
   totalAmount: number | null;
   amount: number | null;
-  refundedAmount: number | null;
   refundAmount: number | null;
   vendorNetPayoutAmount: number | null;
-  vendorPayout: number | null;
   actualStripeFeeAmount: number | null;
   stripeConnectedAccountId: string | null;
   stripeChargeId: string | null;
@@ -1716,10 +1695,8 @@ async function loadPaymentPayoutContextForUpdateInTx(
       p.payout_eligible_at as "payoutEligibleAt",
       p.total_amount as "totalAmount",
       p.amount as "amount",
-      p.refunded_amount as "refundedAmount",
       p.refund_amount as "refundAmount",
       p.vendor_net_payout_amount as "vendorNetPayoutAmount",
-      p.vendor_payout as "vendorPayout",
       p.actual_stripe_fee_amount as "actualStripeFeeAmount",
       p.stripe_connected_account_id as "stripeConnectedAccountId",
       p.stripe_charge_id as "stripeChargeId",
@@ -1771,14 +1748,8 @@ async function refreshPaymentPayoutStateInTx(
         parseIntegerValue(paymentContext.totalAmount) ??
         parseIntegerValue(paymentContext.amount) ??
         0,
-      refundedAmount:
-        parseIntegerValue(paymentContext.refundedAmount) ??
-        parseIntegerValue(paymentContext.refundAmount) ??
-        0,
-      vendorNetPayoutAmount:
-        parseIntegerValue(paymentContext.vendorNetPayoutAmount) ??
-        parseIntegerValue(paymentContext.vendorPayout) ??
-        0,
+      refundedAmount: parseIntegerValue(paymentContext.refundAmount) ?? 0,
+      vendorNetPayoutAmount: parseIntegerValue(paymentContext.vendorNetPayoutAmount) ?? 0,
       actualStripeFeeAmount: paymentContext.actualStripeFeeAmount,
       stripeConnectedAccountId: paymentContext.stripeConnectedAccountId,
       stripeChargeId: paymentContext.stripeChargeId,
@@ -1892,6 +1863,65 @@ async function processSinglePayoutCandidate(params: {
     };
   }
 
+  // Cross-check with Stripe: verify the charge actually succeeded and its
+  // captured amount matches what we recorded. This guards against DB corruption
+  // or race conditions where we attempt to pay out more than was collected.
+  try {
+    const { stripe: stripeClient } = await import("./stripe");
+    const charge = await stripeClient.charges.retrieve(chargeId);
+    if (!charge.paid || charge.status !== "succeeded") {
+      await db
+        .update(payments)
+        .set({
+          payoutStatus: "blocked",
+          payoutBlockedReason: "stripe_charge_not_succeeded",
+          payoutAdjustedAmount: payoutAmount,
+        })
+        .where(eq(payments.id, paymentId));
+      return {
+        paymentId,
+        bookingId,
+        outcome: "blocked",
+        reason: "stripe_charge_not_succeeded",
+        payoutAmount,
+        transferId: null,
+      };
+    }
+    const recordedTotal = parseIntegerValue(refreshed.paymentContext.totalAmount) ?? 0;
+    if (recordedTotal > 0 && charge.amount_captured < recordedTotal) {
+      console.warn(
+        `[payout] Charge amount mismatch for payment ${paymentId}: ` +
+        `Stripe captured ${charge.amount_captured}, DB recorded ${recordedTotal}. Blocking payout.`
+      );
+      await db
+        .update(payments)
+        .set({
+          payoutStatus: "blocked",
+          payoutBlockedReason: "stripe_amount_mismatch",
+          payoutAdjustedAmount: payoutAmount,
+        })
+        .where(eq(payments.id, paymentId));
+      return {
+        paymentId,
+        bookingId,
+        outcome: "blocked",
+        reason: "stripe_amount_mismatch",
+        payoutAmount,
+        transferId: null,
+      };
+    }
+  } catch (stripeErr: any) {
+    console.error(`[payout] Stripe charge verification failed for payment ${paymentId}:`, stripeErr?.message);
+    return {
+      paymentId,
+      bookingId,
+      outcome: "skipped",
+      reason: "stripe_verification_failed",
+      payoutAmount,
+      transferId: null,
+    };
+  }
+
   try {
     const { transferToVendor } = await import("./stripe");
     const transfer = await transferToVendor({
@@ -1941,9 +1971,8 @@ async function processSinglePayoutCandidate(params: {
           payoutEligibleAt: locked.payoutEligibleAt,
           bookingEndAt: locked.bookingEndAt,
           totalAmount: parseIntegerValue(locked.totalAmount) ?? parseIntegerValue(locked.amount) ?? 0,
-          refundedAmount: parseIntegerValue(locked.refundedAmount) ?? parseIntegerValue(locked.refundAmount) ?? 0,
-          vendorNetPayoutAmount:
-            parseIntegerValue(locked.vendorNetPayoutAmount) ?? parseIntegerValue(locked.vendorPayout) ?? 0,
+          refundedAmount: parseIntegerValue(locked.refundAmount) ?? 0,
+          vendorNetPayoutAmount: parseIntegerValue(locked.vendorNetPayoutAmount) ?? 0,
           actualStripeFeeAmount: locked.actualStripeFeeAmount,
           stripeConnectedAccountId: locked.stripeConnectedAccountId,
           stripeChargeId: locked.stripeChargeId,
@@ -2160,14 +2189,11 @@ async function ensurePaymentRecordForIntentInTx(
       status: payments.status,
       amount: payments.amount,
       totalAmount: payments.totalAmount,
-      platformFee: payments.platformFee,
       platformFeeAmount: payments.platformFeeAmount,
-      vendorPayout: payments.vendorPayout,
       vendorGrossAmount: payments.vendorGrossAmount,
       vendorNetPayoutAmount: payments.vendorNetPayoutAmount,
       stripeProcessingFeeEstimate: payments.stripeProcessingFeeEstimate,
       actualStripeFeeAmount: payments.actualStripeFeeAmount,
-      refundedAmount: payments.refundedAmount,
       refundAmount: payments.refundAmount,
       disputeStatus: payments.disputeStatus,
       payoutStatus: payments.payoutStatus,
@@ -2274,21 +2300,23 @@ async function ensurePaymentRecordForIntentInTx(
       : 0;
   if (!amount) return null;
 
+  // Always prefer DB-stored amounts over metadata to prevent price tampering via
+  // manipulated payment intent metadata. Metadata is only used as a last resort.
   const totalAmount =
-    parseIntegerValue(params.fallbackTotalAmount) ??
     parseIntegerValue(bookingRow.totalAmount) ??
+    parseIntegerValue(params.fallbackTotalAmount) ??
     amount;
   const platformFeeAmount =
-    parseIntegerValue(params.fallbackPlatformFeeAmount) ??
     parseIntegerValue(bookingRow.platformFee) ??
+    parseIntegerValue(params.fallbackPlatformFeeAmount) ??
     Math.round(amount * VENDOR_FEE_RATE);
   const vendorGrossAmount =
-    parseIntegerValue(params.fallbackVendorGrossAmount) ??
     parseIntegerValue(bookingRow.subtotalAmountCents) ??
+    parseIntegerValue(params.fallbackVendorGrossAmount) ??
     Math.max(0, totalAmount - Math.max(0, parseIntegerValue(bookingRow.platformFee) ?? 0));
   const vendorNetPayoutAmount =
-    parseIntegerValue(params.fallbackVendorNetPayoutAmount) ??
     parseIntegerValue(bookingRow.vendorPayout) ??
+    parseIntegerValue(params.fallbackVendorNetPayoutAmount) ??
     Math.max(0, amount - platformFeeAmount);
   const stripeProcessingFeeEstimate =
     parseIntegerValue(params.fallbackStripeProcessingFeeEstimate) ??
@@ -2309,10 +2337,8 @@ async function ensurePaymentRecordForIntentInTx(
       stripePaymentIntentId: paymentIntentId,
       amount,
       totalAmount,
-      platformFee: platformFeeAmount,
       platformFeeAmount,
       vendorGrossAmount,
-      vendorPayout: vendorNetPayoutAmount,
       vendorNetPayoutAmount,
       stripeProcessingFeeEstimate,
       stripeConnectedAccountId: connectedAccountId,
@@ -2330,12 +2356,9 @@ async function ensurePaymentRecordForIntentInTx(
       status: payments.status,
       amount: payments.amount,
       totalAmount: payments.totalAmount,
-      platformFee: payments.platformFee,
       platformFeeAmount: payments.platformFeeAmount,
-      vendorPayout: payments.vendorPayout,
       vendorNetPayoutAmount: payments.vendorNetPayoutAmount,
       vendorGrossAmount: payments.vendorGrossAmount,
-      refundedAmount: payments.refundedAmount,
       refundAmount: payments.refundAmount,
       disputeStatus: payments.disputeStatus,
       payoutStatus: payments.payoutStatus,
@@ -2546,10 +2569,8 @@ async function initializeBookingPaymentIntentForSchedule(input: {
         stripePaymentIntentId: paymentIntent.id,
         amount: schedule.amount,
         totalAmount: totalAmountCents,
-        platformFee: platformFeeAmount,
         platformFeeAmount,
         vendorGrossAmount,
-        vendorPayout: vendorNetPayoutAmount,
         vendorNetPayoutAmount,
         stripeProcessingFeeEstimate,
         stripeConnectedAccountId: vendorAccount.stripeConnectId,
@@ -3879,29 +3900,8 @@ async function runGoogleBookingSyncVerificationForVendorAccount(account: any) {
   };
 }
 
-function formatVendorTypeForDraftTitle(vendorType: string): string {
-  if (vendorType === "prop-decor") return "rental";
-  return vendorType.replace(/-/g, " ");
-}
 
 function requireCustomerAnyAuth(req: any, res: any, next: any) {
-  const authHeader = req.headers.authorization || "";
-  if (!authHeader.startsWith("Bearer ")) {
-    return res.status(401).json({ message: "No token provided" });
-  }
-
-  const token = authHeader.slice("Bearer ".length).trim();
-  const jwtPayload = verifyToken(token);
-  if (jwtPayload && (jwtPayload.type === "customer" || jwtPayload.type === "admin")) {
-    req.customerAuth = {
-      id: jwtPayload.id,
-      email: jwtPayload.email,
-      type: jwtPayload.type,
-    };
-    return next();
-  }
-
-  // Fallback to Auth0 bearer tokens.
   return requireDualAuthAuth0(req, res, next);
 }
 
@@ -3971,12 +3971,18 @@ async function safelyBackfillCustomerEmail(params: {
   userId: string;
   currentEmail: string;
   nextEmail?: string;
+  /** When true, allows replacing a real email with the Auth0 token email.
+   *  Only pass this when the user was matched by auth0_sub — a strong identity proof. */
+  allowRealEmailReplacement?: boolean;
 }) {
   const currentEmail = params.currentEmail.trim().toLowerCase();
   const nextEmail = normalizeIdentityEmailCandidate(params.nextEmail);
   if (!nextEmail || nextEmail === currentEmail) return currentEmail;
 
-  const canRepair = isSyntheticAuth0LocalEmail(currentEmail) || !currentEmail;
+  const canRepair =
+    isSyntheticAuth0LocalEmail(currentEmail) ||
+    !currentEmail ||
+    params.allowRealEmailReplacement === true;
   if (!canRepair) return currentEmail;
 
   const conflict = await db
@@ -4130,6 +4136,8 @@ async function resolveCustomerAuthFromRequest(
           userId: resolvedUserId,
           currentEmail: resolvedUserEmail,
           nextEmail: resolvedEmail,
+          // We proved identity via auth0_sub — trust the Auth0 token email as authoritative.
+          allowRealEmailReplacement: true,
         });
 
         return {
@@ -4166,7 +4174,6 @@ async function resolveCustomerAuthFromRequest(
 
   if (!userRow && opts?.createIfMissing) {
     const generatedName = preferredName || toHumanNameFromEmail(email) || "Customer";
-    const hashed = await hashPassword(crypto.randomUUID());
 
     [userRow] = await db
       .insert(users)
@@ -4174,7 +4181,6 @@ async function resolveCustomerAuthFromRequest(
         name: generatedName,
         displayName: generatedName,
         email,
-        password: hashed,
         role: "customer",
         lastLoginAt: new Date(),
       })
@@ -4641,7 +4647,7 @@ app.post(
   /**
    * PATCH /api/vendor/me  ✅ Auth0-only
    */
-  app.patch("/api/vendor/me", ...requireVendorAuth0, async (req, res) => {
+  app.patch("/api/vendor/me", mutationRateLimiter, ...requireVendorAuth0, async (req, res) => {
     try {
       const vendorAuth = (req as any).vendorAuth;
 
@@ -4742,6 +4748,9 @@ app.post(
         email: account.email,
         businessName: activeProfileName || account.businessName,
         accountBusinessName: account.businessName,
+        ownerFirstName: account.ownerFirstName ?? null,
+        ownerLastName: account.ownerLastName ?? null,
+        ownerPhone: account.ownerPhone ?? null,
         stripeConnectId: account.stripeConnectId,
         stripeAccountType: account.stripeAccountType,
         stripeOnboardingComplete: account.stripeOnboardingComplete,
@@ -4749,7 +4758,6 @@ app.post(
         profileId: activeProfile?.id || null,
         activeProfileId: context.activeProfileId,
         profileName: activeProfileName,
-        vendorType: activeProfile?.serviceType || "unspecified",
         operatingTimezone: normalizeIanaTimeZone(activeProfile?.operatingTimezone),
         googleConnectionStatus: account.googleConnectionStatus,
         googleCalendarId: account.googleCalendarId,
@@ -4757,6 +4765,7 @@ app.post(
         hasAnyVendorProfiles,
         hasActiveVendorProfile,
         needsNewVendorProfileOnboarding,
+        shopActive: account.shopActive ?? true,
         __marker: "vendor_me_route_hit",
       });
     } catch (error: any) {
@@ -4769,7 +4778,7 @@ app.post(
    * POST /api/vendor/me/delete ✅ Auth0-only
    * Final account exit while preserving historical booking/payment integrity.
    */
-  app.post("/api/vendor/me/delete", ...requireVendorAuth0, async (req, res) => {
+  app.post("/api/vendor/me/delete", onboardingRateLimiter, ...requireVendorAuth0, async (req, res) => {
     try {
       const vendorAuth = (req as any).vendorAuth as { id: string };
 
@@ -4777,6 +4786,7 @@ app.post(
         .select({
           id: vendorAccounts.id,
           deletedAt: vendorAccounts.deletedAt,
+          userId: vendorAccounts.userId,
         })
         .from(vendorAccounts)
         .where(eq(vendorAccounts.id, vendorAuth.id))
@@ -4795,7 +4805,6 @@ app.post(
 
       const now = new Date();
       const obfuscatedEmail = `deleted+${vendorAuth.id}@eventhub.deleted`;
-      const randomPassword = await hashPassword(`deleted-${vendorAuth.id}-${now.getTime()}-${crypto.randomUUID()}`);
 
       const inactivatedListings = await db
         .update(vendorListings)
@@ -4814,6 +4823,20 @@ app.post(
         .where(and(eq(vendorProfiles.accountId, vendorAuth.id), eq(vendorProfiles.active, true)))
         .returning({ id: vendorProfiles.id });
 
+      // Downgrade the linked user's role back to 'customer' before we null userId.
+      // Admin accounts are never downgraded.
+      if (account.userId) {
+        await db
+          .update(users)
+          .set({ role: "customer" as const })
+          .where(
+            and(
+              eq(users.id, account.userId),
+              drizzleSql`${users.role} <> 'admin'`
+            )
+          );
+      }
+
       await db
         .update(vendorAccounts)
         .set({
@@ -4822,7 +4845,6 @@ app.post(
           email: obfuscatedEmail,
           auth0Sub: null,
           userId: null,
-          password: randomPassword,
           businessName: `Deleted Vendor ${vendorAuth.id.slice(0, 8)}`,
           stripeConnectId: null,
           stripeAccountType: null,
@@ -4951,7 +4973,7 @@ app.post(
       .optional(),
   });
 
-  app.patch("/api/customer/me", requireCustomerAnyAuth, async (req, res) => {
+  app.patch("/api/customer/me", mutationRateLimiter, requireCustomerAnyAuth, async (req, res) => {
     try {
       const customerAuth = await resolveCustomerAuthFromRequest(req, { createIfMissing: true });
       if (!customerAuth?.id) {
@@ -5016,6 +5038,10 @@ app.post(
     if (!clientId) {
       return res.status(500).json({ error: "Missing GOOGLE_CLIENT_ID" });
     }
+    const jwtSecret = (process.env.JWT_SECRET || "").trim();
+    if (!jwtSecret) {
+      return res.status(500).json({ error: "Missing JWT_SECRET environment variable" });
+    }
 
     const redirectUri = (
       process.env.GOOGLE_REDIRECT_URI ||
@@ -5028,6 +5054,7 @@ app.post(
     }
 
     let state = "";
+    let vendorAccountId = "";
 
     try {
       const auth0 = await verifyAuth0Token(authHeader.slice("Bearer ".length).trim());
@@ -5041,11 +5068,21 @@ app.post(
       if (!vendorAccount?.id) {
         return res.status(404).json({ error: "Vendor account not found for this Auth0 user" });
       }
-
-      state = createGoogleOauthState(vendorAccount.id);
+      vendorAccountId = vendorAccount.id;
     } catch (error: any) {
       console.error("Google OAuth start auth failed:", error?.message || error);
       return res.status(401).json({ error: "Invalid Auth0 token" });
+    }
+    const rawReturnTo = typeof req.query.returnTo === "string" ? req.query.returnTo.trim() : "";
+    const ALLOWED_RETURN_TO_PREFIXES = ["/vendor/dashboard", "/vendor/listings", "/vendor/bookings", "/vendor/calendar", "/vendor/settings", "/vendor/profile"];
+    const returnTo = ALLOWED_RETURN_TO_PREFIXES.some((prefix) => rawReturnTo === prefix || rawReturnTo.startsWith(prefix + "/") || rawReturnTo.startsWith(prefix + "?"))
+      ? rawReturnTo
+      : "/vendor/dashboard";
+    try {
+      state = createGoogleOauthState(vendorAccountId, returnTo);
+    } catch (error: any) {
+      console.error("Google OAuth state generation failed:", error?.message || error);
+      return res.status(500).json({ error: error?.message || "Unable to start Google OAuth" });
     }
 
     const params = new URLSearchParams({
@@ -5086,7 +5123,14 @@ app.post(
       `${req.protocol}://${req.get("host")}/api/google/oauth/callback`
     ).trim();
     const appUrl = (process.env.APP_URL || "http://localhost:5173").trim().replace(/\/+$/, "");
-    const parsedState = parseGoogleOauthState(state);
+    let parsedState: { vendorAccountId: string; returnTo: string } | null = null;
+    try {
+      parsedState = parseGoogleOauthState(state);
+    } catch (error: any) {
+      console.error("Google OAuth callback state parse failed:", error?.message || error);
+      return res.redirect(`${appUrl}/vendor/dashboard?google_calendar=error`);
+    }
+    const returnPath = parsedState?.returnTo || "/vendor/dashboard";
 
     if (!parsedState?.vendorAccountId) {
       return res.redirect(`${appUrl}/vendor/dashboard?google_calendar=error`);
@@ -5105,7 +5149,7 @@ app.post(
 
       const vendorAccount = vendorRows[0];
       if (!vendorAccount) {
-        return res.redirect(`${appUrl}/vendor/dashboard?google_calendar=error`);
+        return res.redirect(`${appUrl}${returnPath}?google_calendar=error`);
       }
 
       const tokenResponse = await fetch("https://oauth2.googleapis.com/token", {
@@ -5127,7 +5171,7 @@ app.post(
           .update(vendorAccounts)
           .set({ googleConnectionStatus: "error" })
           .where(eq(vendorAccounts.id, vendorAccount.id));
-        return res.redirect(`${appUrl}/vendor/dashboard?google_calendar=error`);
+        return res.redirect(`${appUrl}${returnPath}?google_calendar=error`);
       }
 
       const tokens = (await tokenResponse.json()) as {
@@ -5144,7 +5188,7 @@ app.post(
           .update(vendorAccounts)
           .set({ googleConnectionStatus: "error" })
           .where(eq(vendorAccounts.id, vendorAccount.id));
-        return res.redirect(`${appUrl}/vendor/dashboard?google_calendar=error`);
+        return res.redirect(`${appUrl}${returnPath}?google_calendar=error`);
       }
 
       const refreshToken =
@@ -5178,10 +5222,10 @@ app.post(
         })
         .where(eq(vendorAccounts.id, vendorAccount.id));
 
-      return res.redirect(`${appUrl}/vendor/dashboard?google_calendar=connected`);
+      return res.redirect(`${appUrl}${returnPath}?google_calendar=connected`);
     } catch (error: any) {
       console.error("Google OAuth callback error:", error?.message || error);
-      return res.redirect(`${appUrl}/vendor/dashboard?google_calendar=error`);
+      return res.redirect(`${appUrl}${returnPath}?google_calendar=error`);
     }
   });
 
@@ -5204,14 +5248,14 @@ app.post(
       return res.json(calendars);
     } catch (error: any) {
       if (error instanceof GoogleCalendarConnectionError) {
-        return res.status(error.statusCode).json({ error: error.message, code: error.code });
+        return res.status(error.statusCode).json({ error: safeGoogleErrorMessage(error), code: error.code });
       }
       logRouteError("/api/google/calendars", error);
       return res.status(500).json({ error: "Unable to load Google calendars" });
     }
   });
 
-  app.post("/api/google/calendars/select", ...requireVendorAuth0, async (req, res) => {
+  app.post("/api/google/calendars/select", mutationRateLimiter, ...requireVendorAuth0, async (req, res) => {
     try {
       const account = await getVendorAccountFromRequest(req);
       if (!account?.id) {
@@ -5252,7 +5296,7 @@ app.post(
       });
     } catch (error: any) {
       if (error instanceof GoogleCalendarConnectionError) {
-        return res.status(error.statusCode).json({ error: error.message, code: error.code });
+        return res.status(error.statusCode).json({ error: safeGoogleErrorMessage(error), code: error.code });
       }
       if (error instanceof z.ZodError) {
         return res.status(400).json({ error: error.issues[0]?.message || "Invalid calendar selection" });
@@ -5262,7 +5306,7 @@ app.post(
     }
   });
 
-  app.post("/api/google/calendars/create", ...requireVendorAuth0, async (req, res) => {
+  app.post("/api/google/calendars/create", mutationRateLimiter, ...requireVendorAuth0, async (req, res) => {
     try {
       const account = await getVendorAccountFromRequest(req);
       if (!account?.id) {
@@ -5273,14 +5317,14 @@ app.post(
       return res.json(calendar);
     } catch (error: any) {
       if (error instanceof GoogleCalendarConnectionError) {
-        return res.status(error.statusCode).json({ error: error.message, code: error.code });
+        return res.status(error.statusCode).json({ error: safeGoogleErrorMessage(error), code: error.code });
       }
       logRouteError("/api/google/calendars/create", error);
       return res.status(500).json({ error: "Unable to create Google calendar" });
     }
   });
 
-  app.post("/api/google/calendars/sync-existing", ...requireVendorAuth0, async (req, res) => {
+  app.post("/api/google/calendars/sync-existing", mutationRateLimiter, ...requireVendorAuth0, async (req, res) => {
     try {
       const account = await getVendorAccountFromRequest(req);
       if (!account?.id) {
@@ -5309,7 +5353,7 @@ app.post(
       return res.json(summary);
     } catch (error: any) {
       if (error instanceof GoogleCalendarConnectionError) {
-        return res.status(error.statusCode).json({ error: error.message, code: error.code });
+        return res.status(error.statusCode).json({ error: safeGoogleErrorMessage(error), code: error.code });
       }
       logRouteError("/api/google/calendars/sync-existing", error);
       return res.status(500).json({ error: "Unable to sync existing EventHub bookings to Google Calendar" });
@@ -5364,14 +5408,14 @@ app.post(
       return res.json({ events: unmatchedEvents });
     } catch (error: any) {
       if (error instanceof GoogleCalendarConnectionError) {
-        return res.status(error.statusCode).json({ error: error.message, code: error.code });
+        return res.status(error.statusCode).json({ error: safeGoogleErrorMessage(error), code: error.code });
       }
       logRouteError("/api/google/events/unmatched", error);
       return res.status(500).json({ error: "Unable to load unmatched Google events" });
     }
   });
 
-  app.post("/api/google/events/map", ...requireVendorAuth0, async (req, res) => {
+  app.post("/api/google/events/map", mutationRateLimiter, ...requireVendorAuth0, async (req, res) => {
     try {
       const account = await getVendorAccountFromRequest(req);
       if (!account?.id) {
@@ -5446,7 +5490,7 @@ app.post(
       });
     } catch (error: any) {
       if (error instanceof GoogleCalendarConnectionError) {
-        return res.status(error.statusCode).json({ error: error.message, code: error.code });
+        return res.status(error.statusCode).json({ error: safeGoogleErrorMessage(error), code: error.code });
       }
       if (error instanceof z.ZodError) {
         return res.status(400).json({ error: error.issues[0]?.message || "Invalid Google event mapping" });
@@ -5456,7 +5500,7 @@ app.post(
     }
   });
 
-  app.delete("/api/google/events/map/:googleEventId", ...requireVendorAuth0, async (req, res) => {
+  app.delete("/api/google/events/map/:googleEventId", mutationRateLimiter, ...requireVendorAuth0, async (req, res) => {
     try {
       const account = await getVendorAccountFromRequest(req);
       if (!account?.id) {
@@ -5646,7 +5690,7 @@ app.post(
     }
   });
 
-  app.post("/api/google/bookings/reconciliation/:bookingId/repair", ...requireVendorAuth0, async (req, res) => {
+  app.post("/api/google/bookings/reconciliation/:bookingId/repair", mutationRateLimiter, ...requireVendorAuth0, async (req, res) => {
     try {
       const account = await getVendorAccountFromRequest(req);
       if (!account?.id) {
@@ -5733,7 +5777,7 @@ app.post(
       });
     } catch (error: any) {
       if (error instanceof GoogleCalendarConnectionError) {
-        return res.status(error.statusCode).json({ error: error.message, code: error.code });
+        return res.status(error.statusCode).json({ error: safeGoogleErrorMessage(error), code: error.code });
       }
       logRouteError("/api/google/bookings/reconciliation/:bookingId/repair", error);
       return res.status(500).json({ error: "Unable to repair Google booking sync" });
@@ -5759,6 +5803,11 @@ app.post(
     vendorType: z.enum(ENABLED_VENDOR_TYPES),
     businessName: z.string().min(2),
     operatingTimezone: z.string().min(1).max(120).optional(),
+
+    // Owner personal details
+    ownerFirstName: z.string().max(100).optional(),
+    ownerLastName: z.string().max(100).optional(),
+    ownerPhone: z.string().max(30).optional(),
 
     streetAddress: z.string().min(1),
     city: z.string().min(1),
@@ -5792,7 +5841,7 @@ app.post(
     createNewProfile: z.boolean().optional(),
   });
 
-  app.post("/api/vendor/onboarding/complete", requireAuth0, async (req, res) => {
+  app.post("/api/vendor/onboarding/complete", onboardingRateLimiter, requireAuth0, async (req, res) => {
     try {
       const customerAuth = (req as any).customerAuth;
       const vendorAuth = (req as any).vendorAuth;
@@ -5852,7 +5901,6 @@ app.post(
               email,
               auth0Sub,
               userId: vendorResolution.resolvedUserId || undefined,
-              password: "auth0-external",
               businessName: normalizedProfileName,
               profileComplete: false,
             })
@@ -5871,6 +5919,17 @@ app.post(
 
         account = updated;
       }
+
+      // Store owner personal details on the vendor account.
+      // These are used when a vendor books another vendor so they are identified
+      // by their real name rather than their business name.
+      const ownerFirstName = asTrimmedString(onboardingData.ownerFirstName) || null;
+      const ownerLastName  = asTrimmedString(onboardingData.ownerLastName)  || null;
+      const ownerPhone     = asTrimmedString(onboardingData.ownerPhone)     || null;
+      await db
+        .update(vendorAccounts)
+        .set({ ownerFirstName, ownerLastName, ownerPhone })
+        .where(eq(vendorAccounts.id, account.id));
 
       const existingProfiles = await db.select().from(vendorProfiles).where(and(eq(vendorProfiles.accountId, account.id), eq(vendorProfiles.active, true)));
       const existingActiveProfile =
@@ -5970,7 +6029,6 @@ app.post(
         showBusinessAddressToCustomers,
         aboutVendor: aboutVendor || null,
         aboutBusiness: aboutBusiness || null,
-        serviceType: onboardingData.vendorType,
         experience: 0,
         qualifications: [] as string[],
         onlineProfiles: {
@@ -6047,6 +6105,23 @@ app.post(
         })
         .where(eq(vendorAccounts.id, account.id));
 
+      // Sync users.role → 'vendor'. Matches by auth0_sub first, then email.
+      // Admin accounts are never downgraded.
+      if (auth0Sub || email) {
+        await db
+          .update(users)
+          .set({ role: "vendor" as const })
+          .where(
+            and(
+              or(
+                ...(auth0Sub ? [eq(users.auth0Sub, auth0Sub)] : []),
+                ...(email    ? [drizzleSql`lower(${users.email}) = ${email}`] : [])
+              ),
+              drizzleSql`${users.role} <> 'admin'`
+            )
+          );
+      }
+
       const isUpgrade = Boolean(customerAuth || vendorAuth);
 
       return res.json({
@@ -6066,7 +6141,6 @@ app.post(
   const updateVendorProfileSchema = z
     .object({
       profileName: z.string().min(2).max(120).optional(),
-      serviceType: z.string().min(1).optional(),
       experience: z.number().int().optional(),
       qualifications: z.array(z.string()).optional(),
       onlineProfiles: z.any().optional(),
@@ -6180,7 +6254,7 @@ app.post(
    * PATCH /api/vendor/profile ✅ Auth0-only
    * Updates the current vendor's profile
    */
-  app.patch("/api/vendor/profile", ...requireVendorAuth0, async (req, res) => {
+  app.patch("/api/vendor/profile", mutationRateLimiter, ...requireVendorAuth0, async (req, res) => {
     try {
       const context = await resolveActiveVendorProfile(req);
       if (!context?.activeProfile) {
@@ -6207,7 +6281,6 @@ app.post(
         }
         updates.profileName = normalized;
       }
-      if (payload.serviceType !== undefined) updates.serviceType = payload.serviceType;
       if (payload.experience !== undefined) updates.experience = payload.experience;
       if (payload.qualifications !== undefined) updates.qualifications = payload.qualifications;
       if (payload.address !== undefined) updates.address = payload.address;
@@ -6281,6 +6354,74 @@ app.post(
         return res.status(400).json({ error: "No updates provided" });
       }
 
+      // ── Circumvention detection ──────────────────────────────────────────────
+      const vendorAuthForCircumvention = (req as any).vendorAuth;
+      const vendorAccountIdForCircumvention = vendorAuthForCircumvention?.id
+        ? String(vendorAuthForCircumvention.id)
+        : null;
+
+      const profileFieldsToCheck: { value: string; contentType: string; label: string }[] = [];
+
+      if (typeof updates.serviceDescription === "string" && updates.serviceDescription) {
+        profileFieldsToCheck.push({ value: updates.serviceDescription, contentType: "vendor_description", label: "Business description" });
+      }
+      if (updates.onlineProfiles && typeof updates.onlineProfiles === "object" && !Array.isArray(updates.onlineProfiles)) {
+        const op = updates.onlineProfiles as Record<string, unknown>;
+        if (typeof op.shopTagline === "string" && op.shopTagline) {
+          profileFieldsToCheck.push({ value: op.shopTagline, contentType: "tagline", label: "Tagline" });
+        }
+        if (typeof op.aboutVendor === "string" && op.aboutVendor) {
+          profileFieldsToCheck.push({ value: op.aboutVendor, contentType: "vendor_description", label: "About section" });
+        }
+        if (typeof op.aboutBusiness === "string" && op.aboutBusiness) {
+          profileFieldsToCheck.push({ value: op.aboutBusiness, contentType: "vendor_description", label: "About the business" });
+        }
+      }
+
+      for (const field of profileFieldsToCheck) {
+        const detection = checkContent(field.value);
+        if (detection.hardBlocked) {
+          // Issue warning for the attempt
+          if (vendorAccountIdForCircumvention) {
+            const serverUrl = (process.env.SERVER_URL || "http://localhost:5001").replace(/\/$/, "");
+            const [flag] = await db.insert(circumventionFlags).values({
+              flagType: "hard_block_attempt",
+              contentType: field.contentType as any,
+              contentSnapshot: field.value.slice(0, 2000),
+              matches: detection.matches,
+              vendorAccountId: vendorAccountIdForCircumvention,
+              status: "pending",
+            }).returning();
+            await issueCircumventionWarning(
+              vendorAccountIdForCircumvention,
+              flag.id,
+              `${field.label} contained ${blockReasonSummary(detection.blockReasons)}`,
+              "system",
+              serverUrl
+            );
+          }
+          return res.status(422).json({
+            error: "content_blocked",
+            field: field.label,
+            reason: `Your ${field.label.toLowerCase()} cannot include ${blockReasonSummary(detection.blockReasons)}. Please remove this information and try again.`,
+            blockReasons: detection.blockReasons,
+            matches: detection.matches,
+          });
+        }
+        if (detection.softFlagged && vendorAccountIdForCircumvention) {
+          // Allow save but flag for admin review
+          db.insert(circumventionFlags).values({
+            flagType: "soft_flag",
+            contentType: field.contentType as any,
+            contentSnapshot: field.value.slice(0, 2000),
+            matches: detection.matches,
+            vendorAccountId: vendorAccountIdForCircumvention,
+            status: "pending",
+          }).catch((err: any) => console.warn("[circumvention] soft flag insert failed:", err?.message));
+        }
+      }
+      // ── End circumvention detection ──────────────────────────────────────────
+
       const [updated] = await db
         .update(vendorProfiles)
         .set({
@@ -6290,7 +6431,8 @@ app.post(
         .where(eq(vendorProfiles.id, existing.id))
         .returning();
 
-      return res.json({ ...updated, activeProfileId: context.activeProfileId });
+      const softFlaggedProfile = profileFieldsToCheck.some(f => checkContent(f.value).softFlagged);
+      return res.json({ ...updated, activeProfileId: context.activeProfileId, softFlagged: softFlaggedProfile });
     } catch (error: any) {
       if (error.name === "ZodError") {
         return res.status(400).json({ error: "Validation failed", details: error.errors });
@@ -6309,7 +6451,6 @@ app.post(
       const profiles = context.profiles.map((profile) => ({
         id: profile.id,
         profileName: getProfileDisplayName(profile, context.account.businessName),
-        serviceType: profile.serviceType,
         city: profile.city,
         createdAt: profile.createdAt,
         isActive: profile.id === context.activeProfileId,
@@ -6326,7 +6467,7 @@ app.post(
     }
   });
 
-  app.post("/api/vendor/profiles/switch", ...requireVendorAuth0, async (req, res) => {
+  app.post("/api/vendor/profiles/switch", mutationRateLimiter, ...requireVendorAuth0, async (req, res) => {
     try {
       const context = await resolveActiveVendorProfile(req);
       if (!context?.account?.id) {
@@ -6354,7 +6495,6 @@ app.post(
         profile: {
           id: target.id,
           profileName: getProfileDisplayName(target, context.account.businessName),
-          serviceType: target.serviceType,
           city: target.city,
           isOperational: target.active !== false,
         },
@@ -6367,7 +6507,7 @@ app.post(
     }
   });
 
-  app.post("/api/vendor/profiles/:id/deactivate", ...requireVendorAuth0, async (req, res) => {
+  app.post("/api/vendor/profiles/:id/deactivate", mutationRateLimiter, ...requireVendorAuth0, async (req, res) => {
     try {
       const context = await resolveActiveVendorProfile(req);
       if (!context?.account?.id) {
@@ -6430,7 +6570,7 @@ app.post(
     }
   });
 
-  app.post("/api/vendor/profiles/:id/reactivate", ...requireVendorAuth0, async (req, res) => {
+  app.post("/api/vendor/profiles/:id/reactivate", mutationRateLimiter, ...requireVendorAuth0, async (req, res) => {
     try {
       const context = await resolveActiveVendorProfile(req);
       if (!context?.account?.id) {
@@ -6476,7 +6616,7 @@ app.post(
   });
 
   // Vendor Listings Routes (already Auth0 dual middleware and working)
-  app.post("/api/vendor/listings", requireDualAuthAuth0, async (req, res) => {
+  app.post("/api/vendor/listings", mutationRateLimiter, requireDualAuthAuth0, async (req, res) => {
     try {
       const vendorAuth = (req as any).vendorAuth;
       if (!vendorAuth) {
@@ -6495,11 +6635,8 @@ app.post(
       if (!listingData || typeof listingData !== "object") {
         return res.status(400).json({ error: "listingData must be a JSON object." });
       }
-      const vendorType = activeProfile.serviceType;
       const normalizedListingData = clampListingDescriptions(listingData) as Record<string, any>;
-      const normalizedClassification = normalizeListingClassification(normalizedListingData, {
-        allowLegacyFallback: false,
-      });
+      const normalizedClassification = normalizeListingClassification(normalizedListingData);
 
       const seededListingData = {
         ...normalizedClassification.listingData,
@@ -6528,9 +6665,7 @@ app.post(
         canonical: canonicalColumns,
       });
 
-      const safeVendorType =
-        typeof vendorType === "string" && vendorType.trim() ? vendorType.trim() : "vendor";
-      const defaultTitleType = formatVendorTypeForDraftTitle(safeVendorType);
+      const defaultTitleType = normalizedClassification.category?.toLowerCase().replace(/s$/, "") ?? "listing";
 
       const title =
         canonicalColumns.title ||
@@ -6555,7 +6690,7 @@ app.post(
     }
   });
 
-  app.patch("/api/vendor/listings/:id", requireDualAuthAuth0, async (req, res) => {
+  app.patch("/api/vendor/listings/:id", mutationRateLimiter, requireDualAuthAuth0, async (req, res) => {
     try {
       const vendorAuth = (req as any).vendorAuth;
 
@@ -6573,7 +6708,7 @@ app.post(
         listingData !== undefined ? (clampListingDescriptions(listingData) as Record<string, any>) : undefined;
       const normalizedClassification =
         normalizedListingData !== undefined
-          ? normalizeListingClassification(normalizedListingData, { allowLegacyFallback: false })
+          ? normalizeListingClassification(normalizedListingData)
           : null;
 
       const existingListings = await db
@@ -6671,20 +6806,85 @@ app.post(
         updatePayload.profileId = activeProfileId;
       }
 
+      // ── Circumvention detection ──────────────────────────────────────────────
+      // If this listing was previously removed for violation, check it before saving.
+      const isResubmission = existingListing.violationRemoval;
+      const listingFieldsToCheck: { value: string; contentType: string; label: string }[] = [];
+
+      const descToCheck = typeof updatePayload.description === "string"
+        ? updatePayload.description
+        : (typeof (updatePayload.listingData as any)?.description === "string"
+          ? (updatePayload.listingData as any).description
+          : null);
+      const titleToCheck = typeof updatePayload.title === "string" ? updatePayload.title : null;
+
+      if (descToCheck) listingFieldsToCheck.push({ value: descToCheck, contentType: "listing_description", label: "Listing description" });
+      if (titleToCheck) listingFieldsToCheck.push({ value: titleToCheck, contentType: "listing_title", label: "Listing title" });
+
+      const vendorAccountIdForListing = String(vendorAuth.id);
+      const serverUrlForListing = (process.env.SERVER_URL || "http://localhost:5001").replace(/\/$/, "");
+
+      for (const field of listingFieldsToCheck) {
+        const detection = checkContent(field.value);
+        if (detection.hardBlocked) {
+          const [flag] = await db.insert(circumventionFlags).values({
+            flagType: "hard_block_attempt",
+            contentType: field.contentType as any,
+            contentSnapshot: field.value.slice(0, 2000),
+            matches: detection.matches,
+            vendorAccountId: vendorAccountIdForListing,
+            listingId: id,
+            status: "pending",
+          }).returning();
+          await issueCircumventionWarning(
+            vendorAccountIdForListing,
+            flag.id,
+            `${field.label} contained ${blockReasonSummary(detection.blockReasons)}`,
+            "system",
+            serverUrlForListing
+          );
+          return res.status(422).json({
+            error: "content_blocked",
+            field: field.label,
+            reason: `Your ${field.label.toLowerCase()} cannot include ${blockReasonSummary(detection.blockReasons)}. Please remove this information and try again.`,
+            blockReasons: detection.blockReasons,
+            matches: detection.matches,
+          });
+        }
+        if (detection.softFlagged) {
+          db.insert(circumventionFlags).values({
+            flagType: "soft_flag",
+            contentType: field.contentType as any,
+            contentSnapshot: field.value.slice(0, 2000),
+            matches: detection.matches,
+            vendorAccountId: vendorAccountIdForListing,
+            listingId: id,
+            status: "pending",
+          }).catch((err: any) => console.warn("[circumvention] soft flag insert failed:", err?.message));
+        }
+      }
+
+      // If this is a resubmission after violation removal, mark as awaiting admin re-review
+      if (isResubmission) {
+        updatePayload.pendingAdminReview = true;
+      }
+      // ── End circumvention detection ──────────────────────────────────────────
+
       const [updated] = await db
         .update(vendorListings)
         .set(updatePayload)
         .where(and(eq(vendorListings.id, id), eq(vendorListings.accountId, vendorAuth.id)))
         .returning();
 
-      return res.json(updated);
+      const softFlaggedListing = listingFieldsToCheck.some(f => checkContent(f.value).softFlagged);
+      return res.json({ ...updated, softFlagged: softFlaggedListing, pendingReview: isResubmission });
     } catch (error: any) {
       logRouteError("/api/vendor/listings/:id", error);
       return res.status(500).json({ error: "Unable to update listing" });
     }
   });
 
-  app.patch("/api/vendor/listings/:id/publish", requireDualAuthAuth0, async (req, res) => {
+  app.patch("/api/vendor/listings/:id/publish", mutationRateLimiter, requireDualAuthAuth0, async (req, res) => {
     try {
       const vendorAuth = (req as any).vendorAuth;
 
@@ -6716,6 +6916,11 @@ app.post(
 
       const incomingListingData = req.body?.listingData;
       const incomingTitle = req.body?.title;
+      const incomingDescription =
+        asTrimmedString(req.body?.description) ||
+        asTrimmedString(req.body?.listingDescription) ||
+        asTrimmedString(req.body?.serviceDescription) ||
+        null;
 
       if (incomingListingData !== undefined && (typeof incomingListingData !== "object" || incomingListingData === null || Array.isArray(incomingListingData))) {
         return res.status(400).json({ error: "listingData must be a JSON object." });
@@ -6732,7 +6937,6 @@ app.post(
         ) as Record<string, any>) || {};
       const normalizedClassification = normalizeListingClassification(rawListingData, {
         requireCategory: false,
-        allowLegacyFallback: false,
       });
       const ld: any = normalizedClassification.listingData;
       const canonicalClassification = {
@@ -6784,8 +6988,16 @@ app.post(
       const loc = ld.serviceLocation;
       const categoryOk = Boolean(canonicalColumns.category ?? normalizeListingCategory(existingListing?.category));
       const resolvedTitle = canonicalColumns.title ?? normalizeListingTitleCandidate(existingListing?.title);
+      const listingDataDescription =
+        asTrimmedString(ld?.description) ||
+        asTrimmedString(ld?.listingDescription) ||
+        asTrimmedString(ld?.serviceDescription) ||
+        null;
       const resolvedDescription =
-        canonicalColumns.description ?? (asTrimmedString(existingListing?.description) || null);
+        canonicalColumns.description ??
+        listingDataDescription ??
+        incomingDescription ??
+        (asTrimmedString(existingListing?.description) || null);
       const resolvedPriceCents = canonicalColumns.priceCents ?? parseIntegerValue(existingListing?.priceCents);
       const resolvedPhotos =
         canonicalColumns.photos.length > 0
@@ -6893,7 +7105,7 @@ app.post(
     }
   });
 
-    app.patch("/api/vendor/listings/:id/unpublish", requireDualAuthAuth0, async (req, res) => {
+    app.patch("/api/vendor/listings/:id/unpublish", mutationRateLimiter, requireDualAuthAuth0, async (req, res) => {
     try {
       const vendorAuth = (req as any).vendorAuth;
 
@@ -7105,7 +7317,6 @@ app.post(
         businessName: getProfileDisplayName(selectedProfile, account.businessName),
         serviceDescription: selectedProfile.serviceDescription,
         city: selectedProfile.city,
-        serviceType: selectedProfile.serviceType,
         onlineProfiles: selectedProfile.onlineProfiles,
       };
 
@@ -7167,7 +7378,6 @@ app.post(
           takedownFeeAmountCents: vendorListings.takedownFeeAmountCents,
           photos: vendorListings.photos,
           listingData: vendorListings.listingData,
-          serviceType: vendorProfiles.serviceType,
           city: vendorProfiles.city,
           vendorId: vendorAccounts.id,
           vendorName: vendorProfiles.profileName,
@@ -7337,13 +7547,137 @@ app.post(
           reviewBreakdown,
           reviews: reviews.slice(0, 60),
           city: vendor.city,
-          serviceType: vendor.serviceType,
         },
         listings: listingsWithVendorMeta,
       });
     } catch (error: any) {
       logRouteError("/api/vendors/public/:vendorId/shop", error);
       return res.status(500).json({ error: "Unable to load vendor storefront" });
+    }
+  });
+
+  // ── Vendor Availability: Vacation Blocks & Shop Status ─────────────────────
+
+  // GET /api/vendor/vacation-blocks  — list vendor's vacation blocks
+  app.get("/api/vendor/vacation-blocks", ...requireVendorAuth0, async (req, res) => {
+    try {
+      const vendorAuth = (req as any).vendorAuth;
+      const rows = await db
+        .select()
+        .from(vendorVacationBlocks)
+        .where(eq(vendorVacationBlocks.vendorId, vendorAuth.id))
+        .orderBy(asc(vendorVacationBlocks.startDate));
+      return res.json(rows);
+    } catch (error: any) {
+      logRouteError("/api/vendor/vacation-blocks GET", error);
+      return res.status(500).json({ error: "Unable to load vacation blocks" });
+    }
+  });
+
+  // POST /api/vendor/vacation-blocks  — create a vacation block
+  app.post("/api/vendor/vacation-blocks", mutationRateLimiter, ...requireVendorAuth0, async (req, res) => {
+    try {
+      const vendorAuth = (req as any).vendorAuth;
+      const { startDate, endDate } = req.body;
+
+      const datePattern = /^\d{4}-\d{2}-\d{2}$/;
+      if (
+        typeof startDate !== "string" || !datePattern.test(startDate) ||
+        typeof endDate !== "string" || !datePattern.test(endDate)
+      ) {
+        return res.status(400).json({ error: "startDate and endDate are required in YYYY-MM-DD format" });
+      }
+      if (endDate < startDate) {
+        return res.status(400).json({ error: "endDate must be on or after startDate" });
+      }
+
+      const insertBlock = async () =>
+        db
+          .insert(vendorVacationBlocks)
+          .values({ id: crypto.randomUUID(), vendorId: vendorAuth.id, startDate, endDate })
+          .returning();
+
+      let blockRows;
+      try {
+        blockRows = await insertBlock();
+      } catch (error: any) {
+        if (typeof error?.code === "string" && error.code === "42P01") {
+          await db.execute(drizzleSql`
+            create table if not exists vendor_vacation_blocks (
+              id          varchar primary key default gen_random_uuid(),
+              vendor_id   varchar not null references vendor_accounts(id) on delete cascade,
+              start_date  text not null,
+              end_date    text not null,
+              created_at  timestamp with time zone not null default now()
+            );
+          `);
+          await db.execute(drizzleSql`
+            create index if not exists idx_vendor_vacation_blocks_vendor_id
+              on vendor_vacation_blocks (vendor_id);
+          `);
+          blockRows = await insertBlock();
+        } else {
+          throw error;
+        }
+      }
+
+      const [block] = blockRows;
+      return res.status(201).json(block);
+    } catch (error: any) {
+      logRouteError("/api/vendor/vacation-blocks POST", error);
+      return res.status(500).json({ error: "Unable to create vacation block" });
+    }
+  });
+
+  // DELETE /api/vendor/vacation-blocks/:id  — delete a vacation block
+  app.delete("/api/vendor/vacation-blocks/:id", mutationRateLimiter, ...requireVendorAuth0, async (req, res) => {
+    try {
+      const vendorAuth = (req as any).vendorAuth;
+      const blockId = String(req.params.id || "").trim();
+
+      const deleted = await db
+        .delete(vendorVacationBlocks)
+        .where(
+          and(
+            eq(vendorVacationBlocks.id, blockId),
+            eq(vendorVacationBlocks.vendorId, vendorAuth.id)
+          )
+        )
+        .returning({ id: vendorVacationBlocks.id });
+
+      if (deleted.length === 0) {
+        return res.status(404).json({ error: "Vacation block not found" });
+      }
+      return res.json({ deleted: deleted[0].id });
+    } catch (error: any) {
+      logRouteError("/api/vendor/vacation-blocks/:id DELETE", error);
+      return res.status(500).json({ error: "Unable to delete vacation block" });
+    }
+  });
+
+  // PATCH /api/vendor/shop-status  — toggle shop open/closed
+  app.patch("/api/vendor/shop-status", mutationRateLimiter, ...requireVendorAuth0, async (req, res) => {
+    try {
+      const vendorAuth = (req as any).vendorAuth;
+      const { shopActive } = req.body;
+
+      if (typeof shopActive !== "boolean") {
+        return res.status(400).json({ error: "shopActive must be a boolean" });
+      }
+
+      const updated = await db
+        .update(vendorAccounts)
+        .set({ shopActive })
+        .where(eq(vendorAccounts.id, vendorAuth.id))
+        .returning({ id: vendorAccounts.id, shopActive: vendorAccounts.shopActive });
+
+      if (updated.length === 0) {
+        return res.status(404).json({ error: "Vendor account not found" });
+      }
+      return res.json({ shopActive: updated[0].shopActive });
+    } catch (error: any) {
+      logRouteError("/api/vendor/shop-status PATCH", error);
+      return res.status(500).json({ error: "Unable to update shop status" });
     }
   });
 
@@ -7392,7 +7726,6 @@ app.post(
           photos: vendorListings.photos,
           listingData: vendorListings.listingData,
 
-          serviceType: vendorProfiles.serviceType,
           city: vendorProfiles.city,
           vendorId: vendorAccounts.id,
           vendorName: vendorAccounts.businessName,
@@ -7405,7 +7738,8 @@ app.post(
           and(
             eq(vendorListings.status, "active"),
             eq(vendorProfiles.active, true),
-            eq(vendorAccounts.active, true)
+            eq(vendorAccounts.active, true),
+            eq(vendorAccounts.shopActive, true)
           )
         );
       const compliantListings = listings.filter(
@@ -7495,11 +7829,11 @@ app.post(
           photos: vendorListings.photos,
           listingData: vendorListings.listingData,
 
-          serviceType: vendorProfiles.serviceType,
           city: vendorProfiles.city,
           vendorId: vendorAccounts.id,
           vendorName: vendorAccounts.businessName,
           vendorOnlineProfiles: vendorProfiles.onlineProfiles,
+          shopActive: vendorAccounts.shopActive,
         })
         .from(vendorListings)
         .innerJoin(vendorProfiles, eq(vendorListings.profileId, vendorProfiles.id))
@@ -7603,11 +7937,26 @@ app.post(
       } catch (err) {
         console.warn("listing_traffic insert failed", err);
       }
+      // Fetch vendor vacation blocks so the listing detail page can show inline warnings
+      const vacationBlocks = listing.vendorId
+        ? await db
+            .select({
+              id: vendorVacationBlocks.id,
+              startDate: vendorVacationBlocks.startDate,
+              endDate: vendorVacationBlocks.endDate,
+            })
+            .from(vendorVacationBlocks)
+            .where(eq(vendorVacationBlocks.vendorId, listing.vendorId))
+            .orderBy(asc(vendorVacationBlocks.startDate))
+        : [];
+
       return res.json({
         ...listing,
         rating,
         reviewCount,
         reviews: publishedReviews,
+        shopActive: listing.shopActive ?? true,
+        vacationBlocks,
       });
     } catch (error: any) {
       logRouteError("/api/listings/public/:id", error);
@@ -7720,7 +8069,7 @@ app.post(
     }
   });
 
-  app.delete("/api/vendor/listings/:id", requireDualAuthAuth0, async (req, res) => {
+  app.delete("/api/vendor/listings/:id", mutationRateLimiter, requireDualAuthAuth0, async (req, res) => {
     try {
       const vendorAuth = (req as any).vendorAuth;
 
@@ -7794,7 +8143,7 @@ app.post(
     businessName: z.string().min(2),
   });
 
-  app.post("/api/vendor/connect/onboard", ...requireVendorAuth0, async (req, res) => {
+  app.post("/api/vendor/connect/onboard", onboardingRateLimiter, ...requireVendorAuth0, async (req, res) => {
     try {
       const { accountType, businessName } = stripeOnboardingSchema.parse(req.body);
       const account = await getVendorAccountFromRequest(req);
@@ -8390,7 +8739,7 @@ app.post(
     }
   });
 
-  app.patch("/api/vendor/bookings/:id", ...requireVendorAuth0, async (req, res) => {
+  app.patch("/api/vendor/bookings/:id", mutationRateLimiter, ...requireVendorAuth0, async (req, res) => {
     try {
       const vendorAuth = (req as any).vendorAuth;
       const vendorAccountId = vendorAuth?.id as string | undefined;
@@ -8605,7 +8954,7 @@ app.post(
         updatedAt: updated.updatedAt,
       });
     } catch (error: any) {
-      res.status(400).json({ error: error.message });
+      return respondWithInternalServerError(req, res, error);
     }
   });
 
@@ -8678,7 +9027,7 @@ app.post(
     }
   });
 
-  app.post("/api/vendor/messages/:bookingId/bootstrap", ...requireVendorAuth0, async (req, res) => {
+  app.post("/api/vendor/messages/:bookingId/bootstrap", messagingRateLimiter, ...requireVendorAuth0, async (req, res) => {
     try {
       if (!isStreamChatConfigured()) {
         return res.status(503).json({ error: "Stream chat is not configured on the server" });
@@ -8807,7 +9156,7 @@ app.post(
     }
   });
 
-  app.post("/api/customer/messages/:bookingId/bootstrap", requireCustomerAnyAuth, async (req, res) => {
+  app.post("/api/customer/messages/:bookingId/bootstrap", messagingRateLimiter, requireCustomerAnyAuth, async (req, res) => {
     try {
       if (!isStreamChatConfigured()) {
         return res.status(503).json({ error: "Stream chat is not configured on the server" });
@@ -8942,6 +9291,7 @@ app.post(
       const senderStreamUserId = String(event.message?.user?.id || "");
       const messageText = String(event.message?.text || "").trim();
 
+      // Determine who sent the message so we can email the other party
       const senderIsCustomer = senderStreamUserId.startsWith("customer_");
       const senderIsVendor = senderStreamUserId.startsWith("vendor_");
       if (!senderIsCustomer && !senderIsVendor) {
@@ -8975,6 +9325,7 @@ app.post(
           if (!info) return;
 
           if (senderIsCustomer && info.vendorEmail) {
+            // Customer sent — notify vendor
             await sendNewMessageEmail(info.vendorEmail, {
               recipientName: info.vendorName || "Vendor",
               senderName: info.customerName || "Customer",
@@ -8985,6 +9336,7 @@ app.post(
               recipientRole: "vendor",
             });
           } else if (senderIsVendor && info.customerEmail) {
+            // Vendor sent — notify customer
             await sendNewMessageEmail(info.customerEmail, {
               recipientName: info.customerName || "Customer",
               senderName: info.vendorName || "Vendor",
@@ -9007,7 +9359,7 @@ app.post(
     }
   });
 
-  app.post("/api/chat/moderation/flag", requireDualAuthAuth0, async (req, res) => {
+  app.post("/api/chat/moderation/flag", messagingRateLimiter, requireDualAuthAuth0, async (req, res) => {
     try {
       await ensureModerationTable();
 
@@ -9069,7 +9421,7 @@ app.post(
 
       return res.status(201).json({ success: true });
     } catch (error: any) {
-      return res.status(400).json({ error: error.message });
+      return respondWithInternalServerError(req, res, error);
     }
   });
 
@@ -9287,6 +9639,7 @@ app.post(
 
   app.patch(
     "/api/vendor/notifications/:id/read",
+    mutationRateLimiter,
     ...requireVendorAuth0,
     async (req, res) => {
       try {
@@ -9324,7 +9677,7 @@ app.post(
     }
   });
 
-  app.post("/api/vendor/reviews/:id/reply", ...requireVendorAuth0, async (req, res) => {
+  app.post("/api/vendor/reviews/:id/reply", socialRateLimiter, ...requireVendorAuth0, async (req, res) => {
     try {
       res.json({ success: true });
     } catch (error: any) {
@@ -9334,7 +9687,7 @@ app.post(
   });
 
   // Customer-facing routes (existing)
-  app.post("/api/events", async (req, res) => {
+  app.post("/api/events", eventsRateLimiter, requireCustomerAnyAuth, async (req, res) => {
     try {
       const validatedData = insertEventSchema.parse(req.body);
       const event = await storage.createEvent(validatedData);
@@ -9657,7 +10010,7 @@ app.post(
     }
   });
 
-  app.patch("/api/customer/bookings/:id/event", requireCustomerAnyAuth, async (req, res) => {
+  app.patch("/api/customer/bookings/:id/event", mutationRateLimiter, requireCustomerAnyAuth, async (req, res) => {
     try {
       const customerAuth = await resolveCustomerAuthFromRequest(req, { createIfMissing: true });
       if (!customerAuth?.id) {
@@ -9768,11 +10121,11 @@ app.post(
         customerEvent: targetEvent,
       });
     } catch (error: any) {
-      res.status(400).json({ error: error.message });
+      return respondWithInternalServerError(req, res, error);
     }
   });
 
-  app.post("/api/customer/bookings/:id/review", requireCustomerAnyAuth, async (req, res) => {
+  app.post("/api/customer/bookings/:id/review", socialRateLimiter, requireCustomerAnyAuth, async (req, res) => {
     const fail = (status: number, message: string): never => {
       const error = new Error(message) as Error & { status?: number };
       error.status = status;
@@ -9931,7 +10284,12 @@ app.post(
         body: reviewBody,
       });
     } catch (error: any) {
-      const status = typeof error?.status === "number" ? error.status : 400;
+      // Only surface error.message when it was thrown by our fail() helper (has explicit status).
+      // Unexpected errors (DB failures, etc.) go through the safe internal-error handler.
+      if (typeof error?.status !== "number") {
+        return respondWithInternalServerError(req, res, error);
+      }
+      const status = error.status;
       if (status >= 500) {
         return respondWithInternalServerError(req, res, error);
       }
@@ -9939,7 +10297,7 @@ app.post(
     }
   });
 
-  app.post("/api/customer/bookings/:id/dispute", requireCustomerAnyAuth, async (req, res) => {
+  app.post("/api/customer/bookings/:id/dispute", socialRateLimiter, requireCustomerAnyAuth, async (req, res) => {
     try {
       await ensureBookingDisputesTable();
 
@@ -10060,7 +10418,7 @@ app.post(
     }
   });
 
-  app.post("/api/vendor/bookings/:id/dispute/respond", ...requireVendorAuth0, async (req, res) => {
+  app.post("/api/vendor/bookings/:id/dispute/respond", socialRateLimiter, ...requireVendorAuth0, async (req, res) => {
     try {
       await ensureBookingDisputesTable();
 
@@ -10137,7 +10495,13 @@ app.post(
     }
   });
 
-  app.get("/api/admin/disputes", requireAdminAuth, async (req, res) => {
+  // Admin identity check — used by the frontend to verify admin access before rendering
+  app.get("/api/admin/me", adminRateLimiter, requireAdminAuth, (req, res) => {
+    const adminAuth = (req as any).adminAuth as { id?: string; email?: string } | undefined;
+    return res.json({ isAdmin: true, email: adminAuth?.email ?? null });
+  });
+
+  app.get("/api/admin/disputes", adminRateLimiter, requireAdminAuth, async (req, res) => {
     try {
       await ensureBookingDisputesTable();
 
@@ -10188,7 +10552,7 @@ app.post(
     }
   });
 
-  app.post("/api/admin/disputes/:id/resolve", requireAdminAuth, async (req, res) => {
+  app.post("/api/admin/disputes/:id/resolve", adminRateLimiter, requireAdminAuth, async (req, res) => {
     try {
       await ensureBookingDisputesTable();
 
@@ -10259,7 +10623,6 @@ app.post(
             .set({
               status: "refunded",
               refundAmount: depositPayment.amount,
-              refundedAmount: depositPayment.amount,
               refundReason: "admin_dispute_refund",
               refundedAt: now,
               payoutStatus: "cancelled",
@@ -10513,7 +10876,6 @@ app.post(
           takedownFeeEnabled: vendorListings.takedownFeeEnabled,
           takedownFeeAmountCents: vendorListings.takedownFeeAmountCents,
           listingData: vendorListings.listingData,
-          profileServiceType: vendorProfiles.serviceType,
           profileOperatingTimezone: vendorProfiles.operatingTimezone,
         })
         .from(vendorListings)
@@ -10541,6 +10903,7 @@ app.post(
           stripeOnboardingComplete: vendorAccounts.stripeOnboardingComplete,
           googleConnectionStatus: vendorAccounts.googleConnectionStatus,
           googleCalendarId: vendorAccounts.googleCalendarId,
+          shopActive: vendorAccounts.shopActive,
         })
         .from(vendorAccounts)
         .where(and(eq(vendorAccounts.id, listingRow.accountId), eq(vendorAccounts.active, true)))
@@ -10557,6 +10920,40 @@ app.post(
           error: "This vendor cannot accept payments yet. Please choose another listing.",
           code: "vendor_payment_not_ready",
         });
+      }
+
+      // Block if vendor has closed their shop
+      if (vendorAccount.shopActive === false) {
+        return res.status(409).json({
+          error: "This vendor's shop is currently closed and not accepting bookings.",
+          code: "shop_closed",
+        });
+      }
+
+      // Block if requested date falls inside a vacation block
+      const eventDateStr = String(data.eventDate || "").trim().slice(0, 10);
+      if (eventDateStr) {
+        const vacationConflict = await db
+          .select({ id: vendorVacationBlocks.id, startDate: vendorVacationBlocks.startDate, endDate: vendorVacationBlocks.endDate })
+          .from(vendorVacationBlocks)
+          .where(
+            and(
+              eq(vendorVacationBlocks.vendorId, vendorAccount.id),
+              lte(vendorVacationBlocks.startDate, eventDateStr),
+              gte(vendorVacationBlocks.endDate, eventDateStr)
+            )
+          )
+          .limit(1);
+
+        if (vacationConflict.length > 0) {
+          const block = vacationConflict[0];
+          return res.status(409).json({
+            error: `This vendor is unavailable from ${block.startDate} to ${block.endDate}. Please choose a different date.`,
+            code: "vacation_block_conflict",
+            conflictStart: block.startDate,
+            conflictEnd: block.endDate,
+          });
+        }
       }
 
       const listingDataAny = (listingRow.listingData ?? {}) as any;
@@ -10578,16 +10975,11 @@ app.post(
 
       let resolvedVendorProfileId =
         listingRow.profileId && typeof listingRow.profileId === "string" ? listingRow.profileId : null;
-      let resolvedVendorServiceType =
-        typeof listingRow.profileServiceType === "string" && listingRow.profileServiceType.trim().length > 0
-          ? listingRow.profileServiceType.trim()
-          : null;
       let resolvedVendorTimeZone = normalizeIanaTimeZone(listingRow.profileOperatingTimezone);
       if (!resolvedVendorProfileId) {
         const profileRows = await db
           .select({
             id: vendorProfiles.id,
-            serviceType: vendorProfiles.serviceType,
             operatingTimezone: vendorProfiles.operatingTimezone,
           })
           .from(vendorProfiles)
@@ -10596,10 +10988,6 @@ app.post(
           .limit(1);
         if (profileRows[0]?.id) {
           resolvedVendorProfileId = profileRows[0].id;
-          resolvedVendorServiceType =
-            typeof profileRows[0].serviceType === "string" && profileRows[0].serviceType.trim().length > 0
-              ? profileRows[0].serviceType.trim()
-              : resolvedVendorServiceType;
           resolvedVendorTimeZone = normalizeIanaTimeZone(
             profileRows[0].operatingTimezone,
             resolvedVendorTimeZone
@@ -10753,7 +11141,6 @@ app.post(
       const bookingLifecycle = resolveBookingLifecycleMode({
         listingCategory: listingRow.category,
         listingInstantBookEnabled: listingRow.instantBookEnabled,
-        fallbackServiceType: resolvedVendorServiceType,
       });
       const bookingStatus = bookingLifecycle.initialStatus;
       const bookingConfirmedAt = bookingStatus === "confirmed" ? new Date() : null;
@@ -11250,6 +11637,10 @@ app.post(
                 status: bookings.status,
                 cancellationReason: bookings.cancellationReason,
                 bookingEndAt: bookings.bookingEndAt,
+                totalAmount: bookings.totalAmount,
+                platformFee: bookings.platformFee,
+                subtotalAmountCents: bookings.subtotalAmountCents,
+                vendorPayout: bookings.vendorPayout,
               })
               .from(bookings)
               .where(eq(bookings.id, payment.bookingId))
@@ -11267,9 +11658,9 @@ app.post(
               paidOutAt: payment.paidOutAt,
               payoutEligibleAt: payment.payoutEligibleAt,
               bookingEndAt: bookingRow.bookingEndAt,
-              totalAmount: payment.totalAmount ?? fallbackTotalAmount ?? payment.amount,
-              refundedAmount: payment.refundedAmount ?? payment.refundAmount,
-              vendorNetPayoutAmount: payment.vendorNetPayoutAmount ?? payment.vendorPayout,
+              totalAmount: payment.totalAmount ?? parseIntegerValue(bookingRow.totalAmount) ?? payment.amount,
+              refundedAmount: payment.refundAmount,
+              vendorNetPayoutAmount: payment.vendorNetPayoutAmount,
               actualStripeFeeAmount: actualStripeFeeAmount ?? payment.actualStripeFeeAmount,
               stripeConnectedAccountId:
                 payment.stripeConnectedAccountId ?? fallbackStripeConnectedAccountId,
@@ -11293,21 +11684,19 @@ app.post(
                     parseIntegerValue(fallbackStripeProcessingFeeEstimate),
                   totalAmount:
                     parseIntegerValue(payment.totalAmount) ??
-                    parseIntegerValue(fallbackTotalAmount) ??
+                    parseIntegerValue(bookingRow.totalAmount) ??
                     parseIntegerValue(payment.amount) ??
                     null,
                   platformFeeAmount:
                     parseIntegerValue(payment.platformFeeAmount) ??
-                    parseIntegerValue(fallbackPlatformFeeAmount) ??
-                    parseIntegerValue(payment.platformFee) ??
+                    parseIntegerValue(bookingRow.platformFee) ??
                     null,
                   vendorGrossAmount:
                     parseIntegerValue(payment.vendorGrossAmount) ??
-                    parseIntegerValue(fallbackVendorGrossAmount),
+                    parseIntegerValue(bookingRow.subtotalAmountCents),
                   vendorNetPayoutAmount:
                     parseIntegerValue(payment.vendorNetPayoutAmount) ??
-                    parseIntegerValue(fallbackVendorNetPayoutAmount) ??
-                    parseIntegerValue(payment.vendorPayout) ??
+                    parseIntegerValue(bookingRow.vendorPayout) ??
                     null,
                   stripeProcessingFeeEstimate:
                     parseIntegerValue(payment.stripeProcessingFeeEstimate) ??
@@ -11427,10 +11816,8 @@ app.post(
                 payoutEligibleAt: payments.payoutEligibleAt,
                 totalAmount: payments.totalAmount,
                 amount: payments.amount,
-                refundedAmount: payments.refundedAmount,
                 refundAmount: payments.refundAmount,
                 vendorNetPayoutAmount: payments.vendorNetPayoutAmount,
-                vendorPayout: payments.vendorPayout,
                 actualStripeFeeAmount: payments.actualStripeFeeAmount,
                 stripeConnectedAccountId: payments.stripeConnectedAccountId,
                 stripeChargeId: payments.stripeChargeId,
@@ -11496,12 +11883,7 @@ app.post(
             return;
           }
 
-          const refundedAmount = Math.max(
-            0,
-            parseIntegerValue(payment.refundedAmount) ??
-              parseIntegerValue(payment.refundAmount) ??
-              0
-          );
+          const refundedAmount = Math.max(0, parseIntegerValue(payment.refundAmount) ?? 0);
           const totalAmount = Math.max(
             0,
             parseIntegerValue(payment.totalAmount) ??
@@ -11527,7 +11909,7 @@ app.post(
             bookingEndAt: bookingRow.bookingEndAt,
             totalAmount,
             refundedAmount,
-            vendorNetPayoutAmount: payment.vendorNetPayoutAmount ?? payment.vendorPayout,
+            vendorNetPayoutAmount: payment.vendorNetPayoutAmount,
             actualStripeFeeAmount: payment.actualStripeFeeAmount,
             stripeConnectedAccountId: payment.stripeConnectedAccountId,
             stripeChargeId: payment.stripeChargeId ?? chargeId,
@@ -11617,7 +11999,7 @@ app.post(
               bookingEndAt: bookingRow.bookingEndAt,
               totalAmount,
               refundedAmount: amountRefunded,
-              vendorNetPayoutAmount: payment.vendorNetPayoutAmount ?? payment.vendorPayout,
+              vendorNetPayoutAmount: payment.vendorNetPayoutAmount,
               actualStripeFeeAmount: payment.actualStripeFeeAmount,
               stripeConnectedAccountId: payment.stripeConnectedAccountId,
               stripeChargeId: payment.stripeChargeId ?? chargeId,
@@ -11631,7 +12013,6 @@ app.post(
                 status: nextStatus as any,
                 stripeChargeId: (payment.stripeChargeId ?? chargeId) || null,
                 refundAmount: amountRefunded > 0 ? amountRefunded : parseIntegerValue(payment.amount),
-                refundedAmount: amountRefunded > 0 ? amountRefunded : parseIntegerValue(payment.amount),
                 refundReason: "stripe_charge_refunded",
                 refundedAt: now,
                 payoutStatus: payoutEligibility.payoutStatus,
@@ -11697,7 +12078,7 @@ app.post(
     dryRun: z.boolean().optional(),
   });
 
-  app.post("/api/admin/payouts/process", requireAdminAuth, async (req, res) => {
+  app.post("/api/admin/payouts/process", adminRateLimiter, requireAdminAuth, async (req, res) => {
     try {
       const payload = processPayoutsSchema.parse(req.body ?? {});
       const dryRun = payload.dryRun === true;
@@ -11869,14 +12250,8 @@ app.post(
                   parseIntegerValue(locked.totalAmount) ??
                   parseIntegerValue(locked.amount) ??
                   0,
-                refundedAmount:
-                  parseIntegerValue(locked.refundedAmount) ??
-                  parseIntegerValue(locked.refundAmount) ??
-                  0,
-                vendorNetPayoutAmount:
-                  parseIntegerValue(locked.vendorNetPayoutAmount) ??
-                  parseIntegerValue(locked.vendorPayout) ??
-                  0,
+                refundedAmount: parseIntegerValue(locked.refundAmount) ?? 0,
+                vendorNetPayoutAmount: parseIntegerValue(locked.vendorNetPayoutAmount) ?? 0,
                 actualStripeFeeAmount: locked.actualStripeFeeAmount,
                 stripeConnectedAccountId: locked.stripeConnectedAccountId,
                 stripeChargeId: locked.stripeChargeId,
@@ -12062,7 +12437,6 @@ app.post(
             .set({
               status: "refunded",
               refundAmount: depositPayment.amount,
-              refundedAmount: depositPayment.amount,
               refundReason: requestedReason || stripeReason,
               refundedAt: now,
               payoutStatus: "cancelled",
@@ -12097,7 +12471,7 @@ app.post(
             .update(payments)
             .set({
               status: "refunded",
-              refundedAmount: depositPayment.amount,
+              refundAmount: depositPayment.amount,
               refundReason: requestedReason || stripeReason,
               refundedAt: now,
               payoutStatus: "cancelled",
@@ -12139,7 +12513,7 @@ app.post(
   // ADMIN ANALYTICS ENDPOINTS (unchanged)
   // ============================================
 
-  app.post("/api/track", async (req, res) => {
+  app.post("/api/track", trackRateLimiter, async (req, res) => {
     try {
       const { path, referrer } = req.body;
 
@@ -12153,31 +12527,25 @@ app.post(
       const authHeader = req.headers.authorization;
       if (authHeader && authHeader.startsWith("Bearer ")) {
         const token = authHeader.substring(7);
-        const payload = verifyToken(token);
-        if (payload) {
-          userId = payload.id;
-          userType = payload.type;
-        } else {
-          try {
-            const auth0 = await verifyAuth0Token(token);
-            const email = typeof auth0?.email === "string" ? auth0.email.trim().toLowerCase() : "";
-            if (email) {
-              const [user] = await db
-                .select({
-                  id: users.id,
-                  role: users.role,
-                })
-                .from(users)
-                .where(drizzleSql`lower(${users.email}) = ${email}`)
-                .limit(1);
-              if (user?.id) {
-                userId = user.id;
-                userType = user.role;
-              }
+        try {
+          const auth0 = await verifyAuth0Token(token);
+          const email = typeof auth0?.email === "string" ? auth0.email.trim().toLowerCase() : "";
+          if (email) {
+            const [user] = await db
+              .select({
+                id: users.id,
+                role: users.role,
+              })
+              .from(users)
+              .where(drizzleSql`lower(${users.email}) = ${email}`)
+              .limit(1);
+            if (user?.id) {
+              userId = user.id;
+              userType = user.role;
             }
-          } catch {
-            // Ignore auth0 lookup failures; keep analytics ingestion best-effort.
           }
+        } catch {
+          // Ignore auth failures; analytics ingestion is best-effort.
         }
       }
 
@@ -12194,7 +12562,7 @@ app.post(
     }
   });
 
-  app.post("/api/admin/chat/cleanup-expired", requireAdminAuth, async (req, res) => {
+  app.post("/api/admin/chat/cleanup-expired", adminRateLimiter, requireAdminAuth, async (req, res) => {
     try {
       const result = await cleanupExpiredStreamChannels();
       return res.json(result);
@@ -12203,7 +12571,7 @@ app.post(
     }
   });
 
-  app.get("/api/admin/stats/users", requireAdminAuth, async (req, res) => {
+  app.get("/api/admin/stats/users", adminRateLimiter, requireAdminAuth, async (req, res) => {
     try {
       const [totalUsersResult] = await db.select({ count: count() }).from(users);
       const totalUsers = totalUsersResult.count;
@@ -12211,13 +12579,19 @@ app.post(
       const [totalVendorsResult] = await db.select({ count: count() }).from(vendorAccounts);
       const totalVendors = totalVendorsResult.count;
 
-      const vendorsByType = await db
-        .select({
-          serviceType: vendorProfiles.serviceType,
-          count: count(),
-        })
-        .from(vendorProfiles)
-        .groupBy(vendorProfiles.serviceType);
+      // Count distinct vendor accounts per listing category (categories live on listings now)
+      const vendorsByTypeRows = await db.execute(drizzleSql`
+        SELECT
+          COALESCE(NULLIF(TRIM(category), ''), 'Uncategorised') AS category,
+          COUNT(DISTINCT account_id)::int                        AS count
+        FROM vendor_listings
+        WHERE status != 'deleted'
+        GROUP BY 1
+        ORDER BY count DESC
+      `);
+      const vendorsByType = extractRows<{ category: string; count: number }>(vendorsByTypeRows).map(
+        (r) => ({ category: r.category, count: Number(r.count) })
+      );
 
       const thirtyDaysAgo = new Date();
       thirtyDaysAgo.setDate(thirtyDaysAgo.getDate() - 30);
@@ -12243,9 +12617,15 @@ app.post(
     }
   });
 
-  app.get("/api/admin/stats/listings", requireAdminAuth, async (req, res) => {
+  app.get("/api/admin/stats/listings", adminRateLimiter, requireAdminAuth, async (req, res) => {
     try {
-      const [totalListingsResult] = await db.select({ count: count() }).from(vendorListings);
+      // Exclude soft-deleted listings from all counts
+      const notDeleted = drizzleSql`${vendorListings.status} != 'deleted'`;
+
+      const [totalListingsResult] = await db
+        .select({ count: count() })
+        .from(vendorListings)
+        .where(notDeleted);
       const totalListings = totalListingsResult.count;
 
       const [activeListingsResult] = await db
@@ -12266,13 +12646,21 @@ app.post(
         .where(eq(vendorListings.status, "inactive"));
       const inactiveListings = inactiveListingsResult.count;
 
-      const listingsByType = await db
-        .select({
-          serviceType: vendorProfiles.serviceType,
-          count: count(),
-        })
-        .from(vendorProfiles)
-        .groupBy(vendorProfiles.serviceType);
+      // Group by the listing's own category (Rentals, Services, Venues, Catering)
+      // rather than the vendor profile's legacy service_type field
+      const listingsByTypeRows = await db.execute(drizzleSql`
+        SELECT
+          COALESCE(NULLIF(TRIM(category), ''), 'Uncategorised') AS category,
+          COUNT(*)::int                                          AS count
+        FROM vendor_listings
+        WHERE status != 'deleted'
+        GROUP BY COALESCE(NULLIF(TRIM(category), ''), 'Uncategorised')
+        ORDER BY count DESC
+      `);
+
+      const listingsByType = extractRows<{ category: string; count: number }>(listingsByTypeRows).map(
+        (r) => ({ category: r.category, count: Number(r.count) })
+      );
 
       res.json({
         totalListings,
@@ -12286,7 +12674,7 @@ app.post(
     }
   });
 
-  app.get("/api/admin/stats/bookings", requireAdminAuth, async (req, res) => {
+  app.get("/api/admin/stats/bookings", adminRateLimiter, requireAdminAuth, async (req, res) => {
     try {
       const [totalBookingsResult] = await db.select({ count: count() }).from(bookings);
       const totalBookings = totalBookingsResult.count;
@@ -12325,7 +12713,7 @@ app.post(
     }
   });
 
-  app.get("/api/admin/stats/chat-flags", requireAdminAuth, async (req, res) => {
+  app.get("/api/admin/stats/chat-flags", adminRateLimiter, requireAdminAuth, async (req, res) => {
     try {
       await ensureModerationTable();
 
@@ -12380,7 +12768,7 @@ app.post(
     }
   });
 
-  app.get("/api/admin/stats/traffic", requireAdminAuth, async (req, res) => {
+  app.get("/api/admin/stats/traffic", adminRateLimiter, requireAdminAuth, async (req, res) => {
     try {
       const [totalVisitsResult] = await db.select({ count: count() }).from(webTraffic);
       const totalVisits = totalVisitsResult.count;
@@ -12427,8 +12815,1249 @@ app.post(
     }
   });
 
+  // ── Booking stats: full status breakdown ─────────────────────────────────
+  app.get("/api/admin/stats/bookings/detail", adminRateLimiter, requireAdminAuth, async (req, res) => {
+    try {
+      const statusCounts = await db.execute(drizzleSql`
+        SELECT status, COUNT(*)::int AS count
+        FROM bookings
+        GROUP BY status
+      `);
+      const disputeCount = await db.execute(drizzleSql`
+        SELECT COUNT(*)::int AS count
+        FROM booking_disputes
+        WHERE status NOT IN ('resolved_refund', 'resolved_payout')
+      `);
+      const avgRows = await db.execute(drizzleSql`
+        SELECT
+          ROUND(AVG(total_amount))::int            AS avg_booking_value_cents,
+          COUNT(*)::int                            AS total_non_cancelled,
+          COUNT(DISTINCT vendor_account_id)::int   AS active_vendors
+        FROM bookings
+        WHERE status NOT IN ('cancelled', 'failed', 'expired')
+      `);
+
+      const statusMap: Record<string, number> = {};
+      for (const row of extractRows<{ status: string; count: number }>(statusCounts)) {
+        statusMap[row.status] = Number(row.count);
+      }
+      const avg = extractRows<{ avg_booking_value_cents: number; total_non_cancelled: number; active_vendors: number }>(avgRows)[0];
+      const openDisputes = Number(extractRows<{ count: number }>(disputeCount)[0]?.count ?? 0);
+
+      return res.json({
+        byStatus: statusMap,
+        openDisputes,
+        avgBookingValueCents: Number(avg?.avg_booking_value_cents ?? 0),
+        totalNonCancelled: Number(avg?.total_non_cancelled ?? 0),
+        activeVendors: Number(avg?.active_vendors ?? 0),
+      });
+    } catch (error: any) {
+      return respondWithInternalServerError(req, res, error);
+    }
+  });
+
+  // ── Revenue analytics: daily, monthly, annual, by service type ──────────
+  app.get("/api/admin/stats/revenue", adminRateLimiter, requireAdminAuth, async (req, res) => {
+    try {
+      // Daily — last 30 days
+      const dailyRows = await db.execute(drizzleSql`
+        SELECT
+          DATE(b.created_at)                    AS date,
+          SUM(b.total_amount)::bigint           AS revenue_cents,
+          SUM(b.platform_fee)::bigint           AS platform_fee_cents,
+          COUNT(*)::int                         AS booking_count
+        FROM bookings b
+        WHERE b.created_at >= NOW() - INTERVAL '30 days'
+          AND b.status NOT IN ('cancelled', 'failed', 'expired')
+        GROUP BY DATE(b.created_at)
+        ORDER BY date ASC
+      `);
+
+      // Monthly — last 12 months
+      const monthlyRows = await db.execute(drizzleSql`
+        SELECT
+          DATE_TRUNC('month', b.created_at)     AS month,
+          SUM(b.total_amount)::bigint           AS revenue_cents,
+          SUM(b.platform_fee)::bigint           AS platform_fee_cents,
+          COUNT(*)::int                         AS booking_count
+        FROM bookings b
+        WHERE b.created_at >= DATE_TRUNC('month', NOW() - INTERVAL '11 months')
+          AND b.status NOT IN ('cancelled', 'failed', 'expired')
+        GROUP BY DATE_TRUNC('month', b.created_at)
+        ORDER BY month ASC
+      `);
+
+      // Annual totals — this year vs last year
+      const annualRows = await db.execute(drizzleSql`
+        SELECT
+          EXTRACT(YEAR FROM b.created_at)::int  AS year,
+          SUM(b.total_amount)::bigint           AS revenue_cents,
+          SUM(b.platform_fee)::bigint           AS platform_fee_cents,
+          COUNT(*)::int                         AS booking_count
+        FROM bookings b
+        WHERE b.status NOT IN ('cancelled', 'failed', 'expired')
+          AND b.created_at >= DATE_TRUNC('year', NOW() - INTERVAL '1 year')
+        GROUP BY EXTRACT(YEAR FROM b.created_at)
+        ORDER BY year ASC
+      `);
+
+      // By listing category (category lives on the listing, not the vendor profile)
+      const byTypeRows = await db.execute(drizzleSql`
+        SELECT
+          COALESCE(NULLIF(TRIM(vl.category), ''), 'Uncategorised') AS service_type,
+          COUNT(b.id)::int                                          AS booking_count,
+          SUM(b.total_amount)::bigint                               AS revenue_cents,
+          ROUND(AVG(b.total_amount))::int                           AS avg_booking_value_cents,
+          COUNT(DISTINCT b.vendor_account_id)::int                  AS vendor_count,
+          ROUND(
+            COUNT(b.id)::numeric
+            / NULLIF(COUNT(DISTINCT b.vendor_account_id), 0)
+            / GREATEST(
+                EXTRACT(EPOCH FROM (NOW() - MIN(b.created_at))) / 2592000.0,
+                1
+              ),
+            2
+          )::numeric                                                AS avg_bookings_per_vendor_per_month
+        FROM bookings b
+        LEFT JOIN vendor_listings vl ON vl.id = b.listing_id
+        WHERE b.status NOT IN ('cancelled', 'failed', 'expired')
+        GROUP BY 1
+        ORDER BY revenue_cents DESC NULLS LAST
+      `);
+
+      // Overall average booking value
+      const overallRows = await db.execute(drizzleSql`
+        SELECT
+          ROUND(AVG(total_amount))::int         AS avg_booking_value_cents,
+          COUNT(DISTINCT vendor_account_id)::int AS vendor_count,
+          COUNT(*)::int                         AS booking_count,
+          ROUND(
+            COUNT(*)::numeric
+            / NULLIF(COUNT(DISTINCT vendor_account_id), 0)
+            / GREATEST(
+                EXTRACT(EPOCH FROM (NOW() - MIN(created_at))) / 2592000.0,
+                1
+              ),
+            2
+          )::numeric AS avg_bookings_per_vendor_per_month
+        FROM bookings
+        WHERE status NOT IN ('cancelled', 'failed', 'expired')
+      `);
+
+      const overall = extractRows<any>(overallRows)[0] ?? {};
+
+      // Compute projection: avg of last 3 full months × remaining months in year
+      const monthly = extractRows<any>(monthlyRows).map((r) => ({
+        month: String(r.month ?? "").slice(0, 7),
+        revenueCents: Number(r.revenue_cents ?? 0),
+        platformFeeCents: Number(r.platform_fee_cents ?? 0),
+        bookingCount: Number(r.booking_count ?? 0),
+      }));
+
+      const now = new Date();
+      const currentMonth = `${now.getFullYear()}-${String(now.getMonth() + 1).padStart(2, "0")}`;
+      const fullMonths = monthly.filter((m) => m.month < currentMonth);
+      const last3 = fullMonths.slice(-3);
+      const avgMonthlyRevenue = last3.length
+        ? last3.reduce((s, m) => s + m.revenueCents, 0) / last3.length
+        : 0;
+      const daysInMonth = new Date(now.getFullYear(), now.getMonth() + 1, 0).getDate();
+      const dayOfMonth = now.getDate();
+      const currentMonthData = monthly.find((m) => m.month === currentMonth);
+      const projectedCurrentMonth =
+        currentMonthData
+          ? Math.round((currentMonthData.revenueCents / dayOfMonth) * daysInMonth)
+          : Math.round(avgMonthlyRevenue);
+      const remainingMonths = 12 - (now.getMonth() + 1);
+      const ytdRevenue = extractRows<any>(annualRows).find(
+        (r) => Number(r.year) === now.getFullYear()
+      );
+      const projectedAnnual = Math.round(
+        Number(ytdRevenue?.revenue_cents ?? 0) + remainingMonths * avgMonthlyRevenue
+      );
+
+      return res.json({
+        daily: extractRows<any>(dailyRows).map((r) => ({
+          date: String(r.date ?? "").slice(0, 10),
+          revenueCents: Number(r.revenue_cents ?? 0),
+          platformFeeCents: Number(r.platform_fee_cents ?? 0),
+          bookingCount: Number(r.booking_count ?? 0),
+        })),
+        monthly,
+        annual: extractRows<any>(annualRows).map((r) => ({
+          year: Number(r.year),
+          revenueCents: Number(r.revenue_cents ?? 0),
+          platformFeeCents: Number(r.platform_fee_cents ?? 0),
+          bookingCount: Number(r.booking_count ?? 0),
+        })),
+        projections: {
+          currentMonthCents: projectedCurrentMonth,
+          annualCents: projectedAnnual,
+          avgMonthlyRevenueCents: Math.round(avgMonthlyRevenue),
+        },
+        byServiceType: extractRows<any>(byTypeRows).map((r) => ({
+          serviceType: String(r.service_type ?? "Unknown"),
+          bookingCount: Number(r.booking_count ?? 0),
+          revenueCents: Number(r.revenue_cents ?? 0),
+          avgBookingValueCents: Number(r.avg_booking_value_cents ?? 0),
+          vendorCount: Number(r.vendor_count ?? 0),
+          avgBookingsPerVendorPerMonth: Number(r.avg_bookings_per_vendor_per_month ?? 0),
+        })),
+        overall: {
+          avgBookingValueCents: Number(overall.avg_booking_value_cents ?? 0),
+          vendorCount: Number(overall.vendor_count ?? 0),
+          bookingCount: Number(overall.booking_count ?? 0),
+          avgBookingsPerVendorPerMonth: Number(overall.avg_bookings_per_vendor_per_month ?? 0),
+        },
+      });
+    } catch (error: any) {
+      return respondWithInternalServerError(req, res, error);
+    }
+  });
+
+  // ── Payout records ────────────────────────────────────────────────────────
+  app.get("/api/admin/payouts", adminRateLimiter, requireAdminAuth, async (req, res) => {
+    try {
+      const rows = await db.execute(drizzleSql`
+        SELECT
+          p.id,
+          p.booking_id,
+          p.stripe_transfer_id,
+          p.stripe_charge_id,
+          p.stripe_connected_account_id,
+          p.payout_status,
+          p.payout_adjusted_amount,
+          p.vendor_net_payout_amount,
+          p.platform_fee_amount,
+          p.total_amount,
+          p.actual_stripe_fee_amount,
+          p.payout_eligible_at,
+          p.paid_out_at,
+          p.payout_blocked_reason,
+          p.payment_type,
+          p.status         AS payment_status,
+          p.created_at,
+          b.event_date,
+          b.listing_title_snapshot,
+          b.status         AS booking_status,
+          va.business_name AS vendor_business_name,
+          va.email         AS vendor_email,
+          u.name           AS customer_name,
+          u.email          AS customer_email
+        FROM payments p
+        JOIN bookings b ON b.id = p.booking_id
+        LEFT JOIN vendor_accounts va ON va.id = p.vendor_account_id
+        LEFT JOIN users u ON u.id = p.customer_id
+        WHERE p.payment_type = 'deposit'
+        ORDER BY p.created_at DESC
+        LIMIT 200
+      `);
+
+      const summary = await db.execute(drizzleSql`
+        SELECT
+          payout_status,
+          COUNT(*)::int                       AS count,
+          COALESCE(SUM(payout_adjusted_amount), 0)::bigint AS total_cents
+        FROM payments
+        WHERE payment_type = 'deposit'
+        GROUP BY payout_status
+      `);
+
+      return res.json({
+        records: extractRows<any>(rows).map((r) => ({
+          id: String(r.id ?? ""),
+          bookingId: String(r.booking_id ?? ""),
+          stripeTransferId: r.stripe_transfer_id ? String(r.stripe_transfer_id) : null,
+          stripeChargeId: r.stripe_charge_id ? String(r.stripe_charge_id) : null,
+          stripeConnectedAccountId: r.stripe_connected_account_id ? String(r.stripe_connected_account_id) : null,
+          payoutStatus: String(r.payout_status ?? ""),
+          payoutAdjustedAmount: r.payout_adjusted_amount != null ? Number(r.payout_adjusted_amount) : null,
+          vendorNetPayoutAmount: r.vendor_net_payout_amount != null ? Number(r.vendor_net_payout_amount) : null,
+          platformFeeAmount: r.platform_fee_amount != null ? Number(r.platform_fee_amount) : null,
+          totalAmount: r.total_amount != null ? Number(r.total_amount) : null,
+          actualStripeFeeAmount: r.actual_stripe_fee_amount != null ? Number(r.actual_stripe_fee_amount) : null,
+          payoutEligibleAt: r.payout_eligible_at ?? null,
+          paidOutAt: r.paid_out_at ?? null,
+          payoutBlockedReason: r.payout_blocked_reason ? String(r.payout_blocked_reason) : null,
+          eventDate: r.event_date ? String(r.event_date) : null,
+          listingTitle: r.listing_title_snapshot ? String(r.listing_title_snapshot) : null,
+          bookingStatus: String(r.booking_status ?? ""),
+          paymentStatus: String(r.payment_status ?? ""),
+          vendorBusinessName: r.vendor_business_name ? String(r.vendor_business_name) : null,
+          vendorEmail: r.vendor_email ? String(r.vendor_email) : null,
+          customerName: r.customer_name ? String(r.customer_name) : null,
+          customerEmail: r.customer_email ? String(r.customer_email) : null,
+          createdAt: r.created_at ?? null,
+        })),
+        summary: extractRows<any>(summary).map((r) => ({
+          payoutStatus: String(r.payout_status ?? ""),
+          count: Number(r.count ?? 0),
+          totalCents: Number(r.total_cents ?? 0),
+        })),
+      });
+    } catch (error: any) {
+      return respondWithInternalServerError(req, res, error);
+    }
+  });
+
+  // ── Add admin note to dispute (without resolving) ─────────────────────────
+  app.post("/api/admin/disputes/:id/note", adminRateLimiter, requireAdminAuth, async (req, res) => {
+    try {
+      await ensureBookingDisputesTable();
+      const disputeId = asTrimmedString(req.params?.id);
+      if (!disputeId) return res.status(400).json({ error: "Dispute id required" });
+
+      const { content } = z.object({ content: z.string().trim().min(1).max(5000) }).parse(req.body ?? {});
+
+      // Ensure dispute exists
+      const [dispute] = await db
+        .select({ id: bookingDisputes.id })
+        .from(bookingDisputes)
+        .where(eq(bookingDisputes.id, disputeId))
+        .limit(1);
+      if (!dispute?.id) return res.status(404).json({ error: "Dispute not found" });
+
+      // Also update the top-level adminNotes field (latest note as summary)
+      await db
+        .update(bookingDisputes)
+        .set({ adminNotes: content, updatedAt: new Date() })
+        .where(eq(bookingDisputes.id, disputeId));
+
+      // Insert into history log
+      const [note] = await db
+        .insert(disputeAdminNotes)
+        .values({ disputeId, content })
+        .returning();
+
+      return res.json(note);
+    } catch (error: any) {
+      return respondWithInternalServerError(req, res, error);
+    }
+  });
+
+  // ── Get admin notes history for a dispute ─────────────────────────────────
+  app.get("/api/admin/disputes/:id/notes", adminRateLimiter, requireAdminAuth, async (req, res) => {
+    try {
+      const disputeId = asTrimmedString(req.params?.id);
+      if (!disputeId) return res.status(400).json({ error: "Dispute id required" });
+
+      const notes = await db
+        .select()
+        .from(disputeAdminNotes)
+        .where(eq(disputeAdminNotes.disputeId, disputeId))
+        .orderBy(drizzleSql`created_at ASC`);
+
+      return res.json(notes);
+    } catch (error: any) {
+      return respondWithInternalServerError(req, res, error);
+    }
+  });
+
+  // ── Stripe platform balance ───────────────────────────────────────────────
+  app.get("/api/admin/stripe/balance", adminRateLimiter, requireAdminAuth, async (req, res) => {
+    try {
+      const { stripe } = await import("./stripe");
+      const balance = await stripe.balance.retrieve();
+      const usdAvailable = balance.available.find((b) => b.currency === "usd");
+      const usdPending = balance.pending.find((b) => b.currency === "usd");
+      return res.json({
+        availableCents: usdAvailable?.amount ?? 0,
+        pendingCents: usdPending?.amount ?? 0,
+        currency: "usd",
+      });
+    } catch (error: any) {
+      return res.status(500).json({ error: "Unable to fetch Stripe balance" });
+    }
+  });
+
+  // ── Circumvention Prevention ─────────────────────────────────────────────────
+
+  // Helper: issue a warning to a vendor. If this is warning #3, trigger suspension.
+  async function issueCircumventionWarning(
+    vendorAccountId: string,
+    flagId: string | null,
+    reason: string,
+    issuedBy: string,
+    serverUrl: string
+  ): Promise<{ warningNumber: number; suspended: boolean; endsAt: Date | null }> {
+    const existingWarnings = await db
+      .select({ id: circumventionWarnings.id })
+      .from(circumventionWarnings)
+      .where(eq(circumventionWarnings.vendorAccountId, vendorAccountId));
+
+    const warningNumber = existingWarnings.length + 1;
+
+    const [warning] = await db
+      .insert(circumventionWarnings)
+      .values({
+        vendorAccountId,
+        flagId: flagId ?? null,
+        reason,
+        issuedBy,
+        warningNumber,
+        notifiedEmail: false,
+      })
+      .returning();
+
+    let suspended = false;
+    let endsAt: Date | null = null;
+
+    if (warningNumber >= 3) {
+      // Check if there is already an active suspension — do not double-suspend
+      const now = new Date();
+      const [existing] = await db
+        .select({ id: vendorSuspensions.id, endsAt: vendorSuspensions.endsAt })
+        .from(vendorSuspensions)
+        .where(
+          and(
+            eq(vendorSuspensions.vendorAccountId, vendorAccountId),
+            drizzleSql`ends_at > ${now}`,
+            isNull(vendorSuspensions.liftedAt)
+          )
+        )
+        .limit(1);
+
+      if (!existing) {
+        const thirtyDaysFromNow = new Date(now.getTime() + 30 * 24 * 60 * 60 * 1000);
+        endsAt = thirtyDaysFromNow;
+
+        await db.insert(vendorSuspensions).values({
+          vendorAccountId,
+          reason,
+          warningSnapshot: warningNumber,
+          startsAt: now,
+          endsAt: thirtyDaysFromNow,
+          createdBy: issuedBy,
+          notifiedEmail: false,
+        });
+
+        // Deactivate all listings for this vendor
+        await db
+          .update(vendorListings)
+          .set({ status: "inactive", updatedAt: new Date() })
+          .where(
+            and(
+              eq(vendorListings.accountId, vendorAccountId),
+              drizzleSql`status NOT IN ('deleted', 'draft')`
+            )
+          );
+
+        suspended = true;
+      } else {
+        endsAt = existing.endsAt;
+        suspended = true;
+      }
+    }
+
+    // Fire-and-forget email notification
+    (async () => {
+      try {
+        const vendorRows = await db
+          .select({ email: vendorAccounts.email, businessName: vendorAccounts.businessName })
+          .from(vendorAccounts)
+          .where(eq(vendorAccounts.id, vendorAccountId))
+          .limit(1);
+        const vendor = vendorRows[0];
+        if (!vendor?.email) return;
+
+        if (suspended && endsAt) {
+          await sendSuspensionEmail(vendor.email, {
+            vendorName: vendor.businessName || "Vendor",
+            endsAt,
+            reason,
+            serverUrl,
+          });
+        } else {
+          await sendCircumventionWarningEmail(vendor.email, {
+            vendorName: vendor.businessName || "Vendor",
+            warningNumber,
+            reason,
+            serverUrl,
+          });
+        }
+
+        await db
+          .update(circumventionWarnings)
+          .set({ notifiedEmail: true })
+          .where(eq(circumventionWarnings.id, warning.id));
+      } catch (err: any) {
+        console.warn("[circumvention] email notification failed:", err?.message || err);
+      }
+    })();
+
+    return { warningNumber, suspended, endsAt };
+  }
+
+  // Helper: get active suspension for a vendor (null if none)
+  async function getActiveSuspension(vendorAccountId: string) {
+    const now = new Date();
+    const [row] = await db
+      .select()
+      .from(vendorSuspensions)
+      .where(
+        and(
+          eq(vendorSuspensions.vendorAccountId, vendorAccountId),
+          drizzleSql`ends_at > ${now}`,
+          isNull(vendorSuspensions.liftedAt)
+        )
+      )
+      .limit(1);
+    return row ?? null;
+  }
+
+  // POST /api/chat/circumvention/flag
+  // Called by the chat client when a message is hard-blocked.
+  // Logs the flag, issues a warning, and returns the vendor's new warning state.
+  app.post("/api/chat/circumvention/flag", messagingRateLimiter, requireDualAuthAuth0, async (req, res) => {
+    try {
+      const payload = z.object({
+        bookingId: z.string().min(1),
+        contentSnapshot: z.string().min(1).max(2000),
+        matches: z.array(z.string()).default([]),
+      }).parse(req.body ?? {});
+
+      const serverUrl = (process.env.SERVER_URL || "http://localhost:5001").replace(/\/$/, "");
+
+      // Resolve who is sending
+      const vendorAuth = (req as any).vendorAuth;
+      const customerAuth = await resolveCustomerAuthFromRequest(req, { createIfMissing: false });
+
+      if (!vendorAuth?.id && !customerAuth?.id) {
+        return res.status(401).json({ error: "Authentication required" });
+      }
+
+      const actorUserId = vendorAuth?.userId || customerAuth?.id || null;
+      const vendorAccountId = vendorAuth?.id || null;
+
+      // Insert flag
+      const [flag] = await db.insert(circumventionFlags).values({
+        flagType: "hard_block_attempt",
+        contentType: "chat_message",
+        contentSnapshot: payload.contentSnapshot,
+        matches: payload.matches,
+        vendorAccountId: vendorAccountId ?? undefined,
+        userId: actorUserId ?? undefined,
+        bookingId: payload.bookingId,
+        status: "pending",
+      }).returning();
+
+      let warningResult: { warningNumber: number; suspended: boolean; endsAt: Date | null } | null = null;
+      if (vendorAccountId) {
+        warningResult = await issueCircumventionWarning(
+          vendorAccountId,
+          flag.id,
+          "Attempted to send contact information in booking chat",
+          "system",
+          serverUrl
+        );
+      }
+
+      return res.status(201).json({
+        flagId: flag.id,
+        warningNumber: warningResult?.warningNumber ?? null,
+        suspended: warningResult?.suspended ?? false,
+        suspensionEndsAt: warningResult?.endsAt ?? null,
+      });
+    } catch (error: any) {
+      return respondWithInternalServerError(req, res, error);
+    }
+  });
+
+  // POST /api/circumvention/report
+  // Customer (or vendor) reports a piece of content for potential circumvention.
+  app.post("/api/circumvention/report", mutationRateLimiter, requireDualAuthAuth0, async (req, res) => {
+    try {
+      const payload = z.object({
+        contentType: z.enum(["chat_message", "listing_description", "listing_title", "vendor_description", "tagline"]),
+        contentSnapshot: z.string().min(1).max(2000),
+        listingId: z.string().optional(),
+        bookingId: z.string().optional(),
+        vendorAccountId: z.string().optional(),
+      }).parse(req.body ?? {});
+
+      const reportedByUserId =
+        (await resolveCustomerAuthFromRequest(req, { createIfMissing: false }))?.id ?? null;
+
+      await db.insert(circumventionFlags).values({
+        flagType: "customer_report",
+        contentType: payload.contentType,
+        contentSnapshot: payload.contentSnapshot,
+        matches: [],
+        vendorAccountId: payload.vendorAccountId ?? undefined,
+        userId: payload.vendorAccountId ? undefined : (reportedByUserId ?? undefined),
+        reportedByUserId: reportedByUserId ?? undefined,
+        listingId: payload.listingId ?? undefined,
+        bookingId: payload.bookingId ?? undefined,
+        status: "pending",
+      });
+
+      return res.status(201).json({ success: true });
+    } catch (error: any) {
+      return respondWithInternalServerError(req, res, error);
+    }
+  });
+
+  // GET /api/vendor/circumvention/status
+  // Returns the vendor's warning count, active suspension, and any listings
+  // pending admin re-review after a violation removal.
+  app.get("/api/vendor/circumvention/status", requireDualAuthAuth0, async (req, res) => {
+    try {
+      const vendorAuth = (req as any).vendorAuth;
+      if (!vendorAuth?.id) return res.status(401).json({ error: "Vendor authentication required" });
+
+      const vendorAccountId = String(vendorAuth.id);
+
+      const warnings = await db
+        .select()
+        .from(circumventionWarnings)
+        .where(eq(circumventionWarnings.vendorAccountId, vendorAccountId))
+        .orderBy(desc(circumventionWarnings.createdAt));
+
+      const suspension = await getActiveSuspension(vendorAccountId);
+
+      const removedListings = await db
+        .select({ id: vendorListings.id, title: vendorListings.title, pendingAdminReview: vendorListings.pendingAdminReview })
+        .from(vendorListings)
+        .where(
+          and(
+            eq(vendorListings.accountId, vendorAccountId),
+            eq(vendorListings.violationRemoval, true)
+          )
+        );
+
+      return res.json({
+        warningCount: warnings.length,
+        warnings,
+        suspension: suspension
+          ? { id: suspension.id, reason: suspension.reason, endsAt: suspension.endsAt, startsAt: suspension.startsAt }
+          : null,
+        removedListings,
+      });
+    } catch (error: any) {
+      return respondWithInternalServerError(req, res, error);
+    }
+  });
+
+  // GET /api/admin/circumvention/flags
+  // Returns pending flags for admin review.
+  // ?status=pending|dismissed|actioned  (default: pending)
+  app.get("/api/admin/circumvention/flags", adminRateLimiter, requireAdminAuth, async (req, res) => {
+    try {
+      const statusFilter = (req.query.status as string) || "pending";
+
+      const rows = await db.execute(drizzleSql`
+        SELECT
+          f.id,
+          f.flag_type       AS "flagType",
+          f.content_type    AS "contentType",
+          f.content_snapshot AS "contentSnapshot",
+          f.matches,
+          f.status,
+          f.reviewed_by     AS "reviewedBy",
+          f.reviewed_at     AS "reviewedAt",
+          f.created_at      AS "createdAt",
+          f.listing_id      AS "listingId",
+          f.booking_id      AS "bookingId",
+          va.id             AS "vendorAccountId",
+          va.business_name  AS "businessName",
+          va.email          AS "vendorEmail",
+          vl.title          AS "listingTitle",
+          vl.status         AS "listingStatus",
+          vl.violation_removal      AS "violationRemoval",
+          vl.pending_admin_review   AS "pendingAdminReview",
+          (SELECT COUNT(*)::int FROM circumvention_warnings w WHERE w.vendor_account_id = va.id) AS "warningCount"
+        FROM circumvention_flags f
+        LEFT JOIN vendor_accounts va ON va.id = f.vendor_account_id
+        LEFT JOIN vendor_listings  vl ON vl.id = f.listing_id
+        WHERE f.status = ${statusFilter}
+        ORDER BY f.created_at DESC
+        LIMIT 200
+      `);
+
+      return res.json(extractRows(rows));
+    } catch (error: any) {
+      return respondWithInternalServerError(req, res, error);
+    }
+  });
+
+  // GET /api/admin/circumvention/rereviews
+  // Listings that vendors have resubmitted after a violation removal.
+  app.get("/api/admin/circumvention/rereviews", adminRateLimiter, requireAdminAuth, async (req, res) => {
+    try {
+      const rows = await db.execute(drizzleSql`
+        SELECT
+          vl.id,
+          vl.title,
+          vl.status,
+          vl.description,
+          vl.updated_at     AS "updatedAt",
+          va.id             AS "vendorAccountId",
+          va.business_name  AS "businessName",
+          va.email          AS "vendorEmail",
+          (SELECT COUNT(*)::int FROM circumvention_warnings w WHERE w.vendor_account_id = va.id) AS "warningCount"
+        FROM vendor_listings vl
+        JOIN vendor_accounts va ON va.id = vl.account_id
+        WHERE vl.violation_removal = true
+          AND vl.pending_admin_review = true
+        ORDER BY vl.updated_at DESC
+        LIMIT 100
+      `);
+
+      return res.json(extractRows(rows));
+    } catch (error: any) {
+      return respondWithInternalServerError(req, res, error);
+    }
+  });
+
+  // GET /api/admin/circumvention/warnings
+  // Warning history, optionally filtered by vendor.
+  app.get("/api/admin/circumvention/warnings", adminRateLimiter, requireAdminAuth, async (req, res) => {
+    try {
+      const vendorAccountId = (req.query.vendorAccountId as string) || null;
+
+      const rows = await db.execute(drizzleSql`
+        SELECT
+          w.id,
+          w.vendor_account_id AS "vendorAccountId",
+          w.flag_id           AS "flagId",
+          w.reason,
+          w.issued_by         AS "issuedBy",
+          w.warning_number    AS "warningNumber",
+          w.created_at        AS "createdAt",
+          va.business_name    AS "businessName",
+          va.email            AS "vendorEmail"
+        FROM circumvention_warnings w
+        JOIN vendor_accounts va ON va.id = w.vendor_account_id
+        ${vendorAccountId ? drizzleSql`WHERE w.vendor_account_id = ${vendorAccountId}` : drizzleSql``}
+        ORDER BY w.created_at DESC
+        LIMIT 500
+      `);
+
+      return res.json(extractRows(rows));
+    } catch (error: any) {
+      return respondWithInternalServerError(req, res, error);
+    }
+  });
+
+  // POST /api/admin/circumvention/flags/:id/dismiss
+  // Admin dismisses a flag — no action taken against the vendor.
+  app.post("/api/admin/circumvention/flags/:id/dismiss", adminRateLimiter, requireAdminAuth, async (req, res) => {
+    try {
+      const flagId = asTrimmedString(req.params?.id);
+      if (!flagId) return res.status(400).json({ error: "Flag id required" });
+
+      const adminAuth = (req as any).adminAuth;
+      const adminEmail = adminAuth?.email || "admin";
+
+      const [updated] = await db
+        .update(circumventionFlags)
+        .set({ status: "dismissed", reviewedBy: adminEmail, reviewedAt: new Date() })
+        .where(eq(circumventionFlags.id, flagId))
+        .returning();
+
+      if (!updated) return res.status(404).json({ error: "Flag not found" });
+
+      return res.json({ success: true, flag: updated });
+    } catch (error: any) {
+      return respondWithInternalServerError(req, res, error);
+    }
+  });
+
+  // POST /api/admin/circumvention/flags/:id/warn-remove
+  // Admin issues a warning and removes (unpublishes) the associated listing.
+  // The listing is marked violation_removal=true so it must be re-reviewed before
+  // it can go live again.
+  app.post("/api/admin/circumvention/flags/:id/warn-remove", adminRateLimiter, requireAdminAuth, async (req, res) => {
+    try {
+      const flagId = asTrimmedString(req.params?.id);
+      if (!flagId) return res.status(400).json({ error: "Flag id required" });
+
+      const adminAuth = (req as any).adminAuth;
+      const adminEmail = adminAuth?.email || "admin";
+      const serverUrl = (process.env.SERVER_URL || "http://localhost:5001").replace(/\/$/, "");
+
+      const [flag] = await db
+        .select()
+        .from(circumventionFlags)
+        .where(eq(circumventionFlags.id, flagId))
+        .limit(1);
+
+      if (!flag) return res.status(404).json({ error: "Flag not found" });
+      if (flag.status === "actioned") return res.status(400).json({ error: "Flag already actioned" });
+
+      // Mark flag as actioned
+      await db
+        .update(circumventionFlags)
+        .set({ status: "actioned", reviewedBy: adminEmail, reviewedAt: new Date() })
+        .where(eq(circumventionFlags.id, flagId));
+
+      // If the flag is linked to a listing, unpublish it and mark for re-review
+      if (flag.listingId) {
+        await db
+          .update(vendorListings)
+          .set({
+            status: "inactive",
+            violationRemoval: true,
+            pendingAdminReview: false,
+            updatedAt: new Date(),
+          })
+          .where(eq(vendorListings.id, flag.listingId));
+      }
+
+      // Issue a warning
+      let warningResult: { warningNumber: number; suspended: boolean; endsAt: Date | null } | null = null;
+      if (flag.vendorAccountId) {
+        const reason =
+          flag.listingId
+            ? "Listing contained contact information or off-platform redirect (admin review)"
+            : "Content contained contact information or off-platform redirect (admin review)";
+        warningResult = await issueCircumventionWarning(
+          flag.vendorAccountId,
+          flagId,
+          reason,
+          adminEmail,
+          serverUrl
+        );
+      }
+
+      return res.json({
+        success: true,
+        warningNumber: warningResult?.warningNumber ?? null,
+        suspended: warningResult?.suspended ?? false,
+        suspensionEndsAt: warningResult?.endsAt ?? null,
+      });
+    } catch (error: any) {
+      return respondWithInternalServerError(req, res, error);
+    }
+  });
+
+  // POST /api/admin/circumvention/listings/:id/approve
+  // Admin approves a resubmitted listing after a violation removal, making it active again.
+  app.post("/api/admin/circumvention/listings/:id/approve", adminRateLimiter, requireAdminAuth, async (req, res) => {
+    try {
+      const listingId = asTrimmedString(req.params?.id);
+      if (!listingId) return res.status(400).json({ error: "Listing id required" });
+
+      const [listing] = await db
+        .select({ id: vendorListings.id, accountId: vendorListings.accountId, pendingAdminReview: vendorListings.pendingAdminReview, violationRemoval: vendorListings.violationRemoval })
+        .from(vendorListings)
+        .where(eq(vendorListings.id, listingId))
+        .limit(1);
+
+      if (!listing) return res.status(404).json({ error: "Listing not found" });
+      if (!listing.violationRemoval || !listing.pendingAdminReview) {
+        return res.status(400).json({ error: "This listing is not awaiting re-review" });
+      }
+
+      // Check the vendor is not currently suspended
+      const suspension = await getActiveSuspension(listing.accountId);
+      if (suspension) {
+        return res.status(400).json({ error: "Cannot approve listing while vendor is suspended" });
+      }
+
+      await db
+        .update(vendorListings)
+        .set({
+          status: "active",
+          violationRemoval: false,
+          pendingAdminReview: false,
+          updatedAt: new Date(),
+        })
+        .where(eq(vendorListings.id, listingId));
+
+      return res.json({ success: true });
+    } catch (error: any) {
+      return respondWithInternalServerError(req, res, error);
+    }
+  });
+
   await ensureBookingDisputesTable();
   startAutoPayoutWorker();
+
+  // ── Planning Boards ────────────────────────────────────────────────────────
+  // All routes require a logged-in customer.
+
+  // GET /api/boards/saved-ids — flat list of all listing IDs the customer has saved
+  // (used client-side to fill the heart icon without fetching every board's details)
+  app.get("/api/boards/saved-ids", requireCustomerAnyAuth, async (req, res) => {
+    try {
+      const customerAuth = await resolveCustomerAuthFromRequest(req, { createIfMissing: false });
+      if (!customerAuth?.id) return res.status(401).json({ error: "Authentication required" });
+
+      const rows = await db
+        .select({ listingId: boardSavedListings.listingId })
+        .from(boardSavedListings)
+        .innerJoin(planningBoards, eq(planningBoards.id, boardSavedListings.boardId))
+        .where(eq(planningBoards.customerId, customerAuth.id));
+
+      return res.json({ listingIds: rows.map((r) => r.listingId) });
+    } catch (err: any) {
+      return respondWithInternalServerError(req, res, err);
+    }
+  });
+
+  // GET /api/boards/for-listing/:listingId — boards list with hasSaved flag for this listing
+  // (drives the popover checkmarks; registered before /:id routes to avoid Express capture)
+  app.get("/api/boards/for-listing/:listingId", requireCustomerAnyAuth, async (req, res) => {
+    try {
+      const customerAuth = await resolveCustomerAuthFromRequest(req, { createIfMissing: false });
+      if (!customerAuth?.id) return res.status(401).json({ error: "Authentication required" });
+
+      const listingId = req.params.listingId?.trim();
+      if (!listingId) return res.status(400).json({ error: "listingId required" });
+
+      const boards = await db
+        .select({
+          id: planningBoards.id,
+          name: planningBoards.name,
+          createdAt: planningBoards.createdAt,
+          savedCount: count(boardSavedListings.id),
+        })
+        .from(planningBoards)
+        .leftJoin(boardSavedListings, eq(boardSavedListings.boardId, planningBoards.id))
+        .where(eq(planningBoards.customerId, customerAuth.id))
+        .groupBy(planningBoards.id, planningBoards.name, planningBoards.createdAt)
+        .orderBy(desc(planningBoards.createdAt));
+
+      const savedRows = await db
+        .select({ boardId: boardSavedListings.boardId })
+        .from(boardSavedListings)
+        .innerJoin(planningBoards, eq(planningBoards.id, boardSavedListings.boardId))
+        .where(
+          and(
+            eq(planningBoards.customerId, customerAuth.id),
+            eq(boardSavedListings.listingId, listingId),
+          ),
+        );
+
+      const savedBoardIds = new Set(savedRows.map((r) => r.boardId));
+      return res.json(boards.map((b) => ({ ...b, hasSaved: savedBoardIds.has(b.id) })));
+    } catch (err: any) {
+      return respondWithInternalServerError(req, res, err);
+    }
+  });
+
+  // GET /api/boards — list boards for the authenticated customer
+  app.get("/api/boards", requireCustomerAnyAuth, async (req, res) => {
+    try {
+      const customerAuth = await resolveCustomerAuthFromRequest(req, { createIfMissing: false });
+      if (!customerAuth?.id) return res.status(401).json({ error: "Authentication required" });
+
+      const boards = await db
+        .select({
+          id: planningBoards.id,
+          name: planningBoards.name,
+          createdAt: planningBoards.createdAt,
+          savedCount: count(boardSavedListings.id),
+        })
+        .from(planningBoards)
+        .leftJoin(boardSavedListings, eq(boardSavedListings.boardId, planningBoards.id))
+        .where(eq(planningBoards.customerId, customerAuth.id))
+        .groupBy(planningBoards.id, planningBoards.name, planningBoards.createdAt)
+        .orderBy(desc(planningBoards.createdAt));
+
+      return res.json(boards);
+    } catch (err: any) {
+      return respondWithInternalServerError(req, res, err);
+    }
+  });
+
+  // POST /api/boards — create a new board
+  app.post("/api/boards", boardsRateLimiter, requireCustomerAnyAuth, async (req, res) => {
+    try {
+      const customerAuth = await resolveCustomerAuthFromRequest(req, { createIfMissing: true });
+      if (!customerAuth?.id) return res.status(401).json({ error: "Authentication required" });
+
+      const name = typeof req.body?.name === "string" ? req.body.name.trim() : "";
+      if (!name) return res.status(400).json({ error: "name is required" });
+      if (name.length > 120) return res.status(400).json({ error: "name must be 120 characters or fewer" });
+
+      const [board] = await db
+        .insert(planningBoards)
+        .values({ customerId: customerAuth.id, name })
+        .returning();
+
+      return res.status(201).json(board);
+    } catch (err: any) {
+      return respondWithInternalServerError(req, res, err);
+    }
+  });
+
+  // DELETE /api/boards/:id — delete a board (owner only)
+  app.delete("/api/boards/:id", boardsRateLimiter, requireCustomerAnyAuth, async (req, res) => {
+    try {
+      const customerAuth = await resolveCustomerAuthFromRequest(req, { createIfMissing: false });
+      if (!customerAuth?.id) return res.status(401).json({ error: "Authentication required" });
+
+      const boardId = req.params.id?.trim();
+      if (!boardId) return res.status(400).json({ error: "Board id required" });
+
+      const [existing] = await db
+        .select({ id: planningBoards.id, customerId: planningBoards.customerId })
+        .from(planningBoards)
+        .where(eq(planningBoards.id, boardId))
+        .limit(1);
+
+      if (!existing) return res.status(404).json({ error: "Board not found" });
+      if (existing.customerId !== customerAuth.id) return res.status(403).json({ error: "Forbidden" });
+
+      await db.delete(planningBoards).where(eq(planningBoards.id, boardId));
+      return res.status(204).send();
+    } catch (err: any) {
+      return respondWithInternalServerError(req, res, err);
+    }
+  });
+
+  // GET /api/boards/:id/listings — list saved listings for a board
+  app.get("/api/boards/:id/listings", requireCustomerAnyAuth, async (req, res) => {
+    try {
+      const customerAuth = await resolveCustomerAuthFromRequest(req, { createIfMissing: false });
+      if (!customerAuth?.id) return res.status(401).json({ error: "Authentication required" });
+
+      const boardId = req.params.id?.trim();
+      if (!boardId) return res.status(400).json({ error: "Board id required" });
+
+      const [board] = await db
+        .select({ id: planningBoards.id, customerId: planningBoards.customerId, name: planningBoards.name })
+        .from(planningBoards)
+        .where(eq(planningBoards.id, boardId))
+        .limit(1);
+
+      if (!board) return res.status(404).json({ error: "Board not found" });
+      if (board.customerId !== customerAuth.id) return res.status(403).json({ error: "Forbidden" });
+
+      const rows = await db
+        .select({
+          savedAt: boardSavedListings.savedAt,
+          listing: vendorListings,
+        })
+        .from(boardSavedListings)
+        .innerJoin(vendorListings, eq(vendorListings.id, boardSavedListings.listingId))
+        .where(eq(boardSavedListings.boardId, boardId))
+        .orderBy(desc(boardSavedListings.savedAt));
+
+      return res.json({
+        board: { id: board.id, name: board.name },
+        listings: rows.map((r) => ({ ...r.listing, savedAt: r.savedAt })),
+      });
+    } catch (err: any) {
+      return respondWithInternalServerError(req, res, err);
+    }
+  });
+
+  // POST /api/boards/:id/listings — save a listing to a board
+  app.post("/api/boards/:id/listings", boardsRateLimiter, requireCustomerAnyAuth, async (req, res) => {
+    try {
+      const customerAuth = await resolveCustomerAuthFromRequest(req, { createIfMissing: false });
+      if (!customerAuth?.id) return res.status(401).json({ error: "Authentication required" });
+
+      const boardId = req.params.id?.trim();
+      const listingId = typeof req.body?.listingId === "string" ? req.body.listingId.trim() : "";
+      if (!boardId) return res.status(400).json({ error: "Board id required" });
+      if (!listingId) return res.status(400).json({ error: "listingId is required" });
+
+      const [board] = await db
+        .select({ customerId: planningBoards.customerId })
+        .from(planningBoards)
+        .where(eq(planningBoards.id, boardId))
+        .limit(1);
+
+      if (!board) return res.status(404).json({ error: "Board not found" });
+      if (board.customerId !== customerAuth.id) return res.status(403).json({ error: "Forbidden" });
+
+      // Upsert — ignore conflict on (board_id, listing_id)
+      const [saved] = await db
+        .insert(boardSavedListings)
+        .values({ boardId, listingId })
+        .onConflictDoNothing()
+        .returning();
+
+      return res.status(201).json(saved ?? { boardId, listingId });
+    } catch (err: any) {
+      return respondWithInternalServerError(req, res, err);
+    }
+  });
+
+  // DELETE /api/boards/:id/listings/:listingId — remove a listing from a board
+  app.delete("/api/boards/:id/listings/:listingId", boardsRateLimiter, requireCustomerAnyAuth, async (req, res) => {
+    try {
+      const customerAuth = await resolveCustomerAuthFromRequest(req, { createIfMissing: false });
+      if (!customerAuth?.id) return res.status(401).json({ error: "Authentication required" });
+
+      const boardId = req.params.id?.trim();
+      const listingId = req.params.listingId?.trim();
+      if (!boardId || !listingId) return res.status(400).json({ error: "Board id and listing id required" });
+
+      const [board] = await db
+        .select({ customerId: planningBoards.customerId })
+        .from(planningBoards)
+        .where(eq(planningBoards.id, boardId))
+        .limit(1);
+
+      if (!board) return res.status(404).json({ error: "Board not found" });
+      if (board.customerId !== customerAuth.id) return res.status(403).json({ error: "Forbidden" });
+
+      await db
+        .delete(boardSavedListings)
+        .where(
+          and(
+            eq(boardSavedListings.boardId, boardId),
+            eq(boardSavedListings.listingId, listingId),
+          ),
+        );
+
+      return res.status(204).send();
+    } catch (err: any) {
+      return respondWithInternalServerError(req, res, err);
+    }
+  });
+  // ── End Planning Boards ────────────────────────────────────────────────────
+
+  // ── Feedback Submissions ───────────────────────────────────────────────────
+  // Customers and vendors can submit feature requests and bug reports.
+  // Admins can view and flag submissions for follow-up.
+
+  const feedbackUploadsDir = path.join(process.cwd(), "server/uploads/feedback");
+
+  const feedbackAttachmentUpload = multer({
+    storage: multer.memoryStorage(),
+    limits: { fileSize: 10 * 1024 * 1024 }, // 10 MB
+    fileFilter: (_req, file, cb) => {
+      const allowed = ["image/jpeg", "image/png", "image/gif", "image/webp", "application/pdf"];
+      cb(null, allowed.includes(file.mimetype));
+    },
+  });
+
+  // POST /api/feedback/attachment — upload a file, returns { url }
+  app.post(
+    "/api/feedback/attachment",
+    uploadRateLimiter,
+    requireAuth0,
+    feedbackAttachmentUpload.single("file"),
+    async (req: any, res: any) => {
+      try {
+        if (!req.file) return res.status(400).json({ error: "No file provided or file type not allowed" });
+
+        const ext = path.extname(req.file.originalname).toLowerCase() || ".bin";
+        const filename = `${crypto.randomUUID()}${ext}`;
+
+        if (isObjectStorageConfigured()) {
+          const key = makeObjectKey("feedback" as UploadFolder, filename);
+          await uploadBufferToObjectStorage({ buffer: req.file.buffer, key, contentType: req.file.mimetype });
+          return res.json({ url: `/uploads/feedback/${filename}` });
+        }
+
+        await fs.mkdir(feedbackUploadsDir, { recursive: true });
+        await fs.writeFile(path.join(feedbackUploadsDir, filename), req.file.buffer);
+        return res.json({ url: `/uploads/feedback/${filename}` });
+      } catch (err: any) {
+        return respondWithInternalServerError(req, res, err);
+      }
+    }
+  );
+
+  // POST /api/feedback — submit a feature request or bug report
+  app.post("/api/feedback", mutationRateLimiter, requireAuth0, async (req: any, res: any) => {
+    try {
+      const auth0 = req.auth0 as { sub?: string; email?: string; name?: string } | undefined;
+      const body = req.body as { type?: string; title?: string; description?: string; attachmentUrl?: string };
+
+      if (!body.type || !["feature_request", "bug_report"].includes(body.type)) {
+        return res.status(400).json({ error: "type must be 'feature_request' or 'bug_report'" });
+      }
+      if (!body.title?.trim()) return res.status(400).json({ error: "title is required" });
+      if (!body.description?.trim()) return res.status(400).json({ error: "description is required" });
+
+      // Resolve identity — try vendor first, then customer
+      let submitterRole: "customer" | "vendor" = "customer";
+      let submittedByUserId: string | null = null;
+      let submittedByVendorAccountId: string | null = null;
+      let submitterName: string | null = auth0?.name ?? null;
+      let submitterEmail: string | null = auth0?.email ?? null;
+
+      const vendorResolution = auth0?.sub
+        ? await resolveVendorAccountForAuth0Identity({ auth0Sub: auth0.sub, email: auth0.email, context: "feedback" })
+        : null;
+
+      if (vendorResolution?.account && !vendorResolution.account.deletedAt) {
+        submitterRole = "vendor";
+        submittedByVendorAccountId = vendorResolution.account.id;
+        submitterName = vendorResolution.account.businessName ?? submitterName;
+        submitterEmail = vendorResolution.account.email ?? submitterEmail;
+      } else if (auth0?.sub) {
+        const [userRow] = await db
+          .select({ id: users.id, name: users.name, email: users.email })
+          .from(users)
+          .where(eq(users.auth0Sub, auth0.sub))
+          .limit(1);
+        if (userRow) {
+          submittedByUserId = userRow.id;
+          submitterName = userRow.name ?? submitterName;
+          submitterEmail = userRow.email ?? submitterEmail;
+        }
+      }
+
+      const [row] = await db
+        .insert(feedbackSubmissions)
+        .values({
+          type: body.type as "feature_request" | "bug_report",
+          title: body.title.trim(),
+          description: body.description.trim(),
+          attachmentUrl: body.attachmentUrl?.trim() || null,
+          submittedByUserId,
+          submittedByVendorAccountId,
+          submitterRole,
+          submitterName,
+          submitterEmail,
+        })
+        .returning({ id: feedbackSubmissions.id });
+
+      return res.status(201).json({ id: row.id });
+    } catch (err: any) {
+      return respondWithInternalServerError(req, res, err);
+    }
+  });
+
+  // GET /api/admin/feedback — list all feedback submissions, newest first
+  app.get("/api/admin/feedback", adminRateLimiter, requireAdminAuth, async (req: any, res: any) => {
+    try {
+      const rows = await db
+        .select()
+        .from(feedbackSubmissions)
+        .orderBy(desc(feedbackSubmissions.createdAt));
+      return res.json(rows);
+    } catch (err: any) {
+      return respondWithInternalServerError(req, res, err);
+    }
+  });
+
+  // POST /api/admin/feedback/:id/flag — toggle the flagged state
+  app.post("/api/admin/feedback/:id/flag", adminRateLimiter, requireAdminAuth, async (req: any, res: any) => {
+    try {
+      const id = req.params.id?.trim();
+      if (!id) return res.status(400).json({ error: "id required" });
+
+      const [existing] = await db
+        .select({ id: feedbackSubmissions.id, flagged: feedbackSubmissions.flagged })
+        .from(feedbackSubmissions)
+        .where(eq(feedbackSubmissions.id, id))
+        .limit(1);
+
+      if (!existing) return res.status(404).json({ error: "Not found" });
+
+      const nowFlagged = !existing.flagged;
+      await db
+        .update(feedbackSubmissions)
+        .set({ flagged: nowFlagged, flaggedAt: nowFlagged ? new Date() : null })
+        .where(eq(feedbackSubmissions.id, id));
+
+      return res.json({ flagged: nowFlagged });
+    } catch (err: any) {
+      return respondWithInternalServerError(req, res, err);
+    }
+  });
+
+  // ── End Feedback Submissions ───────────────────────────────────────────────
 
   const httpServer = createServer(app);
   return httpServer;

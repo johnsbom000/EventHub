@@ -83,10 +83,22 @@ function deriveBookingAmounts(booking: VendorBooking) {
   };
 }
 
+type VendorMe = {
+  googleConnectionStatus?: string | null;
+};
+
 export default function VendorBookings() {
   const { isAuthenticated, getAccessTokenSilently } = useAuth0();
   const queryClient = useQueryClient();
   const { toast } = useToast();
+
+  const { data: vendorAccount } = useQuery<VendorMe>({
+    queryKey: ["/api/vendor/me"],
+    enabled: isAuthenticated,
+  });
+
+  const isGoogleConnected =
+    (vendorAccount?.googleConnectionStatus || "disconnected").toLowerCase() === "connected";
 
   const {
     data: bookings = [],
@@ -105,6 +117,33 @@ export default function VendorBookings() {
   const [actionBookingId, setActionBookingId] = useState<string | null>(null);
   const [expandedBookingId, setExpandedBookingId] = useState<string | null>(null);
   const [isGoogleCalendarConnectLoading, setIsGoogleCalendarConnectLoading] = useState(false);
+
+  // Handle ?google_calendar=connected|error after OAuth callback redirect
+  React.useEffect(() => {
+    const params = new URLSearchParams(window.location.search);
+    const googleCalendarParam = params.get("google_calendar");
+    if (!googleCalendarParam) return;
+
+    params.delete("google_calendar");
+    const newSearch = params.toString();
+    const newUrl = window.location.pathname + (newSearch ? `?${newSearch}` : "");
+    window.history.replaceState(null, "", newUrl);
+
+    if (googleCalendarParam === "connected") {
+      toast({
+        title: "Google Calendar connected",
+        description: "Your Google Calendar has been successfully linked.",
+      });
+      queryClient.invalidateQueries({ queryKey: ["/api/vendor/me"] });
+    } else if (googleCalendarParam === "error") {
+      toast({
+        title: "Google Calendar connection failed",
+        description: "Something went wrong connecting your calendar. Please try again.",
+        variant: "destructive",
+      });
+    }
+  // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, []);
 
   const bookingActionMutation = useMutation({
     mutationFn: async (payload: { id: string; status: "confirmed" | "completed" | "cancelled" }) => {
@@ -343,7 +382,7 @@ export default function VendorBookings() {
         },
       });
 
-      const response = await fetch("/api/google/oauth/start", {
+      const response = await fetch("/api/google/oauth/start?returnTo=%2Fvendor%2Fbookings", {
         method: "GET",
         headers: {
           Authorization: `Bearer ${token}`,
@@ -374,19 +413,46 @@ export default function VendorBookings() {
 
   return (
     <VendorShell>
-      <div className="max-w-7xl mx-auto space-y-6">
+      <div className="max-w-7xl mx-auto space-y-5">
         <div>
           <h1 className="text-3xl font-bold mb-2" data-testid="text-page-title">
             Bookings & Jobs
           </h1>
-          <p className="text-muted-foreground">
-            View all bookings on a calendar and filter by status.
-          </p>
         </div>
 
-        <div className="grid grid-cols-1 items-start gap-4 xl:grid-cols-[minmax(0,1fr)_320px]">
+        <div className="flex items-start">
+          <div className="w-full max-w-xl rounded-xl border border-[hsl(var(--secondary-accent)/0.45)] bg-[hsl(var(--secondary-accent)/0.12)] p-5 sm:p-6">
+            <h2 className="font-heading text-[20px] leading-none tracking-tight">Google Calendar</h2>
+            {isGoogleConnected ? (
+              <>
+                <div className="mt-3 text-sm">
+                  <span className="font-medium text-foreground">Status: </span>
+                  <span className="text-emerald-600">Connected</span>
+                </div>
+              </>
+            ) : (
+              <>
+                <div className="mt-3 text-sm">
+                  <span className="font-medium text-foreground">Status: </span>
+                  <span className="text-muted-foreground">Not connected</span>
+                </div>
+                <div className="mt-4">
+                  <Button
+                    onClick={handleConnectGoogleCalendar}
+                    disabled={isGoogleCalendarConnectLoading}
+                    data-testid="button-connect-google-calendar-bookings"
+                  >
+                    {isGoogleCalendarConnectLoading ? "Opening Google..." : "Connect Google Calendar"}
+                  </Button>
+                </div>
+              </>
+            )}
+          </div>
+        </div>
+
+        <section className="px-5 pb-4 pt-2">
           <Tabs value={activeTab} onValueChange={(v) => setActiveTab(v as TabKey)}>
-            <TabsList>
+            <TabsList className="h-auto w-full flex-wrap justify-start gap-2 rounded-none bg-transparent p-0">
               <TabsTrigger
                 value="all"
                 className={STATUS_TAB_TRIGGER_ACTIVE_CLASSNAME}
@@ -425,31 +491,10 @@ export default function VendorBookings() {
             </TabsList>
           </Tabs>
 
-          <div className="rounded-xl border border-[hsl(var(--secondary-accent)/0.45)] bg-[hsl(var(--secondary-accent)/0.12)] p-5">
-            <h2 className="font-heading text-[20px] leading-none tracking-tight">Connect Google Calendar</h2>
-            <p className="mt-3 text-sm text-muted-foreground">
-              Add your calendar here so booking availability stays aligned.
-            </p>
-            <div className="mt-5">
-              <Button
-                onClick={handleConnectGoogleCalendar}
-                disabled={isGoogleCalendarConnectLoading}
-                data-testid="button-connect-google-calendar-bookings"
-              >
-                {isGoogleCalendarConnectLoading ? "Opening Google..." : "Connect Google Calendar"}
-              </Button>
-            </div>
-          </div>
-        </div>
-
-        <section className="px-5 py-4">
-          <h2 className="font-heading text-[20px] leading-none tracking-tight">{summary.title}</h2>
-          <p className="mt-3 text-sm text-muted-foreground">{summary.subtitle}</p>
-
-          <div className="mt-5 grid grid-cols-1 gap-4 md:grid-cols-[minmax(0,1fr)_auto_minmax(0,1fr)_auto_minmax(0,1fr)] md:gap-0">
+          <div className="mt-4 grid grid-cols-1 gap-4 md:grid-cols-[minmax(0,1fr)_auto_minmax(0,1fr)_auto_minmax(0,1fr)] md:gap-0">
             <div className="px-4 py-2">
-              <div className="text-sm text-muted-foreground">{summary.label1}</div>
-              <div className="mt-1 text-[2rem] font-semibold leading-none">
+              <div className="font-heading text-xl text-muted-foreground">{summary.label1}</div>
+              <div className="font-heading mt-1 text-[2rem] font-semibold leading-none">
                 {summary.value1 instanceof Date
                   ? summary.value1.toLocaleString(undefined, {
                       month: "short",
@@ -465,8 +510,8 @@ export default function VendorBookings() {
             </div>
 
             <div className="px-4 py-2">
-              <div className="text-sm text-muted-foreground">{summary.label2}</div>
-              <div className="mt-1 text-[2rem] font-semibold leading-none">{summary.value2}</div>
+              <div className="font-heading text-xl text-muted-foreground">{summary.label2}</div>
+              <div className="font-heading mt-1 text-[2rem] font-semibold leading-none">{summary.value2}</div>
             </div>
 
             <div className="hidden px-2 md:flex md:items-center md:justify-center">
@@ -474,8 +519,8 @@ export default function VendorBookings() {
             </div>
 
             <div className="px-4 py-2">
-              <div className="text-sm text-muted-foreground">{summary.label3}</div>
-              <div className="mt-1 text-[2rem] font-semibold leading-none">
+              <div className="font-heading text-xl text-muted-foreground">{summary.label3}</div>
+              <div className="font-heading mt-1 text-[2rem] font-semibold leading-none">
                 {new Intl.NumberFormat(undefined, {
                   style: "currency",
                   currency: "USD",
@@ -536,7 +581,7 @@ export default function VendorBookings() {
             ) : viewMode === "calendar" ? (
               <>
                 {/* Day-of-week header */}
-                <div className="grid grid-cols-7 text-xs font-medium text-muted-foreground mb-2">
+                <div className="grid grid-cols-7 text-sm font-medium text-muted-foreground mb-2">
                   {["Sun", "Mon", "Tue", "Wed", "Thu", "Fri", "Sat"].map((d) => (
                     <div key={d} className="px-2 py-1">
                       {d}
@@ -562,14 +607,14 @@ export default function VendorBookings() {
                         <div className="flex items-start justify-between">
                           <div className="text-sm font-medium">{day.getDate()}</div>
                           {items.length > 0 ? (
-                            <div className="text-xs text-muted-foreground">{items.length}</div>
+                            <div className="text-sm text-muted-foreground">{items.length}</div>
                           ) : null}
                         </div>
 
                         {items.length > 0 ? (
                           <div className="mt-2 space-y-1">
                             {items.slice(0, 3).map((it) => (
-                              <div key={it.id} className="text-xs truncate">
+                              <div key={it.id} className="text-sm truncate">
                                 • {it.status || "booking"}
                                 {` · ${it.googleSyncLabel}`}
                                 {it.estimatedPayoutCents != null
@@ -578,7 +623,7 @@ export default function VendorBookings() {
                               </div>
                             ))}
                             {items.length > 3 ? (
-                              <div className="text-xs text-muted-foreground">
+                              <div className="text-sm text-muted-foreground">
                                 +{items.length - 3} more
                               </div>
                             ) : null}
@@ -612,7 +657,7 @@ export default function VendorBookings() {
                         <span className="capitalize text-muted-foreground">{item.status || "unknown"}</span>
                         <span
                           className={[
-                            "rounded-full border px-2 py-0.5 text-xs font-medium uppercase tracking-wide",
+                            "rounded-full border px-2 py-0.5 text-sm font-medium uppercase tracking-wide",
                             item.googleSyncLabel === "synced"
                               ? "border-emerald-200 bg-emerald-50 text-emerald-700"
                               : "border-amber-200 bg-amber-50 text-amber-700",
@@ -648,7 +693,7 @@ export default function VendorBookings() {
                       {expandedBookingId === item.id ? (
                         <div className="mt-3 rounded-md border bg-muted/30 p-3 space-y-3">
                           <div className="space-y-1">
-                            <div className="text-xs uppercase tracking-wide text-muted-foreground">Fee Breakdown</div>
+                            <div className="text-sm uppercase tracking-wide text-muted-foreground">Fee Breakdown</div>
                             <div className="text-sm flex items-center justify-between gap-3">
                               <span className="text-muted-foreground">Google Calendar</span>
                               <span>{item.googleSyncLabel === "synced" ? "Synced" : "Unsynced"}</span>
@@ -676,13 +721,13 @@ export default function VendorBookings() {
                           </div>
                           {item.raw.customerNotes ? (
                             <div>
-                              <div className="text-xs uppercase tracking-wide text-muted-foreground">Notes</div>
+                              <div className="text-sm uppercase tracking-wide text-muted-foreground">Notes</div>
                               <div className="text-sm">{item.raw.customerNotes}</div>
                             </div>
                           ) : null}
                           {item.raw.customerQuestions ? (
                             <div>
-                              <div className="text-xs uppercase tracking-wide text-muted-foreground">Questions</div>
+                              <div className="text-sm uppercase tracking-wide text-muted-foreground">Questions</div>
                               <div className="text-sm">{item.raw.customerQuestions}</div>
                             </div>
                           ) : null}

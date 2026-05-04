@@ -50,9 +50,6 @@ export default function VendorPayments() {
           <h1 className="text-3xl font-bold mb-2" data-testid="text-page-title">
             Payments
           </h1>
-          <p className="text-muted-foreground">
-            Track your earnings and payment history
-          </p>
         </div>
 
         <div className="grid grid-cols-1 gap-4 md:grid-cols-[minmax(0,1fr)_auto_minmax(0,1fr)] md:gap-0">
@@ -64,7 +61,7 @@ export default function VendorPayments() {
             <div className="mt-4 text-2xl font-bold" data-testid="stat-total-earned">
               {formatUsdFromCents(totalNetEarned)}
             </div>
-            <p className="text-xs text-muted-foreground">All time earnings net of fees</p>
+            <p className="text-sm text-muted-foreground">All time earnings net of fees</p>
           </section>
 
           <div className="hidden px-2 md:flex md:items-center md:justify-center" aria-hidden>
@@ -79,19 +76,16 @@ export default function VendorPayments() {
             <div className="mt-4 text-2xl font-bold" data-testid="stat-upcoming-net-payout">
               {formatUsdFromCents(upcomingNetPayout)}
             </div>
-            <p className="text-xs text-muted-foreground">Eligible completed jobs pending manual release</p>
+            <p className="text-sm text-muted-foreground">Eligible completed jobs pending manual release</p>
           </section>
         </div>
 
-        <p className="text-xs text-muted-foreground">{payoutPolicyNote}</p>
+        <p className="text-sm text-muted-foreground">{payoutPolicyNote}</p>
 
         <div className="h-px w-full bg-[var(--dashboard-divider-blue)]" aria-hidden />
 
         <section className="px-4 py-2">
-          <h2 className="font-heading text-[32px] leading-none tracking-tight">Payment History</h2>
-          <p className="mt-3 text-sm text-muted-foreground">
-            Detailed list of all payments and transactions
-          </p>
+          <h2 className="text-2xl font-semibold text-foreground">Payment History</h2>
 
           {history.length === 0 ? (
             <div className="py-12 text-center">

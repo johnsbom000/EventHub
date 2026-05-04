@@ -13,6 +13,7 @@ if (process.env.NODE_ENV !== "production") {
 }
 
 import express, { type Request, Response, NextFunction } from "express";
+import helmet from "helmet";
 import { registerRoutes } from "./routes";
 import { setupVite, serveStatic, log } from "./vite";
 
@@ -22,6 +23,20 @@ if (process.env.NODE_ENV !== "production") {
 }
 
 const app = express();
+
+// Trust exactly one proxy hop (e.g. Render/Fly/nginx). This makes Express
+// populate req.ip from the last X-Forwarded-For entry added by our trusted
+// reverse proxy rather than trusting the raw header from the client.
+app.set("trust proxy", 1);
+
+app.use(
+  helmet({
+    // Allow inline scripts/styles for the Vite dev server; tighten in production via env
+    contentSecurityPolicy: process.env.NODE_ENV === "production" ? undefined : false,
+    crossOriginEmbedderPolicy: false, // Stripe.js requires this to be off
+  })
+);
+
 const uploadsDir = path.resolve(__dirname, "./uploads");
 
 // Dev/local fallback for listing/shop uploads when object storage is not configured.
@@ -86,6 +101,11 @@ declare module 'http' {
     rawBody: unknown
   }
 }
+
+// Restrict body size for public/unauthenticated endpoints before the global 6MB parser.
+// This prevents large-payload DoS attacks against routes that need no photos.
+app.use(["/api/events", "/api/track"], express.json({ limit: "10kb" }));
+
 app.use(express.json({
   // Customer profile photos are sent as base64 data URLs in JSON.
   // 2MB binary expands above 2.6MB as base64, so default parser size is insufficient.

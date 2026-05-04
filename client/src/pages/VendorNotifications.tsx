@@ -269,14 +269,10 @@ export default function VendorNotifications() {
             <h1 className="text-3xl font-bold mb-2" data-testid="text-page-title">
               Notifications
             </h1>
-            <p className="text-muted-foreground">
-              Manage your notification preferences and alerts
-            </p>
           </div>
 
           <section className="px-4 py-2">
-            <h2 className="font-heading text-[32px] leading-none tracking-tight">Recent Notifications</h2>
-            <p className="mt-3 text-sm text-muted-foreground">Your latest alerts and updates</p>
+            <h2 className="text-2xl font-semibold text-foreground">Recent Notifications</h2>
             <div className="mt-5">
               {isLoading ? (
                 <div className="text-center py-12 text-muted-foreground">Loading...</div>
@@ -334,7 +330,7 @@ export default function VendorNotifications() {
                             ) : null}
                           </div>
 
-                          <div className="shrink-0 text-xs text-muted-foreground">
+                          <div className="shrink-0 text-sm text-muted-foreground">
                             {timeLabel}
                           </div>
                         </div>
@@ -365,7 +361,7 @@ export default function VendorNotifications() {
                                   View booking details
                                 </Button>
                               ) : (
-                                <span className="text-xs text-muted-foreground">
+                                <span className="text-sm text-muted-foreground">
                                   {bookingsLoading
                                     ? "Loading booking details..."
                                     : "Booking details unavailable"}
@@ -385,7 +381,7 @@ export default function VendorNotifications() {
           <div className="h-px w-full bg-[var(--dashboard-divider-blue)]" aria-hidden />
 
           <section className="px-4 py-2">
-            <h2 className="font-heading text-[32px] leading-none tracking-tight">Notification Preferences</h2>
+            <h2 className="text-2xl font-semibold text-foreground">Notification Preferences</h2>
             <p className="mt-3 text-sm text-muted-foreground">Choose what alerts you want to receive</p>
             <div className="mt-5 space-y-4">
               <div className="flex items-center justify-between">
@@ -460,7 +456,7 @@ export default function VendorNotifications() {
 
             <div className="grid gap-3 sm:grid-cols-2">
               <div className="rounded-lg border p-3">
-                <div className="text-xs uppercase tracking-wide text-muted-foreground">
+                <div className="text-sm uppercase tracking-wide text-muted-foreground">
                   Booking number
                 </div>
                 <div className="mt-1 font-medium">
@@ -468,7 +464,7 @@ export default function VendorNotifications() {
                 </div>
               </div>
               <div className="rounded-lg border p-3">
-                <div className="text-xs uppercase tracking-wide text-muted-foreground">
+                <div className="text-sm uppercase tracking-wide text-muted-foreground">
                   Status
                 </div>
                 <div className="mt-1 font-medium">
@@ -476,7 +472,7 @@ export default function VendorNotifications() {
                 </div>
               </div>
               <div className="rounded-lg border p-3">
-                <div className="text-xs uppercase tracking-wide text-muted-foreground">
+                <div className="text-sm uppercase tracking-wide text-muted-foreground">
                   Listing
                 </div>
                 <div className="mt-1 font-medium">
@@ -484,7 +480,7 @@ export default function VendorNotifications() {
                 </div>
               </div>
               <div className="rounded-lg border p-3">
-                <div className="text-xs uppercase tracking-wide text-muted-foreground">
+                <div className="text-sm uppercase tracking-wide text-muted-foreground">
                   Event
                 </div>
                 <div className="mt-1 font-medium">
@@ -492,7 +488,7 @@ export default function VendorNotifications() {
                 </div>
               </div>
               <div className="rounded-lg border p-3">
-                <div className="text-xs uppercase tracking-wide text-muted-foreground">
+                <div className="text-sm uppercase tracking-wide text-muted-foreground">
                   Event date
                 </div>
                 <div className="mt-1 font-medium">
@@ -500,7 +496,7 @@ export default function VendorNotifications() {
                 </div>
               </div>
               <div className="rounded-lg border p-3">
-                <div className="text-xs uppercase tracking-wide text-muted-foreground">
+                <div className="text-sm uppercase tracking-wide text-muted-foreground">
                   Event time
                 </div>
                 <div className="mt-1 font-medium">
@@ -509,7 +505,7 @@ export default function VendorNotifications() {
               </div>
               {activeBooking.eventLocation ? (
                 <div className="rounded-lg border p-3 sm:col-span-2">
-                  <div className="text-xs uppercase tracking-wide text-muted-foreground">
+                  <div className="text-sm uppercase tracking-wide text-muted-foreground">
                     Event location
                   </div>
                   <div className="mt-1 font-medium">
@@ -519,7 +515,7 @@ export default function VendorNotifications() {
               ) : null}
               {typeof activeBooking.guestCount === "number" && activeBooking.guestCount > 0 ? (
                 <div className="rounded-lg border p-3">
-                  <div className="text-xs uppercase tracking-wide text-muted-foreground">
+                  <div className="text-sm uppercase tracking-wide text-muted-foreground">
                     Guest count
                   </div>
                   <div className="mt-1 font-medium">
@@ -531,7 +527,7 @@ export default function VendorNotifications() {
 
             {activeBookingAmounts ? (
               <div className="rounded-lg border p-4 space-y-2">
-                <div className="text-xs uppercase tracking-wide text-muted-foreground">
+                <div className="text-sm uppercase tracking-wide text-muted-foreground">
                   Price details
                 </div>
                 <div className="text-sm flex items-center justify-between gap-3">
@@ -559,7 +555,7 @@ export default function VendorNotifications() {
 
             {activeBooking.listingDescription ? (
               <div className="rounded-lg border p-4">
-                <div className="text-xs uppercase tracking-wide text-muted-foreground">
+                <div className="text-sm uppercase tracking-wide text-muted-foreground">
                   Description
                 </div>
                 <div className="mt-2 text-sm whitespace-pre-wrap">
@@ -570,14 +566,14 @@ export default function VendorNotifications() {
 
             {activeIncludedItems.length > 0 ? (
               <div className="rounded-lg border p-4">
-                <div className="text-xs uppercase tracking-wide text-muted-foreground">
+                <div className="text-sm uppercase tracking-wide text-muted-foreground">
                   What&apos;s included
                 </div>
                 <div className="mt-2 flex flex-wrap gap-2">
                   {activeIncludedItems.map((item) => (
                     <span
                       key={item}
-                      className="rounded-full border px-2.5 py-1 text-xs text-muted-foreground"
+                      className="rounded-full border px-2.5 py-1 text-sm text-muted-foreground"
                     >
                       {item}
                     </span>
@@ -589,7 +585,7 @@ export default function VendorNotifications() {
             <div className="grid gap-3 sm:grid-cols-2">
               {activeBooking.deliveryIncluded !== null ? (
                 <div className="rounded-lg border p-3">
-                  <div className="text-xs uppercase tracking-wide text-muted-foreground">
+                  <div className="text-sm uppercase tracking-wide text-muted-foreground">
                     Delivery
                   </div>
                   <div className="mt-1 font-medium">
@@ -599,7 +595,7 @@ export default function VendorNotifications() {
               ) : null}
               {activeBooking.setupIncluded !== null ? (
                 <div className="rounded-lg border p-3">
-                  <div className="text-xs uppercase tracking-wide text-muted-foreground">
+                  <div className="text-sm uppercase tracking-wide text-muted-foreground">
                     Setup
                   </div>
                   <div className="mt-1 font-medium">
@@ -611,7 +607,7 @@ export default function VendorNotifications() {
 
             {activeBooking.customerNotes ? (
               <div className="rounded-lg border p-4">
-                <div className="text-xs uppercase tracking-wide text-muted-foreground">
+                <div className="text-sm uppercase tracking-wide text-muted-foreground">
                   Customer notes
                 </div>
                 <div className="mt-2 text-sm whitespace-pre-wrap">
@@ -622,7 +618,7 @@ export default function VendorNotifications() {
 
             {activeBooking.customerQuestions ? (
               <div className="rounded-lg border p-4">
-                <div className="text-xs uppercase tracking-wide text-muted-foreground">
+                <div className="text-sm uppercase tracking-wide text-muted-foreground">
                   Customer questions
                 </div>
                 <div className="mt-2 text-sm whitespace-pre-wrap">

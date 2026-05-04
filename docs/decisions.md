@@ -1,6 +1,6 @@
 # Event Hub Decisions Log
 
-Last updated: April 22, 2026
+Last updated: May 2, 2026
 
 ## Purpose
 This file tracks decisions that affect product scope, architecture, and launch tradeoffs.
@@ -13,6 +13,204 @@ Template for new entries:
 - Why:
 - Impact:
 - Revisit trigger:
+
+---
+
+## [2026-05-02] Separate Listing Detail back and save controls to opposite sides of the top row
+- Context: On listing detail, the back button and heart/save control appeared adjacent on the left above photos, reducing clarity and tap separation.
+- Decision: Update the listing-detail top control row in `client/src/pages/ListingDetail.tsx` from left-clustered spacing to `justify-between`, keeping `Back` on the far left and the heart/save control on the far right with no heart logic changes.
+- Why: This is a minimal layout-only adjustment that improves control separation and keeps existing save behavior intact.
+- Impact: Back remains in its current left position; heart is now aligned to the matching right-side position across mobile and desktop; save popover/toggle behavior is unchanged.
+- Revisit trigger: If additional top-row controls are added later, convert the row to a dedicated header component with explicit left/center/right slots for stable placement.
+
+---
+
+## [2026-05-02] Simplify full-screen photos header by removing redundant close icon and top divider
+- Context: In listing detail `See all photos` full-screen view, the top-right close `X` duplicated the top-left `Back` control, and the header bottom border rendered as an unwanted blue line.
+- Decision: In `client/src/pages/ListingDetail.tsx`, remove the top-right close button from the full-screen gallery header and remove the header `border-b` divider class, keeping only the `Back` control for exit.
+- Why: This is a minimal view-local cleanup that reduces redundant controls and matches requested visual treatment without changing gallery behavior.
+- Impact: `See all photos` now shows no top-right close icon and no top border line; opening/closing photos and navigation behavior remain unchanged.
+- Revisit trigger: If gallery-header actions expand later (share/download/etc.), revisit header layout and reintroduce a right-side action slot only when it provides unique function beyond `Back`.
+
+---
+
+## [2026-05-02] Prevent auto-open of saved-email suggestions in Login/Signup modal until user interaction
+- Context: On Safari, opening the customer `Login / Sign up` modal could immediately surface stored-email suggestions in the email field before intentional user interaction.
+- Decision: In `client/src/components/AuthModal.tsx`, prevent Radix dialog open auto-focus via `onOpenAutoFocus` on `DialogContent`, keeping focus from landing on the email input at open time; keep `autoComplete="email"` so suggestions still appear when users click into the field.
+- Why: This is a minimal, modal-scoped behavior fix that matches expected UX without changing auth flow, saved credentials behavior, or other forms.
+- Impact: Login/signup modal now opens without auto-showing saved-email suggestions; saved emails remain available after explicit input focus/click.
+- Revisit trigger: If accessibility QA requires deterministic initial focus inside the modal, move focus to a non-input control (for example close button or tab trigger) while preserving no-autofill-on-open behavior.
+
+---
+
+## [2026-05-02] Match customer My Events saved-listing card typography and size to landing listing cards
+- Context: Product requested saved listing cards on customer dashboard `My Events` to look identical to landing page listing cards for style, card size, title, and price, while preserving the existing saved-heart remove behavior.
+- Decision: In `client/src/pages/customer/CustomerEvents.tsx`, apply the same `ListingCard` sizing/font/action props used on landing (`priceScale="double"`, `titleScale="oneAndHalf"`, heading title font, matching title/price size classes, `primaryActionScale="plus15"`), and constrain saved-card width to `max-w-[290px]` to match landing card width bounds.
+- Why: Reusing the same shared card variant on this surface is the thinnest, lowest-risk way to achieve visual parity without touching save/remove functionality or other pages.
+- Impact: Saved cards on `My Events` now match landing listing card typography and sizing treatment; heart removal flow and board save behavior remain unchanged.
+- Revisit trigger: If listing-card variants are centralized into explicit named presets, replace duplicated prop bundles with a shared landing-card variant reference.
+
+---
+
+## [2026-04-30] Add status-specific secondary action buttons to Listings Management cards
+- Context: Product requested two bottom actions per Listings Management card with status-dependent publish controls and explicit hover colors (`Delete` red hover, `Unpublish` gold/blue hover matching Active badge, `Publish` blue hover matching Create Listing CTA).
+- Decision: In `client/src/pages/VendorListings.tsx`, keep `Delete` as the left action and add right-side conditional action: `Unpublish` for active listings (calls `PATCH /api/vendor/listings/:id/unpublish`) and `Publish` for inactive/draft listings (calls `PATCH /api/vendor/listings/:id/publish`). Apply requested hover classes while preserving existing card click/edit behavior.
+- Why: This adds the requested operational controls directly where vendors manage statuses, without broad layout refactors or API contract changes.
+- Impact: Active cards now show `Delete` + `Unpublish`; inactive/draft cards show `Delete` + `Publish`; hover feedback matches requested color behavior; list refresh/toasts occur after each action.
+- Revisit trigger: If card action variants are reused across more vendor surfaces, extract the footer action row into a shared status-action component to avoid style duplication.
+
+---
+
+## [2026-04-30] Match Listings Management card price size to listing title size
+- Context: Product requested Listings Management card prices visually render at the same size as the listing title (`Vases`) on that page.
+- Decision: Update Listings Management card price class in `client/src/pages/VendorListings.tsx` from `text-[1.2rem]` to `text-[1.8rem]` while preserving existing font/color styling (`font-heading font-bold text-[#e07a6a]`).
+- Why: This is a page-local typography adjustment that satisfies the requested visual parity without changing global typography tokens or behavior.
+- Impact: Price text now renders at the same size class as the title on Listings Management cards; functionality/layout logic remains unchanged.
+- Revisit trigger: If card title/price sizing is later tokenized into a shared variant, move this page-local class into the shared sizing contract.
+
+---
+
+## [2026-04-30] Increase Listings Management card price size locally to 1.2rem
+- Context: Product requested larger price text on Listings Management cards while preserving global typography setup and existing page behavior.
+- Decision: In `client/src/pages/VendorListings.tsx`, update listing-card price class from `text-sm` to `text-[1.2rem]`, keeping existing font/color alignment (`font-heading font-bold text-[#e07a6a]`) and page scope.
+- Why: This satisfies the requested visual increase without modifying shared typography tokens or global CSS rules.
+- Impact: Listings Management card prices render larger at `1.2rem`; functionality and global typography behavior remain unchanged.
+- Revisit trigger: If card typography scales are centralized into reusable variants, move this page-local size override into the shared variant config.
+
+---
+
+## [2026-04-30] Align Listings Management card price font/color to shared listing-card style without changing size
+- Context: Product requested Listings Management card prices visually match listing cards elsewhere for font and color, while preserving existing price size on that page.
+- Decision: In `client/src/pages/VendorListings.tsx`, update the card price class from `font-semibold text-[hsl(var(--secondary-accent))]` to `font-heading font-bold text-[#e07a6a]`, keeping `text-sm` unchanged.
+- Why: This applies the shared price visual treatment with minimal risk and no impact on card layout or interaction behavior.
+- Impact: Listings Management card prices now use the same coral heading-style typography as shared listing cards, with the same on-page size as before.
+- Revisit trigger: If price typography is centralized into reusable card tokens, move this page-local class to that shared token.
+
+---
+
+## [2026-04-30] Standardize key vendor section-heading typography to Listings Management Active Listings style
+- Context: Product requested `Payment History`, `Customer Reviews`, `Recent Notifications`, `Notification Preferences`, and My Hub `Active Listings` match Listings Management `Active Listings` heading size/style exactly.
+- Decision: Normalize those five headings to `text-2xl font-semibold text-foreground`, matching the Listings Management section-heading class.
+- Why: This is a low-risk page-level class alignment that improves typographic consistency without changing layout structure or feature behavior.
+- Impact: The named section headings now share the same 24px semibold foreground style as Listings Management `Active Listings`; functionality remains unchanged.
+- Revisit trigger: If heading scales are centralized into shared typography tokens/components, replace per-page class strings with one shared section-heading primitive.
+
+---
+
+## [2026-04-30] Make Vendor Hub/My Hub profile and cover photos optional with no-empty-space header behavior
+- Context: Product requested vendors be able to save My Hub details without profile/cover photos and required the customer-facing Vendor Hub header to avoid empty white space when one or both photos are missing.
+- Decision: Remove the My Hub save validation rule that required a profile photo, and update Vendor Hub header top-spacing logic to adapt by state (`cover+profile`, `cover only`, `profile only`, `neither`) while keeping existing fixed photo dimensions/ratios and photo-management controls unchanged.
+- Why: This keeps the media fields optional and preserves layout quality across missing-photo states without changing upload/edit/delete functionality.
+- Impact: Vendors can save My Hub details with zero, one, or both photos; Vendor Hub/customer-view My Hub no longer reserves excessive blank top spacing when photos are absent; cover/profile thumbnails and change/edit/remove actions in My Hub remain available.
+- Revisit trigger: If future design introduces a dedicated no-media hero treatment, replace spacing-condition classes with an explicit empty-state header component.
+
+---
+
+## [2026-04-30] Normalize global black text utility to brand dark-blue
+- Context: Product requested any black text be rendered as `#2a3a42` while preserving existing light-mode behavior.
+- Decision: Update the global `.text-black` utility override in `client/src/index.css` from `#16222d` to `#2a3a42`.
+- Why: This is the minimal safe change that remaps all `text-black` usages without touching component structure, behavior, or non-text styles.
+- Impact: Elements relying on `text-black` now render `#2a3a42`; functional/UI behavior remains unchanged.
+- Revisit trigger: If additional hardcoded black text appears outside `.text-black`, add a lint/style audit rule for text-color tokens to keep typography colors consistent.
+
+---
+
+## [2026-04-30] Remove dark-mode support and enforce light-only UI
+- Context: Product direction is to permanently retire dark mode across Event Hub and keep one consistent visual system.
+- Decision: Remove all `dark:*` Tailwind class usage from client components, delete `.dark` selector blocks and dark variable overrides from `client/src/index.css`, remove dark-theme bootstrapping from `client/src/main.tsx`, and remove `darkMode: ["class"]` from `tailwind.config.ts`.
+- Why: Full removal is lower-maintenance than forcing light mode while keeping parallel dark styles, and prevents future drift between themes.
+- Impact: The app now renders only with light-mode styles; dark-mode class toggles and dark-specific CSS no longer exist in the codebase.
+- Revisit trigger: If post-launch product strategy reverses and dark mode returns, reintroduce theme support via shared design tokens and a centralized theme provider rather than ad-hoc page-level variants.
+
+---
+
+## [2026-04-30] Set Vendor Hub cover to fixed 450px height and align cover-editor ratio with upload guardrails
+- Context: Product requested removing responsive min/max cover-height behavior in Vendor Hub, using a fixed shorter cover height, shrinking profile avatar slightly, and ensuring cover-photo editing reflects the same rendered framing.
+- Decision: Change Vendor Hub hero cover height to fixed `450px`, reduce `sm+` Vendor Hub avatar size from `216px` to `192px` while keeping existing positioning logic, and update My Hub + onboarding cover-ratio calculators to use `viewportWidth / 450` (matching live render). Add cover upload validation to reject images with optimized height below `450px`.
+- Why: This gives deterministic cover framing and tighter hero vertical space while preserving current overlay/avatar positioning and preventing undersized cover uploads that cannot satisfy the fixed-height frame.
+- Impact: Vendor Hub cover now always renders at 450px tall across breakpoints; profile avatar is slightly smaller on `sm+`; My Hub/onboarding cover editor previews match the live Vendor Hub framing model; too-short cover uploads are blocked with explicit feedback.
+- Revisit trigger: If cover quality issues appear on very wide displays, add a width-based minimum or raise cover processing limits to avoid excessive horizontal upscaling.
+
+---
+
+## [2026-04-30] Increase Vendor Hub header tagline size locally without global typography changes
+- Context: Product requested a larger vendor tagline under business name in Vendor Hub while preserving the site-wide typography system.
+- Decision: Update only the Vendor Hub header tagline class in `client/src/pages/vendorhub.tsx` from `text-[1.1rem]` to `text-[1.5rem]`, with no changes to shared typography tokens or global CSS.
+- Why: A page-local class update is the smallest safe change that meets the visual request without risking cross-page typography drift.
+- Impact: Vendor Hub tagline appears larger in the header; all other pages and global typography rules remain unchanged.
+- Revisit trigger: If heading/subheading scale tokens are later centralized for Vendor Hub, migrate this local hardcoded size to the shared token set.
+
+---
+
+## [2026-04-30] Prevent listing-card heart clicks from triggering card navigation and harden saved-state refresh
+- Context: On shared listing cards outside vendor My Hub, heart clicks could bubble into the card click handler, navigating to listing detail instead of opening save-to-event popover; saved fill feedback could appear inconsistent after toggles.
+- Decision: Update `ListingCard` heart trigger to stop `mousedown` and `click` propagation (and prevent default on click), normalize listing IDs to trimmed strings for saved-ID matching, and await board-related query invalidations in `HeartBoardPopover`.
+- Why: This preserves current card navigation everywhere else while guaranteeing heart interactions remain scoped to save behavior and immediately refresh saved-state UI.
+- Impact: Clicking heart now opens/closes the save popover without routing away; saved hearts remain filled after save and on subsequent renders/reloads where saved IDs are present; vendor My Hub remains heart-hidden via existing prop usage.
+- Revisit trigger: If listing cards move to a composed clickable-link wrapper pattern, centralize interaction guards so all overlay actions (heart/share/buttons) share one propagation utility.
+
+---
+
+## [2026-04-30] Hide listing-card heart control in vendor My Hub only
+- Context: Vendor-facing My Hub listing cards showed the customer save/heart control, which is not relevant in a self-management dashboard card.
+- Decision: Add an optional `showHeartIcon` prop to the shared `ListingCard` component (default `true`) and pass `showHeartIcon={false}` only from `client/src/pages/myhub.tsx`.
+- Why: This is the thinnest scoped UI change that preserves heart behavior across marketplace/customer surfaces while removing non-essential controls from vendor My Hub.
+- Impact: My Hub vendor listing cards no longer render the heart icon; Home, Browse, Vendor Hub, listing detail, and other `ListingCard` usages remain unchanged by default.
+- Revisit trigger: If additional vendor-only card surfaces should hide customer actions, replace page-local prop usage with an explicit dashboard card variant.
+
+---
+
+## [2026-04-29] Return accurate Google OAuth start errors and guard callback state parsing
+- Context: Google OAuth start failures could return a misleading `Invalid Auth0 token` message even when the real problem was missing `JWT_SECRET`, and callback state parsing could throw before graceful redirect handling.
+- Decision: In `/api/google/oauth/start`, validate `JWT_SECRET` up front and separate Auth0 verification from OAuth state generation so state-signing/config errors return explicit `500` messages. In `/api/google/oauth/callback`, wrap state parsing in a guarded try/catch and redirect cleanly on state parse failures.
+- Why: This preserves the existing flow while making user-facing error toasts actionable and preventing hard failures in callback when state-signing config is broken.
+- Impact: Vendors get clearer connect failure reasons (for example missing `JWT_SECRET`) and callback failures fall back to the expected `google_calendar=error` redirect path.
+- Revisit trigger: If OAuth state handling is moved into shared middleware/service, centralize state validation/signing and standardize error codes across all OAuth providers.
+
+---
+
+## [2026-04-29] Align listing-upload client types with API storagePath and set booking reviewPromptSent default in memory storage
+- Context: `npm run check` failed due to client upload handlers reading `storagePath` from listing-photo responses while local TypeScript types omitted it, and in-memory booking creation omitted required `reviewPromptSent`.
+- Decision: Add optional `storagePath` to listing-photo upload response types in Create Listing and Vendor Listing Edit flows, and default `reviewPromptSent` to `false` in `MemStorage.createBooking`.
+- Why: This is the thinnest compile-safe fix that preserves current upload and booking behavior while matching the server response contract and schema requirement.
+- Impact: TypeScript checks pass again, production builds are unblocked, and in-memory booking objects satisfy the current `Booking` type shape.
+- Revisit trigger: If upload response contracts are centralized into shared API types, remove page-local response type duplication and consume one shared contract.
+
+---
+
+## [2026-04-29] Restore missing email exports to unblock server startup and webhook validation
+- Context: Local API startup failed with `SyntaxError` because `routes.ts` imported `sendBookingConfirmedEmail`, `sendBookingCancelledEmail`, `sendNewMessageEmail`, and `sendReviewPromptEmail`, but `server/email.ts` only exported `sendBookingConfirmationEmail`.
+- Decision: Rebuild `server/email.ts` with a shared Resend sender helper and reintroduce all expected exported email functions using existing call signatures, while preserving skip behavior when email env vars are not configured.
+- Why: This is the smallest reliable fix that restores runtime compatibility across booking-status emails, message notifications, and review prompts without changing booking/payment control flow.
+- Impact: API server can boot, Stripe webhook route can be exercised locally, and all current email call sites resolve at runtime.
+- Revisit trigger: If email content/versioning expands post-launch, split templates into dedicated modules and add targeted unit tests for each template payload.
+
+---
+
+## [2026-04-29] Keep local APP_URL on frontend origin for Stripe Connect return flow
+- Context: Local Stripe setup review raised concern that `APP_URL` should match backend port, while Stripe Connect onboarding return/refresh URLs are built from `APP_URL` and must resolve to frontend routes.
+- Decision: Keep `APP_URL=http://localhost:5173` for local development, keep backend API base on `SERVER_URL=http://localhost:5001`, and require a real `STRIPE_WEBHOOK_SECRET` via Stripe CLI forwarding for webhook tests.
+- Why: Connect return routes (`/vendor/connect/return`) are frontend destinations; moving `APP_URL` to API origin would break local post-onboarding navigation.
+- Impact: Local onboarding redirects land correctly in the frontend app, and webhook verification is explicitly tied to a valid local `whsec_...` from `stripe listen`.
+- Revisit trigger: If Connect return handling moves server-side or local frontend/backend are unified behind one origin, simplify env mapping and re-evaluate `APP_URL` semantics.
+
+---
+
+## [2026-04-29] Harden vacation block creation against UUID-default and missing-table failures
+- Context: Vendors could click `Add Block` and receive a generic `Failed (500)` message, which blocked vacation-date availability control in the MVP booking flow.
+- Decision: In `POST /api/vendor/vacation-blocks`, explicitly set `id: crypto.randomUUID()` on insert instead of relying on DB default UUID generation, and if the `vendor_vacation_blocks` table is missing (`42P01`), create it/index it and retry the insert. In the dashboard mutation, parse API error JSON so users see real error messages.
+- Why: This is a minimal, targeted fix in the vacation-block create path that removes a fragile DB-default dependency and improves diagnosability without changing broader availability logic.
+- Impact: `Add Block` succeeds in environments where UUID defaults were failing or the availability table was not yet present, and errors are clearer when failures happen. Existing listing-detail vacation conflict behavior remains unchanged.
+- Revisit trigger: If schema initialization becomes centrally enforced at deploy time, simplify this route-level hardening and rely on guaranteed migration health checks.
+
+---
+
+## [2026-04-29] Add bottom scroll room for Vendor Dashboard availability date picker
+- Context: In Vendor Dashboard, opening the native vacation date picker near the bottom of the Availability section could clip the calendar off-screen because the page ended too close to the input row.
+- Decision: Increase bottom padding on the Availability section container (`pt-4 pb-28 md:pb-32`) to add additional scroll space without changing component structure.
+- Why: This is a CSS-only, low-risk fix that keeps MVP booking/admin flows stable and resolves the immediate usability issue quickly.
+- Impact: Vendors can scroll slightly farther down before opening date inputs, allowing the date picker dropdown to render fully in-view on typical laptop viewports.
+- Revisit trigger: If future dashboard sections move or the date input pattern changes (custom picker/modal), re-evaluate and remove excess section padding in favor of component-level overflow handling.
 
 ---
 
@@ -4270,3 +4468,87 @@ Template for new entries:
 - Why: `Save Draft` should be a deterministic persistence + exit action, not a conditional no-op based on data threshold heuristics.
 - Impact: Clicking `Save Draft` now reliably writes a draft listing record and exits to Listings where the draft is visible.
 - Revisit trigger: If product later wants to block empty drafts, enforce a minimal draft schema requirement in UI and API rather than silent save skipping.
+
+## [2026-04-30] Reposition bookings status tabs and Google Calendar card for clearer visual hierarchy
+- Context: In `VendorBookings`, the status tabs were rendered in the top row while a separate `All` + `Snapshot across all bookings` heading repeated context above metrics, and product requested swapping these regions.
+- Decision: Move the Google Calendar connect card into the former top-left tabs slot, remove the lower heading/subtitle lines, and render the status tabs directly above the summary metrics block with responsive wrapping/tighter spacing.
+- Why: This keeps booking status controls adjacent to the metrics they affect, reduces duplicate headings, and places the calendar setup module in a distinct setup-first area without changing tab/filter behavior.
+- Impact: Desktop, tablet, and mobile layouts now maintain the same filtering functionality with improved spacing and hierarchy; Google connect action remains unchanged.
+- Revisit trigger: If additional controls are added to the bookings header (search/date range/quick actions), reassess top-of-page composition to avoid crowding and preserve first-action clarity.
+
+## [2026-04-30] Remove Vendor Dashboard Recent Activity block in favor of Bookings & Jobs page
+- Context: Vendor Dashboard contained a `Recent Activity` section showing recent bookings/inquiries, which duplicated booking visibility now centered on the dedicated `Bookings & Jobs` page.
+- Decision: Remove the `Recent Activity` UI section from `VendorDashboard` and prune the `recentBookings` field from the dashboard stats type used only by that section.
+- Why: Reducing duplicate booking surfaces keeps dashboard scope focused on setup/overview metrics and lowers maintenance risk during MVP launch.
+- Impact: Dashboard no longer renders the recent bookings list; top stats, setup cards, quick actions, and other dashboard functionality remain unchanged across breakpoints.
+- Revisit trigger: If product later needs at-a-glance activity on dashboard again, reintroduce a minimal activity summary that links directly into `Bookings & Jobs` instead of duplicating list detail.
+
+## [2026-04-30] Preserve listing photos in My Hub listing mapper
+- Context: Listing cards on `My Hub`/customer-mode vendor shop were rendering `No photo yet` while listings showed photos elsewhere.
+- Decision: Remove the `photos: []` override in `MyHub`'s `listingsForShop` mapper so listing cards retain each listing's canonical photo data.
+- Why: `ListingCard` derives its cover image from listing photo fields; overriding `photos` to an empty array dropped the primary image source for this page only.
+- Impact: Active listing cards in My Hub now display their real listing photos consistently with other listing surfaces.
+- Revisit trigger: If My Hub preview requires custom media transformation later, preserve canonical `photos` and apply transformation in a non-destructive derived field.
+
+## [2026-04-30] Persist My Hub cover/profile photos using stable storage paths with public-shop fallback keys
+- Context: Vendors reported cover/profile photos appearing in My Hub edit controls but not persisting reliably in customer-mode/public vendor hub.
+- Decision: In `MyHub`, prefer `storagePath` from `/api/uploads/vendor-shop-photo` for persistence, store shop photo fields using stable path keys (`shopProfileImageStoragePath`, `shopCoverImageStoragePath`) alongside existing URL keys, and include legacy mirror keys (`profileImageUrl`, `coverImageUrl`, `coverImagePosition`) in save payloads. In `/api/vendors/public/:vendorId/shop`, resolve profile/cover images from storage-path keys first, then existing/legacy URL keys, and read cover position from either shop or legacy key.
+- Why: Storage paths are environment-stable and avoid persisting runtime-resolved host-specific URLs; public route fallback handling reduces breakage for mixed historical key shapes.
+- Impact: Customer-view vendor hub now has a consistent data path to render persisted cover/profile photos after save and refresh, while remaining backward compatible with older onlineProfiles data.
+- Revisit trigger: If onlineProfiles is formally versioned/migrated, remove legacy mirror-key fallbacks and standardize on a single canonical photo key set.
+
+## [2026-04-30] Remove vendor hub `View all` CTA and align hub listing card title/price scale with landing storefront cards
+- Context: Product requested removing the `View all` action from customer-facing vendor hub listing section and matching listing title/price typography with storefront listing cards used on landing/browse experiences.
+- Decision: In `vendorhub.tsx`, remove the `View all` text CTA beside `Available Rentals` and update `ListingCard` size overrides to landing storefront values (`titleSizeClassName: text-[1.518rem] md:text-[2rem]`, `priceSizeClassName: text-[1.5rem] leading-none md:text-[2.25rem] md:leading-none`).
+- Why: This simplifies the section header and keeps listing card typographic hierarchy consistent with customer discovery surfaces.
+- Impact: Vendor hub/customer-mode listing cards now render larger title/price text consistent with landing card scale, and the redundant `View all` control is removed.
+- Revisit trigger: If listing card typography is centralized into shared presets, replace page-level class overrides with preset tokens to prevent future drift.
+
+## [2026-04-30] Roll back public vendor shop image-key fallback in API to restore vendor hub availability
+- Context: After introducing additional photo-key fallback reads in `/api/vendors/public/:vendorId/shop`, vendor hub started surfacing `Vendor hub not found` in local flow and required immediate stability restoration.
+- Decision: Revert public-shop route image extraction to prior stable keys (`shopProfileImageUrl`, `shopCoverImageUrl`, `shopCoverImagePosition`) while leaving unrelated UI updates intact.
+- Why: Restoring the known-good API path is the fastest low-risk move to recover marketplace browsing reliability for MVP booking/discovery flow.
+- Impact: Vendor hub endpoint returns to previous behavior for profile/cover reads, reducing risk of route-level regressions while we isolate a safer persistence migration.
+- Revisit trigger: Reintroduce multi-key photo fallback only after validating end-to-end public shop responses against real vendor records and adding a focused regression check.
+
+## [2026-04-30] Hydrate My Hub persisted shop photos without canvas re-encoding
+- Context: Persisted profile/cover photos could appear missing in My Hub editor (upload controls shown again) even when customer view still had images, due hydration path converting remote image URLs through canvas.
+- Decision: In `myhub.tsx`, set `Image.crossOrigin = "anonymous"` and update `createShopPhotoSourceFromSrc` to keep persisted URL `src` directly (with measured dimensions) instead of re-encoding through canvas during hydration.
+- Why: Canvas conversion of cross-origin assets can fail/taint and trigger hydration fallback to `null`, which looks like unsaved photos despite persisted data.
+- Impact: My Hub now reliably shows previously saved profile/cover photos in editor state, reducing false “didn’t save” behavior and keeping customer-mode consistency.
+- Revisit trigger: If all persisted media is guaranteed same-origin or CORS-enabled, optional normalization can be reintroduced with explicit taint-safe guards.
+
+## [2026-04-30] Harden listing publish description validation against mixed legacy listingData keys
+- Context: Vendors could unpublish an active listing and then fail re-publish with `Listing incomplete — cannot publish` claiming description was too short, even when edit UI showed a valid description.
+- Decision: Update server listing canonicalization/publish validation to resolve description from `listingData.description`, `listingData.listingDescription`, and legacy `listingData.serviceDescription` independently (instead of a single short-circuiting `||` expression), and clamp all three description aliases consistently.
+- Why: Legacy/non-string data under one alias could block fallback to the actual populated description key, causing false-negative publish validation.
+- Impact: Publish checks now correctly recognize valid existing descriptions across legacy and current listing payload shapes, preventing incorrect “description too short” errors after unpublish/re-publish cycles.
+- Revisit trigger: If listing data is fully migrated to a single canonical description field, remove alias fallbacks and keep one strict source of truth.
+
+## [2026-04-30] Add defensive description alias payloads in vendor publish clients
+- Context: Some listings still carried mixed/legacy description shapes, and publish could fail from both `VendorListingEdit` and `VendorListings` surfaces even when a valid description was visible in UI.
+- Decision: Update both publish callers to send synchronized description aliases (`listingDescription`, `description`, `serviceDescription`) and include normalized description hydration fallback in `VendorListingEdit` draft initialization; update listings-management publish mutation to post listing data instead of empty body.
+- Why: This provides client-side compatibility while server-side normalization converges, and prevents no-body publish calls from relying solely on fragile historical row shapes.
+- Impact: Publishing from edit page and listings management now carries explicit description data into validation, reducing false incomplete errors for legacy listings without changing publish requirements.
+- Revisit trigger: After a complete data migration to canonical listing fields, remove alias duplication from client payload builders and keep only the canonical field.
+
+## [2026-04-30] Raise global minimum UI text utility from `text-xs` to `text-sm`
+- Context: Product requested removing `text-xs` across the website and rendering previously extra-small UI copy at `text-sm`, including Vendor Edit Listing input-adjacent helper text.
+- Decision: Replace all `text-xs` utility classes in `client/src` with `text-sm`, including shared UI components and page-level usage; update `VendorListingEdit` field surface class to explicitly include `text-sm` so typed input content remains at the larger size.
+- Why: A global utility-level replacement is the fastest consistent way to enforce a new minimum readable text size without introducing one-off exceptions.
+- Impact: No `text-xs` utility usage remains in client code; formerly extra-small labels/helper text now render at `text-sm`, and Vendor Edit Listing form fields render typed text at `text-sm`.
+- Revisit trigger: If tighter compact UI density is needed on specific components later, introduce explicit tokenized size variants instead of reintroducing ad-hoc `text-xs`.
+
+## [2026-04-30] Fail fast when frontend Auth0 env is missing to prevent redirecting to `https://undefined/authorize`
+- Context: Login/Continue with Google could open a browser URL on host `undefined` (`https://undefined/authorize`), which produced a hard navigation failure and no actionable in-app guidance.
+- Decision: Gate `Auth0Provider` initialization behind both secure-origin and required frontend env presence (`VITE_AUTH0_DOMAIN`, `VITE_AUTH0_CLIENT_ID`), and fall back to the existing stub auth context with a clear missing-config error message when env is absent. Also update env example files to include required frontend Auth0 vars.
+- Why: This prevents broken redirects and makes missing configuration obvious during local/dev setup.
+- Impact: Users now receive a clear auth-disabled error instead of navigating to an invalid URL when Auth0 frontend env is unset; setup docs/examples now list required vars for both frontend and backend Auth0 usage.
+- Revisit trigger: If auth config is centralized in a runtime config endpoint (instead of build-time Vite env), remove duplicate env documentation and switch guard to runtime config validation.
+
+## [2026-05-02] Standardize top-header EventHub wordmark size/placement to landing-page reference
+- Context: Header wordmark sizing and placement differed across landing/navigation, customer dashboard, and vendor shell, creating inconsistent brand placement between pages.
+- Decision: Use the landing-page navigation wordmark size (`text-[1.875rem]`) and landing-style left header placement as the shared reference for existing top-header wordmarks in `Navigation`, `CustomerDashboard`, and `VendorShell`, without adding/removing logo instances.
+- Why: This satisfies immediate MVP visual consistency with minimal surface-area change and no route-level feature behavior impact.
+- Impact: Existing top-header logos now share one size and landing-style left placement across pages that render those headers; footer/modal/flow-specific wordmarks remain unchanged.
+- Revisit trigger: If a formal global header design token system is introduced, replace page-level class values with shared brand sizing/placement tokens.

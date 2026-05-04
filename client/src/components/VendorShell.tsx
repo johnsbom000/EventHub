@@ -19,6 +19,8 @@ import {
 import { Link, useLocation } from "wouter";
 import { VendorSidebar } from "@/components/vendor-sidebar";
 import BrandWordmark from "@/components/BrandWordmark";
+import { SuspensionBanner, WarningCountBanner } from "@/components/CircumventionWarningModal";
+import { apiRequest } from "@/lib/queryClient";
 import {
   DropdownMenu,
   DropdownMenuContent,
@@ -155,6 +157,21 @@ export default function VendorShell({ children, onOpenAccountSettings }: VendorS
     ]);
   };
 
+  const { data: circumventionStatus } = useQuery<{
+    warningCount: number;
+    suspension: { id: string; reason: string; endsAt: string; startsAt: string } | null;
+  }>({
+    queryKey: ["/api/vendor/circumvention/status"],
+    enabled: isAuthenticated,
+    retry: false,
+    staleTime: 60_000,
+    queryFn: async () => {
+      const res = await apiRequest("GET", "/api/vendor/circumvention/status");
+      if (!res.ok) return { warningCount: 0, suspension: null, warnings: [], removedListings: [] };
+      return res.json();
+    },
+  });
+
   const displayName = activeProfileName || vendorAccount?.email || "Vendor";
   const initials = getInitialsFromName(displayName);
 
@@ -191,11 +208,11 @@ export default function VendorShell({ children, onOpenAccountSettings }: VendorS
         <header className="flex items-center justify-between border-b border-[rgba(74,106,125,0.22)] bg-[#ffffff] p-4">
           <Link
             href="/"
-            className="flex items-center rounded-md px-1 py-1"
+            className="flex items-center gap-2 rounded-md px-3 py-2"
             data-testid="link-vendor-shell-home"
           >
             <BrandWordmark
-              className="text-[2.32rem]"
+              className="text-[1.875rem]"
               eventClassName="text-[#e07a6a] font-normal"
               hubClassName="text-[#4a6a7d] font-normal"
             />
@@ -234,7 +251,7 @@ export default function VendorShell({ children, onOpenAccountSettings }: VendorS
                 data-testid="dropdown-vendor-shell-menu"
               >
                 <DropdownMenuLabel>Vendor Account</DropdownMenuLabel>
-                <DropdownMenuLabel className="pt-0 text-xs font-normal text-muted-foreground">
+                <DropdownMenuLabel className="pt-0 text-sm font-normal text-muted-foreground">
                   Active: {activeProfileName}
                 </DropdownMenuLabel>
                 {vendorProfiles.length > 0 ? (
@@ -323,6 +340,16 @@ export default function VendorShell({ children, onOpenAccountSettings }: VendorS
             </DropdownMenu>
           </div>
         </header>
+
+        {/* Circumvention banners — shown below the header */}
+        {circumventionStatus?.suspension ? (
+          <SuspensionBanner
+            endsAt={circumventionStatus.suspension.endsAt}
+            reason={circumventionStatus.suspension.reason}
+          />
+        ) : circumventionStatus && circumventionStatus.warningCount > 0 ? (
+          <WarningCountBanner warningCount={circumventionStatus.warningCount} />
+        ) : null}
 
         <div className="flex min-h-0 flex-1">
           <VendorSidebar className="hidden lg:flex shrink-0" />

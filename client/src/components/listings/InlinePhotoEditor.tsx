@@ -313,7 +313,7 @@ export function InlinePhotoEditor({
         <div>
           <div className="font-medium">Photo order and editing</div>
           <div className="text-sm text-muted-foreground">
-            Drag photos to reorder. The first photo is always your cover photo.
+            Drag photos to reorder. The first photo is your cover photo.
           </div>
         </div>
         {showAddPhotosButton && (
@@ -341,7 +341,7 @@ export function InlinePhotoEditor({
                     </Button>
                   ))}
                 </div>
-                <div className="text-xs text-muted-foreground">
+                <div className="text-sm text-muted-foreground">
                   Drag inside the cover box to position the image.
                 </div>
                 <div className="relative w-full max-w-[940px] h-[520px] md:h-[620px] overflow-hidden rounded-lg border bg-muted">
@@ -362,13 +362,13 @@ export function InlinePhotoEditor({
                   <Button type="button" variant="outline" onClick={resetCurrentCrop}>
                     Reset crop
                   </Button>
-                  <div className="text-xs text-muted-foreground">Changes save automatically.</div>
+                  <div className="text-sm text-muted-foreground">Changes save automatically.</div>
                 </div>
               </>
             ) : (
               <>
                 <div className="text-sm font-medium">Crop gallery photo</div>
-                <div className="flex flex-wrap items-center gap-2 text-xs text-muted-foreground">
+                <div className="flex flex-wrap items-center gap-2 text-sm text-muted-foreground">
                   <span>Aspect presets:</span>
                   {[
                     { label: "1:1", value: 1 },
@@ -388,7 +388,7 @@ export function InlinePhotoEditor({
                     </Button>
                   ))}
                 </div>
-                <div className="text-xs text-muted-foreground">
+                <div className="text-sm text-muted-foreground">
                   Use the bottom-right corner of the selected photo area to change orientation.
                 </div>
 
@@ -412,14 +412,14 @@ export function InlinePhotoEditor({
                     aria-label="Adjust non-cover orientation"
                     title="Drag to adjust orientation"
                   >
-                    <span className="block text-xs leading-none">◢</span>
+                    <span className="block text-sm leading-none">◢</span>
                   </button>
                 </div>
                 <div className="flex items-center gap-2">
                   <Button type="button" variant="outline" onClick={resetCurrentCrop}>
                     Reset crop
                   </Button>
-                  <div className="text-xs text-muted-foreground">Changes save automatically.</div>
+                  <div className="text-sm text-muted-foreground">Changes save automatically.</div>
                 </div>
               </>
             )}

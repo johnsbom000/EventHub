@@ -1,5 +1,4 @@
 export type WizardStep =
-  | "serviceType"
   | "locationSelection"
   | "createIntro"
   | "about"
@@ -42,7 +41,6 @@ export interface Discount {
 }
 
 export interface ListingFormData {
-  serviceType: string;
   city: string;
   experience: number;
   qualifications: string[];
@@ -62,7 +60,6 @@ export interface ListingFormData {
 }
 
 export const DEFAULT_FORM_DATA: ListingFormData = {
-  serviceType: "",
   city: "",
   experience: 0,
   qualifications: [],
@@ -91,18 +88,17 @@ export const DEFAULT_FORM_DATA: ListingFormData = {
 };
 
 export const STEP_METADATA: StepMetadata[] = [
-  { id: "serviceType", label: "Service Type", icon: "1" },
-  { id: "locationSelection", label: "Location", icon: "2" },
-  { id: "createIntro", label: "Get Started", icon: "3" },
-  { id: "about", label: "About You", icon: "4" },
-  { id: "location", label: "Service Area", icon: "5" },
-  { id: "photos", label: "Photos", icon: "6" },
-  { id: "service", label: "Description", icon: "7" },
-  { id: "offerings", label: "Offerings", icon: "8" },
-  { id: "offeringDetails", label: "Offering Details", icon: "9" },
-  { id: "businessHours", label: "Hours", icon: "10" },
-  { id: "discounts", label: "Discounts", icon: "11" },
-  { id: "requirements", label: "Requirements", icon: "12" },
-  { id: "reviewSubmit", label: "Review", icon: "13" },
+  { id: "locationSelection", label: "Location", icon: "1" },
+  { id: "createIntro", label: "Get Started", icon: "2" },
+  { id: "about", label: "About You", icon: "3" },
+  { id: "location", label: "Service Area", icon: "4" },
+  { id: "photos", label: "Photos", icon: "5" },
+  { id: "service", label: "Description", icon: "6" },
+  { id: "offerings", label: "Offerings", icon: "7" },
+  { id: "offeringDetails", label: "Offering Details", icon: "8" },
+  { id: "businessHours", label: "Hours", icon: "9" },
+  { id: "discounts", label: "Discounts", icon: "10" },
+  { id: "requirements", label: "Requirements", icon: "11" },
+  { id: "reviewSubmit", label: "Review", icon: "12" },
   { id: "done", label: "Complete", icon: "✓" },
 ];

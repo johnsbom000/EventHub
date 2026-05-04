@@ -62,6 +62,8 @@ export const bookingDisputeStatusEnum = pgEnum("booking_dispute_status", [
   "resolved_refund",
   "resolved_payout",
 ]);
+export const messageSenderTypeEnum = pgEnum("message_sender_type", ["customer", "vendor"]);
+export const notificationRecipientTypeEnum = pgEnum("notification_recipient_type", ["customer", "vendor"]);
 
 export const users = pgTable(
   "users",
@@ -69,7 +71,6 @@ export const users = pgTable(
     id: varchar("id").primaryKey().default(sql`gen_random_uuid()`),
     name: text("name").notNull(),
     email: text("email").notNull().unique(),
-    password: text("password").notNull(),
     role: userRoleEnum("role").notNull().default("customer"),
     auth0Sub: text("auth0_sub"),
     displayName: text("display_name"),
@@ -88,7 +89,6 @@ export const users = pgTable(
 export const insertUserSchema = createInsertSchema(users).pick({
   name: true,
   email: true,
-  password: true,
 });
 
 export type InsertUser = z.infer<typeof insertUserSchema>;
@@ -190,13 +190,16 @@ export const events = pgTable("events", {
   cateringDetails: jsonb("catering_details").$type<CateringDetails | null>(),
   djDetails: jsonb("dj_details").$type<DJDetails | null>(),
   propDecorDetails: jsonb("prop_decor_details").$type<PropDecorDetails | null>(),
+  customerId: varchar("customer_id").references(() => users.id, { onDelete: "set null" }),
   createdAt: timestamp("created_at").defaultNow(),
+  updatedAt: timestamp("updated_at").defaultNow(),
 });
 
 export const insertEventSchema = createInsertSchema(events)
   .omit({
     id: true,
     createdAt: true,
+    updatedAt: true,
   })
   .extend({
     photographerDetails: photographerDetailsSchema.optional(),
@@ -219,7 +222,6 @@ export const vendorAccounts = pgTable(
     activeProfileId: varchar("active_profile_id"),
     email: text("email").notNull().unique(),
     auth0Sub: text("auth0_sub"), // Migration-window fallback for identity linking
-    password: text("password").notNull(),
     businessName: text("business_name").notNull(),
     stripeConnectId: text("stripe_connect_id"),
     stripeAccountType: text("stripe_account_type"), // 'express' or 'standard'
@@ -231,6 +233,10 @@ export const vendorAccounts = pgTable(
     googleTokenExpiresAt: timestamp("google_token_expires_at"),
     googleCalendarId: text("google_calendar_id"),
     googleConnectionStatus: text("google_connection_status").notNull().default("disconnected"),
+    shopActive: boolean("shop_active").notNull().default(true),
+    ownerFirstName: text("owner_first_name"),
+    ownerLastName: text("owner_last_name"),
+    ownerPhone: text("owner_phone"),
     deletedAt: timestamp("deleted_at"),
     createdAt: timestamp("created_at").defaultNow(),
   },
@@ -276,7 +282,6 @@ export const vendorProfiles = pgTable("vendor_profiles", {
   showBusinessAddressToCustomers: boolean("show_business_address_to_customers").notNull().default(false),
   aboutVendor: text("about_vendor"),
   aboutBusiness: text("about_business"),
-  serviceType: text("service_type").notNull(),
   experience: integer("experience").notNull(),
   qualifications: text("qualifications").array().default(sql`'{}'`),
   onlineProfiles: jsonb("online_profiles"),
@@ -305,7 +310,9 @@ export const vendorListings = pgTable("vendor_listings", {
   id: varchar("id").primaryKey().default(sql`gen_random_uuid()`),
   profileId: varchar("profile_id").references(() => vendorProfiles.id),
   accountId: varchar("account_id").references(() => vendorAccounts.id).notNull(),
-  status: text("status").notNull().default("draft"), // draft, pending, active, inactive
+  status: listingStatusEnum("status").notNull().default("draft"),
+  violationRemoval: boolean("violation_removal").notNull().default(false),
+  pendingAdminReview: boolean("pending_admin_review").notNull().default(false),
   category: text("category"),
   subcategory: text("subcategory"),
   title: text("title"),
@@ -476,6 +483,24 @@ export const insertBookingDisputeSchema = createInsertSchema(bookingDisputes).om
 export type InsertBookingDispute = z.infer<typeof insertBookingDisputeSchema>;
 export type BookingDispute = typeof bookingDisputes.$inferSelect;
 
+// Admin notes on disputes — one row per note, chronological log
+export const disputeAdminNotes = pgTable(
+  "dispute_admin_notes",
+  {
+    id: varchar("id").primaryKey().default(sql`gen_random_uuid()`),
+    disputeId: varchar("dispute_id")
+      .notNull()
+      .references(() => bookingDisputes.id, { onDelete: "cascade" }),
+    content: text("content").notNull(),
+    createdAt: timestamp("created_at").defaultNow().notNull(),
+  },
+  (table) => ({
+    disputeIdIdx: index("dispute_admin_notes_dispute_id_idx").on(table.disputeId, table.createdAt),
+  })
+);
+
+export type DisputeAdminNote = typeof disputeAdminNotes.$inferSelect;
+
 export const bookingItems = pgTable(
   "booking_items",
   {
@@ -547,10 +572,10 @@ export const messages = pgTable("messages", {
   id: varchar("id").primaryKey().default(sql`gen_random_uuid()`),
   bookingId: varchar("booking_id").references(() => bookings.id).notNull(),
   senderId: varchar("sender_id").notNull(), // can be customer or vendor
-  senderType: text("sender_type").notNull(), // 'customer' or 'vendor'
+  senderType: messageSenderTypeEnum("sender_type").notNull(),
   content: text("content").notNull(),
   attachments: text("attachments").array().default(sql`'{}'`), // URLs to uploaded files
-  read: boolean("read").default(false),
+  read: boolean("read").default(false).notNull(),
   createdAt: timestamp("created_at").defaultNow(),
 });
 
@@ -598,16 +623,14 @@ export const payments = pgTable("payments", {
   stripeChargeId: text("stripe_charge_id"),
   stripeTransferId: text("stripe_transfer_id"), // transfer to vendor via Stripe Connect
   stripeConnectedAccountId: text("stripe_connected_account_id"),
-  amount: integer("amount").notNull(), // in cents
-  platformFee: integer("platform_fee").notNull(),
-  vendorPayout: integer("vendor_payout").notNull(),
+  // `amount` = per-transaction charge (e.g. deposit). NOT the same as totalAmount (booking total).
+  amount: integer("amount").notNull(),
   totalAmount: integer("total_amount"),
   platformFeeAmount: integer("platform_fee_amount"),
   vendorGrossAmount: integer("vendor_gross_amount"),
   vendorNetPayoutAmount: integer("vendor_net_payout_amount"),
   stripeProcessingFeeEstimate: integer("stripe_processing_fee_estimate"),
   actualStripeFeeAmount: integer("actual_stripe_fee_amount"),
-  refundedAmount: integer("refunded_amount").default(0),
   disputeStatus: text("dispute_status"),
   payoutStatus: payoutStatusEnum("payout_status").notNull().default("not_ready"),
   payoutEligibleAt: timestamp("payout_eligible_at"),
@@ -636,12 +659,12 @@ export type Payment = typeof payments.$inferSelect;
 export const notifications = pgTable("notifications", {
   id: varchar("id").primaryKey().default(sql`gen_random_uuid()`),
   recipientId: varchar("recipient_id").notNull(), // vendor or customer ID
-  recipientType: text("recipient_type").notNull(), // 'vendor' or 'customer'
+  recipientType: notificationRecipientTypeEnum("recipient_type").notNull(),
   type: notificationTypeEnum("type").notNull(),
   title: text("title").notNull(),
   message: text("message").notNull(),
   link: text("link"), // URL to relevant page
-  read: boolean("read").default(false),
+  read: boolean("read").default(false).notNull(),
   createdAt: timestamp("created_at").defaultNow(),
 });
 
@@ -660,7 +683,9 @@ export const reviewReplies = pgTable("review_replies", {
   // ✅ migrated from legacy vendors -> vendor_accounts
   vendorAccountId: varchar("vendor_account_id").references(() => vendorAccounts.id),
 
-  reviewIndex: integer("review_index").notNull(), // index in vendor.reviews array (legacy concept; ok for now)
+  // DEPRECATED: use listingReviewId FK instead; kept until backfill is confirmed
+  reviewIndex: integer("review_index").notNull(),
+  listingReviewId: varchar("listing_review_id").references(() => listingReviews.id, { onDelete: "cascade" }),
   reply: text("reply").notNull(),
   createdAt: timestamp("created_at").defaultNow(),
 });
@@ -762,6 +787,7 @@ export const stripeWebhookEvents = pgTable("stripe_webhook_events", {
   livemode: boolean("livemode").notNull().default(false),
   payload: jsonb("payload").notNull().default(sql`'{}'::jsonb`),
   processedAt: timestamp("processed_at").defaultNow().notNull(),
+  expiresAt: timestamp("expires_at").notNull().default(sql`now() + interval '90 days'`),
 });
 
 export const insertStripeWebhookEventSchema = createInsertSchema(stripeWebhookEvents).omit({
@@ -774,6 +800,25 @@ export type StripeWebhookEvent = typeof stripeWebhookEvents.$inferSelect;
 
 export type RentalType = typeof rentalTypes.$inferSelect;
 
+// Vendor Vacation Blocks (date ranges when vendor is away)
+export const vendorVacationBlocks = pgTable("vendor_vacation_blocks", {
+  id: varchar("id").primaryKey().default(sql`gen_random_uuid()`),
+  vendorId: varchar("vendor_id")
+    .notNull()
+    .references(() => vendorAccounts.id, { onDelete: "cascade" }),
+  startDate: text("start_date").notNull(), // YYYY-MM-DD
+  endDate: text("end_date").notNull(),     // YYYY-MM-DD
+  createdAt: timestamp("created_at", { withTimezone: true }).defaultNow().notNull(),
+});
+
+export const insertVendorVacationBlockSchema = createInsertSchema(vendorVacationBlocks).omit({
+  id: true,
+  createdAt: true,
+});
+
+export type InsertVendorVacationBlock = z.infer<typeof insertVendorVacationBlockSchema>;
+export type VendorVacationBlock = typeof vendorVacationBlocks.$inferSelect;
+
 // Rental Types (DB-backed canonical prop/rental types)
 export const rentalTypes = pgTable("rental_types", {
   id: varchar("id").primaryKey().default(sql`gen_random_uuid()`),
@@ -783,3 +828,142 @@ export const rentalTypes = pgTable("rental_types", {
   sortOrder: integer("sort_order").default(0).notNull(),
   createdAt: timestamp("created_at").defaultNow().notNull(),
 });
+
+// Planning Boards — customer-created boards for saving vendor listings
+export const planningBoards = pgTable("planning_boards", {
+  id: varchar("id").primaryKey().default(sql`gen_random_uuid()`),
+  customerId: varchar("customer_id").notNull().references(() => users.id),
+  name: text("name").notNull(),
+  createdAt: timestamp("created_at", { withTimezone: true }).defaultNow().notNull(),
+});
+
+export const boardSavedListings = pgTable(
+  "board_saved_listings",
+  {
+    id: varchar("id").primaryKey().default(sql`gen_random_uuid()`),
+    boardId: varchar("board_id")
+      .notNull()
+      .references(() => planningBoards.id, { onDelete: "cascade" }),
+    listingId: varchar("listing_id")
+      .notNull()
+      .references(() => vendorListings.id, { onDelete: "cascade" }),
+    savedAt: timestamp("saved_at", { withTimezone: true }).defaultNow().notNull(),
+  },
+  (table) => ({
+    uniqueBoardListing: uniqueIndex("board_saved_listings_board_listing_unique").on(
+      table.boardId,
+      table.listingId,
+    ),
+  }),
+);
+
+export const insertPlanningBoardSchema = createInsertSchema(planningBoards).omit({
+  id: true,
+  createdAt: true,
+});
+
+export const insertBoardSavedListingSchema = createInsertSchema(boardSavedListings).omit({
+  id: true,
+  savedAt: true,
+});
+
+export type PlanningBoard = typeof planningBoards.$inferSelect;
+export type BoardSavedListing = typeof boardSavedListings.$inferSelect;
+export type InsertPlanningBoard = z.infer<typeof insertPlanningBoardSchema>;
+export type InsertBoardSavedListing = z.infer<typeof insertBoardSavedListingSchema>;
+
+// ─── Circumvention Prevention ─────────────────────────────────────────────────
+
+// flag_type: what triggered the flag
+//   hard_block_attempt  – matched a hard-block regex (email, phone, URL, social)
+//   soft_flag           – matched a soft-flag keyword phrase
+//   customer_report     – a customer manually reported the content
+//
+// content_type: which field the content appeared in
+//   chat_message | listing_description | listing_title | vendor_description | tagline
+//
+// status: admin review state
+//   pending | dismissed | actioned
+
+export const circumventionFlags = pgTable("circumvention_flags", {
+  id: varchar("id").primaryKey().default(sql`gen_random_uuid()`),
+  flagType: varchar("flag_type").notNull(),
+  contentType: varchar("content_type").notNull(),
+  contentSnapshot: text("content_snapshot").notNull(),
+  matches: text("matches").array().notNull().default(sql`'{}'`),
+  vendorAccountId: varchar("vendor_account_id").references(() => vendorAccounts.id),
+  userId: varchar("user_id").references(() => users.id),
+  reportedByUserId: varchar("reported_by_user_id").references(() => users.id),
+  listingId: varchar("listing_id").references(() => vendorListings.id),
+  bookingId: varchar("booking_id").references(() => bookings.id),
+  status: varchar("status").notNull().default("pending"),
+  reviewedBy: varchar("reviewed_by"),
+  reviewedAt: timestamp("reviewed_at"),
+  createdAt: timestamp("created_at").notNull().defaultNow(),
+});
+
+export const circumventionWarnings = pgTable("circumvention_warnings", {
+  id: varchar("id").primaryKey().default(sql`gen_random_uuid()`),
+  vendorAccountId: varchar("vendor_account_id").notNull().references(() => vendorAccounts.id),
+  flagId: varchar("flag_id").references(() => circumventionFlags.id),
+  reason: text("reason").notNull(),
+  issuedBy: varchar("issued_by").notNull().default("system"),
+  warningNumber: integer("warning_number").notNull(),
+  notifiedEmail: boolean("notified_email").notNull().default(false),
+  createdAt: timestamp("created_at").notNull().defaultNow(),
+});
+
+export const vendorSuspensions = pgTable("vendor_suspensions", {
+  id: varchar("id").primaryKey().default(sql`gen_random_uuid()`),
+  vendorAccountId: varchar("vendor_account_id").notNull().references(() => vendorAccounts.id),
+  reason: text("reason").notNull(),
+  warningSnapshot: integer("warning_snapshot").notNull(),
+  startsAt: timestamp("starts_at").notNull().defaultNow(),
+  endsAt: timestamp("ends_at").notNull(),
+  createdBy: varchar("created_by").notNull().default("system"),
+  notifiedEmail: boolean("notified_email").notNull().default(false),
+  liftedAt: timestamp("lifted_at"),
+  liftedBy: varchar("lifted_by"),
+  createdAt: timestamp("created_at").notNull().defaultNow(),
+});
+
+export type CircumventionFlag = typeof circumventionFlags.$inferSelect;
+export type CircumventionWarning = typeof circumventionWarnings.$inferSelect;
+export type VendorSuspension = typeof vendorSuspensions.$inferSelect;
+
+// ─── Feedback Submissions ──────────────────────────────────────────────────────
+
+export const feedbackTypeEnum = pgEnum("feedback_type", ["feature_request", "bug_report"]);
+
+export const feedbackSubmissions = pgTable(
+  "feedback_submissions",
+  {
+    id: varchar("id").primaryKey().default(sql`gen_random_uuid()`),
+    type: feedbackTypeEnum("type").notNull(),
+    title: text("title").notNull(),
+    description: text("description").notNull(),
+    attachmentUrl: text("attachment_url"),
+    submittedByUserId: varchar("submitted_by_user_id").references(() => users.id, { onDelete: "set null" }),
+    submittedByVendorAccountId: varchar("submitted_by_vendor_account_id").references(() => vendorAccounts.id, { onDelete: "set null" }),
+    submitterRole: text("submitter_role").notNull(), // 'customer' | 'vendor'
+    submitterName: text("submitter_name"),
+    submitterEmail: text("submitter_email"),
+    flagged: boolean("flagged").notNull().default(false),
+    flaggedAt: timestamp("flagged_at"),
+    createdAt: timestamp("created_at").defaultNow().notNull(),
+  },
+  (table) => ({
+    typeIdx: index("feedback_submissions_type_idx").on(table.type, table.createdAt),
+    flaggedIdx: index("feedback_submissions_flagged_idx").on(table.flagged, table.createdAt),
+  })
+);
+
+export const insertFeedbackSubmissionSchema = createInsertSchema(feedbackSubmissions).omit({
+  id: true,
+  flagged: true,
+  flaggedAt: true,
+  createdAt: true,
+});
+
+export type FeedbackSubmission = typeof feedbackSubmissions.$inferSelect;
+export type InsertFeedbackSubmission = z.infer<typeof insertFeedbackSubmissionSchema>;

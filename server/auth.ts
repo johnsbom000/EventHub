@@ -1,43 +1,8 @@
-import bcrypt from "bcrypt";
-import jwt from "jsonwebtoken";
 import type { Request, Response, NextFunction } from "express";
 import { requireAuth0 } from "./auth0";
 import { db } from "./db";
 import { eq, and, isNull, sql as drizzleSql } from "drizzle-orm";
 import { users, vendorAccounts } from "@shared/schema";
-
-const JWT_SECRET = (process.env.JWT_SECRET || "").trim();
-if (!JWT_SECRET) {
-  throw new Error("Missing JWT_SECRET environment variable");
-}
-const SALT_ROUNDS = 10;
-
-export interface JWTPayload {
-  id: string;
-  email?: string;
-  username?: string;
-  type: "customer" | "vendor" | "admin";
-}
-
-/* ======================================================
-   Password helpers
-====================================================== */
-
-export async function hashPassword(password: string): Promise<string> {
-  return bcrypt.hash(password, SALT_ROUNDS);
-}
-
-/* ======================================================
-   JWT helpers
-====================================================== */
-
-export function verifyToken(token: string): JWTPayload | null {
-  try {
-    return jwt.verify(token, JWT_SECRET) as JWTPayload;
-  } catch {
-    return null;
-  }
-}
 
 type VendorResolverMatchPath = "users.user_id" | "vendor_accounts.auth0_sub" | "vendor_accounts.email" | "none";
 
@@ -123,6 +88,9 @@ async function maybeHealVendorAccountLinks(
     auth0Sub: string | null;
     resolvedUserId: string | null;
     context: string;
+    // When true, we arrived via a verified email match — safe to overwrite a
+    // stale auth0Sub so future logins resolve on the faster sub path.
+    trustedEmailMatch?: boolean;
   }
 ): Promise<{
   account: typeof vendorAccounts.$inferSelect;
@@ -142,7 +110,8 @@ async function maybeHealVendorAccountLinks(
   const updates: Record<string, unknown> = {};
 
   if (params.auth0Sub) {
-    if (!account.auth0Sub) {
+    if (!account.auth0Sub || (params.trustedEmailMatch && account.auth0Sub !== params.auth0Sub)) {
+      // Only write the new sub if no other active account already owns it.
       const bySub = await db
         .select({ id: vendorAccounts.id })
         .from(vendorAccounts)
@@ -159,12 +128,6 @@ async function maybeHealVendorAccountLinks(
         updates.auth0Sub = params.auth0Sub;
         healedAuth0Sub = true;
       }
-    } else if (account.auth0Sub !== params.auth0Sub) {
-      logVendorResolver("warn", "auth0_sub_mismatch", {
-        context: params.context,
-        accountId: account.id,
-        accountAuth0SubPresent: true,
-      });
     }
   }
 
@@ -324,14 +287,9 @@ export async function resolveVendorAccountForAuth0Identity(
 
     if (accountsByEmail.length === 1) {
       const account = accountsByEmail[0];
-      if (normalizedSub && account.auth0Sub && account.auth0Sub !== normalizedSub) {
-        logVendorResolver("warn", "email_fallback_auth0_sub_conflict", {
-          context,
-          accountId: account.id,
-          matchedBy: "vendor_accounts.email",
-        });
-        return finalize(null, "none", resolvedUserId, false, false);
-      }
+
+      // If a different active vendor account already owns this userId, something
+      // is structurally wrong — log and skip rather than silently merge.
       if (resolvedUserId && account.userId && account.userId !== resolvedUserId) {
         logVendorResolver("warn", "email_fallback_user_id_conflict", {
           context,
@@ -342,10 +300,15 @@ export async function resolveVendorAccountForAuth0Identity(
         return finalize(null, "none", resolvedUserId, false, false);
       }
 
+      // Email is verified by Auth0 upstream (requireAuth0 rejects email_verified !== true),
+      // so a matching email is sufficient proof of ownership regardless of which login
+      // method (Google, email/password, etc.) the user chose this session.
+      // Pass trustedEmailMatch so the heal can overwrite a stale auth0Sub.
       const healed = await maybeHealVendorAccountLinks(account, {
         auth0Sub: normalizedSub,
         resolvedUserId,
         context,
+        trustedEmailMatch: true,
       });
       return finalize(
         healed.account,
@@ -361,60 +324,88 @@ export async function resolveVendorAccountForAuth0Identity(
 }
 
 /* ======================================================
-   JWT/Auth0 bridge middleware
+   Admin middleware
 ====================================================== */
 
-export function requireAdminAuth(req: Request, res: Response, next: NextFunction) {
-  const authHeader = req.headers.authorization;
+// Admin access is gated by an env-var allowlist of verified emails, not the
+// DB role column. This means a DB compromise cannot grant admin access —
+// only changing the server env var (which requires server access) can.
+const ADMIN_EMAILS: ReadonlySet<string> = new Set(
+  (process.env.ADMIN_EMAILS || process.env.ADMIN_EMAIL || "")
+    .split(",")
+    .map((s) => s.trim().toLowerCase())
+    .filter(Boolean)
+);
 
-  if (!authHeader || !authHeader.startsWith("Bearer ")) {
-    return res.status(401).json({ message: "No token provided" });
-  }
-
-  const token = authHeader.substring(7);
-  const payload = verifyToken(token);
-
-  if (payload && payload.type === "admin") {
-    (req as any).adminAuth = payload;
-    return next();
-  }
-
-  // Fallback for Auth0 access tokens during migration.
-  return requireDualAuthAuth0(req, res, () => {
-    const customerAuth = (req as any).customerAuth as { id?: string; type?: string } | undefined;
-    if (customerAuth?.type === "admin" && customerAuth.id) {
-      (req as any).adminAuth = customerAuth;
-      return next();
-    }
-
-    const customerId = typeof customerAuth?.id === "string" ? customerAuth.id.trim() : "";
-    if (!customerId) {
-      return res.status(403).json({ message: "Admin access required" });
-    }
-
-    void db
-      .select({ id: users.id, role: users.role, email: users.email })
-      .from(users)
-      .where(eq(users.id, customerId))
-      .limit(1)
-      .then((rows) => {
-        const user = rows[0];
-        if (!user || user.role !== "admin") {
-          return res.status(403).json({ message: "Admin access required" });
-        }
-
-        (req as any).adminAuth = {
-          id: user.id,
-          email: user.email,
-          type: "admin",
-        };
-        return next();
-      })
-      .catch((error: any) => {
-        console.error("Admin role lookup failed:", error?.message || error);
-        return res.status(500).json({ message: "Unable to verify admin access" });
+export async function requireAdminAuth(req: Request, res: Response, next: NextFunction) {
+  try {
+    // Step 1: Verify Auth0 token. requireAuth0 rejects expired tokens and
+    // unverified emails — so auth0.email is safe to trust after this.
+    let authed = false;
+    await new Promise<void>((resolve) => {
+      requireAuth0(req, res, () => {
+        authed = true;
+        resolve();
       });
-  });
+    });
+    if (!authed) return; // requireAuth0 already sent 401
+
+    const auth0 = (req as any).auth0 as { sub: string; email?: string };
+    const email = typeof auth0.email === "string" ? auth0.email.trim().toLowerCase() : "";
+
+    // Step 2: Allowlist check — always fresh, never trusts a prior middleware.
+    if (!email || !ADMIN_EMAILS.has(email)) {
+      // Return generic 403 — don't reveal that an admin page exists.
+      return res.status(403).json({ message: "Forbidden" });
+    }
+
+    // Step 3: Fetch or auto-provision the admin user row.
+    // The DB record is not required for access (allowlist is the gate), but
+    // having one lets admin routes that join on users.id work correctly.
+    const auth0Full = (req as any).auth0 as {
+      sub: string; email?: string; name?: string;
+      given_name?: string; family_name?: string;
+    };
+
+    let [user] = await db
+      .select({ id: users.id, email: users.email, role: users.role })
+      .from(users)
+      .where(drizzleSql`lower(${users.email}) = ${email}`)
+      .limit(1);
+
+    if (!user) {
+      // First-ever login for this admin email — create the user record.
+      const displayName =
+        auth0Full.name ||
+        [auth0Full.given_name, auth0Full.family_name].filter(Boolean).join(" ") ||
+        email.split("@")[0];
+      try {
+        const [inserted] = await db
+          .insert(users)
+          .values({ name: displayName, email: auth0Full.email!, role: "admin", auth0Sub: auth0Full.sub || null })
+          .onConflictDoNothing()
+          .returning({ id: users.id, email: users.email, role: users.role });
+        user = inserted ?? undefined;
+      } catch {
+        // Non-fatal — admin access is already granted above.
+      }
+    } else if (user.role !== "admin") {
+      // Ensure existing record has the admin role.
+      await db.update(users).set({ role: "admin" }).where(eq(users.id, user.id)).catch(() => {});
+    }
+
+    (req as any).adminAuth = {
+      id: user?.id ?? null,
+      email: auth0Full.email ?? user?.email ?? null,
+      sub: auth0Full.sub,
+      type: "admin",
+    };
+
+    return next();
+  } catch (err: any) {
+    console.error("requireAdminAuth error:", err?.message || err);
+    return res.status(401).json({ message: "Unauthorized" });
+  }
 }
 
 /* ======================================================
@@ -459,18 +450,40 @@ export async function requireDualAuthAuth0(
           email: matchedVendor.email,
           type: "vendor",
         };
+
+        // Also populate customerAuth so vendor users can access customer routes
+        // (book other vendors, view their own bookings as a customer, etc.).
+        // Vendors are a superset of customers — they can do everything a customer can.
+        // Prefer the userId FK on the vendor account; fall back to email lookup.
+        const linkedUserId = (matchedVendor as any).userId as string | null | undefined;
+        const normalizedEmailForVendor = typeof email === "string" ? email.trim().toLowerCase() : "";
+        const vendorUserRows = linkedUserId
+          ? await db.select().from(users).where(eq(users.id, linkedUserId)).limit(1)
+          : normalizedEmailForVendor
+            ? await db.select().from(users).where(drizzleSql`lower(${users.email}) = ${normalizedEmailForVendor}`).limit(1)
+            : [];
+        if (vendorUserRows[0]) {
+          const u = vendorUserRows[0];
+          (req as any).customerAuth = {
+            id: u.id,
+            email: u.email,
+            type: u.role === "admin" ? "admin" : "customer",
+          };
+        }
+
         return next();
       }
       (req as any).vendorAuthBlocked = true;
       (req as any).vendorAuthBlockedReason = vendorIsDeleted ? "deleted" : "inactive";
     }
 
-    // 3) Customer match by email
-    const usersFound = email
+    // 3) Customer match by email (case-insensitive)
+    const normalizedEmailForCustomer = typeof email === "string" ? email.trim().toLowerCase() : "";
+    const usersFound = normalizedEmailForCustomer
       ? await db
           .select()
           .from(users)
-          .where(eq(users.email, email))
+          .where(drizzleSql`lower(${users.email}) = ${normalizedEmailForCustomer}`)
       : [];
 
     if (usersFound.length > 0) {

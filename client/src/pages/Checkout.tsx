@@ -316,14 +316,33 @@ function CheckoutContent({
   const elements = useElements();
   const { isAuthenticated, loginWithRedirect, getAccessTokenSilently, user } = useAuth0();
 
+  // Fetch vendor account so we can use the owner's real name when a vendor is the one booking.
+  const { data: vendorMe } = useQuery<{
+    ownerFirstName?: string | null;
+    ownerLastName?: string | null;
+  }>({
+    queryKey: ["/api/vendor/me"],
+    enabled: isAuthenticated,
+    retry: false,
+    staleTime: 5 * 60 * 1000,
+  });
+
   useEffect(() => {
     if (user?.email && !contactEmail) {
       setContactEmail(user.email);
     }
-    if (user?.name && !contactName) {
-      setContactName(user.name);
+    if (!contactName) {
+      // Prefer the owner's stored real name (reliable for all signup methods).
+      // Fall back to Auth0 display name (only reliable for Google OAuth).
+      const ownerName = [vendorMe?.ownerFirstName, vendorMe?.ownerLastName]
+        .filter(Boolean)
+        .join(" ")
+        .trim();
+      const fallback = typeof user?.name === "string" ? user.name.trim() : "";
+      const resolved = ownerName || fallback;
+      if (resolved) setContactName(resolved);
     }
-  }, [user, contactEmail, contactName]);
+  }, [user, vendorMe, contactEmail, contactName]);
 
   useEffect(() => {
     if (typeof window === "undefined") return;
@@ -1281,7 +1300,7 @@ function CheckoutContent({
                     ))}
                   </SelectContent>
                 </Select>
-                <p className="text-xs text-muted-foreground">
+                <p className="text-sm text-muted-foreground">
                   {maxAvailableQuantity} identical unit{maxAvailableQuantity === 1 ? "" : "s"} available.
                 </p>
               </div>
@@ -1466,32 +1485,32 @@ function CheckoutContent({
                 <div>
                   <div className="font-medium leading-tight">{data.title}</div>
                   <div className="text-sm text-muted-foreground">{data.vendorName}</div>
-                  <div className="text-xs text-muted-foreground mt-2 flex items-center gap-2">
+                  <div className="text-sm text-muted-foreground mt-2 flex items-center gap-2">
                     <Calendar className="w-4 h-4" />
                     <span>{eventDate}</span>
                   </div>
                   {normalizedQuantity > 1 ? (
-                    <div className="text-xs text-muted-foreground mt-1">
+                    <div className="text-sm text-muted-foreground mt-1">
                       Quantity: {normalizedQuantity}
                     </div>
                   ) : null}
                   {isHourlyBooking && eventStartTime && eventEndTime ? (
-                    <div className="text-xs text-muted-foreground mt-1">
+                    <div className="text-sm text-muted-foreground mt-1">
                       Rental window: {eventStartTime} - {eventEndTime}
                     </div>
                   ) : null}
                   {shouldShowPerDayLogistics && itemNeededByTime && itemDoneByTime ? (
-                    <div className="text-xs text-muted-foreground mt-1">
+                    <div className="text-sm text-muted-foreground mt-1">
                       Rental window: {itemNeededByTime} - {itemDoneByTime}
                     </div>
                   ) : null}
                   {shouldShowPerDayLogistics && eventStartTime && eventEndTime ? (
-                    <div className="text-xs text-muted-foreground mt-1">
+                    <div className="text-sm text-muted-foreground mt-1">
                       Event time: {eventStartTime} - {eventEndTime}
                     </div>
                   ) : null}
                   {data.deliveryIncluded ? (
-                    <div className="text-xs text-muted-foreground mt-1 flex items-center gap-2">
+                    <div className="text-sm text-muted-foreground mt-1 flex items-center gap-2">
                       <MapPin className="w-4 h-4" />
                       <span>Delivery Included</span>
                     </div>
@@ -1543,7 +1562,7 @@ function CheckoutContent({
               ) : null}
 
               {variableTravelFeePending ? (
-                <div className="text-xs text-muted-foreground">
+                <div className="text-sm text-muted-foreground">
                   Travel fee is configured as {data?.travelFeeType === "per_mile" ? "per mile" : "per hour"} and will
                   be finalized by the vendor.
                 </div>
@@ -1557,7 +1576,7 @@ function CheckoutContent({
               <div className="border-t border-[rgba(74,106,125,0.22)] pt-4 flex items-end justify-between">
                 <div>
                   <div className="text-xl font-semibold">Total</div>
-                  <div className="text-xs text-muted-foreground">Taxes calculated later</div>
+                  <div className="text-sm text-muted-foreground">Taxes calculated later</div>
                 </div>
                 <div className="text-3xl font-bold">{formatUsdFromCents(customerTotal)}</div>
               </div>
@@ -1576,11 +1595,11 @@ function CheckoutContent({
                 </div>
               </div>
 
-              <p className="text-xs text-muted-foreground">Use Stripe test card `4242 4242 4242 4242`.</p>
+              <p className="text-sm text-muted-foreground">Use Stripe test card `4242 4242 4242 4242`.</p>
 
               {submitError ? <p className="text-sm text-red-600">{submitError}</p> : null}
               {pendingPaymentDraft && !submitError ? (
-                <p className="text-xs text-amber-700">
+                <p className="text-sm text-amber-700">
                   A previous payment attempt is pending. Submitting again will safely resume it.
                 </p>
               ) : null}

@@ -2,7 +2,6 @@ import type { ListingFormData, Offering, BusinessHours, Discount } from "@/featu
 
 export interface ListingPublic extends Pick<
   ListingFormData,
-  | "serviceType"
   | "city"
   | "travelMode"
   | "serviceRadius"

@@ -1,6 +1,5 @@
 import { useAuth0 } from "@auth0/auth0-react";
 import { useState } from "react";
-import { Facebook } from "lucide-react";
 import { Dialog, DialogContent, DialogDescription, DialogHeader, DialogTitle } from "@/components/ui/dialog";
 import { Tabs, TabsList, TabsTrigger } from "@/components/ui/tabs";
 import { Button } from "@/components/ui/button";
@@ -73,15 +72,6 @@ export default function AuthModal({ open, onOpenChange }: AuthModalProps) {
     });
   };
 
-  const continueWithFacebook = async () => {
-    await startLogin({
-      authorizationParams: {
-        connection: "facebook",
-        login_hint: safeLoginHint,
-      },
-    });
-  };
-
   const continueWithEmail = async () => {
     await startLogin({
       authorizationParams: {
@@ -98,7 +88,13 @@ export default function AuthModal({ open, onOpenChange }: AuthModalProps) {
 
   return (
     <Dialog open={open} onOpenChange={onOpenChange}>
-      <DialogContent className="max-h-[96vh] overflow-y-auto border-[2px] border-[rgba(74,106,125,0.35)] bg-background p-0 shadow-xl sm:max-w-[560px] sm:rounded-[16px] [&>button]:right-5 [&>button]:top-5 [&>button]:h-7 [&>button]:w-7 [&>button]:rounded-full [&>button]:opacity-100 [&>button]:text-[#6e7590] [&>button]:ring-0 [&>button]:ring-offset-0 [&>button]:hover:bg-transparent [&>button]:hover:text-[#4a6a7d]">
+      <DialogContent
+        onOpenAutoFocus={(event) => {
+          // Keep Safari from auto-focusing email and opening saved-email suggestions on modal open.
+          event.preventDefault();
+        }}
+        className="max-h-[96vh] overflow-y-auto border-[2px] border-[rgba(74,106,125,0.35)] bg-background p-0 shadow-xl sm:max-w-[560px] sm:rounded-[16px] [&>button]:right-5 [&>button]:top-5 [&>button]:h-7 [&>button]:w-7 [&>button]:rounded-full [&>button]:opacity-100 [&>button]:text-[#6e7590] [&>button]:ring-0 [&>button]:ring-offset-0 [&>button]:hover:bg-transparent [&>button]:hover:text-[#4a6a7d]"
+      >
         <div className="px-5 pb-4 pt-7 sm:px-7 sm:pb-5 sm:pt-8">
           <DialogHeader className="space-y-2 text-left">
             <DialogTitle className="sr-only">Authentication</DialogTitle>
@@ -108,7 +104,7 @@ export default function AuthModal({ open, onOpenChange }: AuthModalProps) {
               hubClassName="text-[#4a6a7d] font-normal"
             />
             <DialogDescription className="font-sans text-[1.5rem] text-[#6e7590]">
-              Continue with Google, Facebook, or email.
+              Continue with Google or email.
             </DialogDescription>
           </DialogHeader>
 
@@ -137,6 +133,7 @@ export default function AuthModal({ open, onOpenChange }: AuthModalProps) {
               <Input
                 id="auth-email"
                 type="email"
+                autoComplete="email"
                 placeholder="you@example.com"
                 value={email}
                 onChange={(e) => setEmail(e.target.value)}
@@ -206,20 +203,6 @@ export default function AuthModal({ open, onOpenChange }: AuthModalProps) {
                 Continue with Google
               </Button>
 
-              <Button
-                type="button"
-                variant="outline"
-                className="h-12 w-full justify-center gap-3 rounded-[14px] border-[2px] border-[rgba(74,106,125,0.22)] bg-[hsl(var(--card))] font-sans text-[1.5rem] font-medium text-[#20243d] hover:bg-[hsl(var(--card))]"
-                onClick={continueWithFacebook}
-              >
-                <span
-                  aria-hidden="true"
-                  className="inline-flex h-6 w-6 items-center justify-center rounded-full bg-[#1c74e9] text-[#ffffff]"
-                >
-                  <Facebook className="h-3.5 w-3.5" />
-                </span>
-                Continue with Facebook
-              </Button>
             </div>
 
             <div className="rounded-[14px] border-[2px] border-[rgba(74,106,125,0.2)] bg-transparent px-4 py-3">

@@ -1,7 +1,8 @@
 import { Switch, Route, useLocation } from "wouter";
-import { useEffect } from "react";
-import { QueryClientProvider } from "@tanstack/react-query";
+import { useEffect, useState } from "react";
+import { QueryClientProvider, useQuery } from "@tanstack/react-query";
 import { queryClient } from "./lib/queryClient";
+import { useAuth0 } from "@auth0/auth0-react";
 
 import { Toaster } from "@/components/ui/toaster";
 import { ScrollToTop } from "@/components/ScrollToTop";
@@ -10,9 +11,6 @@ import { useTrackPageView } from "@/hooks/useTrackPageView";
 
 import Home from "@/pages/Home";
 import BrowseVendors from "@/pages/BrowseVendors";
-import VendorProfile from "@/pages/VendorProfile";
-import EventPlanner from "@/pages/EventPlanner";
-import CuratedRecommendations from "@/pages/CuratedRecommendations";
 import CustomerDashboard from "@/pages/CustomerDashboard";
 
 import VendorDashboard from "@/pages/VendorDashboard";
@@ -30,9 +28,7 @@ import MyHub from "@/pages/myhub";
 import VendorHub from "@/pages/vendorhub";
 
 import AdminDashboard from "@/pages/AdminDashboard";
-import UIDemo from "@/pages/UIDemo";
 import NotFound from "@/pages/not-found";
-import AuthTest from "@/pages/AuthTest";
 import ListingDetail from "@/pages/ListingDetail";
 import Checkout from "@/pages/Checkout";
 
@@ -51,9 +47,6 @@ function Router() {
         <Route path="/checkout/:listingId" component={Checkout} />
         <Route path="/shop/:vendorId" component={VendorHub} />
         <Route path="/vendor/hub/:vendorId" component={VendorHub} />
-        <Route path="/planner" component={EventPlanner} />
-        <Route path="/recommendations/:eventId" component={CuratedRecommendations} />
-
         {/* Vendor */}
         <Route path="/vendor/login" component={VendorLogin} />
         <Route path="/vendor/onboarding" component={VendorOnboarding} />
@@ -69,19 +62,45 @@ function Router() {
         <Route path="/vendor/shop" component={MyHub} />
         <Route path="/vendor/my-hub" component={MyHub} />
         <Route path="/my-hub" component={MyHub} />
-        <Route path="/vendor/:id" component={VendorProfile} />
 
         {/* Admin */}
         <Route path="/admin" component={AdminDashboard} />
-
-        {/* Misc */}
-        <Route path="/ui-demo" component={UIDemo} />
-        <Route path="/auth-test" component={AuthTest} />
+        <Route path="/admin/:section" component={AdminDashboard} />
 
         <Route component={NotFound} />
       </Switch>
     </>
   );
+}
+
+// Checks once per browser session whether the authenticated user is an admin.
+// If so, redirects them to /admin. Works for both full OAuth redirects and
+// silent token restores from localStorage (which don't fire onRedirectCallback).
+function AdminAutoRedirect() {
+  const [, setLocation] = useLocation();
+  const { isAuthenticated, isLoading } = useAuth0();
+
+  // One check per browser session — cleared when tab/window closes.
+  const [shouldCheck, setShouldCheck] = useState(
+    () => sessionStorage.getItem("eh_admin_checked") !== "1"
+  );
+
+  const { data, isError } = useQuery<{ isAdmin: boolean }>({
+    queryKey: ["/api/admin/me"],
+    enabled: isAuthenticated && !isLoading && shouldCheck,
+    retry: false,
+  });
+
+  useEffect(() => {
+    if (!shouldCheck) return;
+    if (!data && !isError) return; // still in flight
+    // Mark as checked so navigation within the session doesn't re-trigger.
+    setShouldCheck(false);
+    sessionStorage.setItem("eh_admin_checked", "1");
+    if (data?.isAdmin) setLocation("/admin");
+  }, [data, isError, shouldCheck, setLocation]);
+
+  return null;
 }
 
 function AppContent() {
@@ -99,7 +118,12 @@ function AppContent() {
     document.documentElement.classList.toggle("vendor-dashboard-parity", !isExcludedRoute);
   }, [location]);
 
-  return <Router />;
+  return (
+    <>
+      <AdminAutoRedirect />
+      <Router />
+    </>
+  );
 }
 
 export default function App() {
