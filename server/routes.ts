@@ -17,11 +17,16 @@ import {
   paymentSchedules,
   payments,
   bookingDisputes,
+  disputeAdminNotes,
   rentalTypes,
   stripeWebhookEvents,
   vendorVacationBlocks,
   planningBoards,
   boardSavedListings,
+  circumventionFlags,
+  circumventionWarnings,
+  vendorSuspensions,
+  feedbackSubmissions,
 } from "@shared/schema";
 import {
   requireDualAuthAuth0,
@@ -41,7 +46,10 @@ import {
   sendBookingCancelledEmail,
   sendNewMessageEmail,
   sendReviewPromptEmail,
+  sendCircumventionWarningEmail,
+  sendSuspensionEmail,
 } from "./email";
+import { checkContent, blockReasonSummary } from "./circumvention-detection";
 import {
   uploadBufferToObjectStorage,
   makeObjectKey,
@@ -6426,6 +6434,74 @@ app.post(
         return res.status(400).json({ error: "No updates provided" });
       }
 
+      // ── Circumvention detection ──────────────────────────────────────────────
+      const vendorAuthForCircumvention = (req as any).vendorAuth;
+      const vendorAccountIdForCircumvention = vendorAuthForCircumvention?.id
+        ? String(vendorAuthForCircumvention.id)
+        : null;
+
+      const profileFieldsToCheck: { value: string; contentType: string; label: string }[] = [];
+
+      if (typeof updates.serviceDescription === "string" && updates.serviceDescription) {
+        profileFieldsToCheck.push({ value: updates.serviceDescription, contentType: "vendor_description", label: "Business description" });
+      }
+      if (updates.onlineProfiles && typeof updates.onlineProfiles === "object" && !Array.isArray(updates.onlineProfiles)) {
+        const op = updates.onlineProfiles as Record<string, unknown>;
+        if (typeof op.shopTagline === "string" && op.shopTagline) {
+          profileFieldsToCheck.push({ value: op.shopTagline, contentType: "tagline", label: "Tagline" });
+        }
+        if (typeof op.aboutVendor === "string" && op.aboutVendor) {
+          profileFieldsToCheck.push({ value: op.aboutVendor, contentType: "vendor_description", label: "About section" });
+        }
+        if (typeof op.aboutBusiness === "string" && op.aboutBusiness) {
+          profileFieldsToCheck.push({ value: op.aboutBusiness, contentType: "vendor_description", label: "About the business" });
+        }
+      }
+
+      for (const field of profileFieldsToCheck) {
+        const detection = checkContent(field.value);
+        if (detection.hardBlocked) {
+          // Issue warning for the attempt
+          if (vendorAccountIdForCircumvention) {
+            const serverUrl = (process.env.SERVER_URL || "http://localhost:5001").replace(/\/$/, "");
+            const [flag] = await db.insert(circumventionFlags).values({
+              flagType: "hard_block_attempt",
+              contentType: field.contentType as any,
+              contentSnapshot: field.value.slice(0, 2000),
+              matches: detection.matches,
+              vendorAccountId: vendorAccountIdForCircumvention,
+              status: "pending",
+            }).returning();
+            await issueCircumventionWarning(
+              vendorAccountIdForCircumvention,
+              flag.id,
+              `${field.label} contained ${blockReasonSummary(detection.blockReasons)}`,
+              "system",
+              serverUrl
+            );
+          }
+          return res.status(422).json({
+            error: "content_blocked",
+            field: field.label,
+            reason: `Your ${field.label.toLowerCase()} cannot include ${blockReasonSummary(detection.blockReasons)}. Please remove this information and try again.`,
+            blockReasons: detection.blockReasons,
+            matches: detection.matches,
+          });
+        }
+        if (detection.softFlagged && vendorAccountIdForCircumvention) {
+          // Allow save but flag for admin review
+          db.insert(circumventionFlags).values({
+            flagType: "soft_flag",
+            contentType: field.contentType as any,
+            contentSnapshot: field.value.slice(0, 2000),
+            matches: detection.matches,
+            vendorAccountId: vendorAccountIdForCircumvention,
+            status: "pending",
+          }).catch((err: any) => console.warn("[circumvention] soft flag insert failed:", err?.message));
+        }
+      }
+      // ── End circumvention detection ──────────────────────────────────────────
+
       const [updated] = await db
         .update(vendorProfiles)
         .set({
@@ -6435,7 +6511,8 @@ app.post(
         .where(eq(vendorProfiles.id, existing.id))
         .returning();
 
-      return res.json({ ...updated, activeProfileId: context.activeProfileId });
+      const softFlaggedProfile = profileFieldsToCheck.some(f => checkContent(f.value).softFlagged);
+      return res.json({ ...updated, activeProfileId: context.activeProfileId, softFlagged: softFlaggedProfile });
     } catch (error: any) {
       if (error.name === "ZodError") {
         return res.status(400).json({ error: "Validation failed", details: error.errors });
@@ -6816,13 +6893,78 @@ app.post(
         updatePayload.profileId = activeProfileId;
       }
 
+      // ── Circumvention detection ──────────────────────────────────────────────
+      // If this listing was previously removed for violation, check it before saving.
+      const isResubmission = existingListing.violationRemoval;
+      const listingFieldsToCheck: { value: string; contentType: string; label: string }[] = [];
+
+      const descToCheck = typeof updatePayload.description === "string"
+        ? updatePayload.description
+        : (typeof (updatePayload.listingData as any)?.description === "string"
+          ? (updatePayload.listingData as any).description
+          : null);
+      const titleToCheck = typeof updatePayload.title === "string" ? updatePayload.title : null;
+
+      if (descToCheck) listingFieldsToCheck.push({ value: descToCheck, contentType: "listing_description", label: "Listing description" });
+      if (titleToCheck) listingFieldsToCheck.push({ value: titleToCheck, contentType: "listing_title", label: "Listing title" });
+
+      const vendorAccountIdForListing = String(vendorAuth.id);
+      const serverUrlForListing = (process.env.SERVER_URL || "http://localhost:5001").replace(/\/$/, "");
+
+      for (const field of listingFieldsToCheck) {
+        const detection = checkContent(field.value);
+        if (detection.hardBlocked) {
+          const [flag] = await db.insert(circumventionFlags).values({
+            flagType: "hard_block_attempt",
+            contentType: field.contentType as any,
+            contentSnapshot: field.value.slice(0, 2000),
+            matches: detection.matches,
+            vendorAccountId: vendorAccountIdForListing,
+            listingId: id,
+            status: "pending",
+          }).returning();
+          await issueCircumventionWarning(
+            vendorAccountIdForListing,
+            flag.id,
+            `${field.label} contained ${blockReasonSummary(detection.blockReasons)}`,
+            "system",
+            serverUrlForListing
+          );
+          return res.status(422).json({
+            error: "content_blocked",
+            field: field.label,
+            reason: `Your ${field.label.toLowerCase()} cannot include ${blockReasonSummary(detection.blockReasons)}. Please remove this information and try again.`,
+            blockReasons: detection.blockReasons,
+            matches: detection.matches,
+          });
+        }
+        if (detection.softFlagged) {
+          db.insert(circumventionFlags).values({
+            flagType: "soft_flag",
+            contentType: field.contentType as any,
+            contentSnapshot: field.value.slice(0, 2000),
+            matches: detection.matches,
+            vendorAccountId: vendorAccountIdForListing,
+            listingId: id,
+            status: "pending",
+          }).catch((err: any) => console.warn("[circumvention] soft flag insert failed:", err?.message));
+        }
+      }
+
+      // If this is a resubmission after violation removal, mark as awaiting admin re-review
+      if (isResubmission) {
+        updatePayload.pendingAdminReview = true;
+      }
+      // ── End circumvention detection ──────────────────────────────────────────
+
       const [updated] = await db
         .update(vendorListings)
         .set(updatePayload)
         .where(and(eq(vendorListings.id, id), eq(vendorListings.accountId, vendorAuth.id)))
         .returning();
 
-      return res.json(updated);
+      const softFlaggedListing = listingFieldsToCheck.some(f => checkContent(f.value).softFlagged);
+      return res.json({ ...updated, softFlagged: softFlaggedListing, pendingReview: isResubmission });
     } catch (error: any) {
       logRouteError("/api/vendor/listings/:id", error);
       return res.status(500).json({ error: "Unable to update listing" });
@@ -10446,6 +10588,12 @@ app.post(
     }
   });
 
+  // Admin identity check — used by the frontend to verify admin access before rendering
+  app.get("/api/admin/me", adminRateLimiter, requireAdminAuth, (req, res) => {
+    const adminAuth = (req as any).adminAuth as { id?: string; email?: string } | undefined;
+    return res.json({ isAdmin: true, email: adminAuth?.email ?? null });
+  });
+
   app.get("/api/admin/disputes", adminRateLimiter, requireAdminAuth, async (req, res) => {
     try {
       await ensureBookingDisputesTable();
@@ -12535,13 +12683,32 @@ app.post(
       const [totalVendorsResult] = await db.select({ count: count() }).from(vendorAccounts);
       const totalVendors = totalVendorsResult.count;
 
-      const vendorsByType = await db
-        .select({
-          serviceType: vendorProfiles.serviceType,
-          count: count(),
-        })
-        .from(vendorProfiles)
-        .groupBy(vendorProfiles.serviceType);
+      const vendorsByTypeRows = await db.execute(drizzleSql`
+        SELECT
+          CASE lower(COALESCE(service_type, ''))
+            WHEN 'rentals'      THEN 'Rentals'
+            WHEN 'rental'       THEN 'Rentals'
+            WHEN 'prop-decor'   THEN 'Rentals'
+            WHEN 'prop-rental'  THEN 'Rentals'
+            WHEN 'venues'       THEN 'Venues'
+            WHEN 'venue'        THEN 'Venues'
+            WHEN 'catering'     THEN 'Catering'
+            WHEN 'services'     THEN 'Services'
+            WHEN 'florist'      THEN 'Services'
+            WHEN 'hair-styling' THEN 'Services'
+            WHEN 'photography'  THEN 'Services'
+            WHEN 'videography'  THEN 'Services'
+            WHEN 'dj'           THEN 'Services'
+            ELSE 'Other'
+          END          AS category,
+          COUNT(*)::int AS count
+        FROM vendor_profiles
+        GROUP BY 1
+        ORDER BY count DESC
+      `);
+      const vendorsByType = extractRows<{ category: string; count: number }>(vendorsByTypeRows).map(
+        (r) => ({ category: r.category, count: Number(r.count) })
+      );
 
       const thirtyDaysAgo = new Date();
       thirtyDaysAgo.setDate(thirtyDaysAgo.getDate() - 30);
@@ -12569,7 +12736,13 @@ app.post(
 
   app.get("/api/admin/stats/listings", adminRateLimiter, requireAdminAuth, async (req, res) => {
     try {
-      const [totalListingsResult] = await db.select({ count: count() }).from(vendorListings);
+      // Exclude soft-deleted listings from all counts
+      const notDeleted = drizzleSql`${vendorListings.status} != 'deleted'`;
+
+      const [totalListingsResult] = await db
+        .select({ count: count() })
+        .from(vendorListings)
+        .where(notDeleted);
       const totalListings = totalListingsResult.count;
 
       const [activeListingsResult] = await db
@@ -12590,13 +12763,21 @@ app.post(
         .where(eq(vendorListings.status, "inactive"));
       const inactiveListings = inactiveListingsResult.count;
 
-      const listingsByType = await db
-        .select({
-          serviceType: vendorProfiles.serviceType,
-          count: count(),
-        })
-        .from(vendorProfiles)
-        .groupBy(vendorProfiles.serviceType);
+      // Group by the listing's own category (Rentals, Services, Venues, Catering)
+      // rather than the vendor profile's legacy service_type field
+      const listingsByTypeRows = await db.execute(drizzleSql`
+        SELECT
+          COALESCE(NULLIF(TRIM(category), ''), 'Uncategorised') AS category,
+          COUNT(*)::int                                          AS count
+        FROM vendor_listings
+        WHERE status != 'deleted'
+        GROUP BY COALESCE(NULLIF(TRIM(category), ''), 'Uncategorised')
+        ORDER BY count DESC
+      `);
+
+      const listingsByType = extractRows<{ category: string; count: number }>(listingsByTypeRows).map(
+        (r) => ({ category: r.category, count: Number(r.count) })
+      );
 
       res.json({
         totalListings,
@@ -12746,6 +12927,877 @@ app.post(
         topPaths,
         dailyTraffic,
       });
+    } catch (error: any) {
+      return respondWithInternalServerError(req, res, error);
+    }
+  });
+
+  // ── Booking stats: full status breakdown ─────────────────────────────────
+  app.get("/api/admin/stats/bookings/detail", adminRateLimiter, requireAdminAuth, async (req, res) => {
+    try {
+      const statusCounts = await db.execute(drizzleSql`
+        SELECT status, COUNT(*)::int AS count
+        FROM bookings
+        GROUP BY status
+      `);
+      const disputeCount = await db.execute(drizzleSql`
+        SELECT COUNT(*)::int AS count
+        FROM booking_disputes
+        WHERE status NOT IN ('resolved_refund', 'resolved_payout')
+      `);
+      const avgRows = await db.execute(drizzleSql`
+        SELECT
+          ROUND(AVG(total_amount))::int            AS avg_booking_value_cents,
+          COUNT(*)::int                            AS total_non_cancelled,
+          COUNT(DISTINCT vendor_account_id)::int   AS active_vendors
+        FROM bookings
+        WHERE status NOT IN ('cancelled', 'failed', 'expired')
+      `);
+
+      const statusMap: Record<string, number> = {};
+      for (const row of extractRows<{ status: string; count: number }>(statusCounts)) {
+        statusMap[row.status] = Number(row.count);
+      }
+      const avg = extractRows<{ avg_booking_value_cents: number; total_non_cancelled: number; active_vendors: number }>(avgRows)[0];
+      const openDisputes = Number(extractRows<{ count: number }>(disputeCount)[0]?.count ?? 0);
+
+      return res.json({
+        byStatus: statusMap,
+        openDisputes,
+        avgBookingValueCents: Number(avg?.avg_booking_value_cents ?? 0),
+        totalNonCancelled: Number(avg?.total_non_cancelled ?? 0),
+        activeVendors: Number(avg?.active_vendors ?? 0),
+      });
+    } catch (error: any) {
+      return respondWithInternalServerError(req, res, error);
+    }
+  });
+
+  // ── Revenue analytics: daily, monthly, annual, by service type ──────────
+  app.get("/api/admin/stats/revenue", adminRateLimiter, requireAdminAuth, async (req, res) => {
+    try {
+      // Daily — last 30 days
+      const dailyRows = await db.execute(drizzleSql`
+        SELECT
+          DATE(b.created_at)                    AS date,
+          SUM(b.total_amount)::bigint           AS revenue_cents,
+          SUM(b.platform_fee)::bigint           AS platform_fee_cents,
+          COUNT(*)::int                         AS booking_count
+        FROM bookings b
+        WHERE b.created_at >= NOW() - INTERVAL '30 days'
+          AND b.status NOT IN ('cancelled', 'failed', 'expired')
+        GROUP BY DATE(b.created_at)
+        ORDER BY date ASC
+      `);
+
+      // Monthly — last 12 months
+      const monthlyRows = await db.execute(drizzleSql`
+        SELECT
+          DATE_TRUNC('month', b.created_at)     AS month,
+          SUM(b.total_amount)::bigint           AS revenue_cents,
+          SUM(b.platform_fee)::bigint           AS platform_fee_cents,
+          COUNT(*)::int                         AS booking_count
+        FROM bookings b
+        WHERE b.created_at >= DATE_TRUNC('month', NOW() - INTERVAL '11 months')
+          AND b.status NOT IN ('cancelled', 'failed', 'expired')
+        GROUP BY DATE_TRUNC('month', b.created_at)
+        ORDER BY month ASC
+      `);
+
+      // Annual totals — this year vs last year
+      const annualRows = await db.execute(drizzleSql`
+        SELECT
+          EXTRACT(YEAR FROM b.created_at)::int  AS year,
+          SUM(b.total_amount)::bigint           AS revenue_cents,
+          SUM(b.platform_fee)::bigint           AS platform_fee_cents,
+          COUNT(*)::int                         AS booking_count
+        FROM bookings b
+        WHERE b.status NOT IN ('cancelled', 'failed', 'expired')
+          AND b.created_at >= DATE_TRUNC('year', NOW() - INTERVAL '1 year')
+        GROUP BY EXTRACT(YEAR FROM b.created_at)
+        ORDER BY year ASC
+      `);
+
+      // By service type — normalize legacy service_type values to current categories
+      const byTypeRows = await db.execute(drizzleSql`
+        SELECT
+          CASE lower(COALESCE(vp.service_type, ''))
+            WHEN 'rentals'   THEN 'Rentals'
+            WHEN 'rental'    THEN 'Rentals'
+            WHEN 'prop-decor' THEN 'Rentals'
+            WHEN 'prop-rental' THEN 'Rentals'
+            WHEN 'venues'    THEN 'Venues'
+            WHEN 'venue'     THEN 'Venues'
+            WHEN 'catering'  THEN 'Catering'
+            WHEN 'services'  THEN 'Services'
+            WHEN 'florist'   THEN 'Services'
+            WHEN 'hair-styling' THEN 'Services'
+            WHEN 'photography' THEN 'Services'
+            WHEN 'videography' THEN 'Services'
+            WHEN 'dj'        THEN 'Services'
+            ELSE 'Other'
+          END                                           AS service_type,
+          COUNT(b.id)::int                              AS booking_count,
+          SUM(b.total_amount)::bigint                   AS revenue_cents,
+          ROUND(AVG(b.total_amount))::int               AS avg_booking_value_cents,
+          COUNT(DISTINCT b.vendor_account_id)::int      AS vendor_count,
+          ROUND(
+            COUNT(b.id)::numeric
+            / NULLIF(COUNT(DISTINCT b.vendor_account_id), 0)
+            / GREATEST(
+                EXTRACT(EPOCH FROM (NOW() - MIN(b.created_at))) / 2592000.0,
+                1
+              ),
+            2
+          )::numeric                                    AS avg_bookings_per_vendor_per_month
+        FROM bookings b
+        LEFT JOIN vendor_profiles vp ON vp.id = b.vendor_profile_id
+        WHERE b.status NOT IN ('cancelled', 'failed', 'expired')
+        GROUP BY 1
+        ORDER BY revenue_cents DESC NULLS LAST
+      `);
+
+      // Overall average booking value
+      const overallRows = await db.execute(drizzleSql`
+        SELECT
+          ROUND(AVG(total_amount))::int         AS avg_booking_value_cents,
+          COUNT(DISTINCT vendor_account_id)::int AS vendor_count,
+          COUNT(*)::int                         AS booking_count,
+          ROUND(
+            COUNT(*)::numeric
+            / NULLIF(COUNT(DISTINCT vendor_account_id), 0)
+            / GREATEST(
+                EXTRACT(EPOCH FROM (NOW() - MIN(created_at))) / 2592000.0,
+                1
+              ),
+            2
+          )::numeric AS avg_bookings_per_vendor_per_month
+        FROM bookings
+        WHERE status NOT IN ('cancelled', 'failed', 'expired')
+      `);
+
+      const overall = extractRows<any>(overallRows)[0] ?? {};
+
+      // Compute projection: avg of last 3 full months × remaining months in year
+      const monthly = extractRows<any>(monthlyRows).map((r) => ({
+        month: String(r.month ?? "").slice(0, 7),
+        revenueCents: Number(r.revenue_cents ?? 0),
+        platformFeeCents: Number(r.platform_fee_cents ?? 0),
+        bookingCount: Number(r.booking_count ?? 0),
+      }));
+
+      const now = new Date();
+      const currentMonth = `${now.getFullYear()}-${String(now.getMonth() + 1).padStart(2, "0")}`;
+      const fullMonths = monthly.filter((m) => m.month < currentMonth);
+      const last3 = fullMonths.slice(-3);
+      const avgMonthlyRevenue = last3.length
+        ? last3.reduce((s, m) => s + m.revenueCents, 0) / last3.length
+        : 0;
+      const daysInMonth = new Date(now.getFullYear(), now.getMonth() + 1, 0).getDate();
+      const dayOfMonth = now.getDate();
+      const currentMonthData = monthly.find((m) => m.month === currentMonth);
+      const projectedCurrentMonth =
+        currentMonthData
+          ? Math.round((currentMonthData.revenueCents / dayOfMonth) * daysInMonth)
+          : Math.round(avgMonthlyRevenue);
+      const remainingMonths = 12 - (now.getMonth() + 1);
+      const ytdRevenue = extractRows<any>(annualRows).find(
+        (r) => Number(r.year) === now.getFullYear()
+      );
+      const projectedAnnual = Math.round(
+        Number(ytdRevenue?.revenue_cents ?? 0) + remainingMonths * avgMonthlyRevenue
+      );
+
+      return res.json({
+        daily: extractRows<any>(dailyRows).map((r) => ({
+          date: String(r.date ?? "").slice(0, 10),
+          revenueCents: Number(r.revenue_cents ?? 0),
+          platformFeeCents: Number(r.platform_fee_cents ?? 0),
+          bookingCount: Number(r.booking_count ?? 0),
+        })),
+        monthly,
+        annual: extractRows<any>(annualRows).map((r) => ({
+          year: Number(r.year),
+          revenueCents: Number(r.revenue_cents ?? 0),
+          platformFeeCents: Number(r.platform_fee_cents ?? 0),
+          bookingCount: Number(r.booking_count ?? 0),
+        })),
+        projections: {
+          currentMonthCents: projectedCurrentMonth,
+          annualCents: projectedAnnual,
+          avgMonthlyRevenueCents: Math.round(avgMonthlyRevenue),
+        },
+        byServiceType: extractRows<any>(byTypeRows).map((r) => ({
+          serviceType: String(r.service_type ?? "Unknown"),
+          bookingCount: Number(r.booking_count ?? 0),
+          revenueCents: Number(r.revenue_cents ?? 0),
+          avgBookingValueCents: Number(r.avg_booking_value_cents ?? 0),
+          vendorCount: Number(r.vendor_count ?? 0),
+          avgBookingsPerVendorPerMonth: Number(r.avg_bookings_per_vendor_per_month ?? 0),
+        })),
+        overall: {
+          avgBookingValueCents: Number(overall.avg_booking_value_cents ?? 0),
+          vendorCount: Number(overall.vendor_count ?? 0),
+          bookingCount: Number(overall.booking_count ?? 0),
+          avgBookingsPerVendorPerMonth: Number(overall.avg_bookings_per_vendor_per_month ?? 0),
+        },
+      });
+    } catch (error: any) {
+      return respondWithInternalServerError(req, res, error);
+    }
+  });
+
+  // ── Payout records ────────────────────────────────────────────────────────
+  app.get("/api/admin/payouts", adminRateLimiter, requireAdminAuth, async (req, res) => {
+    try {
+      const rows = await db.execute(drizzleSql`
+        SELECT
+          p.id,
+          p.booking_id,
+          p.stripe_transfer_id,
+          p.stripe_charge_id,
+          p.stripe_connected_account_id,
+          p.payout_status,
+          p.payout_adjusted_amount,
+          p.vendor_net_payout_amount,
+          p.platform_fee_amount,
+          p.total_amount,
+          p.actual_stripe_fee_amount,
+          p.payout_eligible_at,
+          p.paid_out_at,
+          p.payout_blocked_reason,
+          p.payment_type,
+          p.status         AS payment_status,
+          p.created_at,
+          b.event_date,
+          b.listing_title_snapshot,
+          b.status         AS booking_status,
+          va.business_name AS vendor_business_name,
+          va.email         AS vendor_email,
+          u.name           AS customer_name,
+          u.email          AS customer_email
+        FROM payments p
+        JOIN bookings b ON b.id = p.booking_id
+        LEFT JOIN vendor_accounts va ON va.id = p.vendor_account_id
+        LEFT JOIN users u ON u.id = p.customer_id
+        WHERE p.payment_type = 'deposit'
+        ORDER BY p.created_at DESC
+        LIMIT 200
+      `);
+
+      const summary = await db.execute(drizzleSql`
+        SELECT
+          payout_status,
+          COUNT(*)::int                       AS count,
+          COALESCE(SUM(payout_adjusted_amount), 0)::bigint AS total_cents
+        FROM payments
+        WHERE payment_type = 'deposit'
+        GROUP BY payout_status
+      `);
+
+      return res.json({
+        records: extractRows<any>(rows).map((r) => ({
+          id: String(r.id ?? ""),
+          bookingId: String(r.booking_id ?? ""),
+          stripeTransferId: r.stripe_transfer_id ? String(r.stripe_transfer_id) : null,
+          stripeChargeId: r.stripe_charge_id ? String(r.stripe_charge_id) : null,
+          stripeConnectedAccountId: r.stripe_connected_account_id ? String(r.stripe_connected_account_id) : null,
+          payoutStatus: String(r.payout_status ?? ""),
+          payoutAdjustedAmount: r.payout_adjusted_amount != null ? Number(r.payout_adjusted_amount) : null,
+          vendorNetPayoutAmount: r.vendor_net_payout_amount != null ? Number(r.vendor_net_payout_amount) : null,
+          platformFeeAmount: r.platform_fee_amount != null ? Number(r.platform_fee_amount) : null,
+          totalAmount: r.total_amount != null ? Number(r.total_amount) : null,
+          actualStripeFeeAmount: r.actual_stripe_fee_amount != null ? Number(r.actual_stripe_fee_amount) : null,
+          payoutEligibleAt: r.payout_eligible_at ?? null,
+          paidOutAt: r.paid_out_at ?? null,
+          payoutBlockedReason: r.payout_blocked_reason ? String(r.payout_blocked_reason) : null,
+          eventDate: r.event_date ? String(r.event_date) : null,
+          listingTitle: r.listing_title_snapshot ? String(r.listing_title_snapshot) : null,
+          bookingStatus: String(r.booking_status ?? ""),
+          paymentStatus: String(r.payment_status ?? ""),
+          vendorBusinessName: r.vendor_business_name ? String(r.vendor_business_name) : null,
+          vendorEmail: r.vendor_email ? String(r.vendor_email) : null,
+          customerName: r.customer_name ? String(r.customer_name) : null,
+          customerEmail: r.customer_email ? String(r.customer_email) : null,
+          createdAt: r.created_at ?? null,
+        })),
+        summary: extractRows<any>(summary).map((r) => ({
+          payoutStatus: String(r.payout_status ?? ""),
+          count: Number(r.count ?? 0),
+          totalCents: Number(r.total_cents ?? 0),
+        })),
+      });
+    } catch (error: any) {
+      return respondWithInternalServerError(req, res, error);
+    }
+  });
+
+  // ── Add admin note to dispute (without resolving) ─────────────────────────
+  app.post("/api/admin/disputes/:id/note", adminRateLimiter, requireAdminAuth, async (req, res) => {
+    try {
+      await ensureBookingDisputesTable();
+      const disputeId = asTrimmedString(req.params?.id);
+      if (!disputeId) return res.status(400).json({ error: "Dispute id required" });
+
+      const { content } = z.object({ content: z.string().trim().min(1).max(5000) }).parse(req.body ?? {});
+
+      // Ensure dispute exists
+      const [dispute] = await db
+        .select({ id: bookingDisputes.id })
+        .from(bookingDisputes)
+        .where(eq(bookingDisputes.id, disputeId))
+        .limit(1);
+      if (!dispute?.id) return res.status(404).json({ error: "Dispute not found" });
+
+      // Also update the top-level adminNotes field (latest note as summary)
+      await db
+        .update(bookingDisputes)
+        .set({ adminNotes: content, updatedAt: new Date() })
+        .where(eq(bookingDisputes.id, disputeId));
+
+      // Insert into history log
+      const [note] = await db
+        .insert(disputeAdminNotes)
+        .values({ disputeId, content })
+        .returning();
+
+      return res.json(note);
+    } catch (error: any) {
+      return respondWithInternalServerError(req, res, error);
+    }
+  });
+
+  // ── Get admin notes history for a dispute ─────────────────────────────────
+  app.get("/api/admin/disputes/:id/notes", adminRateLimiter, requireAdminAuth, async (req, res) => {
+    try {
+      const disputeId = asTrimmedString(req.params?.id);
+      if (!disputeId) return res.status(400).json({ error: "Dispute id required" });
+
+      const notes = await db
+        .select()
+        .from(disputeAdminNotes)
+        .where(eq(disputeAdminNotes.disputeId, disputeId))
+        .orderBy(drizzleSql`created_at ASC`);
+
+      return res.json(notes);
+    } catch (error: any) {
+      return respondWithInternalServerError(req, res, error);
+    }
+  });
+
+  // ── Stripe platform balance ───────────────────────────────────────────────
+  app.get("/api/admin/stripe/balance", adminRateLimiter, requireAdminAuth, async (req, res) => {
+    try {
+      const { stripe } = await import("./stripe");
+      const balance = await stripe.balance.retrieve();
+      const usdAvailable = balance.available.find((b) => b.currency === "usd");
+      const usdPending = balance.pending.find((b) => b.currency === "usd");
+      return res.json({
+        availableCents: usdAvailable?.amount ?? 0,
+        pendingCents: usdPending?.amount ?? 0,
+        currency: "usd",
+      });
+    } catch (error: any) {
+      return res.status(500).json({ error: "Unable to fetch Stripe balance" });
+    }
+  });
+
+  // ── Circumvention Prevention ─────────────────────────────────────────────────
+
+  // Helper: issue a warning to a vendor. If this is warning #3, trigger suspension.
+  async function issueCircumventionWarning(
+    vendorAccountId: string,
+    flagId: string | null,
+    reason: string,
+    issuedBy: string,
+    serverUrl: string
+  ): Promise<{ warningNumber: number; suspended: boolean; endsAt: Date | null }> {
+    const existingWarnings = await db
+      .select({ id: circumventionWarnings.id })
+      .from(circumventionWarnings)
+      .where(eq(circumventionWarnings.vendorAccountId, vendorAccountId));
+
+    const warningNumber = existingWarnings.length + 1;
+
+    const [warning] = await db
+      .insert(circumventionWarnings)
+      .values({
+        vendorAccountId,
+        flagId: flagId ?? null,
+        reason,
+        issuedBy,
+        warningNumber,
+        notifiedEmail: false,
+      })
+      .returning();
+
+    let suspended = false;
+    let endsAt: Date | null = null;
+
+    if (warningNumber >= 3) {
+      // Check if there is already an active suspension — do not double-suspend
+      const now = new Date();
+      const [existing] = await db
+        .select({ id: vendorSuspensions.id, endsAt: vendorSuspensions.endsAt })
+        .from(vendorSuspensions)
+        .where(
+          and(
+            eq(vendorSuspensions.vendorAccountId, vendorAccountId),
+            drizzleSql`ends_at > ${now}`,
+            isNull(vendorSuspensions.liftedAt)
+          )
+        )
+        .limit(1);
+
+      if (!existing) {
+        const thirtyDaysFromNow = new Date(now.getTime() + 30 * 24 * 60 * 60 * 1000);
+        endsAt = thirtyDaysFromNow;
+
+        await db.insert(vendorSuspensions).values({
+          vendorAccountId,
+          reason,
+          warningSnapshot: warningNumber,
+          startsAt: now,
+          endsAt: thirtyDaysFromNow,
+          createdBy: issuedBy,
+          notifiedEmail: false,
+        });
+
+        // Deactivate all listings for this vendor
+        await db
+          .update(vendorListings)
+          .set({ status: "inactive", updatedAt: new Date() })
+          .where(
+            and(
+              eq(vendorListings.accountId, vendorAccountId),
+              drizzleSql`status NOT IN ('deleted', 'draft')`
+            )
+          );
+
+        suspended = true;
+      } else {
+        endsAt = existing.endsAt;
+        suspended = true;
+      }
+    }
+
+    // Fire-and-forget email notification
+    (async () => {
+      try {
+        const vendorRows = await db
+          .select({ email: vendorAccounts.email, businessName: vendorAccounts.businessName })
+          .from(vendorAccounts)
+          .where(eq(vendorAccounts.id, vendorAccountId))
+          .limit(1);
+        const vendor = vendorRows[0];
+        if (!vendor?.email) return;
+
+        if (suspended && endsAt) {
+          await sendSuspensionEmail(vendor.email, {
+            vendorName: vendor.businessName || "Vendor",
+            endsAt,
+            reason,
+            serverUrl,
+          });
+        } else {
+          await sendCircumventionWarningEmail(vendor.email, {
+            vendorName: vendor.businessName || "Vendor",
+            warningNumber,
+            reason,
+            serverUrl,
+          });
+        }
+
+        await db
+          .update(circumventionWarnings)
+          .set({ notifiedEmail: true })
+          .where(eq(circumventionWarnings.id, warning.id));
+      } catch (err: any) {
+        console.warn("[circumvention] email notification failed:", err?.message || err);
+      }
+    })();
+
+    return { warningNumber, suspended, endsAt };
+  }
+
+  // Helper: get active suspension for a vendor (null if none)
+  async function getActiveSuspension(vendorAccountId: string) {
+    const now = new Date();
+    const [row] = await db
+      .select()
+      .from(vendorSuspensions)
+      .where(
+        and(
+          eq(vendorSuspensions.vendorAccountId, vendorAccountId),
+          drizzleSql`ends_at > ${now}`,
+          isNull(vendorSuspensions.liftedAt)
+        )
+      )
+      .limit(1);
+    return row ?? null;
+  }
+
+  // POST /api/chat/circumvention/flag
+  // Called by the chat client when a message is hard-blocked.
+  // Logs the flag, issues a warning, and returns the vendor's new warning state.
+  app.post("/api/chat/circumvention/flag", messagingRateLimiter, requireDualAuthAuth0, async (req, res) => {
+    try {
+      const payload = z.object({
+        bookingId: z.string().min(1),
+        contentSnapshot: z.string().min(1).max(2000),
+        matches: z.array(z.string()).default([]),
+      }).parse(req.body ?? {});
+
+      const serverUrl = (process.env.SERVER_URL || "http://localhost:5001").replace(/\/$/, "");
+
+      // Resolve who is sending
+      const vendorAuth = (req as any).vendorAuth;
+      const customerAuth = await resolveCustomerAuthFromRequest(req, { createIfMissing: false });
+
+      if (!vendorAuth?.id && !customerAuth?.id) {
+        return res.status(401).json({ error: "Authentication required" });
+      }
+
+      const actorUserId = vendorAuth?.userId || customerAuth?.id || null;
+      const vendorAccountId = vendorAuth?.id || null;
+
+      // Insert flag
+      const [flag] = await db.insert(circumventionFlags).values({
+        flagType: "hard_block_attempt",
+        contentType: "chat_message",
+        contentSnapshot: payload.contentSnapshot,
+        matches: payload.matches,
+        vendorAccountId: vendorAccountId ?? undefined,
+        userId: actorUserId ?? undefined,
+        bookingId: payload.bookingId,
+        status: "pending",
+      }).returning();
+
+      let warningResult: { warningNumber: number; suspended: boolean; endsAt: Date | null } | null = null;
+      if (vendorAccountId) {
+        warningResult = await issueCircumventionWarning(
+          vendorAccountId,
+          flag.id,
+          "Attempted to send contact information in booking chat",
+          "system",
+          serverUrl
+        );
+      }
+
+      return res.status(201).json({
+        flagId: flag.id,
+        warningNumber: warningResult?.warningNumber ?? null,
+        suspended: warningResult?.suspended ?? false,
+        suspensionEndsAt: warningResult?.endsAt ?? null,
+      });
+    } catch (error: any) {
+      return respondWithInternalServerError(req, res, error);
+    }
+  });
+
+  // POST /api/circumvention/report
+  // Customer (or vendor) reports a piece of content for potential circumvention.
+  app.post("/api/circumvention/report", mutationRateLimiter, requireDualAuthAuth0, async (req, res) => {
+    try {
+      const payload = z.object({
+        contentType: z.enum(["chat_message", "listing_description", "listing_title", "vendor_description", "tagline"]),
+        contentSnapshot: z.string().min(1).max(2000),
+        listingId: z.string().optional(),
+        bookingId: z.string().optional(),
+        vendorAccountId: z.string().optional(),
+      }).parse(req.body ?? {});
+
+      const reportedByUserId =
+        (await resolveCustomerAuthFromRequest(req, { createIfMissing: false }))?.id ?? null;
+
+      await db.insert(circumventionFlags).values({
+        flagType: "customer_report",
+        contentType: payload.contentType,
+        contentSnapshot: payload.contentSnapshot,
+        matches: [],
+        vendorAccountId: payload.vendorAccountId ?? undefined,
+        userId: payload.vendorAccountId ? undefined : (reportedByUserId ?? undefined),
+        reportedByUserId: reportedByUserId ?? undefined,
+        listingId: payload.listingId ?? undefined,
+        bookingId: payload.bookingId ?? undefined,
+        status: "pending",
+      });
+
+      return res.status(201).json({ success: true });
+    } catch (error: any) {
+      return respondWithInternalServerError(req, res, error);
+    }
+  });
+
+  // GET /api/vendor/circumvention/status
+  // Returns the vendor's warning count, active suspension, and any listings
+  // pending admin re-review after a violation removal.
+  app.get("/api/vendor/circumvention/status", requireDualAuthAuth0, async (req, res) => {
+    try {
+      const vendorAuth = (req as any).vendorAuth;
+      if (!vendorAuth?.id) return res.status(401).json({ error: "Vendor authentication required" });
+
+      const vendorAccountId = String(vendorAuth.id);
+
+      const warnings = await db
+        .select()
+        .from(circumventionWarnings)
+        .where(eq(circumventionWarnings.vendorAccountId, vendorAccountId))
+        .orderBy(desc(circumventionWarnings.createdAt));
+
+      const suspension = await getActiveSuspension(vendorAccountId);
+
+      const removedListings = await db
+        .select({ id: vendorListings.id, title: vendorListings.title, pendingAdminReview: vendorListings.pendingAdminReview })
+        .from(vendorListings)
+        .where(
+          and(
+            eq(vendorListings.accountId, vendorAccountId),
+            eq(vendorListings.violationRemoval, true)
+          )
+        );
+
+      return res.json({
+        warningCount: warnings.length,
+        warnings,
+        suspension: suspension
+          ? { id: suspension.id, reason: suspension.reason, endsAt: suspension.endsAt, startsAt: suspension.startsAt }
+          : null,
+        removedListings,
+      });
+    } catch (error: any) {
+      return respondWithInternalServerError(req, res, error);
+    }
+  });
+
+  // GET /api/admin/circumvention/flags
+  // Returns pending flags for admin review.
+  // ?status=pending|dismissed|actioned  (default: pending)
+  app.get("/api/admin/circumvention/flags", adminRateLimiter, requireAdminAuth, async (req, res) => {
+    try {
+      const statusFilter = (req.query.status as string) || "pending";
+
+      const rows = await db.execute(drizzleSql`
+        SELECT
+          f.id,
+          f.flag_type       AS "flagType",
+          f.content_type    AS "contentType",
+          f.content_snapshot AS "contentSnapshot",
+          f.matches,
+          f.status,
+          f.reviewed_by     AS "reviewedBy",
+          f.reviewed_at     AS "reviewedAt",
+          f.created_at      AS "createdAt",
+          f.listing_id      AS "listingId",
+          f.booking_id      AS "bookingId",
+          va.id             AS "vendorAccountId",
+          va.business_name  AS "businessName",
+          va.email          AS "vendorEmail",
+          vl.title          AS "listingTitle",
+          vl.status         AS "listingStatus",
+          vl.violation_removal      AS "violationRemoval",
+          vl.pending_admin_review   AS "pendingAdminReview",
+          (SELECT COUNT(*)::int FROM circumvention_warnings w WHERE w.vendor_account_id = va.id) AS "warningCount"
+        FROM circumvention_flags f
+        LEFT JOIN vendor_accounts va ON va.id = f.vendor_account_id
+        LEFT JOIN vendor_listings  vl ON vl.id = f.listing_id
+        WHERE f.status = ${statusFilter}
+        ORDER BY f.created_at DESC
+        LIMIT 200
+      `);
+
+      return res.json(extractRows(rows));
+    } catch (error: any) {
+      return respondWithInternalServerError(req, res, error);
+    }
+  });
+
+  // GET /api/admin/circumvention/rereviews
+  // Listings that vendors have resubmitted after a violation removal.
+  app.get("/api/admin/circumvention/rereviews", adminRateLimiter, requireAdminAuth, async (req, res) => {
+    try {
+      const rows = await db.execute(drizzleSql`
+        SELECT
+          vl.id,
+          vl.title,
+          vl.status,
+          vl.description,
+          vl.updated_at     AS "updatedAt",
+          va.id             AS "vendorAccountId",
+          va.business_name  AS "businessName",
+          va.email          AS "vendorEmail",
+          (SELECT COUNT(*)::int FROM circumvention_warnings w WHERE w.vendor_account_id = va.id) AS "warningCount"
+        FROM vendor_listings vl
+        JOIN vendor_accounts va ON va.id = vl.account_id
+        WHERE vl.violation_removal = true
+          AND vl.pending_admin_review = true
+        ORDER BY vl.updated_at DESC
+        LIMIT 100
+      `);
+
+      return res.json(extractRows(rows));
+    } catch (error: any) {
+      return respondWithInternalServerError(req, res, error);
+    }
+  });
+
+  // GET /api/admin/circumvention/warnings
+  // Warning history, optionally filtered by vendor.
+  app.get("/api/admin/circumvention/warnings", adminRateLimiter, requireAdminAuth, async (req, res) => {
+    try {
+      const vendorAccountId = (req.query.vendorAccountId as string) || null;
+
+      const rows = await db.execute(drizzleSql`
+        SELECT
+          w.id,
+          w.vendor_account_id AS "vendorAccountId",
+          w.flag_id           AS "flagId",
+          w.reason,
+          w.issued_by         AS "issuedBy",
+          w.warning_number    AS "warningNumber",
+          w.created_at        AS "createdAt",
+          va.business_name    AS "businessName",
+          va.email            AS "vendorEmail"
+        FROM circumvention_warnings w
+        JOIN vendor_accounts va ON va.id = w.vendor_account_id
+        ${vendorAccountId ? drizzleSql`WHERE w.vendor_account_id = ${vendorAccountId}` : drizzleSql``}
+        ORDER BY w.created_at DESC
+        LIMIT 500
+      `);
+
+      return res.json(extractRows(rows));
+    } catch (error: any) {
+      return respondWithInternalServerError(req, res, error);
+    }
+  });
+
+  // POST /api/admin/circumvention/flags/:id/dismiss
+  // Admin dismisses a flag — no action taken against the vendor.
+  app.post("/api/admin/circumvention/flags/:id/dismiss", adminRateLimiter, requireAdminAuth, async (req, res) => {
+    try {
+      const flagId = asTrimmedString(req.params?.id);
+      if (!flagId) return res.status(400).json({ error: "Flag id required" });
+
+      const adminAuth = (req as any).adminAuth;
+      const adminEmail = adminAuth?.email || "admin";
+
+      const [updated] = await db
+        .update(circumventionFlags)
+        .set({ status: "dismissed", reviewedBy: adminEmail, reviewedAt: new Date() })
+        .where(eq(circumventionFlags.id, flagId))
+        .returning();
+
+      if (!updated) return res.status(404).json({ error: "Flag not found" });
+
+      return res.json({ success: true, flag: updated });
+    } catch (error: any) {
+      return respondWithInternalServerError(req, res, error);
+    }
+  });
+
+  // POST /api/admin/circumvention/flags/:id/warn-remove
+  // Admin issues a warning and removes (unpublishes) the associated listing.
+  // The listing is marked violation_removal=true so it must be re-reviewed before
+  // it can go live again.
+  app.post("/api/admin/circumvention/flags/:id/warn-remove", adminRateLimiter, requireAdminAuth, async (req, res) => {
+    try {
+      const flagId = asTrimmedString(req.params?.id);
+      if (!flagId) return res.status(400).json({ error: "Flag id required" });
+
+      const adminAuth = (req as any).adminAuth;
+      const adminEmail = adminAuth?.email || "admin";
+      const serverUrl = (process.env.SERVER_URL || "http://localhost:5001").replace(/\/$/, "");
+
+      const [flag] = await db
+        .select()
+        .from(circumventionFlags)
+        .where(eq(circumventionFlags.id, flagId))
+        .limit(1);
+
+      if (!flag) return res.status(404).json({ error: "Flag not found" });
+      if (flag.status === "actioned") return res.status(400).json({ error: "Flag already actioned" });
+
+      // Mark flag as actioned
+      await db
+        .update(circumventionFlags)
+        .set({ status: "actioned", reviewedBy: adminEmail, reviewedAt: new Date() })
+        .where(eq(circumventionFlags.id, flagId));
+
+      // If the flag is linked to a listing, unpublish it and mark for re-review
+      if (flag.listingId) {
+        await db
+          .update(vendorListings)
+          .set({
+            status: "inactive",
+            violationRemoval: true,
+            pendingAdminReview: false,
+            updatedAt: new Date(),
+          })
+          .where(eq(vendorListings.id, flag.listingId));
+      }
+
+      // Issue a warning
+      let warningResult: { warningNumber: number; suspended: boolean; endsAt: Date | null } | null = null;
+      if (flag.vendorAccountId) {
+        const reason =
+          flag.listingId
+            ? "Listing contained contact information or off-platform redirect (admin review)"
+            : "Content contained contact information or off-platform redirect (admin review)";
+        warningResult = await issueCircumventionWarning(
+          flag.vendorAccountId,
+          flagId,
+          reason,
+          adminEmail,
+          serverUrl
+        );
+      }
+
+      return res.json({
+        success: true,
+        warningNumber: warningResult?.warningNumber ?? null,
+        suspended: warningResult?.suspended ?? false,
+        suspensionEndsAt: warningResult?.endsAt ?? null,
+      });
+    } catch (error: any) {
+      return respondWithInternalServerError(req, res, error);
+    }
+  });
+
+  // POST /api/admin/circumvention/listings/:id/approve
+  // Admin approves a resubmitted listing after a violation removal, making it active again.
+  app.post("/api/admin/circumvention/listings/:id/approve", adminRateLimiter, requireAdminAuth, async (req, res) => {
+    try {
+      const listingId = asTrimmedString(req.params?.id);
+      if (!listingId) return res.status(400).json({ error: "Listing id required" });
+
+      const [listing] = await db
+        .select({ id: vendorListings.id, accountId: vendorListings.accountId, pendingAdminReview: vendorListings.pendingAdminReview, violationRemoval: vendorListings.violationRemoval })
+        .from(vendorListings)
+        .where(eq(vendorListings.id, listingId))
+        .limit(1);
+
+      if (!listing) return res.status(404).json({ error: "Listing not found" });
+      if (!listing.violationRemoval || !listing.pendingAdminReview) {
+        return res.status(400).json({ error: "This listing is not awaiting re-review" });
+      }
+
+      // Check the vendor is not currently suspended
+      const suspension = await getActiveSuspension(listing.accountId);
+      if (suspension) {
+        return res.status(400).json({ error: "Cannot approve listing while vendor is suspended" });
+      }
+
+      await db
+        .update(vendorListings)
+        .set({
+          status: "active",
+          violationRemoval: false,
+          pendingAdminReview: false,
+          updatedAt: new Date(),
+        })
+        .where(eq(vendorListings.id, listingId));
+
+      return res.json({ success: true });
     } catch (error: any) {
       return respondWithInternalServerError(req, res, error);
     }
@@ -12992,6 +14044,152 @@ app.post(
     }
   });
   // ── End Planning Boards ────────────────────────────────────────────────────
+
+  // ── Feedback Submissions ───────────────────────────────────────────────────
+  // Customers and vendors can submit feature requests and bug reports.
+  // Admins can view and flag submissions for follow-up.
+
+  const feedbackUploadsDir = path.join(process.cwd(), "server/uploads/feedback");
+
+  const feedbackAttachmentUpload = multer({
+    storage: multer.memoryStorage(),
+    limits: { fileSize: 10 * 1024 * 1024 }, // 10 MB
+    fileFilter: (_req, file, cb) => {
+      const allowed = ["image/jpeg", "image/png", "image/gif", "image/webp", "application/pdf"];
+      cb(null, allowed.includes(file.mimetype));
+    },
+  });
+
+  // POST /api/feedback/attachment — upload a file, returns { url }
+  app.post(
+    "/api/feedback/attachment",
+    uploadRateLimiter,
+    requireAuth0,
+    feedbackAttachmentUpload.single("file"),
+    async (req: any, res: any) => {
+      try {
+        if (!req.file) return res.status(400).json({ error: "No file provided or file type not allowed" });
+
+        const ext = path.extname(req.file.originalname).toLowerCase() || ".bin";
+        const filename = `${crypto.randomUUID()}${ext}`;
+
+        if (isObjectStorageConfigured()) {
+          const key = makeObjectKey("feedback" as UploadFolder, filename);
+          await uploadBufferToObjectStorage({ buffer: req.file.buffer, key, contentType: req.file.mimetype });
+          return res.json({ url: `/uploads/feedback/${filename}` });
+        }
+
+        await fs.mkdir(feedbackUploadsDir, { recursive: true });
+        await fs.writeFile(path.join(feedbackUploadsDir, filename), req.file.buffer);
+        return res.json({ url: `/uploads/feedback/${filename}` });
+      } catch (err: any) {
+        return respondWithInternalServerError(req, res, err);
+      }
+    }
+  );
+
+  // POST /api/feedback — submit a feature request or bug report
+  app.post("/api/feedback", mutationRateLimiter, requireAuth0, async (req: any, res: any) => {
+    try {
+      const auth0 = req.auth0 as { sub?: string; email?: string; name?: string } | undefined;
+      const body = req.body as { type?: string; title?: string; description?: string; attachmentUrl?: string };
+
+      if (!body.type || !["feature_request", "bug_report"].includes(body.type)) {
+        return res.status(400).json({ error: "type must be 'feature_request' or 'bug_report'" });
+      }
+      if (!body.title?.trim()) return res.status(400).json({ error: "title is required" });
+      if (!body.description?.trim()) return res.status(400).json({ error: "description is required" });
+
+      // Resolve identity — try vendor first, then customer
+      let submitterRole: "customer" | "vendor" = "customer";
+      let submittedByUserId: string | null = null;
+      let submittedByVendorAccountId: string | null = null;
+      let submitterName: string | null = auth0?.name ?? null;
+      let submitterEmail: string | null = auth0?.email ?? null;
+
+      const vendorResolution = auth0?.sub
+        ? await resolveVendorAccountForAuth0Identity({ auth0Sub: auth0.sub, email: auth0.email, context: "feedback" })
+        : null;
+
+      if (vendorResolution?.account && !vendorResolution.account.deletedAt) {
+        submitterRole = "vendor";
+        submittedByVendorAccountId = vendorResolution.account.id;
+        submitterName = vendorResolution.account.businessName ?? submitterName;
+        submitterEmail = vendorResolution.account.email ?? submitterEmail;
+      } else if (auth0?.sub) {
+        const [userRow] = await db
+          .select({ id: users.id, name: users.name, email: users.email })
+          .from(users)
+          .where(eq(users.auth0Sub, auth0.sub))
+          .limit(1);
+        if (userRow) {
+          submittedByUserId = userRow.id;
+          submitterName = userRow.name ?? submitterName;
+          submitterEmail = userRow.email ?? submitterEmail;
+        }
+      }
+
+      const [row] = await db
+        .insert(feedbackSubmissions)
+        .values({
+          type: body.type as "feature_request" | "bug_report",
+          title: body.title.trim(),
+          description: body.description.trim(),
+          attachmentUrl: body.attachmentUrl?.trim() || null,
+          submittedByUserId,
+          submittedByVendorAccountId,
+          submitterRole,
+          submitterName,
+          submitterEmail,
+        })
+        .returning({ id: feedbackSubmissions.id });
+
+      return res.status(201).json({ id: row.id });
+    } catch (err: any) {
+      return respondWithInternalServerError(req, res, err);
+    }
+  });
+
+  // GET /api/admin/feedback — list all feedback submissions, newest first
+  app.get("/api/admin/feedback", adminRateLimiter, requireAdminAuth, async (req: any, res: any) => {
+    try {
+      const rows = await db
+        .select()
+        .from(feedbackSubmissions)
+        .orderBy(desc(feedbackSubmissions.createdAt));
+      return res.json(rows);
+    } catch (err: any) {
+      return respondWithInternalServerError(req, res, err);
+    }
+  });
+
+  // POST /api/admin/feedback/:id/flag — toggle the flagged state
+  app.post("/api/admin/feedback/:id/flag", adminRateLimiter, requireAdminAuth, async (req: any, res: any) => {
+    try {
+      const id = req.params.id?.trim();
+      if (!id) return res.status(400).json({ error: "id required" });
+
+      const [existing] = await db
+        .select({ id: feedbackSubmissions.id, flagged: feedbackSubmissions.flagged })
+        .from(feedbackSubmissions)
+        .where(eq(feedbackSubmissions.id, id))
+        .limit(1);
+
+      if (!existing) return res.status(404).json({ error: "Not found" });
+
+      const nowFlagged = !existing.flagged;
+      await db
+        .update(feedbackSubmissions)
+        .set({ flagged: nowFlagged, flaggedAt: nowFlagged ? new Date() : null })
+        .where(eq(feedbackSubmissions.id, id));
+
+      return res.json({ flagged: nowFlagged });
+    } catch (err: any) {
+      return respondWithInternalServerError(req, res, err);
+    }
+  });
+
+  // ── End Feedback Submissions ───────────────────────────────────────────────
 
   const httpServer = createServer(app);
   return httpServer;

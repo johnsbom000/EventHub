@@ -312,6 +312,8 @@ export const vendorListings = pgTable("vendor_listings", {
   profileId: varchar("profile_id").references(() => vendorProfiles.id),
   accountId: varchar("account_id").references(() => vendorAccounts.id).notNull(),
   status: listingStatusEnum("status").notNull().default("draft"),
+  violationRemoval: boolean("violation_removal").notNull().default(false),
+  pendingAdminReview: boolean("pending_admin_review").notNull().default(false),
   category: text("category"),
   subcategory: text("subcategory"),
   title: text("title"),
@@ -481,6 +483,24 @@ export const insertBookingDisputeSchema = createInsertSchema(bookingDisputes).om
 
 export type InsertBookingDispute = z.infer<typeof insertBookingDisputeSchema>;
 export type BookingDispute = typeof bookingDisputes.$inferSelect;
+
+// Admin notes on disputes — one row per note, chronological log
+export const disputeAdminNotes = pgTable(
+  "dispute_admin_notes",
+  {
+    id: varchar("id").primaryKey().default(sql`gen_random_uuid()`),
+    disputeId: varchar("dispute_id")
+      .notNull()
+      .references(() => bookingDisputes.id, { onDelete: "cascade" }),
+    content: text("content").notNull(),
+    createdAt: timestamp("created_at").defaultNow().notNull(),
+  },
+  (table) => ({
+    disputeIdIdx: index("dispute_admin_notes_dispute_id_idx").on(table.disputeId, table.createdAt),
+  })
+);
+
+export type DisputeAdminNote = typeof disputeAdminNotes.$inferSelect;
 
 export const bookingItems = pgTable(
   "booking_items",
@@ -852,3 +872,99 @@ export type PlanningBoard = typeof planningBoards.$inferSelect;
 export type BoardSavedListing = typeof boardSavedListings.$inferSelect;
 export type InsertPlanningBoard = z.infer<typeof insertPlanningBoardSchema>;
 export type InsertBoardSavedListing = z.infer<typeof insertBoardSavedListingSchema>;
+
+// ─── Circumvention Prevention ─────────────────────────────────────────────────
+
+// flag_type: what triggered the flag
+//   hard_block_attempt  – matched a hard-block regex (email, phone, URL, social)
+//   soft_flag           – matched a soft-flag keyword phrase
+//   customer_report     – a customer manually reported the content
+//
+// content_type: which field the content appeared in
+//   chat_message | listing_description | listing_title | vendor_description | tagline
+//
+// status: admin review state
+//   pending | dismissed | actioned
+
+export const circumventionFlags = pgTable("circumvention_flags", {
+  id: varchar("id").primaryKey().default(sql`gen_random_uuid()`),
+  flagType: varchar("flag_type").notNull(),
+  contentType: varchar("content_type").notNull(),
+  contentSnapshot: text("content_snapshot").notNull(),
+  matches: text("matches").array().notNull().default(sql`'{}'`),
+  vendorAccountId: varchar("vendor_account_id").references(() => vendorAccounts.id),
+  userId: varchar("user_id").references(() => users.id),
+  reportedByUserId: varchar("reported_by_user_id").references(() => users.id),
+  listingId: varchar("listing_id").references(() => vendorListings.id),
+  bookingId: varchar("booking_id").references(() => bookings.id),
+  status: varchar("status").notNull().default("pending"),
+  reviewedBy: varchar("reviewed_by"),
+  reviewedAt: timestamp("reviewed_at"),
+  createdAt: timestamp("created_at").notNull().defaultNow(),
+});
+
+export const circumventionWarnings = pgTable("circumvention_warnings", {
+  id: varchar("id").primaryKey().default(sql`gen_random_uuid()`),
+  vendorAccountId: varchar("vendor_account_id").notNull().references(() => vendorAccounts.id),
+  flagId: varchar("flag_id").references(() => circumventionFlags.id),
+  reason: text("reason").notNull(),
+  issuedBy: varchar("issued_by").notNull().default("system"),
+  warningNumber: integer("warning_number").notNull(),
+  notifiedEmail: boolean("notified_email").notNull().default(false),
+  createdAt: timestamp("created_at").notNull().defaultNow(),
+});
+
+export const vendorSuspensions = pgTable("vendor_suspensions", {
+  id: varchar("id").primaryKey().default(sql`gen_random_uuid()`),
+  vendorAccountId: varchar("vendor_account_id").notNull().references(() => vendorAccounts.id),
+  reason: text("reason").notNull(),
+  warningSnapshot: integer("warning_snapshot").notNull(),
+  startsAt: timestamp("starts_at").notNull().defaultNow(),
+  endsAt: timestamp("ends_at").notNull(),
+  createdBy: varchar("created_by").notNull().default("system"),
+  notifiedEmail: boolean("notified_email").notNull().default(false),
+  liftedAt: timestamp("lifted_at"),
+  liftedBy: varchar("lifted_by"),
+  createdAt: timestamp("created_at").notNull().defaultNow(),
+});
+
+export type CircumventionFlag = typeof circumventionFlags.$inferSelect;
+export type CircumventionWarning = typeof circumventionWarnings.$inferSelect;
+export type VendorSuspension = typeof vendorSuspensions.$inferSelect;
+
+// ─── Feedback Submissions ──────────────────────────────────────────────────────
+
+export const feedbackTypeEnum = pgEnum("feedback_type", ["feature_request", "bug_report"]);
+
+export const feedbackSubmissions = pgTable(
+  "feedback_submissions",
+  {
+    id: varchar("id").primaryKey().default(sql`gen_random_uuid()`),
+    type: feedbackTypeEnum("type").notNull(),
+    title: text("title").notNull(),
+    description: text("description").notNull(),
+    attachmentUrl: text("attachment_url"),
+    submittedByUserId: varchar("submitted_by_user_id").references(() => users.id, { onDelete: "set null" }),
+    submittedByVendorAccountId: varchar("submitted_by_vendor_account_id").references(() => vendorAccounts.id, { onDelete: "set null" }),
+    submitterRole: text("submitter_role").notNull(), // 'customer' | 'vendor'
+    submitterName: text("submitter_name"),
+    submitterEmail: text("submitter_email"),
+    flagged: boolean("flagged").notNull().default(false),
+    flaggedAt: timestamp("flagged_at"),
+    createdAt: timestamp("created_at").defaultNow().notNull(),
+  },
+  (table) => ({
+    typeIdx: index("feedback_submissions_type_idx").on(table.type, table.createdAt),
+    flaggedIdx: index("feedback_submissions_flagged_idx").on(table.flagged, table.createdAt),
+  })
+);
+
+export const insertFeedbackSubmissionSchema = createInsertSchema(feedbackSubmissions).omit({
+  id: true,
+  flagged: true,
+  flaggedAt: true,
+  createdAt: true,
+});
+
+export type FeedbackSubmission = typeof feedbackSubmissions.$inferSelect;
+export type InsertFeedbackSubmission = z.infer<typeof insertFeedbackSubmissionSchema>;

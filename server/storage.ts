@@ -368,6 +368,9 @@ export class MemStorage implements IStorage {
 
       // required; must not be undefined
       listingData: insert.listingData ?? {},
+
+      violationRemoval: insert.violationRemoval ?? false,
+      pendingAdminReview: insert.pendingAdminReview ?? false,
     };
 
     this.vendorListings.set(id, listing);

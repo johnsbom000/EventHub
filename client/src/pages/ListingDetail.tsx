@@ -1,8 +1,9 @@
 import React, { useEffect, useState } from "react";
 import { useLocation, useRoute } from "wouter";
-import { useQuery } from "@tanstack/react-query";
+import { useQuery, useMutation } from "@tanstack/react-query";
+import { apiRequest } from "@/lib/queryClient";
 import HeartBoardPopover from "@/components/HeartBoardPopover";
-import { ChevronLeft, Heart, MapPin, Star, CheckCircle, XCircle, Truck, Wrench, X } from "lucide-react";
+import { ChevronLeft, Heart, MapPin, Star, CheckCircle, XCircle, Truck, Wrench } from "lucide-react";
 import { useAuth0 } from "@auth0/auth0-react";
 import { format } from "date-fns";
 import {
@@ -176,7 +177,16 @@ export default function ListingDetailPage() {
 
  const [galleryOpen, setGalleryOpen] = useState(false);
  const [heartOpen, setHeartOpen] = useState(false);
+ const [reportSent, setReportSent] = useState(false);
  const { isAuthenticated } = useAuth0();
+
+ const reportMutation = useMutation({
+   mutationFn: async (payload: { contentType: string; contentSnapshot: string; listingId: string; vendorAccountId?: string }) => {
+     const res = await apiRequest("POST", "/api/circumvention/report", payload);
+     if (!res.ok) throw new Error("Failed to send report");
+   },
+   onSuccess: () => setReportSent(true),
+ });
 
  const { data: savedIdsData } = useQuery<{ listingIds: string[] }>({
  queryKey: ["/api/boards/saved-ids"],
@@ -450,7 +460,7 @@ export default function ListingDetailPage() {
  return (
  <div className="no-global-scale max-w-6xl mx-auto px-4 sm:px-6 lg:px-8 py-8 pb-24 lg:pb-8">
  {/* Back + heart */}
- <div className="flex items-center gap-3 mb-6">
+ <div className="mb-6 flex items-center justify-between">
  <button
  onClick={() => setLocation("/browse")}
  className="flex items-center text-muted-foreground hover:text-foreground"
@@ -649,6 +659,30 @@ export default function ListingDetailPage() {
  <p className="text-muted-foreground leading-relaxed">{data.description}</p>
  ) : (
  <p className="text-muted-foreground">Not configured yet</p>
+ )}
+ {isAuthenticated && (
+   <div className="pt-1">
+     {reportSent ? (
+       <p className="text-xs text-muted-foreground">Report submitted. Thank you — our team will review this listing.</p>
+     ) : (
+       <button
+         type="button"
+         onClick={() => {
+           if (!listingId) return;
+           reportMutation.mutate({
+             contentType: "listing_description",
+             contentSnapshot: (data.description || "").slice(0, 2000),
+             listingId,
+             vendorAccountId: data.vendorId ?? undefined,
+           });
+         }}
+         disabled={reportMutation.isPending}
+         className="text-xs text-muted-foreground underline-offset-2 hover:underline disabled:opacity-50"
+       >
+         Report this listing for contact information
+       </button>
+     )}
+   </div>
  )}
  </section>
 
@@ -853,7 +887,7 @@ export default function ListingDetailPage() {
  {/* Full-screen gallery */}
  {galleryOpen && (
  <div className="fixed inset-0 z-50 bg-background">
- <header className="sticky top-0 z-10 border-b border-border bg-background/95 backdrop-blur">
+ <header className="sticky top-0 z-10 bg-background/95 backdrop-blur">
  <div className="max-w-6xl mx-auto px-4 sm:px-6 py-4 flex items-center justify-between gap-3">
  <button
  onClick={() => setGalleryOpen(false)}
@@ -865,13 +899,7 @@ export default function ListingDetailPage() {
  <div className="text-sm text-muted-foreground">
  {photos.length} photo{photos.length === 1 ? "" : "s"}
  </div>
- <button
- onClick={() => setGalleryOpen(false)}
- className="rounded-md p-2 hover:bg-muted"
- aria-label="Close photos"
- >
- <X className="w-5 h-5" />
- </button>
+ <div className="w-10" aria-hidden="true" />
  </div>
  </header>
 

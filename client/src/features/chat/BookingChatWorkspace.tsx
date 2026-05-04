@@ -1,6 +1,6 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
-import { AlertTriangle, ArrowLeft, MessageSquare, ShieldAlert } from "lucide-react";
+import { AlertTriangle, ArrowLeft, Flag, MessageSquare, ShieldAlert } from "lucide-react";
 import { Filter } from "bad-words";
 import { Chat, Channel, ChannelHeader, MessageInput, MessageList, Thread, Window } from "stream-chat-react";
 import { StreamChat, type Message as StreamMessage, type SendMessageOptions } from "stream-chat";
@@ -10,6 +10,7 @@ import { cn } from "@/lib/utils";
 import { Badge } from "@/components/ui/badge";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { useToast } from "@/hooks/use-toast";
+import { chatBlockMessage } from "@/components/CircumventionWarningModal";
 
 type Role = "customer" | "vendor";
 
@@ -60,6 +61,28 @@ type ChatBootstrapResponse = {
 };
 
 const TOXIC_PATTERN = /\b(kill yourself|go die|i will hurt you|i'll hurt you|hate you)\b/gi;
+
+// ─── Client-side circumvention detection (mirrors server patterns) ────────────
+
+const CIRCUMVENTION_HARD_PATTERNS: RegExp[] = [
+  /[a-zA-Z0-9._%+\-]+@[a-zA-Z0-9.\-]+\.[a-zA-Z]{2,}/,
+  /(\+?1[\s.\-]?)?\(?\d{3}\)?[\s.\-]?\d{3}[\s.\-]?\d{4}/,
+  /\b(zero|one|two|three|four|five|six|seven|eight|nine)[\s\-]+(zero|one|two|three|four|five|six|seven|eight|nine)[\s\-]+(zero|one|two|three|four|five|six|seven|eight|nine)[\s\-]+(zero|one|two|three|four|five|six|seven|eight|nine)/i,
+  /https?:\/\/[^\s<>"']+/i,
+  /\bwww\.[a-zA-Z0-9\-]+\.[a-zA-Z]{2,}/i,
+  /\b[a-zA-Z0-9\-]{2,}\.(com|net|org|io|co|app|biz|info|me|us|shop|store|online|site|web)\b/i,
+  /\b(instagram|facebook|twitter|tiktok|linkedin|snapchat|youtube|pinterest|threads|x\.com)\.(com|me)\/[^\s<>"']+/i,
+  /@[a-zA-Z0-9_.]{3,}/,
+];
+
+function detectChatCircumvention(text: string): { blocked: boolean; matches: string[] } {
+  const matches: string[] = [];
+  for (const pattern of CIRCUMVENTION_HARD_PATTERNS) {
+    const found = text.match(pattern)?.[0];
+    if (found) matches.push(found.slice(0, 120));
+  }
+  return { blocked: matches.length > 0, matches };
+}
 
 function formatDate(value: string | null) {
   if (!value) return "Date TBD";
@@ -308,6 +331,36 @@ export function BookingChatWorkspace({ role }: { role: Role }) {
     },
   });
 
+  const [reportSent, setReportSent] = useState<string | null>(null); // bookingId that was reported
+
+  const customerReportMutation = useMutation({
+    mutationFn: async (payload: { bookingId: string; contentSnapshot: string }) => {
+      const res = await apiRequest("POST", "/api/circumvention/report", {
+        contentType: "chat_message",
+        contentSnapshot: payload.contentSnapshot,
+        bookingId: payload.bookingId,
+      });
+      if (!res.ok) throw new Error("Failed to send report");
+    },
+    onSuccess: (_, variables) => setReportSent(variables.bookingId),
+  });
+
+  const circumventionFlagMutation = useMutation({
+    mutationFn: async (payload: {
+      bookingId: string;
+      contentSnapshot: string;
+      matches: string[];
+    }) => {
+      const res = await apiRequest("POST", "/api/chat/circumvention/flag", payload);
+      return res.json() as Promise<{
+        flagId: string;
+        warningNumber: number | null;
+        suspended: boolean;
+        suspensionEndsAt: string | null;
+      }>;
+    },
+  });
+
   const sendModeratedMessage = useCallback(
     async (
       streamChannel: ReturnType<StreamChat["channel"]>,
@@ -315,6 +368,38 @@ export function BookingChatWorkspace({ role }: { role: Role }) {
       sendOptions?: SendMessageOptions
     ) => {
       const sourceText = String(message.text || "");
+
+      // ── Circumvention check (hard block — runs before profanity filter) ──────
+      const circumvention = detectChatCircumvention(sourceText);
+      if (circumvention.blocked && selectedConversation?.bookingId) {
+        // Fire-and-forget: log flag + issue warning on server
+        circumventionFlagMutation
+          .mutateAsync({
+            bookingId: selectedConversation.bookingId,
+            contentSnapshot: sourceText.slice(0, 2000),
+            matches: circumvention.matches,
+          })
+          .then((result) => {
+            toast({
+              variant: "destructive",
+              title: "Message blocked",
+              description: chatBlockMessage(result.warningNumber, result.suspended),
+              duration: 8000,
+            });
+          })
+          .catch(() => {
+            toast({
+              variant: "destructive",
+              title: "Message blocked",
+              description: chatBlockMessage(),
+              duration: 6000,
+            });
+          });
+        // Block the send — return without calling streamChannel.sendMessage
+        return Promise.resolve({} as any);
+      }
+      // ── End circumvention check ───────────────────────────────────────────────
+
       const moderation = moderateText(profanityFilter, sourceText);
       const safeText = moderation.sanitizedText.trim();
       const hasAttachments = Array.isArray(message.attachments) && message.attachments.length > 0;
@@ -356,7 +441,7 @@ export function BookingChatWorkspace({ role }: { role: Role }) {
         sendOptions
       );
     },
-    [moderationFlagMutation, profanityFilter, role, selectedConversation?.bookingId, toast]
+    [circumventionFlagMutation, moderationFlagMutation, profanityFilter, role, selectedConversation?.bookingId, toast]
   );
 
   const renderSafeText = useCallback(
@@ -552,12 +637,38 @@ export function BookingChatWorkspace({ role }: { role: Role }) {
           </CardContent>
         ) : (
           <CardContent className="flex min-h-0 flex-1 flex-col p-0">
-            <div className="flex items-start gap-3 border-b border-cyan-200 bg-gradient-to-r from-cyan-50 to-blue-50 px-4 py-3 text-sm text-cyan-900">
-              <ShieldAlert className="mt-0.5 h-4 w-4 shrink-0 text-cyan-700" />
-              <p className="leading-relaxed">
-                {bootstrapMutation.data?.policyWarning ||
-                  "For your safety, do not share personal information in chat."}
-              </p>
+            <div className="flex items-start justify-between gap-3 border-b border-cyan-200 bg-gradient-to-r from-cyan-50 to-blue-50 px-4 py-3 text-sm text-cyan-900">
+              <div className="flex items-start gap-3">
+                <ShieldAlert className="mt-0.5 h-4 w-4 shrink-0 text-cyan-700" />
+                <p className="leading-relaxed">
+                  {bootstrapMutation.data?.policyWarning ||
+                    "For your safety, do not share personal information in chat."}
+                </p>
+              </div>
+              {role === "customer" && selectedConversation?.bookingId && (
+                <div className="shrink-0">
+                  {reportSent === selectedConversation.bookingId ? (
+                    <p className="text-xs text-cyan-700">Reported</p>
+                  ) : (
+                    <button
+                      type="button"
+                      title="Report this conversation for contact information sharing"
+                      onClick={() => {
+                        if (!selectedConversation?.bookingId) return;
+                        customerReportMutation.mutate({
+                          bookingId: selectedConversation.bookingId,
+                          contentSnapshot: "Customer-reported chat conversation",
+                        });
+                      }}
+                      disabled={customerReportMutation.isPending}
+                      className="flex items-center gap-1 rounded px-2 py-1 text-xs text-cyan-700 hover:bg-cyan-100 transition-colors disabled:opacity-50"
+                    >
+                      <Flag className="h-3 w-3" />
+                      Report
+                    </button>
+                  )}
+                </div>
+              )}
             </div>
             <div className="eventhub-stream-chat flex-1 min-h-0">
               <Chat client={chatClient} theme="str-chat__theme-light">

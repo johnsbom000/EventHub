@@ -31,6 +31,7 @@ import {
 import { InlinePhotoEditor, type ListingPhotoCrop } from "@/components/listings/InlinePhotoEditor";
 import { getPublishFailureToastContent } from "@/lib/publishFailureToast";
 import { resolveAssetUrl } from "@/lib/runtimeUrls";
+import { HardBlockModal, SoftFlagNotice } from "@/components/CircumventionWarningModal";
 
 import { LocationPicker } from "@/components/LocationPicker";
 import mapboxgl from "mapbox-gl";
@@ -330,6 +331,15 @@ export default function VendorListingEdit() {
   const [draft, setDraft] = useState<any>(null);
   const [includedInput, setIncludedInput] = useState("");
   const [notIncludedInput, setNotIncludedInput] = useState("");
+  const [blockModal, setBlockModal] = useState<{
+    open: boolean;
+    field: string;
+    reason: string;
+    warningNumber?: number | null;
+    suspended?: boolean;
+    suspensionEndsAt?: string | null;
+  }>({ open: false, field: "", reason: "" });
+  const [softFlagNotice, setSoftFlagNotice] = useState<{ open: boolean; field?: string }>({ open: false });
 
   // Init draft once listing is loaded
   useEffect(() => {
@@ -1123,19 +1133,45 @@ export default function VendorListingEdit() {
 
       const res = await apiRequest("PATCH", `/api/vendor/listings/${listingId}`, payload);
 
+      if (res.status === 422) {
+        const body = await res.json().catch(() => ({}));
+        if (body?.error === "content_blocked") {
+          throw Object.assign(new Error("content_blocked"), { blockData: body });
+        }
+      }
+
       if (!res.ok) throw new Error("Failed to save changes");
       return res.json();
     },
-    onSuccess: async () => {
+    onSuccess: async (data) => {
       await queryClient.invalidateQueries({ queryKey: ["/api/vendor/listings"] });
       await queryClient.invalidateQueries({ queryKey: ["/api/vendor/listings", listingId] });
-      toast({ title: "Saved", description: "Your changes were saved." });
-      setLocation("/vendor/listings");
+      await queryClient.invalidateQueries({ queryKey: ["/api/listings/public", listingId] });
+      if (data?.softFlagged) {
+        setSoftFlagNotice({ open: true, field: "listing content" });
+      } else if (data?.pendingReview) {
+        setSoftFlagNotice({ open: true, field: "listing" });
+        toast({ title: "Submitted for re-review", description: "Your changes have been sent to the Event Hub team for approval before your listing goes live." });
+      } else {
+        toast({ title: "Saved", description: "Your changes were saved." });
+        setLocation("/vendor/listings");
+      }
     },
-    onError: (err) => {
+    onError: (err: any) => {
+      if (err?.blockData?.error === "content_blocked") {
+        setBlockModal({
+          open: true,
+          field: err.blockData.field || "Content",
+          reason: err.blockData.reason || "Contact information is not allowed.",
+          warningNumber: err.blockData.warningNumber ?? null,
+          suspended: err.blockData.suspended ?? false,
+          suspensionEndsAt: err.blockData.suspensionEndsAt ?? null,
+        });
+        return;
+      }
       toast({
         title: "Save failed",
-        description: (err as Error)?.message || "Could not save changes",
+        description: err?.message || "Could not save changes",
         variant: "destructive",
       });
     },
@@ -1157,6 +1193,7 @@ export default function VendorListingEdit() {
     },
     onSuccess: () => {
       queryClient.invalidateQueries({ queryKey: ["/api/vendor/listings"] });
+      queryClient.invalidateQueries({ queryKey: ["/api/listings/public", listingId] });
       toast({
         title: "Listing published!",
         description: "Your listing is now live and visible to customers.",
@@ -1428,6 +1465,24 @@ export default function VendorListingEdit() {
   };
 
   return (
+    <>
+    <HardBlockModal
+      open={blockModal.open}
+      onClose={() => setBlockModal((prev) => ({ ...prev, open: false }))}
+      field={blockModal.field}
+      reason={blockModal.reason}
+      warningNumber={blockModal.warningNumber}
+      suspended={blockModal.suspended}
+      suspensionEndsAt={blockModal.suspensionEndsAt}
+    />
+    <SoftFlagNotice
+      open={softFlagNotice.open}
+      onClose={() => {
+        setSoftFlagNotice({ open: false });
+        setLocation("/vendor/listings");
+      }}
+      field={softFlagNotice.field}
+    />
     <SidebarProvider style={sidebarStyle} className="bg-[#ffffff]">
       <div className="flex h-screen w-full bg-[#ffffff]">
         <VendorSidebar className="!bg-[#ffffff] [&_[data-slot=sidebar-header]]:bg-[#ffffff] [&_[data-slot=sidebar-content]]:bg-[#ffffff] [&_[data-slot=sidebar-footer]]:bg-[#ffffff]" />
@@ -2183,5 +2238,6 @@ export default function VendorListingEdit() {
         </div>
       </div>
     </SidebarProvider>
+    </>
   );
 }

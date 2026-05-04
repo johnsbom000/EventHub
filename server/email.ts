@@ -241,3 +241,91 @@ export async function sendReviewPromptEmail(
 
   return sendEmail(to, subject, html);
 }
+
+// ─── Circumvention / Policy Emails ───────────────────────────────────────────
+
+type CircumventionWarningEmailParams = {
+  vendorName: string;
+  warningNumber: number;
+  reason: string;
+  serverUrl: string;
+};
+
+type SuspensionEmailParams = {
+  vendorName: string;
+  endsAt: Date;
+  reason: string;
+  serverUrl: string;
+};
+
+export async function sendCircumventionWarningEmail(
+  to: string,
+  params: CircumventionWarningEmailParams
+): Promise<EmailResult> {
+  const subject = `Event Hub: Policy warning (${params.warningNumber} of 3)`;
+  const dashboardUrl = buildUrl(params.serverUrl, "/vendor/dashboard");
+
+  const warningsLeft = 3 - params.warningNumber;
+  const warningsLeftText =
+    warningsLeft > 0
+      ? `You have <strong>${warningsLeft} warning${warningsLeft === 1 ? "" : "s"}</strong> remaining before your account is suspended.`
+      : "This is your final warning. A further violation will result in a 30-day suspension.";
+
+  const html = `
+    <div style="font-family: Arial, sans-serif; line-height: 1.5; max-width: 600px;">
+      <h2 style="color: #b45309;">Policy Warning — Warning ${params.warningNumber} of 3</h2>
+      <p>Hi ${params.vendorName},</p>
+      <p>
+        Your account has received a policy warning because content you submitted
+        appeared to share contact information or redirect customers away from
+        Event Hub. Sharing contact details outside of your official business
+        profile is not permitted under our platform policy.
+      </p>
+      <p><strong>Reason:</strong> ${params.reason}</p>
+      <p>${warningsLeftText}</p>
+      <p>
+        If you believe this warning was issued in error, please contact our
+        support team. You can also review our policies in your vendor dashboard.
+      </p>
+      <p><a href="${dashboardUrl}">Open your dashboard</a></p>
+    </div>
+  `;
+
+  return sendEmail(to, subject, html);
+}
+
+export async function sendSuspensionEmail(
+  to: string,
+  params: SuspensionEmailParams
+): Promise<EmailResult> {
+  const subject = "Event Hub: Account suspended";
+  const endsAtFormatted = params.endsAt.toLocaleDateString("en-US", {
+    month: "long",
+    day: "numeric",
+    year: "numeric",
+  });
+
+  const html = `
+    <div style="font-family: Arial, sans-serif; line-height: 1.5; max-width: 600px;">
+      <h2 style="color: #dc2626;">Account Suspended</h2>
+      <p>Hi ${params.vendorName},</p>
+      <p>
+        Your Event Hub vendor account has been suspended for 30 days due to
+        repeated policy violations related to sharing contact information or
+        redirecting customers off-platform.
+      </p>
+      <p><strong>Reason:</strong> ${params.reason}</p>
+      <p><strong>Suspension ends:</strong> ${endsAtFormatted}</p>
+      <p>
+        During your suspension, your listings have been made inactive and you
+        cannot publish new listings. Existing bookings are not affected.
+      </p>
+      <p>
+        If you believe this suspension was applied in error, please contact our
+        support team to appeal.
+      </p>
+    </div>
+  `;
+
+  return sendEmail(to, subject, html);
+}
