@@ -76,7 +76,7 @@ export default function ListingCard({
  const { isAuthenticated } = useAuth0();
  const listingAny = listing as any;
 
- const title = listingAny.title ?? listingAny.listingData?.listingTitle ?? listing.serviceType ?? "Service";
+ const title = listingAny.title ?? listingAny.listingData?.listingTitle ?? "Service";
  const priceValue = getListingDisplayPrice(listingAny);
  const pricingUnit = getListingDisplayPricingUnit(listingAny);
  const showPerHourSuffix = pricingUnit === "per_hour";

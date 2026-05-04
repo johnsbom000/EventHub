@@ -92,7 +92,6 @@ const getListingTitle = (listing: ListingPublic) => {
  return (
  listingAny?.title ??
  listingAny?.listingData?.listingTitle ??
- listing.serviceType ??
  ""
  );
 };
@@ -102,8 +101,6 @@ const getListingCategoryKey = (listing: ListingPublic): BrowseCategoryKey | "" =
  const rawCategory =
  listingAny?.category ??
  listingAny?.listingData?.category ??
- listingAny?.listingData?.serviceType ??
- listing.serviceType ??
  "";
 
  return parseCategoryParam(String(rawCategory));

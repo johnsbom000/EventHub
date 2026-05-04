@@ -1353,9 +1353,7 @@ function buildCanonicalListingColumns(input: {
 function resolveCanonicalListingCategory(listingDataRaw: unknown, canonicalCategory?: unknown): ListingCategoryValue | null {
   return (
     normalizeListingCategory(canonicalCategory) ??
-    normalizeListingClassification(listingDataRaw, {
-      allowLegacyFallback: false,
-    }).category
+    normalizeListingClassification(listingDataRaw).category
   );
 }
 
@@ -6713,7 +6711,7 @@ app.post(
         listingData !== undefined ? (clampListingDescriptions(listingData) as Record<string, any>) : undefined;
       const normalizedClassification =
         normalizedListingData !== undefined
-          ? normalizeListingClassification(normalizedListingData, { allowLegacyFallback: false })
+          ? normalizeListingClassification(normalizedListingData)
           : null;
 
       const existingListings = await db
@@ -6942,7 +6940,6 @@ app.post(
         ) as Record<string, any>) || {};
       const normalizedClassification = normalizeListingClassification(rawListingData, {
         requireCategory: false,
-        allowLegacyFallback: false,
       });
       const ld: any = normalizedClassification.listingData;
       const canonicalClassification = {
