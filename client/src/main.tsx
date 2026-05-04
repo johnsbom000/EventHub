@@ -149,6 +149,9 @@ root.render(
             const target = appState?.returnTo || "/";
             window.history.replaceState({}, document.title, target);
             window.dispatchEvent(new PopStateEvent("popstate"));
+            // Clear the per-session admin check flag so the redirect fires
+            // again after a full logout+login cycle.
+            sessionStorage.removeItem("eh_admin_checked");
           }}
         >
           {appContent}

@@ -88,6 +88,7 @@ export default function HeartBoardPopover({
  <div
  ref={popoverRef}
  onClick={(e) => e.stopPropagation()}
+ onKeyDown={(e) => e.stopPropagation()}
  className="absolute right-0 top-full z-50 mt-2 w-52 overflow-hidden rounded-2xl border border-[rgba(74,106,125,0.18)] bg-white shadow-xl "
  >
  <p className="border-b border-[rgba(74,106,125,0.1)] px-3.5 py-2 text-[0.7rem] font-semibold uppercase tracking-wider text-[#4a6a7d]">

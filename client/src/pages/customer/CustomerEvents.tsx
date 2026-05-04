@@ -1,8 +1,6 @@
 import { useMemo, useState } from "react";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
-import { useLocation } from "wouter";
 import {
- ArrowUpRight,
  Calendar,
  CheckCircle2,
  Heart,
@@ -13,15 +11,14 @@ import { format } from "date-fns";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import { Textarea } from "@/components/ui/textarea";
-import { apiRequest } from "@/lib/queryClient";
 import {
- coverRatioToAspectRatio,
- getCoverPhotoIndex,
- getCoverPhotoRatio,
- getListingPhotoUrls,
- moveCoverToFront,
-} from "@/lib/listingPhotos";
-import { getListingDisplayPrice } from "@/lib/listingPrice";
+ Dialog,
+ DialogContent,
+ DialogTitle,
+ DialogDescription,
+} from "@/components/ui/dialog";
+import { apiRequest } from "@/lib/queryClient";
+import ListingCard from "@/components/ListingCard";
 
 // ── Types ──────────────────────────────────────────────────────────────────
 
@@ -100,29 +97,18 @@ const STATUS_PILL: Record<string, string> = {
  completed: "border-[rgba(74,106,125,0.2)] bg-[rgba(74,106,125,0.08)] text-[#4a6a7d]",
 };
 
-// ── SavedListingMiniCard ───────────────────────────────────────────────────
+// ── SavedListingCard ──────────────────────────────────────────────────────
 
-function SavedListingMiniCard({
+function SavedListingCard({
  listing,
  boardId,
 }: {
  listing: SavedListing;
  boardId: string;
 }) {
- const [, setLocation] = useLocation();
  const qc = useQueryClient();
- const [imgFailed, setImgFailed] = useState(false);
-
- const allPhotos = getListingPhotoUrls(listing);
- const coverIdx = getCoverPhotoIndex(listing, allPhotos);
- const ordered = moveCoverToFront(allPhotos, coverIdx);
- const cover = ordered[0] ?? null;
- const ratio = coverRatioToAspectRatio(getCoverPhotoRatio(listing));
- const price = getListingDisplayPrice(listing);
- const title =
- listing.title ?? listing.listingData?.listingTitle ?? listing.serviceType ?? "Listing";
+ const [confirmOpen, setConfirmOpen] = useState(false);
  const listingId = listing.id ?? listing.listingId;
- const listingPath = listingId ? `/listing/${listingId}` : null;
 
  const removeMutation = useMutation({
  mutationFn: async () => {
@@ -132,65 +118,66 @@ function SavedListingMiniCard({
  qc.invalidateQueries({ queryKey: [`/api/boards/${boardId}/listings`] });
  qc.invalidateQueries({ queryKey: ["/api/boards/saved-ids"] });
  qc.invalidateQueries({ queryKey: ["/api/boards"] });
- qc.invalidateQueries({
- queryKey: [`/api/boards/for-listing/${listingId}`],
- });
+ qc.invalidateQueries({ queryKey: [`/api/boards/for-listing/${listingId}`] });
+ setConfirmOpen(false);
  },
  });
 
  return (
- <div className="group/mini relative flex flex-col overflow-hidden rounded-xl border border-[rgba(74,106,125,0.14)] bg-white shadow-sm ">
- {/* Cover photo */}
- <div className="relative overflow-hidden bg-[rgba(74,106,125,0.08)]">
- {cover && !imgFailed ? (
- <img
- src={cover}
- alt={title}
- className="w-full object-cover"
- style={{ aspectRatio: ratio }}
- onError={() => setImgFailed(true)}
+ <>
+ <div className="relative w-full max-w-[290px]">
+ <ListingCard
+ listing={listing}
+ showHeartIcon={false}
+ priceScale="double"
+ titleScale="oneAndHalf"
+ titleSizeClassName="text-[1.518rem] md:text-[2rem]"
+ priceSizeClassName="text-[1.5rem] leading-none md:text-[2.25rem] md:leading-none"
+ titleFont="heading"
+ primaryActionScale="plus15"
  />
- ) : (
- <div
- className="flex w-full items-center justify-center text-sm text-[#4a6a7d]/40"
- style={{ aspectRatio: "4/3" }}
+ {/* Always-visible solid red heart — click to unsave */}
+ <button
+ type="button"
+ onClick={(e) => {
+ e.stopPropagation();
+ setConfirmOpen(true);
+ }}
+ aria-label="Remove from event"
+ className="absolute right-3 top-3 z-[60]"
  >
- No photo
+ <Heart className="h-7 w-7 drop-shadow-md fill-[#e07a6a] text-[#e07a6a] transition-transform hover:scale-110" />
+ </button>
  </div>
- )}
- {/* Remove (×) button — top-right corner */}
+
+ <Dialog open={confirmOpen} onOpenChange={setConfirmOpen}>
+ <DialogContent className="rounded-2xl border border-border bg-card px-6 py-6 sm:max-w-sm">
+ <DialogTitle className="text-[1.25rem] font-semibold text-[#2a3a42]">
+ Remove from event?
+ </DialogTitle>
+ <DialogDescription className="text-sm text-[#4a6a7d]">
+ This listing will be removed from your saved event. You can always heart it again to re-save it.
+ </DialogDescription>
+ <div className="mt-4 flex justify-end gap-3">
+ <button
+ type="button"
+ onClick={() => setConfirmOpen(false)}
+ className="rounded-full border border-[rgba(74,106,125,0.24)] px-4 py-2 text-sm font-medium text-[#4a6a7d] transition hover:bg-[rgba(74,106,125,0.07)]"
+ >
+ Cancel
+ </button>
  <button
  type="button"
  onClick={() => removeMutation.mutate()}
  disabled={removeMutation.isPending}
- aria-label="Remove from event"
- className="absolute right-1.5 top-1.5 flex h-6 w-6 items-center justify-center rounded-full bg-white/80 text-[#4a6a7d] opacity-0 shadow-sm backdrop-blur-sm transition-opacity hover:bg-white hover:text-red-500 group-hover/mini:opacity-100 disabled:opacity-40"
+ className="rounded-full bg-[#e07a6a] px-4 py-2 text-sm font-medium text-white transition hover:bg-[#d46a5a] disabled:opacity-50"
  >
- <span className="text-[13px] font-semibold leading-none">×</span>
+ {removeMutation.isPending ? "Removing…" : "Remove"}
  </button>
  </div>
-
- {/* Info row */}
- <div className="flex flex-col gap-0.5 px-2.5 py-2">
- <p className="line-clamp-1 text-[0.8rem] font-semibold leading-tight text-[#2a3a42] ">
- {title}
- </p>
- <div className="flex items-center justify-between gap-1">
- <p className="text-[0.75rem] font-bold text-[#e07a6a]">
- {typeof price === "number" ? `$${price.toLocaleString()}` : "—"}
- </p>
- {listingPath ? (
- <button
- type="button"
- onClick={() => setLocation(listingPath)}
- className="flex items-center gap-0.5 rounded-full border border-[rgba(74,106,125,0.22)] px-1.5 py-0.5 text-[0.68rem] font-medium text-[#4a6a7d] transition hover:bg-[rgba(74,106,125,0.08)]"
- >
- View <ArrowUpRight className="h-2.5 w-2.5" />
- </button>
- ) : null}
- </div>
- </div>
- </div>
+ </DialogContent>
+ </Dialog>
+ </>
  );
 }
 
@@ -451,18 +438,18 @@ function PlannedEventSection({
  </p>
 
  {loadingSaved ? (
- <div className="grid grid-cols-2 gap-3 sm:grid-cols-3 lg:grid-cols-4">
+ <div className="grid grid-cols-1 justify-items-start gap-4 sm:grid-cols-2 lg:grid-cols-3">
  {[1, 2, 3].map((i) => (
  <div
  key={i}
- className="aspect-[4/3] animate-pulse rounded-xl bg-[rgba(74,106,125,0.08)]"
+ className="aspect-[4/3] w-full max-w-[290px] animate-pulse rounded-xl bg-[rgba(74,106,125,0.08)]"
  />
  ))}
  </div>
  ) : savedListings.length > 0 ? (
- <div className="grid grid-cols-2 gap-3 sm:grid-cols-3 lg:grid-cols-4">
+ <div className="grid grid-cols-1 justify-items-start gap-4 sm:grid-cols-2 lg:grid-cols-3">
  {savedListings.map((listing: SavedListing) => (
- <SavedListingMiniCard
+ <SavedListingCard
  key={listing.id ?? listing.listingId}
  listing={listing}
  boardId={board.id}

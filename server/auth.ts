@@ -327,42 +327,85 @@ export async function resolveVendorAccountForAuth0Identity(
    Admin middleware
 ====================================================== */
 
-export function requireAdminAuth(req: Request, res: Response, next: NextFunction) {
-  return requireDualAuthAuth0(req, res, async () => {
-    const customerAuth = (req as any).customerAuth as { id?: string; type?: string } | undefined;
-    if (customerAuth?.type === "admin" && customerAuth.id) {
-      (req as any).adminAuth = customerAuth;
-      return next();
+// Admin access is gated by an env-var allowlist of verified emails, not the
+// DB role column. This means a DB compromise cannot grant admin access —
+// only changing the server env var (which requires server access) can.
+const ADMIN_EMAILS: ReadonlySet<string> = new Set(
+  (process.env.ADMIN_EMAILS || process.env.ADMIN_EMAIL || "")
+    .split(",")
+    .map((s) => s.trim().toLowerCase())
+    .filter(Boolean)
+);
+
+export async function requireAdminAuth(req: Request, res: Response, next: NextFunction) {
+  try {
+    // Step 1: Verify Auth0 token. requireAuth0 rejects expired tokens and
+    // unverified emails — so auth0.email is safe to trust after this.
+    let authed = false;
+    await new Promise<void>((resolve) => {
+      requireAuth0(req, res, () => {
+        authed = true;
+        resolve();
+      });
+    });
+    if (!authed) return; // requireAuth0 already sent 401
+
+    const auth0 = (req as any).auth0 as { sub: string; email?: string };
+    const email = typeof auth0.email === "string" ? auth0.email.trim().toLowerCase() : "";
+
+    // Step 2: Allowlist check — always fresh, never trusts a prior middleware.
+    if (!email || !ADMIN_EMAILS.has(email)) {
+      // Return generic 403 — don't reveal that an admin page exists.
+      return res.status(403).json({ message: "Forbidden" });
     }
 
-    const customerId = typeof customerAuth?.id === "string" ? customerAuth.id.trim() : "";
-    if (!customerId) {
-      return res.status(403).json({ message: "Admin access required" });
-    }
+    // Step 3: Fetch or auto-provision the admin user row.
+    // The DB record is not required for access (allowlist is the gate), but
+    // having one lets admin routes that join on users.id work correctly.
+    const auth0Full = (req as any).auth0 as {
+      sub: string; email?: string; name?: string;
+      given_name?: string; family_name?: string;
+    };
 
-    try {
-      const rows = await db
-        .select({ id: users.id, role: users.role, email: users.email })
-        .from(users)
-        .where(eq(users.id, customerId))
-        .limit(1);
+    let [user] = await db
+      .select({ id: users.id, email: users.email, role: users.role })
+      .from(users)
+      .where(drizzleSql`lower(${users.email}) = ${email}`)
+      .limit(1);
 
-      const user = rows[0];
-      if (!user || user.role !== "admin") {
-        return res.status(403).json({ message: "Admin access required" });
+    if (!user) {
+      // First-ever login for this admin email — create the user record.
+      const displayName =
+        auth0Full.name ||
+        [auth0Full.given_name, auth0Full.family_name].filter(Boolean).join(" ") ||
+        email.split("@")[0];
+      try {
+        const [inserted] = await db
+          .insert(users)
+          .values({ name: displayName, email: auth0Full.email!, role: "admin", auth0Sub: auth0Full.sub || null })
+          .onConflictDoNothing()
+          .returning({ id: users.id, email: users.email, role: users.role });
+        user = inserted ?? undefined;
+      } catch {
+        // Non-fatal — admin access is already granted above.
       }
-
-      (req as any).adminAuth = {
-        id: user.id,
-        email: user.email,
-        type: "admin",
-      };
-      return next();
-    } catch (error: any) {
-      console.error("Admin role lookup failed:", error?.message || error);
-      return res.status(500).json({ message: "Unable to verify admin access" });
+    } else if (user.role !== "admin") {
+      // Ensure existing record has the admin role.
+      await db.update(users).set({ role: "admin" }).where(eq(users.id, user.id)).catch(() => {});
     }
-  });
+
+    (req as any).adminAuth = {
+      id: user?.id ?? null,
+      email: auth0Full.email ?? user?.email ?? null,
+      sub: auth0Full.sub,
+      type: "admin",
+    };
+
+    return next();
+  } catch (err: any) {
+    console.error("requireAdminAuth error:", err?.message || err);
+    return res.status(401).json({ message: "Unauthorized" });
+  }
 }
 
 /* ======================================================

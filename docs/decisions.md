@@ -1,6 +1,6 @@
 # Event Hub Decisions Log
 
-Last updated: April 30, 2026
+Last updated: May 2, 2026
 
 ## Purpose
 This file tracks decisions that affect product scope, architecture, and launch tradeoffs.
@@ -13,6 +13,42 @@ Template for new entries:
 - Why:
 - Impact:
 - Revisit trigger:
+
+---
+
+## [2026-05-02] Separate Listing Detail back and save controls to opposite sides of the top row
+- Context: On listing detail, the back button and heart/save control appeared adjacent on the left above photos, reducing clarity and tap separation.
+- Decision: Update the listing-detail top control row in `client/src/pages/ListingDetail.tsx` from left-clustered spacing to `justify-between`, keeping `Back` on the far left and the heart/save control on the far right with no heart logic changes.
+- Why: This is a minimal layout-only adjustment that improves control separation and keeps existing save behavior intact.
+- Impact: Back remains in its current left position; heart is now aligned to the matching right-side position across mobile and desktop; save popover/toggle behavior is unchanged.
+- Revisit trigger: If additional top-row controls are added later, convert the row to a dedicated header component with explicit left/center/right slots for stable placement.
+
+---
+
+## [2026-05-02] Simplify full-screen photos header by removing redundant close icon and top divider
+- Context: In listing detail `See all photos` full-screen view, the top-right close `X` duplicated the top-left `Back` control, and the header bottom border rendered as an unwanted blue line.
+- Decision: In `client/src/pages/ListingDetail.tsx`, remove the top-right close button from the full-screen gallery header and remove the header `border-b` divider class, keeping only the `Back` control for exit.
+- Why: This is a minimal view-local cleanup that reduces redundant controls and matches requested visual treatment without changing gallery behavior.
+- Impact: `See all photos` now shows no top-right close icon and no top border line; opening/closing photos and navigation behavior remain unchanged.
+- Revisit trigger: If gallery-header actions expand later (share/download/etc.), revisit header layout and reintroduce a right-side action slot only when it provides unique function beyond `Back`.
+
+---
+
+## [2026-05-02] Prevent auto-open of saved-email suggestions in Login/Signup modal until user interaction
+- Context: On Safari, opening the customer `Login / Sign up` modal could immediately surface stored-email suggestions in the email field before intentional user interaction.
+- Decision: In `client/src/components/AuthModal.tsx`, prevent Radix dialog open auto-focus via `onOpenAutoFocus` on `DialogContent`, keeping focus from landing on the email input at open time; keep `autoComplete="email"` so suggestions still appear when users click into the field.
+- Why: This is a minimal, modal-scoped behavior fix that matches expected UX without changing auth flow, saved credentials behavior, or other forms.
+- Impact: Login/signup modal now opens without auto-showing saved-email suggestions; saved emails remain available after explicit input focus/click.
+- Revisit trigger: If accessibility QA requires deterministic initial focus inside the modal, move focus to a non-input control (for example close button or tab trigger) while preserving no-autofill-on-open behavior.
+
+---
+
+## [2026-05-02] Match customer My Events saved-listing card typography and size to landing listing cards
+- Context: Product requested saved listing cards on customer dashboard `My Events` to look identical to landing page listing cards for style, card size, title, and price, while preserving the existing saved-heart remove behavior.
+- Decision: In `client/src/pages/customer/CustomerEvents.tsx`, apply the same `ListingCard` sizing/font/action props used on landing (`priceScale="double"`, `titleScale="oneAndHalf"`, heading title font, matching title/price size classes, `primaryActionScale="plus15"`), and constrain saved-card width to `max-w-[290px]` to match landing card width bounds.
+- Why: Reusing the same shared card variant on this surface is the thinnest, lowest-risk way to achieve visual parity without touching save/remove functionality or other pages.
+- Impact: Saved cards on `My Events` now match landing listing card typography and sizing treatment; heart removal flow and board save behavior remain unchanged.
+- Revisit trigger: If listing-card variants are centralized into explicit named presets, replace duplicated prop bundles with a shared landing-card variant reference.
 
 ---
 
@@ -4509,3 +4545,10 @@ Template for new entries:
 - Why: This prevents broken redirects and makes missing configuration obvious during local/dev setup.
 - Impact: Users now receive a clear auth-disabled error instead of navigating to an invalid URL when Auth0 frontend env is unset; setup docs/examples now list required vars for both frontend and backend Auth0 usage.
 - Revisit trigger: If auth config is centralized in a runtime config endpoint (instead of build-time Vite env), remove duplicate env documentation and switch guard to runtime config validation.
+
+## [2026-05-02] Standardize top-header EventHub wordmark size/placement to landing-page reference
+- Context: Header wordmark sizing and placement differed across landing/navigation, customer dashboard, and vendor shell, creating inconsistent brand placement between pages.
+- Decision: Use the landing-page navigation wordmark size (`text-[1.875rem]`) and landing-style left header placement as the shared reference for existing top-header wordmarks in `Navigation`, `CustomerDashboard`, and `VendorShell`, without adding/removing logo instances.
+- Why: This satisfies immediate MVP visual consistency with minimal surface-area change and no route-level feature behavior impact.
+- Impact: Existing top-header logos now share one size and landing-style left placement across pages that render those headers; footer/modal/flow-specific wordmarks remain unchanged.
+- Revisit trigger: If a formal global header design token system is introduced, replace page-level class values with shared brand sizing/placement tokens.

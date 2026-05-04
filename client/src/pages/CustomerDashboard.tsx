@@ -206,11 +206,11 @@ export default function CustomerDashboard() {
         <header className="flex items-center justify-between border-b border-[rgba(74,106,125,0.22)] bg-[#ffffff] p-4">
           <Link
             href="/"
-            className="flex items-center rounded-md px-1 py-1"
+            className="flex items-center gap-2 rounded-md px-3 py-2"
             data-testid="link-customer-shell-home"
           >
             <BrandWordmark
-              className="text-[2.32rem]"
+              className="text-[1.875rem]"
               eventClassName="text-[#e07a6a] font-normal"
               hubClassName="text-[#4a6a7d] font-normal"
             />

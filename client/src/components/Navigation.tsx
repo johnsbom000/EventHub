@@ -27,8 +27,11 @@ import {
  Calendar,
  Briefcase,
  Store,
+ Lightbulb,
+ Bug,
 } from "lucide-react";
 import { deriveVendorDetection, type VendorMeState } from "@/lib/vendorState";
+import FeedbackModal from "@/components/FeedbackModal";
 
 type UserRole = "customer" | "vendor" | null;
 
@@ -64,6 +67,8 @@ export default function Navigation({
  return window.localStorage.getItem("eventhub:last-known-vendor-account") === "1";
  });
  const [authModalOpen, setAuthModalOpen] = useState(false);
+ const [feedbackModalOpen, setFeedbackModalOpen] = useState(false);
+ const [feedbackType, setFeedbackType] = useState<"feature_request" | "bug_report">("feature_request");
  const { isAuthenticated, user, logout: auth0Logout } = useAuth0();
  useEffect(() => {
  if (user) console.log("AUTH0 USER OBJECT:", user);
@@ -181,7 +186,7 @@ export default function Navigation({
  const homeLinkClass = vendorDashboardAligned
  ? "flex items-center rounded-md px-1 py-1"
  : "flex items-center gap-2 px-3 py-2 rounded-md -ml-3";
- const brandWordmarkClass = vendorDashboardAligned ? "text-[1.625rem]" : "text-[1.875rem]";
+ const brandWordmarkClass = "text-[1.875rem]";
  const navPositionClass = vendorDashboardAligned ? "" : "sticky top-0";
 
  return (
@@ -212,6 +217,13 @@ export default function Navigation({
  <div className="ml-auto flex items-center gap-4">
  {/* Auth Modal */}
  <AuthModal open={authModalOpen} onOpenChange={setAuthModalOpen} />
+
+ {/* Feedback Modal */}
+ <FeedbackModal
+   open={feedbackModalOpen}
+   type={feedbackType}
+   onOpenChange={setFeedbackModalOpen}
+ />
 
  {/* Logged Out State */}
  {!isLoggedIn && (
@@ -328,6 +340,21 @@ export default function Navigation({
  <DropdownMenuItem data-testid="menu-item-languages">
  <Globe className="mr-2 h-4 w-4" />
  <span>Languages & currency</span>
+ </DropdownMenuItem>
+ <DropdownMenuSeparator />
+ <DropdownMenuItem
+   onClick={() => { setFeedbackType("feature_request"); setFeedbackModalOpen(true); }}
+   data-testid="menu-item-request-feature"
+ >
+ <Lightbulb className="mr-2 h-4 w-4" />
+ <span>Request a Feature</span>
+ </DropdownMenuItem>
+ <DropdownMenuItem
+   onClick={() => { setFeedbackType("bug_report"); setFeedbackModalOpen(true); }}
+   data-testid="menu-item-report-bug"
+ >
+ <Bug className="mr-2 h-4 w-4" />
+ <span>Report a Bug</span>
  </DropdownMenuItem>
  <DropdownMenuSeparator />
  <DropdownMenuItem data-testid="menu-item-help">
@@ -457,6 +484,21 @@ export default function Navigation({
  <DropdownMenuItem data-testid="menu-item-languages">
  <Globe className="mr-2 h-4 w-4" />
  <span>Languages & currency</span>
+ </DropdownMenuItem>
+ <DropdownMenuSeparator />
+ <DropdownMenuItem
+   onClick={() => { setFeedbackType("feature_request"); setFeedbackModalOpen(true); }}
+   data-testid="menu-item-request-feature"
+ >
+ <Lightbulb className="mr-2 h-4 w-4" />
+ <span>Request a Feature</span>
+ </DropdownMenuItem>
+ <DropdownMenuItem
+   onClick={() => { setFeedbackType("bug_report"); setFeedbackModalOpen(true); }}
+   data-testid="menu-item-report-bug"
+ >
+ <Bug className="mr-2 h-4 w-4" />
+ <span>Report a Bug</span>
  </DropdownMenuItem>
  <DropdownMenuSeparator />
  <DropdownMenuItem data-testid="menu-item-help">
