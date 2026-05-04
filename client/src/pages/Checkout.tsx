@@ -1610,6 +1610,14 @@ function CheckoutContent({
                 </p>
               ) : null}
 
+              <p className="text-xs text-muted-foreground leading-relaxed">
+                By confirming this booking you agree to our{" "}
+                <a href="/terms" target="_blank" rel="noopener noreferrer" className="underline underline-offset-2 hover:text-foreground">
+                  Terms of Service
+                </a>
+                , including payment authorization, the 48-hour dispute window from your event date, damage responsibility, and assumption of risk for personal injury.
+              </p>
+
               <Button
                 className="w-full h-12 text-base"
                 disabled={!canSubmit}

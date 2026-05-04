@@ -4457,8 +4457,8 @@ export async function registerRoutes(app: Express): Promise<Server> {
   }
 
   // ── Daily review prompt job ──────────────────────────────────────────────
-  // Runs once per day. Sends a review request to customers whose event date
-  // was at least 48 hours ago and have not yet received a prompt.
+  // Sends a review request to customers whose event date was ≥48h ago and
+  // who have not yet received a review prompt (review_prompt_sent = false).
   const REVIEW_PROMPT_INTERVAL_MS = 24 * 60 * 60 * 1000; // 24 hours
 
   const runReviewPromptJob = async () => {
@@ -4529,15 +4529,12 @@ export async function registerRoutes(app: Express): Promise<Server> {
     }
   };
 
-  // Run once shortly after startup (staggered to avoid cold-start pile-up),
-  // then every 24 hours.
+  // Stagger 5 min after startup, then every 24 hours.
   const reviewPromptStartTimer = setTimeout(() => {
     void runReviewPromptJob();
-    const reviewPromptTimer = setInterval(() => {
-      void runReviewPromptJob();
-    }, REVIEW_PROMPT_INTERVAL_MS);
+    const reviewPromptTimer = setInterval(() => void runReviewPromptJob(), REVIEW_PROMPT_INTERVAL_MS);
     reviewPromptTimer.unref();
-  }, 5 * 60 * 1000); // 5 min after startup
+  }, 5 * 60 * 1000);
   reviewPromptStartTimer.unref();
 
   const listingUpload = multer({
@@ -8927,7 +8924,7 @@ app.post(
 
       await syncBookingToGoogleCalendarSafely(updated.id, "/api/vendor/bookings/:id google-sync");
 
-      // Send confirmed/cancelled emails to both parties
+      // Send confirmed/cancelled emails to both parties (fire-and-forget)
       if (nextStatus === "confirmed" || nextStatus === "cancelled") {
         void (async () => {
           try {
