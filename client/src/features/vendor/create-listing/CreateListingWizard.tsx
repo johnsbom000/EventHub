@@ -34,6 +34,8 @@ import { resolveAssetUrl } from "@/lib/runtimeUrls";
 import { cn } from "@/lib/utils";
 import type { LocationResult } from "@/types/location";
 import { POPULAR_FOR_OPTIONS } from "@/constants/eventTypes";
+import { SubcategoryPicker } from "@/components/listings/SubcategoryPicker";
+import type { SubcategoryPickerValue } from "@/components/listings/SubcategoryPicker";
 
 const MAPBOX_TOKEN =
  (import.meta.env.VITE_MAPBOX_TOKEN as string | undefined) ??
@@ -81,6 +83,8 @@ type ListingTag = { label: string; slug: string };
 
 type ListingDraft = {
  category: ListingCategory | "";
+ subcategory: string;
+ subcategoryDetail: string;
  listingTitle: string;
  listingDescription: string;
  whatsIncluded: string[];
@@ -128,6 +132,8 @@ type ListingDraft = {
 
 const DEFAULT_DRAFT: ListingDraft = {
  category: "",
+ subcategory: "",
+ subcategoryDetail: "",
  listingTitle: "",
  listingDescription: "",
  whatsIncluded: [],
@@ -776,6 +782,8 @@ export function CreateListingWizard({ onClose }: CreateListingWizardProps) {
  return {
  vendorType,
  category: draft.category || undefined,
+ subcategory: draft.subcategory || undefined,
+ subcategoryDetail: draft.subcategoryDetail || undefined,
  listingTitle: draft.listingTitle.trim(),
  title: draft.listingTitle.trim(),
  listingDescription: draft.listingDescription.trim(),
@@ -1784,6 +1792,8 @@ export function CreateListingWizard({ onClose }: CreateListingWizardProps) {
  setDraft((prev) => ({
  ...prev,
  category: option.value,
+ subcategory: "",
+ subcategoryDetail: "",
  bookingType: option.value === "Rental" ? "instant" : prev.bookingType,
  dimensionWidth: option.value === "Rental" ? prev.dimensionWidth : "",
  dimensionLength: option.value === "Rental" ? prev.dimensionLength : "",
@@ -1804,6 +1814,15 @@ export function CreateListingWizard({ onClose }: CreateListingWizardProps) {
  </div>
  {showBasicsValidation && !hasCategory ? <p className="text-sm text-destructive">Category is required.</p> : null}
  </div>
+
+ {/* Subcategory — shown only when a category is selected */}
+ {draft.category ? (
+ <SubcategoryPicker
+  category={draft.category}
+  value={{ subcategory: draft.subcategory, subcategoryDetail: draft.subcategoryDetail }}
+  onChange={(next) => setDraft((prev) => ({ ...prev, subcategory: next.subcategory, subcategoryDetail: next.subcategoryDetail }))}
+ />
+ ) : null}
 
  <div className="space-y-2">
  <Label htmlFor="listing-title" className="text-base font-semibold">

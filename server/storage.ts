@@ -334,6 +334,7 @@ export class MemStorage implements IStorage {
       profileId: insert.profileId ?? null,
       category: insert.category ?? null,
       subcategory: insert.subcategory ?? null,
+      subcategoryDetail: insert.subcategoryDetail ?? null,
       title: insert.title ?? null,
       description: insert.description ?? null,
       whatsIncluded: insert.whatsIncluded ?? [],
@@ -466,6 +467,7 @@ export class MemStorage implements IStorage {
       cancelledAt: insertBooking.cancelledAt ?? null,
       confirmedAt: insertBooking.confirmedAt ?? null,
       completedAt: insertBooking.completedAt ?? null,
+      reviewPromptSent: insertBooking.reviewPromptSent ?? false,
       createdAt: now,
       updatedAt: now,
     };

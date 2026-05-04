@@ -1,4 +1,7 @@
+import { useState } from "react";
 import { Button } from "@/components/ui/button";
+import { Checkbox } from "@/components/ui/checkbox";
+import { Label } from "@/components/ui/label";
 import OnboardingStepHeader from "@/features/vendor/onboarding/OnboardingStepHeader";
 
 interface Step4ConfirmProps {
@@ -49,6 +52,7 @@ export default function Step4_Confirm({
   isSubmitting = false,
   submittingAction = null,
 }: Step4ConfirmProps) {
+  const [agreedToTerms, setAgreedToTerms] = useState(false);
   const businessFields: ConfirmField[] = [
     {
       label: "Business name",
@@ -176,35 +180,53 @@ export default function Step4_Confirm({
         </div>
 
         <div className="fixed bottom-0 left-24 right-0 z-30 bg-[#ffffff]/96 backdrop-blur-sm">
-          <div className="mx-auto flex w-full max-w-[1400px] items-center justify-between px-6 pt-4 pb-8 sm:px-12 lg:px-16">
-            <Button
-              variant="outline"
-              type="button"
-              onClick={onBack}
-              disabled={isSubmitting}
-              className="min-h-[2.7rem] px-6 font-sans text-[1.2rem] font-medium"
-            >
-              Back
-            </Button>
+          <div className="mx-auto flex w-full max-w-[1400px] flex-col gap-3 px-6 pt-4 pb-8 sm:px-12 lg:px-16">
+            <div className="flex items-start gap-3">
+              <Checkbox
+                id="vendor-terms-agree"
+                checked={agreedToTerms}
+                onCheckedChange={(checked) => setAgreedToTerms(Boolean(checked))}
+                className="mt-0.5"
+              />
+              <Label htmlFor="vendor-terms-agree" className="text-[13px] leading-[1.5] text-muted-foreground cursor-pointer">
+                I have read and agree to the EventHub{" "}
+                <a href="/terms" target="_blank" rel="noopener noreferrer" className="underline underline-offset-2 hover:text-foreground">
+                  Terms of Service
+                </a>
+                , including the Vendor Agreement, anti-circumvention policy, commission terms, and fulfillment obligations.
+              </Label>
+            </div>
 
-            <div className="flex items-center gap-3">
+            <div className="flex items-center justify-between">
               <Button
                 variant="outline"
                 type="button"
-                onClick={() => onComplete(false, "myHub")}
+                onClick={onBack}
                 disabled={isSubmitting}
                 className="min-h-[2.7rem] px-6 font-sans text-[1.2rem] font-medium"
               >
-                {isSubmitting && submittingAction === "myHub" ? "Opening My Hub..." : "Go To My Hub"}
+                Back
               </Button>
-              <Button
-                type="button"
-                onClick={() => onComplete(true)}
-                disabled={isSubmitting}
-                className="min-h-[2.7rem] px-6 font-sans text-[1.2rem] font-medium"
-              >
-                {isSubmitting && submittingAction === "createListing" ? "Opening listing wizard..." : "Create first listing"}
-              </Button>
+
+              <div className="flex items-center gap-3">
+                <Button
+                  variant="outline"
+                  type="button"
+                  onClick={() => onComplete(false, "myHub")}
+                  disabled={isSubmitting || !agreedToTerms}
+                  className="min-h-[2.7rem] px-6 font-sans text-[1.2rem] font-medium"
+                >
+                  {isSubmitting && submittingAction === "myHub" ? "Opening My Hub..." : "Go To My Hub"}
+                </Button>
+                <Button
+                  type="button"
+                  onClick={() => onComplete(true)}
+                  disabled={isSubmitting || !agreedToTerms}
+                  className="min-h-[2.7rem] px-6 font-sans text-[1.2rem] font-medium"
+                >
+                  {isSubmitting && submittingAction === "createListing" ? "Opening listing wizard..." : "Create first listing"}
+                </Button>
+              </div>
             </div>
           </div>
         </div>
