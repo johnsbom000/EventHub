@@ -31,6 +31,7 @@ import AdminDashboard from "@/pages/AdminDashboard";
 import NotFound from "@/pages/not-found";
 import ListingDetail from "@/pages/ListingDetail";
 import Checkout from "@/pages/Checkout";
+import Terms from "@/pages/Terms";
 
 function Router() {
   return (
@@ -62,6 +63,9 @@ function Router() {
         <Route path="/vendor/shop" component={MyHub} />
         <Route path="/vendor/my-hub" component={MyHub} />
         <Route path="/my-hub" component={MyHub} />
+
+        {/* Legal */}
+        <Route path="/terms" component={Terms} />
 
         {/* Admin */}
         <Route path="/admin" component={AdminDashboard} />

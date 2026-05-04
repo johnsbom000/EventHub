@@ -1103,6 +1103,13 @@ function ReservationCard({
  <div className="text-sm font-medium">Cancellation Policy</div>
  <div className="text-sm text-muted-foreground">Not configured yet</div>
  </div>
+
+ <p className="text-xs text-muted-foreground leading-relaxed">
+  Listings are provided by independent vendors and have not been verified by EventHub.{" "}
+  <a href="/terms" className="underline underline-offset-2 hover:text-foreground">
+   Terms of Service
+  </a>
+ </p>
  </div>
  </div>
  );

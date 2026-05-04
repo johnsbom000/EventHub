@@ -210,6 +210,16 @@ export default function AuthModal({ open, onOpenChange }: AuthModalProps) {
                 We&apos;ll open a secure Auth0 sign-in in the same tab and bring you back here after login.
               </p>
             </div>
+
+            {!isLogin && (
+              <p className="text-center font-sans text-[1.1rem] leading-[1.4] text-[#6e7590]">
+                By creating an account, you agree to our{" "}
+                <a href="/terms" className="underline underline-offset-2 hover:text-[#4a6a7d]">
+                  Terms of Service
+                </a>
+                .
+              </p>
+            )}
           </div>
         </div>
       </DialogContent>
