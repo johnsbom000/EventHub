@@ -13,7 +13,7 @@ import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@
 import { Label } from "@/components/ui/label";
 import { Switch } from "@/components/ui/switch";
 import { Search, SlidersHorizontal, ChevronDown, ChevronRight, Check } from "lucide-react";
-import { POPULAR_FOR_OPTIONS } from "@/constants/eventTypes";
+import { POPULAR_FOR_OPTIONS, EVENT_TYPE_SLUG_TO_LABEL } from "@/constants/eventTypes";
 import { getListingDisplayPrice } from "@/lib/listingPrice";
 import { isTwoLevel, toCategoryKey } from "@/constants/subcategories";
 import type { AvailableSubcategories } from "@/components/HeroCategoryPopup";
@@ -340,10 +340,13 @@ export default function BrowseVendors() {
 
  const locationParam = (params.get("location") ?? "").trim();
  const eventTypeParam = (params.get("eventType") ?? "").trim();
+ // Resolve the URL slug to its canonical POPULAR_FOR_OPTIONS label so the
+ // bestFor filter matches what is stored on listings (e.g. "birthdays" → "Birthdays").
+ const eventTypeLabel = eventTypeParam ? (EVENT_TYPE_SLUG_TO_LABEL[eventTypeParam] ?? "") : "";
  const categoryParam = parseCategoryParam(params.get("category"));
  const bestForParam = parseCsvParam(params.get("bestFor"));
  const mergedBestFor = uniqueSorted(
- bestForParam.length > 0 ? bestForParam : eventTypeParam ? [eventTypeParam] : []
+ bestForParam.length > 0 ? bestForParam : eventTypeLabel ? [eventTypeLabel] : []
  );
 
  setSearchQuery((params.get("q") ?? "").trim());
