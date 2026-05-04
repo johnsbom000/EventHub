@@ -28,7 +28,7 @@ export default function Footer() {
  return (
  <footer className="border-t border-[rgba(245,240,232,0.12)] bg-[#4a6a7d] ">
  <div className="w-full px-6 lg:px-10 py-12">
- <div className="grid grid-cols-1 md:grid-cols-4 gap-8">
+ <div className="grid grid-cols-1 md:grid-cols-5 gap-8">
  <div className="col-span-1 md:col-span-2">
  <div className="mb-4">
  <BrandWordmark
@@ -53,6 +53,17 @@ export default function Footer() {
  </ul>
  </div>
  
+ <div>
+ <h3 className="mb-4 font-sans text-[0.84rem] font-medium uppercase tracking-[0.1em] text-[#9dd4cc]">Legal</h3>
+ <ul className="space-y-2">
+  <li>
+   <Link href="/terms" className="font-sans text-[0.98rem] text-[rgba(245,240,232,0.85)] hover:text-[#f5f0e8]">
+    Terms of Service
+   </Link>
+  </li>
+ </ul>
+ </div>
+
  <div>
  <h3 className="mb-4 font-sans text-[0.84rem] font-medium uppercase tracking-[0.1em] text-[#9dd4cc]">For Vendors</h3>
  <ul className="space-y-2">
