@@ -315,6 +315,7 @@ export const vendorListings = pgTable("vendor_listings", {
   pendingAdminReview: boolean("pending_admin_review").notNull().default(false),
   category: text("category"),
   subcategory: text("subcategory"),
+  subcategoryDetail: text("subcategory_detail"),
   title: text("title"),
   description: text("description"),
   whatsIncluded: text("whats_included").array().notNull().default(sql`'{}'`),

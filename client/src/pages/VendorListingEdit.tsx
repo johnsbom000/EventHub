@@ -32,6 +32,7 @@ import { InlinePhotoEditor, type ListingPhotoCrop } from "@/components/listings/
 import { getPublishFailureToastContent } from "@/lib/publishFailureToast";
 import { resolveAssetUrl } from "@/lib/runtimeUrls";
 import { HardBlockModal, SoftFlagNotice } from "@/components/CircumventionWarningModal";
+import { SubcategoryPicker } from "@/components/listings/SubcategoryPicker";
 
 import { LocationPicker } from "@/components/LocationPicker";
 import mapboxgl from "mapbox-gl";
@@ -440,6 +441,7 @@ export default function VendorListingEdit() {
     const initial = {
       category: initialCategory,
       subcategory: String(ld?.subcategory ?? ld?.listingSubcategory ?? "").trim().slice(0, SUBCATEGORY_MAX_CHARS),
+      subcategoryDetail: String(ld?.subcategoryDetail ?? "").trim().slice(0, SUBCATEGORY_MAX_CHARS),
 
       // Listing Type
       pricingMode: (ld.pricingMode || "single_service") as PricingMode,
@@ -1044,6 +1046,9 @@ export default function VendorListingEdit() {
       subcategory: typeof draft?.subcategory === "string"
         ? draft.subcategory.trim().slice(0, SUBCATEGORY_MAX_CHARS) || undefined
         : undefined,
+      subcategoryDetail: typeof draft?.subcategoryDetail === "string"
+        ? draft.subcategoryDetail.trim().slice(0, SUBCATEGORY_MAX_CHARS) || undefined
+        : undefined,
       pricingMode: draft.pricingMode,
       listingTitle: normalizeListingTitle(String(draft.listingTitle ?? "")),
       listingDescription: draft.listingDescription,
@@ -1558,6 +1563,8 @@ export default function VendorListingEdit() {
                                 category: LISTING_CATEGORY_OPTIONS.includes(value as ListingCategory)
                                   ? (value as ListingCategory)
                                   : "",
+                                subcategory: "",
+                                subcategoryDetail: "",
                               }))
                             }
                           >
@@ -1576,6 +1583,24 @@ export default function VendorListingEdit() {
                             <div className="text-sm text-destructive">Category is required.</div>
                           )}
                         </div>
+
+                        {/* Subcategory — cascading picker, shown when category is selected */}
+                        {draft.category ? (
+                          <SubcategoryPicker
+                            category={draft.category}
+                            value={{
+                              subcategory: draft.subcategory ?? "",
+                              subcategoryDetail: draft.subcategoryDetail ?? "",
+                            }}
+                            onChange={(next) =>
+                              setDraft((d: any) => ({
+                                ...d,
+                                subcategory: next.subcategory,
+                                subcategoryDetail: next.subcategoryDetail,
+                              }))
+                            }
+                          />
+                        ) : null}
                       </div>
                     </div>
                   </Card>

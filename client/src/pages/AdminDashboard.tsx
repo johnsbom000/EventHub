@@ -690,6 +690,46 @@ function ListingsSection({ isAdmin }: { isAdmin: boolean }) {
           </ResponsiveContainer>
         </CardContent>
       </Card>
+
+      {/* Subcategory breakdowns — one chart per category that has data */}
+      {listingStats?.subcatByCategory &&
+        Object.entries(listingStats.subcatByCategory as Record<string, { name: string; count: number; details: { name: string; count: number }[] }[]>).map(([category, subcats]) => (
+          <Card key={category}>
+            <CardHeader>
+              <CardTitle>{category} — Subcategories</CardTitle>
+            </CardHeader>
+            <CardContent>
+              <ResponsiveContainer width="100%" height={Math.max(200, subcats.length * 36 + 40)}>
+                <BarChart
+                  layout="vertical"
+                  data={subcats}
+                  margin={{ top: 4, right: 48, left: 8, bottom: 4 }}
+                >
+                  <CartesianGrid strokeDasharray="3 3" />
+                  <XAxis type="number" allowDecimals={false} />
+                  <YAxis type="category" dataKey="name" width={180} tick={{ fontSize: 12 }} />
+                  <Tooltip
+                    formatter={(value, _name, props) => {
+                      const entry = props.payload as any;
+                      const details = entry?.details ?? [];
+                      if (details.length > 0) {
+                        return [
+                          `${value} total (${details.map((d: any) => `${d.name}: ${d.count}`).join(", ")})`,
+                          "Listings",
+                        ];
+                      }
+                      return [value, "Listings"];
+                    }}
+                  />
+                  <Bar dataKey="count" fill="hsl(var(--primary) / 0.75)">
+                    <LabelList dataKey="count" position="right" style={{ fontSize: 12, fill: "hsl(var(--foreground))" }} />
+                  </Bar>
+                </BarChart>
+              </ResponsiveContainer>
+            </CardContent>
+          </Card>
+        ))
+      }
     </>
   );
 }
