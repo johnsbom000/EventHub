@@ -334,6 +334,7 @@ export class MemStorage implements IStorage {
       profileId: insert.profileId ?? null,
       category: insert.category ?? null,
       subcategory: insert.subcategory ?? null,
+      subcategoryDetail: insert.subcategoryDetail ?? null,
       title: insert.title ?? null,
       description: insert.description ?? null,
       whatsIncluded: insert.whatsIncluded ?? [],

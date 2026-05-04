@@ -181,6 +181,7 @@ const AUTO_PAYOUT_INTERVAL_MS = 10 * 60 * 1000; // 10 minutes
 const MIN_LISTING_PHOTO_COUNT = 3;
 const LISTING_DESCRIPTION_MAX_CHARS = 1000;
 const LISTING_SUBCATEGORY_MAX_CHARS = 120;
+const LISTING_SUBCATEGORY_DETAIL_MAX_CHARS = 120;
 const LISTING_CATEGORY_VALUES = ["Rentals", "Services", "Venues", "Catering"] as const;
 type ListingCategoryValue = (typeof LISTING_CATEGORY_VALUES)[number];
 const CHAT_POLICY_WARNING =
@@ -850,6 +851,12 @@ function normalizeListingSubcategory(value: unknown): string | null {
   return trimmed.length > 0 ? trimmed : null;
 }
 
+function normalizeListingSubcategoryDetail(value: unknown): string | null {
+  if (typeof value !== "string") return null;
+  const trimmed = value.replace(/\s+/g, " ").trim().slice(0, LISTING_SUBCATEGORY_DETAIL_MAX_CHARS);
+  return trimmed.length > 0 ? trimmed : null;
+}
+
 function normalizeListingClassification(
   listingDataRaw: unknown,
   options?: {
@@ -859,6 +866,7 @@ function normalizeListingClassification(
   listingData: Record<string, any>;
   category: ListingCategoryValue | null;
   subcategory: string | null;
+  subcategoryDetail: string | null;
   missingCategory: boolean;
 } {
   const listingData =
@@ -870,16 +878,22 @@ function normalizeListingClassification(
 
   const subcategory = normalizeListingSubcategory(listingData.subcategory);
 
+  const subcategoryDetail = normalizeListingSubcategoryDetail(listingData.subcategoryDetail);
+
   if (category) listingData.category = category;
   else delete listingData.category;
 
   if (subcategory) listingData.subcategory = subcategory;
   else delete listingData.subcategory;
 
+  if (subcategoryDetail) listingData.subcategoryDetail = subcategoryDetail;
+  else delete listingData.subcategoryDetail;
+
   return {
     listingData,
     category,
     subcategory,
+    subcategoryDetail,
     missingCategory: Boolean(options?.requireCategory && !category),
   };
 }
@@ -1143,6 +1157,7 @@ function buildCanonicalListingColumns(input: {
   classification: {
     category: ListingCategoryValue | null;
     subcategory: string | null;
+    subcategoryDetail?: string | null;
   };
 }) {
   const listingData =
@@ -1297,6 +1312,7 @@ function buildCanonicalListingColumns(input: {
   return {
     category: input.classification.category ?? normalizeListingCategory(existing?.category),
     subcategory: input.classification.subcategory ?? normalizeListingSubcategory(existing?.subcategory),
+    subcategoryDetail: input.classification.subcategoryDetail ?? normalizeListingSubcategoryDetail((existing as any)?.subcategoryDetail),
     title:
       normalizeListingTitleCandidate(listingData?.title) ??
       normalizeListingTitleCandidate(listingData?.listingTitle) ??
@@ -6739,6 +6755,7 @@ app.post(
         const canonicalClassification = {
           category: normalizedClassification.category ?? normalizeListingCategory(existingListing?.category),
           subcategory: normalizedClassification.subcategory ?? normalizeListingSubcategory(existingListing?.subcategory),
+          subcategoryDetail: normalizedClassification.subcategoryDetail ?? normalizeListingSubcategoryDetail((existingListing as any)?.subcategoryDetail),
         };
         const canonicalColumns = buildCanonicalListingColumns({
           listingDataRaw: normalizedClassification.listingData,
@@ -7349,6 +7366,7 @@ app.post(
           status: vendorListings.status,
           category: vendorListings.category,
           subcategory: vendorListings.subcategory,
+          subcategoryDetail: vendorListings.subcategoryDetail,
           title: vendorListings.title,
           description: vendorListings.description,
           whatsIncluded: vendorListings.whatsIncluded,
@@ -7697,6 +7715,7 @@ app.post(
           title: vendorListings.title,
           category: vendorListings.category,
           subcategory: vendorListings.subcategory,
+          subcategoryDetail: vendorListings.subcategoryDetail,
           description: vendorListings.description,
           whatsIncluded: vendorListings.whatsIncluded,
           whatsNotIncluded: vendorListings.whatsNotIncluded,
@@ -7777,6 +7796,55 @@ app.post(
 
   });
 
+  // Available subcategories — returns only values that appear on at least one active listing.
+  // Used by hero search, browse filters, and admin dashboard to avoid showing empty options.
+  app.get("/api/listings/available-subcategories", async (req, res) => {
+    try {
+      const rows = await db.execute(drizzleSql`
+        SELECT
+          LOWER(TRIM(category))                  AS category_key,
+          TRIM(subcategory)                      AS subcategory,
+          TRIM(subcategory_detail)               AS subcategory_detail,
+          COUNT(*)::int                          AS count
+        FROM vendor_listings
+        WHERE status = 'active'
+          AND TRIM(COALESCE(category, '')) != ''
+          AND TRIM(COALESCE(subcategory, '')) != ''
+        GROUP BY 1, 2, 3
+        ORDER BY 1, count DESC
+      `);
+
+      type SubcatRow = { category_key: string; subcategory: string; subcategory_detail: string | null; count: number };
+      const typed = extractRows<SubcatRow>(rows);
+
+      // Shape: { rentals: { subcategories: string[], details: Record<string,string[]> }, ... }
+      const result: Record<string, { subcategories: string[]; details: Record<string, string[]> }> = {};
+
+      for (const row of typed) {
+        const key = row.category_key; // e.g. "rentals", "venues"
+        if (!result[key]) result[key] = { subcategories: [], details: {} };
+
+        const sub = row.subcategory;
+        if (!result[key].subcategories.includes(sub)) {
+          result[key].subcategories.push(sub);
+        }
+
+        if (row.subcategory_detail) {
+          if (!result[key].details[sub]) result[key].details[sub] = [];
+          if (!result[key].details[sub].includes(row.subcategory_detail)) {
+            result[key].details[sub].push(row.subcategory_detail);
+          }
+        }
+      }
+
+      res.setHeader("Cache-Control", "no-store");
+      return res.json(result);
+    } catch (error: any) {
+      logRouteError("/api/listings/available-subcategories", error);
+      return res.status(500).json({ error: "Unable to load subcategories" });
+    }
+  });
+
     // Public Listing Detail (guest browsing) added 1/22/26
   // Returns one active listing by id. No auth.
   app.get("/api/listings/public/:id", async (req, res) => {
@@ -7800,6 +7868,7 @@ app.post(
           title: vendorListings.title,
           category: vendorListings.category,
           subcategory: vendorListings.subcategory,
+          subcategoryDetail: vendorListings.subcategoryDetail,
           description: vendorListings.description,
           whatsIncluded: vendorListings.whatsIncluded,
           whatsNotIncluded: vendorListings.whatsNotIncluded,
@@ -12665,9 +12734,43 @@ app.post(
         (r) => ({ category: r.category, count: Number(r.count) })
       );
 
+      // Subcategory breakdown (active listings only, grouped by category → subcategory → detail)
+      const subcatRows = await db.execute(drizzleSql`
+        SELECT
+          COALESCE(NULLIF(TRIM(category), ''), 'Uncategorised')       AS category,
+          COALESCE(NULLIF(TRIM(subcategory), ''), 'Uncategorised')     AS subcategory,
+          COALESCE(NULLIF(TRIM(subcategory_detail), ''), NULL)         AS subcategory_detail,
+          COUNT(*)::int                                                AS count
+        FROM vendor_listings
+        WHERE status = 'active'
+          AND TRIM(COALESCE(category, '')) != ''
+          AND TRIM(COALESCE(subcategory, '')) != ''
+        GROUP BY 1, 2, 3
+        ORDER BY 1, count DESC
+      `);
+
+      type SubcatStatRow = { category: string; subcategory: string; subcategory_detail: string | null; count: number };
+      const subcatTyped = extractRows<SubcatStatRow>(subcatRows);
+
+      // Shape: { Rentals: { subcategories: [{ name, count, details: [{ name, count }] }] }, ... }
+      const subcatByCategory: Record<string, { name: string; count: number; details: { name: string; count: number }[] }[]> = {};
+      for (const row of subcatTyped) {
+        if (!subcatByCategory[row.category]) subcatByCategory[row.category] = [];
+        let subEntry = subcatByCategory[row.category].find((s) => s.name === row.subcategory);
+        if (!subEntry) {
+          subEntry = { name: row.subcategory, count: 0, details: [] };
+          subcatByCategory[row.category].push(subEntry);
+        }
+        subEntry.count += Number(row.count);
+        if (row.subcategory_detail) {
+          subEntry.details.push({ name: row.subcategory_detail, count: Number(row.count) });
+        }
+      }
+
       res.json({
         totalListings,
         listingsByType,
+        subcatByCategory,
         activeListings,
         draftListings,
         inactiveListings,
