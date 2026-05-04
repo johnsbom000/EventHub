@@ -1,5 +1,4 @@
 export type WizardStep =
-  | "serviceType"
   | "locationSelection"
   | "createIntro"
   | "about"
@@ -42,7 +41,6 @@ export interface Discount {
 }
 
 export interface ListingFormData {
-  serviceType: string;
   city: string;
   experience: number;
   qualifications: string[];
@@ -62,7 +60,6 @@ export interface ListingFormData {
 }
 
 export const DEFAULT_FORM_DATA: ListingFormData = {
-  serviceType: "",
   city: "",
   experience: 0,
   qualifications: [],
@@ -91,8 +88,7 @@ export const DEFAULT_FORM_DATA: ListingFormData = {
 };
 
 export const STEP_METADATA: StepMetadata[] = [
-  { id: "serviceType", label: "Service Type", icon: "1" },
-  { id: "locationSelection", label: "Location", icon: "2" },
+  { id: "locationSelection", label: "Location", icon: "1" },
   { id: "createIntro", label: "Get Started", icon: "3" },
   { id: "about", label: "About You", icon: "4" },
   { id: "location", label: "Service Area", icon: "5" },

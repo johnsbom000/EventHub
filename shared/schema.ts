@@ -282,7 +282,6 @@ export const vendorProfiles = pgTable("vendor_profiles", {
   showBusinessAddressToCustomers: boolean("show_business_address_to_customers").notNull().default(false),
   aboutVendor: text("about_vendor"),
   aboutBusiness: text("about_business"),
-  serviceType: text("service_type").notNull(),
   experience: integer("experience").notNull(),
   qualifications: text("qualifications").array().default(sql`'{}'`),
   onlineProfiles: jsonb("online_profiles"),

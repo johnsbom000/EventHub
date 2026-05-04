@@ -38,6 +38,7 @@ const migrationModules = [
   '../migrations/0043_dispute_admin_notes.ts',
   '../migrations/0044_circumvention_system.ts',
   '../migrations/0045_feedback_submissions.ts',
+  '../migrations/0046_drop_vendor_profile_service_type.ts',
 ] as const;
 
 async function runUpMigrations() {

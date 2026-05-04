@@ -825,18 +825,6 @@ function normalizeListingCategory(value: unknown): ListingCategoryValue | null {
   return null;
 }
 
-function mapServiceTypeToListingCategory(serviceType: unknown): ListingCategoryValue {
-  const normalized = asTrimmedString(serviceType).toLowerCase().replace(/[_\s]+/g, "-");
-  if (!normalized) return "Services";
-
-  if (normalized === "prop-decor" || normalized === "prop-rental" || normalized === "rental" || normalized === "rentals") {
-    return "Rentals";
-  }
-  if (normalized === "venue" || normalized === "venues") return "Venues";
-  if (normalized === "catering") return "Catering";
-  return "Services";
-}
-
 function isInstantBookingCategory(category: ListingCategoryValue | null) {
   return category === "Rentals";
 }
@@ -844,11 +832,8 @@ function isInstantBookingCategory(category: ListingCategoryValue | null) {
 function resolveBookingLifecycleMode(input: {
   listingCategory?: unknown;
   listingInstantBookEnabled?: unknown;
-  fallbackServiceType?: unknown;
 }) {
-  const category =
-    normalizeListingCategory(input.listingCategory) ??
-    (input.fallbackServiceType ? mapServiceTypeToListingCategory(input.fallbackServiceType) : null);
+  const category = normalizeListingCategory(input.listingCategory);
   const explicitInstantBook = parseBooleanInput(input.listingInstantBookEnabled);
   const isInstantBooking = explicitInstantBook ?? isInstantBookingCategory(category);
 
@@ -868,9 +853,7 @@ function normalizeListingSubcategory(value: unknown): string | null {
 function normalizeListingClassification(
   listingDataRaw: unknown,
   options?: {
-    fallbackServiceType?: unknown;
     requireCategory?: boolean;
-    allowLegacyFallback?: boolean;
   }
 ): {
   listingData: Record<string, any>;
@@ -883,21 +866,7 @@ function normalizeListingClassification(
       ? ({ ...(listingDataRaw as Record<string, any>) } as Record<string, any>)
       : ({} as Record<string, any>);
 
-  let category =
-    normalizeListingCategory(listingData.category) ?? null;
-
-  const allowLegacyFallback = options?.allowLegacyFallback ?? true;
-
-  if (!category && allowLegacyFallback) {
-    const legacyListingType = asTrimmedString(listingData.vendorType) || asTrimmedString(listingData.serviceType);
-    if (legacyListingType) {
-      category = mapServiceTypeToListingCategory(legacyListingType);
-    }
-  }
-
-  if (!category && allowLegacyFallback && options?.fallbackServiceType) {
-    category = mapServiceTypeToListingCategory(options.fallbackServiceType);
-  }
+  const category = normalizeListingCategory(listingData.category) ?? null;
 
   const subcategory = normalizeListingSubcategory(listingData.subcategory);
 
@@ -915,42 +884,6 @@ function normalizeListingClassification(
   };
 }
 
-async function backfillListingCategoriesFromProfileType(accountId?: string): Promise<number> {
-  const accountFilterSql = accountId ? drizzleSql`and vl.account_id = ${accountId}` : drizzleSql``;
-
-  const result: any = await db.execute(drizzleSql`
-    with updated as (
-      update vendor_listings vl
-      set
-        listing_data = jsonb_set(
-          coalesce(vl.listing_data, '{}'::jsonb),
-          '{category}',
-          to_jsonb(
-            case
-              when lower(coalesce(vp.service_type, '')) in ('prop-decor', 'prop-rental', 'rental', 'rentals') then 'Rentals'
-              when lower(coalesce(vp.service_type, '')) in ('venue', 'venues') then 'Venues'
-              when lower(coalesce(vp.service_type, '')) = 'catering' then 'Catering'
-              else 'Services'
-            end
-          ),
-          true
-        ),
-        updated_at = now()
-      from vendor_profiles vp
-      where vp.id = vl.profile_id
-        and (
-          vl.listing_data is null
-          or nullif(btrim(coalesce(vl.listing_data ->> 'category', '')), '') is null
-        )
-        ${accountFilterSql}
-      returning vl.id
-    )
-    select count(*)::int as "count" from updated
-  `);
-
-  const rows = extractRows<{ count?: number | string }>(result);
-  return Number(rows[0]?.count || 0);
-}
 
 function toUniqueTrimmedStringList(value: unknown): string[] {
   if (!Array.isArray(value)) return [];
@@ -3969,10 +3902,6 @@ async function runGoogleBookingSyncVerificationForVendorAccount(account: any) {
   };
 }
 
-function formatVendorTypeForDraftTitle(vendorType: string): string {
-  if (vendorType === "prop-decor") return "rental";
-  return vendorType.replace(/-/g, " ");
-}
 
 function requireCustomerAnyAuth(req: any, res: any, next: any) {
   return requireDualAuthAuth0(req, res, next);
@@ -4834,7 +4763,6 @@ app.post(
         profileId: activeProfile?.id || null,
         activeProfileId: context.activeProfileId,
         profileName: activeProfileName,
-        vendorType: activeProfile?.serviceType || "unspecified",
         operatingTimezone: normalizeIanaTimeZone(activeProfile?.operatingTimezone),
         googleConnectionStatus: account.googleConnectionStatus,
         googleCalendarId: account.googleCalendarId,
@@ -6106,7 +6034,6 @@ app.post(
         showBusinessAddressToCustomers,
         aboutVendor: aboutVendor || null,
         aboutBusiness: aboutBusiness || null,
-        serviceType: onboardingData.vendorType,
         experience: 0,
         qualifications: [] as string[],
         onlineProfiles: {
@@ -6219,7 +6146,6 @@ app.post(
   const updateVendorProfileSchema = z
     .object({
       profileName: z.string().min(2).max(120).optional(),
-      serviceType: z.string().min(1).optional(),
       experience: z.number().int().optional(),
       qualifications: z.array(z.string()).optional(),
       onlineProfiles: z.any().optional(),
@@ -6360,7 +6286,6 @@ app.post(
         }
         updates.profileName = normalized;
       }
-      if (payload.serviceType !== undefined) updates.serviceType = payload.serviceType;
       if (payload.experience !== undefined) updates.experience = payload.experience;
       if (payload.qualifications !== undefined) updates.qualifications = payload.qualifications;
       if (payload.address !== undefined) updates.address = payload.address;
@@ -6531,7 +6456,6 @@ app.post(
       const profiles = context.profiles.map((profile) => ({
         id: profile.id,
         profileName: getProfileDisplayName(profile, context.account.businessName),
-        serviceType: profile.serviceType,
         city: profile.city,
         createdAt: profile.createdAt,
         isActive: profile.id === context.activeProfileId,
@@ -6576,7 +6500,6 @@ app.post(
         profile: {
           id: target.id,
           profileName: getProfileDisplayName(target, context.account.businessName),
-          serviceType: target.serviceType,
           city: target.city,
           isOperational: target.active !== false,
         },
@@ -6717,11 +6640,8 @@ app.post(
       if (!listingData || typeof listingData !== "object") {
         return res.status(400).json({ error: "listingData must be a JSON object." });
       }
-      const vendorType = activeProfile.serviceType;
       const normalizedListingData = clampListingDescriptions(listingData) as Record<string, any>;
-      const normalizedClassification = normalizeListingClassification(normalizedListingData, {
-        allowLegacyFallback: false,
-      });
+      const normalizedClassification = normalizeListingClassification(normalizedListingData);
 
       const seededListingData = {
         ...normalizedClassification.listingData,
@@ -6750,9 +6670,7 @@ app.post(
         canonical: canonicalColumns,
       });
 
-      const safeVendorType =
-        typeof vendorType === "string" && vendorType.trim() ? vendorType.trim() : "vendor";
-      const defaultTitleType = formatVendorTypeForDraftTitle(safeVendorType);
+      const defaultTitleType = normalizedClassification.category?.toLowerCase().replace(/s$/, "") ?? "listing";
 
       const title =
         canonicalColumns.title ||
@@ -7405,7 +7323,6 @@ app.post(
         businessName: getProfileDisplayName(selectedProfile, account.businessName),
         serviceDescription: selectedProfile.serviceDescription,
         city: selectedProfile.city,
-        serviceType: selectedProfile.serviceType,
         onlineProfiles: selectedProfile.onlineProfiles,
       };
 
@@ -7467,7 +7384,6 @@ app.post(
           takedownFeeAmountCents: vendorListings.takedownFeeAmountCents,
           photos: vendorListings.photos,
           listingData: vendorListings.listingData,
-          serviceType: vendorProfiles.serviceType,
           city: vendorProfiles.city,
           vendorId: vendorAccounts.id,
           vendorName: vendorProfiles.profileName,
@@ -7637,7 +7553,6 @@ app.post(
           reviewBreakdown,
           reviews: reviews.slice(0, 60),
           city: vendor.city,
-          serviceType: vendor.serviceType,
         },
         listings: listingsWithVendorMeta,
       });
@@ -7817,7 +7732,6 @@ app.post(
           photos: vendorListings.photos,
           listingData: vendorListings.listingData,
 
-          serviceType: vendorProfiles.serviceType,
           city: vendorProfiles.city,
           vendorId: vendorAccounts.id,
           vendorName: vendorAccounts.businessName,
@@ -7921,7 +7835,6 @@ app.post(
           photos: vendorListings.photos,
           listingData: vendorListings.listingData,
 
-          serviceType: vendorProfiles.serviceType,
           city: vendorProfiles.city,
           vendorId: vendorAccounts.id,
           vendorName: vendorAccounts.businessName,
@@ -10969,7 +10882,6 @@ app.post(
           takedownFeeEnabled: vendorListings.takedownFeeEnabled,
           takedownFeeAmountCents: vendorListings.takedownFeeAmountCents,
           listingData: vendorListings.listingData,
-          profileServiceType: vendorProfiles.serviceType,
           profileOperatingTimezone: vendorProfiles.operatingTimezone,
         })
         .from(vendorListings)
@@ -11069,16 +10981,11 @@ app.post(
 
       let resolvedVendorProfileId =
         listingRow.profileId && typeof listingRow.profileId === "string" ? listingRow.profileId : null;
-      let resolvedVendorServiceType =
-        typeof listingRow.profileServiceType === "string" && listingRow.profileServiceType.trim().length > 0
-          ? listingRow.profileServiceType.trim()
-          : null;
       let resolvedVendorTimeZone = normalizeIanaTimeZone(listingRow.profileOperatingTimezone);
       if (!resolvedVendorProfileId) {
         const profileRows = await db
           .select({
             id: vendorProfiles.id,
-            serviceType: vendorProfiles.serviceType,
             operatingTimezone: vendorProfiles.operatingTimezone,
           })
           .from(vendorProfiles)
@@ -11087,10 +10994,6 @@ app.post(
           .limit(1);
         if (profileRows[0]?.id) {
           resolvedVendorProfileId = profileRows[0].id;
-          resolvedVendorServiceType =
-            typeof profileRows[0].serviceType === "string" && profileRows[0].serviceType.trim().length > 0
-              ? profileRows[0].serviceType.trim()
-              : resolvedVendorServiceType;
           resolvedVendorTimeZone = normalizeIanaTimeZone(
             profileRows[0].operatingTimezone,
             resolvedVendorTimeZone
@@ -11244,7 +11147,6 @@ app.post(
       const bookingLifecycle = resolveBookingLifecycleMode({
         listingCategory: listingRow.category,
         listingInstantBookEnabled: listingRow.instantBookEnabled,
-        fallbackServiceType: resolvedVendorServiceType,
       });
       const bookingStatus = bookingLifecycle.initialStatus;
       const bookingConfirmedAt = bookingStatus === "confirmed" ? new Date() : null;
@@ -12683,26 +12585,13 @@ app.post(
       const [totalVendorsResult] = await db.select({ count: count() }).from(vendorAccounts);
       const totalVendors = totalVendorsResult.count;
 
+      // Count distinct vendor accounts per listing category (categories live on listings now)
       const vendorsByTypeRows = await db.execute(drizzleSql`
         SELECT
-          CASE lower(COALESCE(service_type, ''))
-            WHEN 'rentals'      THEN 'Rentals'
-            WHEN 'rental'       THEN 'Rentals'
-            WHEN 'prop-decor'   THEN 'Rentals'
-            WHEN 'prop-rental'  THEN 'Rentals'
-            WHEN 'venues'       THEN 'Venues'
-            WHEN 'venue'        THEN 'Venues'
-            WHEN 'catering'     THEN 'Catering'
-            WHEN 'services'     THEN 'Services'
-            WHEN 'florist'      THEN 'Services'
-            WHEN 'hair-styling' THEN 'Services'
-            WHEN 'photography'  THEN 'Services'
-            WHEN 'videography'  THEN 'Services'
-            WHEN 'dj'           THEN 'Services'
-            ELSE 'Other'
-          END          AS category,
-          COUNT(*)::int AS count
-        FROM vendor_profiles
+          COALESCE(NULLIF(TRIM(category), ''), 'Uncategorised') AS category,
+          COUNT(DISTINCT account_id)::int                        AS count
+        FROM vendor_listings
+        WHERE status != 'deleted'
         GROUP BY 1
         ORDER BY count DESC
       `);
@@ -13018,29 +12907,14 @@ app.post(
         ORDER BY year ASC
       `);
 
-      // By service type — normalize legacy service_type values to current categories
+      // By listing category (category lives on the listing, not the vendor profile)
       const byTypeRows = await db.execute(drizzleSql`
         SELECT
-          CASE lower(COALESCE(vp.service_type, ''))
-            WHEN 'rentals'   THEN 'Rentals'
-            WHEN 'rental'    THEN 'Rentals'
-            WHEN 'prop-decor' THEN 'Rentals'
-            WHEN 'prop-rental' THEN 'Rentals'
-            WHEN 'venues'    THEN 'Venues'
-            WHEN 'venue'     THEN 'Venues'
-            WHEN 'catering'  THEN 'Catering'
-            WHEN 'services'  THEN 'Services'
-            WHEN 'florist'   THEN 'Services'
-            WHEN 'hair-styling' THEN 'Services'
-            WHEN 'photography' THEN 'Services'
-            WHEN 'videography' THEN 'Services'
-            WHEN 'dj'        THEN 'Services'
-            ELSE 'Other'
-          END                                           AS service_type,
-          COUNT(b.id)::int                              AS booking_count,
-          SUM(b.total_amount)::bigint                   AS revenue_cents,
-          ROUND(AVG(b.total_amount))::int               AS avg_booking_value_cents,
-          COUNT(DISTINCT b.vendor_account_id)::int      AS vendor_count,
+          COALESCE(NULLIF(TRIM(vl.category), ''), 'Uncategorised') AS service_type,
+          COUNT(b.id)::int                                          AS booking_count,
+          SUM(b.total_amount)::bigint                               AS revenue_cents,
+          ROUND(AVG(b.total_amount))::int                           AS avg_booking_value_cents,
+          COUNT(DISTINCT b.vendor_account_id)::int                  AS vendor_count,
           ROUND(
             COUNT(b.id)::numeric
             / NULLIF(COUNT(DISTINCT b.vendor_account_id), 0)
@@ -13049,9 +12923,9 @@ app.post(
                 1
               ),
             2
-          )::numeric                                    AS avg_bookings_per_vendor_per_month
+          )::numeric                                                AS avg_bookings_per_vendor_per_month
         FROM bookings b
-        LEFT JOIN vendor_profiles vp ON vp.id = b.vendor_profile_id
+        LEFT JOIN vendor_listings vl ON vl.id = b.listing_id
         WHERE b.status NOT IN ('cancelled', 'failed', 'expired')
         GROUP BY 1
         ORDER BY revenue_cents DESC NULLS LAST
