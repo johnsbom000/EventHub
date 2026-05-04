@@ -12,9 +12,11 @@ import { Button } from "@/components/ui/button";
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
 import { Label } from "@/components/ui/label";
 import { Switch } from "@/components/ui/switch";
-import { Search, SlidersHorizontal } from "lucide-react";
+import { Search, SlidersHorizontal, ChevronDown, ChevronRight, Check } from "lucide-react";
 import { POPULAR_FOR_OPTIONS } from "@/constants/eventTypes";
 import { getListingDisplayPrice } from "@/lib/listingPrice";
+import { isTwoLevel, toCategoryKey } from "@/constants/subcategories";
+import type { AvailableSubcategories } from "@/components/HeroCategoryPopup";
 
 type SortBy = "recommended" | "price-asc" | "price-desc";
 type BrowseCategoryKey = "rentals" | "services" | "venues" | "catering";
@@ -257,6 +259,9 @@ export default function BrowseVendors() {
  const [, setLocation] = useLocation();
  const searchString = useSearch();
  const hydratedFromUrlRef = useRef(false);
+ // Set to true when the hydration effect runs so the writing effect can skip
+ // the same render cycle (state hasn't flushed yet, writing would see stale values).
+ const hydrationJustRanRef = useRef(false);
  const browseSurfaceClass = "bg-[#ffffff] ";
  const browseInputClass =
  "bg-[#efefef] text-[#2a3a42] placeholder:text-[#8fa2ad] border-[rgba(74,106,125,0.24)] ";
@@ -281,6 +286,12 @@ export default function BrowseVendors() {
  const [searchRadiusMiles, setSearchRadiusMiles] = useState<number>(15);
  const [searchLocationLabel, setSearchLocationLabel] = useState<string>("");
 
+ // Subcategory multi-select filter state
+ const [selectedSubcategories, setSelectedSubcategories] = useState<string[]>([]);
+ const [selectedSubcategoryDetails, setSelectedSubcategoryDetails] = useState<string[]>([]);
+ // Track which subcategory groups are expanded in the filter panel
+ const [expandedSubcatGroups, setExpandedSubcatGroups] = useState<string[]>([]);
+
  const { data: publicListings = [], isLoading } = useQuery<ListingPublic[]>({
  queryKey: ["/api/listings/public"],
  queryFn: async () => {
@@ -289,6 +300,15 @@ export default function BrowseVendors() {
  },
  staleTime: 0,
  refetchOnMount: "always",
+ });
+
+ const { data: availableSubcategories = {} } = useQuery<AvailableSubcategories>({
+ queryKey: ["/api/listings/available-subcategories"],
+ queryFn: async () => {
+ const res = await apiRequest("GET", "/api/listings/available-subcategories");
+ return res.json();
+ },
+ staleTime: 5 * 60 * 1000,
  });
 
  const availableTags = useMemo(
@@ -310,6 +330,7 @@ export default function BrowseVendors() {
  );
 
  useEffect(() => {
+ hydrationJustRanRef.current = true;
  const params = new URLSearchParams(searchString);
  const sortParam = params.get("sort");
  const parsedSort: SortBy =
@@ -327,6 +348,14 @@ export default function BrowseVendors() {
 
  setSearchQuery((params.get("q") ?? "").trim());
  setSelectedCategory(categoryParam);
+ // "subs" = multi-select from filter panel; "subcategory" = single from hero
+ const heroSubcategory = (params.get("subcategory") ?? "").trim();
+ const heroDetail = (params.get("subcategoryDetail") ?? "").trim();
+ const subsParam = parseCsvParam(params.get("subs"));
+ setSelectedSubcategories(subsParam.length > 0 ? subsParam : heroSubcategory ? [heroSubcategory] : []);
+ const detailsParam = parseCsvParam(params.get("details"));
+ setSelectedSubcategoryDetails(detailsParam.length > 0 ? detailsParam : heroDetail ? [heroDetail] : []);
+ setExpandedSubcatGroups([]);
  setSortBy(parsedSort);
  setLocationQuery(locationParam);
  setMinPrice((params.get("minPrice") ?? "").trim());
@@ -350,6 +379,12 @@ export default function BrowseVendors() {
 
  useEffect(() => {
  if (!hydratedFromUrlRef.current) return;
+ // Hydration just fired in this same render cycle — state hasn't flushed yet.
+ // Skip this run; the effect will re-fire after React commits the new state.
+ if (hydrationJustRanRef.current) {
+   hydrationJustRanRef.current = false;
+   return;
+ }
 
  const params = new URLSearchParams();
  if (searchQuery.trim()) params.set("q", searchQuery.trim());
@@ -361,6 +396,8 @@ export default function BrowseVendors() {
  if (deliveryIncludedOnly) params.set("delivery", "1");
  if (setupIncludedOnly) params.set("setup", "1");
  if (selectedTags.length > 0) params.set("tags", selectedTags.join(","));
+ if (selectedSubcategories.length > 0) params.set("subs", selectedSubcategories.join(","));
+ if (selectedSubcategoryDetails.length > 0) params.set("details", selectedSubcategoryDetails.join(","));
  if (availabilityDate) params.set("availabilityDate", availabilityDate);
  if (selectedBestFor.length > 0) params.set("bestFor", selectedBestFor.join(","));
  if (searchLat != null && searchLng != null) {
@@ -386,12 +423,13 @@ export default function BrowseVendors() {
  deliveryIncludedOnly,
  setupIncludedOnly,
  selectedTags,
+ selectedSubcategories,
+ selectedSubcategoryDetails,
  availabilityDate,
  selectedBestFor,
  searchLat,
  searchLng,
  searchRadiusMiles,
- searchString,
  setLocation,
  ]);
 
@@ -407,6 +445,8 @@ export default function BrowseVendors() {
  deliveryIncludedOnly ||
  setupIncludedOnly ||
  selectedTags.length > 0 ||
+ selectedSubcategories.length > 0 ||
+ selectedSubcategoryDetails.length > 0 ||
  availabilityDate ||
  selectedBestFor.length > 0 ||
  searchLat != null ||
@@ -422,6 +462,8 @@ export default function BrowseVendors() {
  deliveryIncludedOnly,
  setupIncludedOnly,
  selectedTags,
+ selectedSubcategories,
+ selectedSubcategoryDetails,
  availabilityDate,
  selectedBestFor,
  searchLat,
@@ -432,6 +474,9 @@ export default function BrowseVendors() {
  const clearFilters = () => {
  setSearchQuery("");
  setSelectedCategory("");
+ setSelectedSubcategories([]);
+ setSelectedSubcategoryDetails([]);
+ setExpandedSubcatGroups([]);
  setSortBy("recommended");
  setLocationQuery("");
  setMinPrice("");
@@ -467,6 +512,22 @@ export default function BrowseVendors() {
 
  if (selectedCategory) {
  filtered = filtered.filter((listing) => getListingCategoryKey(listing) === selectedCategory);
+ }
+
+ if (selectedSubcategories.length > 0) {
+ const normalizedSubs = selectedSubcategories.map(normalizeText);
+ filtered = filtered.filter((listing) => {
+ const sub = normalizeText((listing as any)?.subcategory ?? "");
+ return sub && normalizedSubs.includes(sub);
+ });
+ }
+
+ if (selectedSubcategoryDetails.length > 0) {
+ const normalizedDetails = selectedSubcategoryDetails.map(normalizeText);
+ filtered = filtered.filter((listing) => {
+ const detail = normalizeText((listing as any)?.subcategoryDetail ?? "");
+ return detail && normalizedDetails.includes(detail);
+ });
  }
 
  if (normalizedQuery) {
@@ -581,6 +642,8 @@ export default function BrowseVendors() {
  publicListings,
  searchQuery,
  selectedCategory,
+ selectedSubcategories,
+ selectedSubcategoryDetails,
  locationQuery,
  minPrice,
  maxPrice,
@@ -698,6 +761,154 @@ export default function BrowseVendors() {
  Close
  </button>
  </div>
+
+ {/* Category & Subcategory multi-select */}
+ <section className="space-y-3">
+ <h2 className="text-[20px] font-heading">Category</h2>
+ <div className="space-y-1">
+ {(["rentals", "services", "venues", "catering"] as BrowseCategoryKey[]).map((catKey) => {
+ const catLabel = catKey.charAt(0).toUpperCase() + catKey.slice(1);
+ const isCatSelected = selectedCategory === catKey;
+ const catAvail = availableSubcategories[catKey];
+ const hasSubs = (catAvail?.subcategories ?? []).length > 0;
+ const catCanonical = toCategoryKey(catKey);
+ const isExpanded = expandedSubcatGroups.includes(catKey);
+
+ return (
+ <div key={catKey}>
+ <div className="flex items-center gap-2">
+ <button
+ type="button"
+ onClick={() => {
+ if (isCatSelected) {
+ setSelectedCategory("");
+ setSelectedSubcategories([]);
+ setSelectedSubcategoryDetails([]);
+ } else {
+ setSelectedCategory(catKey);
+ setSelectedSubcategories([]);
+ setSelectedSubcategoryDetails([]);
+ }
+ }}
+ className={[
+ "flex flex-1 items-center gap-2 rounded-lg px-3 py-2 text-sm font-medium transition-colors text-left",
+ isCatSelected
+ ? "bg-[#4a6a7d] text-[#f5f0e8]"
+ : "bg-[#f5f0e8] text-[#2a3a42] hover:bg-white",
+ ].join(" ")}
+ >
+ <span className={[
+ "flex h-4 w-4 shrink-0 items-center justify-center rounded border",
+ isCatSelected ? "border-white bg-white" : "border-[rgba(74,106,125,0.4)] bg-white",
+ ].join(" ")}>
+ {isCatSelected && <Check className="h-3 w-3 text-[#4a6a7d]" />}
+ </span>
+ {catLabel}
+ </button>
+ {hasSubs && isCatSelected && (
+ <button
+ type="button"
+ onClick={() => setExpandedSubcatGroups((prev) =>
+ prev.includes(catKey) ? prev.filter((k) => k !== catKey) : [...prev, catKey]
+ )}
+ className="shrink-0 rounded p-1 text-[#4a6a7d] hover:bg-[#f5f0e8] transition-colors"
+ >
+ {isExpanded ? <ChevronDown className="h-4 w-4" /> : <ChevronRight className="h-4 w-4" />}
+ </button>
+ )}
+ </div>
+
+ {isCatSelected && isExpanded && hasSubs && (
+ <div className="ml-4 mt-1 space-y-1 border-l border-[rgba(74,106,125,0.14)] pl-3">
+ {(catAvail?.subcategories ?? []).map((sub) => {
+ const isSubSelected = selectedSubcategories.includes(sub);
+ const detailOptions = catCanonical && isTwoLevel(catCanonical)
+ ? catAvail?.details?.[sub] ?? []
+ : [];
+ const subExpandKey = `${catKey}|${sub}`;
+ const isSubExpanded = expandedSubcatGroups.includes(subExpandKey);
+
+ return (
+ <div key={sub}>
+ <div className="flex items-center gap-2">
+ <button
+ type="button"
+ onClick={() => {
+ setSelectedSubcategories((prev) =>
+ isSubSelected ? prev.filter((s) => s !== sub) : [...prev, sub]
+ );
+ if (isSubSelected) {
+ setSelectedSubcategoryDetails((prev) =>
+ prev.filter((d) => !detailOptions.includes(d))
+ );
+ }
+ }}
+ className={[
+ "flex flex-1 items-center gap-2 rounded-lg px-3 py-1.5 text-sm transition-colors text-left",
+ isSubSelected ? "bg-[#e07a6a]/10 text-[#2a3a42] font-medium" : "text-[#2a3a42] hover:bg-[#f5f0e8]",
+ ].join(" ")}
+ >
+ <span className={[
+ "flex h-4 w-4 shrink-0 items-center justify-center rounded border",
+ isSubSelected ? "border-[#e07a6a] bg-[#e07a6a]" : "border-[rgba(74,106,125,0.4)] bg-white",
+ ].join(" ")}>
+ {isSubSelected && <Check className="h-3 w-3 text-white" />}
+ </span>
+ {sub}
+ </button>
+ {detailOptions.length > 0 && isSubSelected && (
+ <button
+ type="button"
+ onClick={() => setExpandedSubcatGroups((prev) =>
+ prev.includes(subExpandKey) ? prev.filter((k) => k !== subExpandKey) : [...prev, subExpandKey]
+ )}
+ className="shrink-0 rounded p-1 text-[#4a6a7d] hover:bg-[#f5f0e8] transition-colors"
+ >
+ {isSubExpanded ? <ChevronDown className="h-4 w-4" /> : <ChevronRight className="h-4 w-4" />}
+ </button>
+ )}
+ </div>
+
+ {isSubSelected && isSubExpanded && detailOptions.length > 0 && (
+ <div className="ml-4 mt-1 space-y-1 border-l border-[rgba(74,106,125,0.08)] pl-3">
+ {detailOptions.map((detail) => {
+ const isDetailSelected = selectedSubcategoryDetails.includes(detail);
+ return (
+ <button
+ key={detail}
+ type="button"
+ onClick={() =>
+ setSelectedSubcategoryDetails((prev) =>
+ isDetailSelected ? prev.filter((d) => d !== detail) : [...prev, detail]
+ )
+ }
+ className={[
+ "flex w-full items-center gap-2 rounded-lg px-3 py-1.5 text-sm transition-colors text-left",
+ isDetailSelected ? "bg-[#e07a6a]/10 text-[#2a3a42] font-medium" : "text-[#2a3a42] hover:bg-[#f5f0e8]",
+ ].join(" ")}
+ >
+ <span className={[
+ "flex h-4 w-4 shrink-0 items-center justify-center rounded border",
+ isDetailSelected ? "border-[#e07a6a] bg-[#e07a6a]" : "border-[rgba(74,106,125,0.4)] bg-white",
+ ].join(" ")}>
+ {isDetailSelected && <Check className="h-3 w-3 text-white" />}
+ </span>
+ {detail}
+ </button>
+ );
+ })}
+ </div>
+ )}
+ </div>
+ );
+ })}
+ </div>
+ )}
+ </div>
+ );
+ })}
+ </div>
+ </section>
 
  <section className="space-y-3">
  <h2 className="text-[20px] font-heading">Sort</h2>
