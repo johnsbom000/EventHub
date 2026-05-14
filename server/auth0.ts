@@ -1,4 +1,5 @@
 // server/auth0.ts
+import { logger } from "./lib/logger";
 import jwt from "jsonwebtoken";
 import jwksClient from "jwks-rsa";
 import type { Request, Response, NextFunction } from "express";
@@ -55,7 +56,7 @@ export function verifyAuth0Token(token: string): Promise<Auth0Payload> {
       },
       (err, decoded) => {
         if (err) {
-          console.error("AUTH0 jwt.verify ERROR:", err.name, err.message);
+          logger.error({ err, name: err.name }, "AUTH0 jwt.verify error");
           return reject(err);
         }
 
@@ -80,6 +81,11 @@ type UserInfoProfile = {
   family_name?: string;
 };
 
+// In-process cache for /userinfo responses — avoids one external HTTP call per request.
+// Key: auth0 sub. TTL: 5 minutes (short enough to pick up email-verify changes quickly).
+const _userInfoCache = new Map<string, { profile: UserInfoProfile; expiresAt: number }>();
+const USERINFO_CACHE_TTL_MS = 5 * 60 * 1000;
+
 async function fetchUserInfoProfile(accessToken: string): Promise<UserInfoProfile | null> {
   const controller = new AbortController();
   const t = setTimeout(() => controller.abort(), 2000);
@@ -92,12 +98,7 @@ async function fetchUserInfoProfile(accessToken: string): Promise<UserInfoProfil
 
     if (!resp.ok) {
       const text = await resp.text().catch(() => "");
-      console.warn(
-        "AUTH0 /userinfo failed:",
-        resp.status,
-        resp.statusText,
-        text ? `:: ${text}` : ""
-      );
+      logger.warn({ status: resp.status, statusText: resp.statusText, body: text }, "AUTH0 /userinfo failed");
       return null;
     }
 
@@ -105,11 +106,23 @@ async function fetchUserInfoProfile(accessToken: string): Promise<UserInfoProfil
     return data ?? null;
   } catch (e: any) {
     // AbortError or network errors should not block auth
-    console.warn("AUTH0 /userinfo exception:", e?.name || "", e?.message || e);
+    logger.warn("AUTH0 /userinfo exception:", e?.name || "", e?.message || e);
     return null;
   } finally {
     clearTimeout(t);
   }
+}
+
+async function fetchUserInfoProfileCached(sub: string, accessToken: string): Promise<UserInfoProfile | null> {
+  const now = Date.now();
+  const cached = _userInfoCache.get(sub);
+  if (cached && cached.expiresAt > now) return cached.profile;
+
+  const profile = await fetchUserInfoProfile(accessToken);
+  if (profile) {
+    _userInfoCache.set(sub, { profile, expiresAt: now + USERINFO_CACHE_TTL_MS });
+  }
+  return profile;
 }
 
 /**
@@ -141,7 +154,7 @@ export async function requireAuth0(req: Request, res: Response, next: NextFuncti
     // Also fetch when email_verified is undefined — API-audience access tokens
     // often omit it, but /userinfo always includes it.
     if (!auth0.email || auth0.email_verified === undefined || !auth0.name || !auth0.given_name || !auth0.family_name || !auth0.nickname) {
-      const userInfo = await fetchUserInfoProfile(token);
+      const userInfo = await fetchUserInfoProfileCached(payload.sub, token);
       if (userInfo) {
         if (!auth0.email && userInfo.email) auth0.email = userInfo.email;
         if (auth0.email_verified === undefined && userInfo.email_verified !== undefined) auth0.email_verified = userInfo.email_verified;
@@ -156,10 +169,12 @@ export async function requireAuth0(req: Request, res: Response, next: NextFuncti
     // This prevents an attacker from creating an Auth0 account with someone
     // else's email (unverified) and hitting the email-based account fallback.
     if (auth0.email && auth0.email_verified !== true) {
+      logger.info({ sub: auth0.sub, email: auth0.email, email_verified: auth0.email_verified }, "[auth0] 403 email_verified check failed");
       return res.status(403).json({ error: "Email address must be verified before accessing this resource" });
     }
 
     // Attach to request for downstream middleware/routes
+    logger.info({ sub: auth0.sub, email: auth0.email ?? "(none)" }, "[auth0] token verified");
     (req as any).auth0 = auth0;
 
     // Update last_login_at (non-blocking)
@@ -188,13 +203,13 @@ export async function requireAuth0(req: Request, res: Response, next: NextFuncti
           );
         }
       } catch (e: any) {
-        console.warn("AUTH0 last_login_at update failed:", e?.message || e);
+        logger.warn("AUTH0 last_login_at update failed:", e?.message || e);
       }
     })();
 
     return next();
   } catch (err: any) {
-    console.error("Auth0 token verify failed:", err?.name, err?.message);
+    logger.error("Auth0 token verify failed:", err?.name, err?.message);
     return res.status(401).json({ error: "Invalid Auth0 token" });
   }
 }

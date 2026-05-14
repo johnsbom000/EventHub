@@ -15,6 +15,7 @@ import {
  moveCoverToFront,
 } from "@/lib/listingPhotos";
 import { getListingDisplayPrice, getListingDisplayPricingUnit } from "@/lib/listingPrice";
+import { useTranslation } from "react-i18next";
 
 function ShareSquareIcon() {
  return (
@@ -50,6 +51,8 @@ interface ListingCardProps {
  cardNavigationPath?: string | null;
  primaryActionLabel?: string;
  primaryActionPath?: string | null;
+ onPrimaryAction?: () => void;
+ primaryActionActive?: boolean;
  showHeartIcon?: boolean;
 }
 
@@ -64,10 +67,14 @@ export default function ListingCard({
  showVendorShopButton = false,
  disableCardNavigation = false,
  cardNavigationPath,
- primaryActionLabel = "View Listing",
+ primaryActionLabel,
  primaryActionPath,
+ onPrimaryAction,
+ primaryActionActive = false,
  showHeartIcon = true,
 }: ListingCardProps) {
+ const { t } = useTranslation();
+ const resolvedPrimaryActionLabel = primaryActionLabel ?? t("card.viewListing");
  const [, setLocation] = useLocation();
  const [shareOpen, setShareOpen] = useState(false);
  const [shareFeedback, setShareFeedback] = useState("");
@@ -80,6 +87,7 @@ export default function ListingCard({
  const priceValue = getListingDisplayPrice(listingAny);
  const pricingUnit = getListingDisplayPricingUnit(listingAny);
  const showPerHourSuffix = pricingUnit === "per_hour";
+ const isPackageContainer = listingAny.listingType === "package_container";
 
  const allPhotoUrls = getListingPhotoUrls(listingAny);
  const coverIndex = getCoverPhotoIndex(listingAny, allPhotoUrls);
@@ -121,12 +129,25 @@ export default function ListingCard({
  });
  const isSaved = Boolean(hasListingId && savedIdsData?.listingIds.includes(listingId));
 
+ // Active sale for this listing (public, no auth needed)
+ const { data: activeSaleData } = useQuery<{ sale: { percentOff: number; endsAt: string } | null }>({
+ queryKey: [`/api/listings/${listingId}/active-sale`],
+ enabled: hasListingId,
+ staleTime: 60_000,
+ });
+ const activeSale = activeSaleData?.sale ?? null;
+ const saleDiscountedPrice =
+ activeSale && typeof priceValue === "number"
+   ? Math.round(priceValue * (1 - activeSale.percentOff / 100) * 100) / 100
+   : null;
+
  const handleOpenListing = () => {
  if (!resolvedCardNavigationPath) return;
  setLocation(resolvedCardNavigationPath);
  };
 
  const handleOpenPrimaryAction = () => {
+ if (onPrimaryAction) { onPrimaryAction(); return; }
  if (!resolvedPrimaryActionPath) return;
  setLocation(resolvedPrimaryActionPath);
  };
@@ -135,12 +156,12 @@ export default function ListingCard({
  try {
  if (navigator.clipboard?.writeText) {
  await navigator.clipboard.writeText(shareUrl);
- setShareFeedback("Link copied.");
+ setShareFeedback(t("card.linkCopied"));
  } else {
- setShareFeedback("Clipboard unavailable on this browser.");
+ setShareFeedback(t("card.clipboardUnavailable"));
  }
  } catch {
- setShareFeedback("Couldn't copy link. Please copy from address bar.");
+ setShareFeedback(t("card.copyError"));
  }
  };
 
@@ -149,10 +170,10 @@ export default function ListingCard({
  setLocation(vendorShopPath);
  };
 
- const smsHref = `sms:?&body=${encodeURIComponent(`Check out this listing on EventHub: ${shareUrl}`)}`;
+ const smsHref = `sms:?&body=${encodeURIComponent(t("card.shareSmsBody", { url: shareUrl }))}`;
  const emailHref = `mailto:?subject=${encodeURIComponent(
- "Check out this EventHub listing"
- )}&body=${encodeURIComponent(`I found this on EventHub:\n${shareUrl}`)}`;
+   t("card.shareEmailSubject")
+ )}&body=${encodeURIComponent(t("card.shareEmailBody", { url: shareUrl }))}`;
 
  const resolvedTitleSizeClass =
  titleSizeClassName ??
@@ -209,7 +230,7 @@ export default function ListingCard({
  className="flex w-full items-center justify-center bg-[rgba(74,106,125,0.14)] text-sm font-medium text-[#2a3a42] "
  style={{ aspectRatio: coverAspectRatio }}
  >
- No photo yet
+ {t("card.noPhotoYet")}
  </div>
  )}
 
@@ -222,11 +243,11 @@ export default function ListingCard({
  e.stopPropagation();
  handleOpenPrimaryAction();
  }}
- className={`inline-flex items-center rounded-full border border-[rgba(74,106,125,0.2)] bg-white/95 font-sans font-medium text-[#2a3a42] shadow-sm backdrop-blur-sm ${primaryActionClasses}`}
+ className={`inline-flex items-center rounded-full border font-sans font-medium shadow-sm backdrop-blur-sm ${primaryActionClasses} ${primaryActionActive ? "border-primary bg-primary text-primary-foreground" : "border-[rgba(74,106,125,0.2)] bg-white/95 text-[#2a3a42]"}`}
  data-testid={`button-view-listing-${hasListingId ? listingId : "unknown"}`}
  >
  <ArrowUpRight className={primaryActionIconClasses} />
- {primaryActionLabel}
+ {resolvedPrimaryActionLabel}
  </button>
 
  {/* Share button */}
@@ -238,7 +259,7 @@ export default function ListingCard({
  setShareOpen(true);
  }}
  className="inline-flex h-11 w-11 items-center justify-center text-white/95 transition-colors hover:text-white focus-visible:text-white"
- aria-label="Share listing"
+ aria-label={t("card.shareListingAriaLabel")}
  data-testid={`button-share-listing-${hasListingId ? listingId : "unknown"}`}
  >
  <ShareSquareIcon />
@@ -260,7 +281,7 @@ export default function ListingCard({
  e.stopPropagation();
  setHeartOpen((v) => !v);
  }}
- aria-label={isSaved ? "Saved to event" : "Save to event"}
+ aria-label={isSaved ? t("card.savedToEvent") : t("card.saveToEvent")}
  >
  <Heart
  className={`h-7 w-7 drop-shadow-md transition-colors ${
@@ -289,18 +310,47 @@ export default function ListingCard({
  >
  {title}
  </h3>
- <p className={`shrink-0 font-heading font-bold text-[#e07a6a] ${resolvedPriceSizeClass}`}>
- {typeof priceValue === "number" ? (
+ <div className="shrink-0 flex flex-col items-end gap-0.5">
+ {activeSale && saleDiscountedPrice !== null && typeof priceValue === "number" ? (
  <>
- ${priceValue.toLocaleString()}
- {showPerHourSuffix ? (
- <span className="text-[0.6em] font-bold"> / Hour</span>
- ) : null}
+ <div className="flex items-center gap-1.5">
+   <span className="rounded-full bg-[#e07a6a] px-1.5 py-0.5 text-[10px] font-bold text-white leading-none">
+   {activeSale.percentOff}% OFF
+   </span>
+   <span className="text-xs text-muted-foreground line-through leading-none">
+   ${priceValue.toLocaleString()}
+   {showPerHourSuffix ? "/hr" : pricingUnit === "per_day" ? "/day" : ""}
+   </span>
+ </div>
+ <p className={`font-heading font-bold text-[#e07a6a] ${resolvedPriceSizeClass}`}>
+   ${saleDiscountedPrice.toLocaleString()}
+   {showPerHourSuffix ? (
+   <span className="text-[0.6em] font-bold"> / Hour</span>
+   ) : pricingUnit === "per_day" ? (
+   <span className="text-[0.6em] font-bold"> / Day</span>
+   ) : null}
+ </p>
  </>
  ) : (
- "—"
- )}
+ <p className={`font-heading font-bold text-[#e07a6a] ${resolvedPriceSizeClass}`}>
+   {typeof priceValue === "number" ? (
+   <>
+   {isPackageContainer && (
+     <span className="text-[0.55em] font-medium text-[#e07a6a] block leading-none mb-0.5">Starting from</span>
+   )}
+   ${priceValue.toLocaleString()}
+   {showPerHourSuffix ? (
+   <span className="text-[0.6em] font-bold"> / Hour</span>
+   ) : pricingUnit === "per_day" ? (
+   <span className="text-[0.6em] font-bold"> / Day</span>
+   ) : null}
+   </>
+   ) : (
+   "—"
+   )}
  </p>
+ )}
+ </div>
  </div>
 
  {showVendorShopButton && vendorShopPath ? (
@@ -314,7 +364,7 @@ export default function ListingCard({
  className="inline-flex max-w-full items-center rounded-full border border-[rgba(74,106,125,0.24)] bg-white/90 px-3 py-1.5 text-sm font-medium text-[#2a3a42] transition-colors hover:bg-white "
  data-testid={`button-visit-vendor-shop-${listingId ?? "unknown"}`}
  >
- <span className="truncate">Visit {vendorShopLabel}</span>
+ <span className="truncate">{t("card.visitVendor", { vendorName: vendorShopLabel })}</span>
  </button>
  </div>
  ) : null}
@@ -324,7 +374,7 @@ export default function ListingCard({
  <Dialog open={shareOpen} onOpenChange={setShareOpen}>
  <DialogContent className="rounded-3xl border border-border bg-card p-6 sm:max-w-[540px]">
  <DialogTitle className="text-center text-[1.74rem] font-semibold text-foreground">
- Share Listing
+ {t("card.shareListingTitle")}
  </DialogTitle>
  <p className="-mt-2 line-clamp-1 text-center text-[1.01rem] text-muted-foreground">
  {title}
@@ -337,7 +387,7 @@ export default function ListingCard({
  className="flex flex-col items-center gap-2 rounded-2xl border border-border px-3 py-3 text-[1.01rem] font-medium text-foreground transition hover:bg-accent hover:text-accent-foreground"
  >
  <Link2 className="h-5 w-5" />
- Copy link
+ {t("card.copyLink")}
  </button>
  <button
  type="button"
@@ -345,7 +395,7 @@ export default function ListingCard({
  className="flex flex-col items-center gap-2 rounded-2xl border border-border px-3 py-3 text-[1.01rem] font-medium text-foreground transition hover:bg-accent hover:text-accent-foreground"
  >
  <MessageCircle className="h-5 w-5" />
- Messages
+ {t("card.messages")}
  </button>
  <button
  type="button"
@@ -353,7 +403,7 @@ export default function ListingCard({
  className="flex flex-col items-center gap-2 rounded-2xl border border-border px-3 py-3 text-[1.01rem] font-medium text-foreground transition hover:bg-accent hover:text-accent-foreground"
  >
  <Mail className="h-5 w-5" />
- Email
+ {t("card.email")}
  </button>
  <button
  type="button"
@@ -362,12 +412,12 @@ export default function ListingCard({
  if (typeof window !== "undefined") {
  window.open("https://www.messenger.com/", "_blank", "noopener,noreferrer");
  }
- setShareFeedback("Link copied. Paste it in Messenger.");
+ setShareFeedback(t("card.messengerFeedback"));
  }}
  className="flex flex-col items-center gap-2 rounded-2xl border border-border px-3 py-3 text-[1.01rem] font-medium text-foreground transition hover:bg-accent hover:text-accent-foreground"
  >
  <Share2 className="h-5 w-5" />
- Messenger
+ {t("card.messenger")}
  </button>
  </div>
 

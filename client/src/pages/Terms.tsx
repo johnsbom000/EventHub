@@ -1,3 +1,4 @@
+import { useTranslation } from "react-i18next";
 import { Link } from "wouter";
 import { ChevronLeft } from "lucide-react";
 
@@ -12,16 +13,17 @@ const SECTIONS = [
 ];
 
 export default function TermsOfService() {
+  const { t } = useTranslation();
   return (
     <div className="min-h-screen bg-background">
       <div className="mx-auto max-w-5xl px-4 py-10 sm:px-6 lg:px-8">
         <Link href="/" className="mb-8 inline-flex items-center text-sm text-muted-foreground hover:text-foreground">
           <ChevronLeft className="mr-1 h-4 w-4" />
-          Back to EventHub
+          {t("terms.backToEventHub")}
         </Link>
 
         <div className="mb-8">
-          <h1 className="text-3xl font-semibold tracking-tight text-foreground">Terms of Service</h1>
+          <h1 className="text-3xl font-semibold tracking-tight text-foreground">{t("terms.pageTitle")}</h1>
           <p className="mt-2 text-sm text-muted-foreground">
             Version 6 · Governing law: State of Utah · Questions: legal@eventhub.com
           </p>
@@ -31,7 +33,7 @@ export default function TermsOfService() {
           {/* Sidebar TOC */}
           <nav className="hidden lg:block">
             <div className="sticky top-8 space-y-1">
-              <p className="mb-3 text-xs font-medium uppercase tracking-wider text-muted-foreground">Contents</p>
+              <p className="mb-3 text-xs font-medium uppercase tracking-wider text-muted-foreground">{t("terms.contents")}</p>
               {SECTIONS.map((s) => (
                 <a
                   key={s.id}
@@ -131,7 +133,7 @@ export default function TermsOfService() {
                 <li>Conduct all booking-related communications exclusively through the EventHub platform</li>
               </ul>
               <p>
-                Customers have a <strong>48-hour window from the event date</strong> to file a refund dispute. Disputes filed after this window will not be considered. Disputes must include supporting documentation.
+                Customers have a <strong>72-hour window from the event date</strong> to file a refund dispute. Disputes filed after this window will not be considered. Disputes must include supporting documentation.
               </p>
               <p>
                 EventHub processes payments as a limited payment collection agent on behalf of Vendors. Vendor payouts are released after the event date, subject to any open disputes. All payments are processed through Stripe and subject to Stripe's terms of service.
@@ -170,7 +172,7 @@ export default function TermsOfService() {
                 Upon booking confirmation, both the Customer and Vendor receive a confirmation email documenting the booking terms, cancellation policy, damage deposit requirements, and fulfillment obligations. These confirmation emails constitute notice of the agreed terms.
               </p>
               <p>
-                The <strong>48-hour dispute window begins from the event date</strong> — not the booking date. Customers must file any service quality claims within this window. Vendors must file any damage claims within 48 hours of item return, supported by timestamped photo evidence and, for claims over $100, a third-party estimate.
+                The <strong>72-hour dispute window begins from the event date</strong> — not the booking date. Customers must file any service quality claims within this window. Vendors must file any damage claims within 48 hours of item return, supported by timestamped photo evidence and, for claims over $100, a third-party estimate.
               </p>
               <p>
                 Cancellation requests must follow the Vendor's cancellation policy as disclosed at the time of booking. Refunds, where applicable, are processed within 5–10 business days depending on your financial institution.
@@ -187,8 +189,8 @@ export default function TermsOfService() {
               </p>
               <p>To file a dispute:</p>
               <ul>
-                <li>Service quality claims must be filed within 48 hours of the event date with supporting documentation (photos, written communication, etc.)</li>
-                <li>Vendor damage claims require timestamped photo evidence submitted within 48 hours of item return; claims over $100 require a third-party repair or replacement estimate</li>
+                <li>Service quality claims must be filed within 72 hours of the event date with supporting documentation (photos, written communication, etc.)</li>
+                <li>Vendor damage claims require timestamped photo evidence submitted within 72 hours of item return; claims over $100 require a third-party repair or replacement estimate</li>
                 <li>Personal injury claims must be directed to the Vendor and, where applicable, their insurer — EventHub does not provide insurance coverage</li>
               </ul>
               <p>

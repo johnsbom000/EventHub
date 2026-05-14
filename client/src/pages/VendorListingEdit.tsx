@@ -1,3 +1,4 @@
+import { useTranslation } from "react-i18next";
 import React, { useMemo, useState, useEffect, useRef } from "react";
 import { Link, useLocation, useParams } from "wouter";
 import { useMutation, useQuery } from "@tanstack/react-query";
@@ -12,6 +13,7 @@ import { Label } from "@/components/ui/label";
 import { Input } from "@/components/ui/input";
 import { Textarea } from "@/components/ui/textarea";
 import { Slider } from "@/components/ui/slider";
+import { Switch } from "@/components/ui/switch";
 import {
   Select,
   SelectContent,
@@ -33,6 +35,9 @@ import { getPublishFailureToastContent } from "@/lib/publishFailureToast";
 import { resolveAssetUrl } from "@/lib/runtimeUrls";
 import { HardBlockModal, SoftFlagNotice } from "@/components/CircumventionWarningModal";
 import { SubcategoryPicker } from "@/components/listings/SubcategoryPicker";
+import { PackagesStep, type PackagesStepHandle } from "@/features/vendor/create-listing/steps/PackagesStep";
+import { AttachAddonsStep } from "@/features/vendor/create-listing/steps/AttachAddonsStep";
+import { CreateListingWizard } from "@/features/vendor/create-listing/CreateListingWizard";
 
 import { LocationPicker } from "@/components/LocationPicker";
 import mapboxgl from "mapbox-gl";
@@ -292,6 +297,7 @@ function makeCircleGeoJSON(
 
 
 export default function VendorListingEdit() {
+  const { t } = useTranslation();
   const params = useParams() as { id?: string };
   const listingId = params?.id;
   const [, setLocation] = useLocation();
@@ -327,6 +333,18 @@ export default function VendorListingEdit() {
   });
 
   const listing = (data as AnyListing | undefined) ?? undefined;
+  const isPackageContainer = (data as any)?.listingType === "package_container";
+
+  type EditTab = "info" | "packages" | "addons" | "media";
+  const [activeTab, setActiveTab] = useState<EditTab>("info");
+  const [creatingAddon, setCreatingAddon] = useState(false);
+  const packagesStepRef = useRef<PackagesStepHandle>(null);
+
+  // ---- Dirty tracking ----
+  // snapshotRef holds the JSON of the draft at last save/publish/load.
+  // isDirty is true whenever the current draft differs from that snapshot.
+  const snapshotRef = useRef<string>("");
+  const [isDirty, setIsDirty] = useState(false);
 
   // ---- Draft state (this is what we edit inline) ----
   const [draft, setDraft] = useState<any>(null);
@@ -557,11 +575,30 @@ export default function VendorListingEdit() {
           lng: normalized.lng,
         };
       })(),
+
+      // Cancellation policy
+      cancellationPolicy: (ld?.cancellationPolicy ?? "cancel_anytime") as "cancel_anytime" | "cancel_within_hours" | "no_cancellations",
+      cancellationPolicyHours: String(ld?.cancellationPolicyHours ?? 48),
+
+      // Security deposit (canonical columns — read directly from listing row)
+      securityDepositEnabled: Boolean((listing as any).securityDepositEnabled),
+      securityDepositAmount:
+        (listing as any).securityDepositCents != null && Number((listing as any).securityDepositCents) > 0
+          ? String(Number((listing as any).securityDepositCents) / 100)
+          : "",
     };
 
     setDraft(initial);
+    snapshotRef.current = JSON.stringify(initial);
+    setIsDirty(false);
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [listing?.id]);
+
+  // Re-check dirty state whenever draft changes
+  useEffect(() => {
+    if (!draft || !snapshotRef.current) return;
+    setIsDirty(JSON.stringify(draft) !== snapshotRef.current);
+  }, [draft]);
 
   // ---- Default service center from vendor onboarding (same logic as CreateListingWizard) ----
   useEffect(() => {
@@ -705,15 +742,6 @@ export default function VendorListingEdit() {
 
     const allowed = new Set(["image/jpeg", "image/png", "image/webp"]);
     const fileArr = Array.from(files);
-
-    console.log(
-      "[upload debug]",
-      fileArr.map((f) => ({
-        name: f.name,
-        type: f.type,
-        sizeMB: Math.round((f.size / 1024 / 1024) * 100) / 100,
-      }))
-    );
 
     // Reject obvious HEIC/HEIF and unsupported types up front
     const rejected = fileArr.filter((f) => {
@@ -1005,7 +1033,9 @@ export default function VendorListingEdit() {
     : [];
   const photoCount = persistedPhotoNames.length;
   const hasMinimumPhotos = photoCount >= MIN_LISTING_PHOTO_COUNT;
-  const canPublish = hasCategory && hasTitle && hasDescription && hasPricing && hasMinimumPhotos;
+  const canPublish = isPackageContainer
+    ? hasCategory && hasTitle && hasMinimumPhotos
+    : hasCategory && hasTitle && hasDescription && hasPricing && hasMinimumPhotos;
 
   const buildPersistPayload = () => {
     if (!draft) return null;
@@ -1102,6 +1132,12 @@ export default function VendorListingEdit() {
         takedownFeeEnabled,
         takedownFeeAmount: takedownFeeAmount ?? "",
       },
+      cancellationPolicy: draft.cancellationPolicy ?? "cancel_anytime",
+      cancellationPolicyHours:
+        draft.cancellationPolicy === "cancel_within_hours"
+          ? Number(draft.cancellationPolicyHours) || 48
+          : null,
+
       serviceAreaMode: draft.serviceAreaMode,
       serviceRadiusMiles: draft.serviceRadiusMiles,
       serviceCenter: draft.serviceCenter,
@@ -1119,12 +1155,22 @@ export default function VendorListingEdit() {
     };
 
     const normalizedDescription = String(draft.listingDescription ?? "").trim();
+
+    const securityDepositEnabled = Boolean((draft as any).securityDepositEnabled);
+    const securityDepositAmountStr = String((draft as any).securityDepositAmount ?? "");
+    const securityDepositCents =
+      securityDepositEnabled && Number(securityDepositAmountStr) > 0
+        ? Math.round(Number(securityDepositAmountStr) * 100)
+        : null;
+
     return {
       listingData: nextListingData,
       title: normalizeListingTitle(String(draft.listingTitle ?? "")) || listing?.title || "Untitled Listing",
       description: normalizedDescription || undefined,
       listingDescription: normalizedDescription || undefined,
       serviceDescription: normalizedDescription || undefined,
+      securityDepositEnabled,
+      securityDepositCents,
     };
   };
 
@@ -1198,6 +1244,7 @@ export default function VendorListingEdit() {
     },
     onSuccess: () => {
       queryClient.invalidateQueries({ queryKey: ["/api/vendor/listings"] });
+      queryClient.invalidateQueries({ queryKey: ["/api/vendor/listings", listingId] });
       queryClient.invalidateQueries({ queryKey: ["/api/listings/public", listingId] });
       toast({
         title: "Listing published!",
@@ -1216,8 +1263,15 @@ export default function VendorListingEdit() {
 
   const status = String(listing?.status || "—");
   const normalizedStatus = status.trim().toLowerCase();
+  const isActive = normalizedStatus === "active";
   const showPublishAction = normalizedStatus === "draft" || normalizedStatus === "inactive";
   const shouldShowRadiusMap = draft?.serviceAreaMode === "radius";
+
+  // Publish handler — flushes any open package edit first, then publishes
+  const handlePublishClick = () => {
+    if (activeTab === "packages") packagesStepRef.current?.submitIfEditing();
+    publishMutation.mutate();
+  };
 
   // ---- Location derived center + circle (for future map preview) ----
   const center = useMemo(() => {
@@ -1249,7 +1303,7 @@ export default function VendorListingEdit() {
     const startCenter = center ? [center.lng, center.lat] : [-111.891, 40.7608]; // fallback
     const map = new mapboxgl.Map({
       container: mapContainerRef.current,
-      style: "mapbox://styles/mapbox/streets-v12",
+      style: "mapbox://styles/mapbox/outdoors-v12",
       center: startCenter as [number, number],
       zoom: center ? 9 : 5,
     });
@@ -1497,24 +1551,30 @@ export default function VendorListingEdit() {
             <div className="flex items-center gap-2">
               <Button
                 className={activeFillButtonClass}
-                onClick={() => saveMutation.mutate()}
+                onClick={() => {
+                  if (activeTab === "packages") {
+                    packagesStepRef.current?.submitIfEditing();
+                  } else {
+                    saveMutation.mutate();
+                  }
+                }}
                 disabled={saveMutation.isPending || !draft}
               >
-                {saveMutation.isPending ? "Saving…" : "Save changes"}
+                {saveMutation.isPending ? t("vendorListingEdit.saving") : t("vendorListingEdit.saveChanges")}
               </Button>
 
-              {showPublishAction && (
+              {(showPublishAction || (isActive && isDirty)) && (
                 <Button
                   disabled={!canPublish || publishMutation.isPending || !draft}
-                  onClick={() => publishMutation.mutate()}
+                  onClick={handlePublishClick}
                   className={mintActionButtonClass}
                 >
-                  {publishMutation.isPending ? "Publishing…" : "Publish"}
+                  {publishMutation.isPending ? t("vendorListingEdit.publishing") : isActive ? "Publish Changes" : t("vendorListingEdit.publish")}
                 </Button>
               )}
 
               <Link href="/vendor/listings">
-                <Button variant="outline">Back to listings</Button>
+                <Button variant="outline">{t("vendorListingEdit.backToListings")}</Button>
               </Link>
             </div>
           </header>
@@ -1522,7 +1582,7 @@ export default function VendorListingEdit() {
           <main className="flex-1 overflow-auto bg-[#ffffff]">
             <div className="max-w-5xl mx-auto px-6 py-8">
               <div className="mb-6">
-                <h1 className="text-3xl font-bold">Edit listing</h1>
+                <h1 className="text-3xl font-bold">{t("vendorListingEdit.editListing")}</h1>
               </div>
 
               {!listingId ? (
@@ -1531,30 +1591,157 @@ export default function VendorListingEdit() {
                 </Card>
               ) : isLoading ? (
                 <Card className="p-6">
-                  <p className="text-sm text-muted-foreground">Loading…</p>
+                  <p className="text-sm text-muted-foreground">{t("vendorListingEdit.loading")}</p>
                 </Card>
               ) : error ? (
                 <Card className="p-6">
                   <p className="text-sm text-destructive">
-                    {(error as Error)?.message || "Error loading listing"}
+                    {(error as Error)?.message || t("vendorListingEdit.errorLoading")}
                   </p>
                 </Card>
               ) : !listing || !draft ? (
                 <Card className="p-6">
-                  <p className="text-sm text-muted-foreground">Listing not found.</p>
+                  <p className="text-sm text-muted-foreground">{t("vendorListingEdit.errorLoading")}</p>
                 </Card>
               ) : (
                 <div className="space-y-6">
+                  {/* ── Tab bar ─────────────────────────────────────────── */}
+                  <div className="border-b border-border">
+                    <div className="flex gap-0">
+                      {(
+                        [
+                          { id: "info" as EditTab, label: "Listing Info" },
+                          ...(isPackageContainer ? [{ id: "packages" as EditTab, label: "Packages" }] : []),
+                          { id: "addons" as EditTab, label: "Add-ons" },
+                          { id: "media" as EditTab, label: "Media" },
+                        ] as Array<{ id: EditTab; label: string }>
+                      ).map((tab) => (
+                        <button
+                          key={tab.id}
+                          type="button"
+                          onClick={() => setActiveTab(tab.id)}
+                          className={[
+                            "px-5 py-3 text-sm font-medium border-b-2 -mb-px transition-colors",
+                            activeTab === tab.id
+                              ? "border-primary text-foreground"
+                              : "border-transparent text-muted-foreground hover:text-foreground",
+                          ].join(" ")}
+                        >
+                          {tab.label}
+                        </button>
+                      ))}
+                    </div>
+                  </div>
+
+                  {/* ── Packages tab ─────────────────────────────────────── */}
+                  {activeTab === "packages" && isPackageContainer && (
+                    <PackagesStep
+                      ref={packagesStepRef}
+                      listingId={listingId ?? null}
+                      category={draft?.category ?? ""}
+                    />
+                  )}
+
+                  {/* ── Add-ons tab ───────────────────────────────────────── */}
+                  {activeTab === "addons" && (
+                    <AttachAddonsStep
+                      listingId={listingId ?? null}
+                      onCreateNewAddon={() => setCreatingAddon(true)}
+                    />
+                  )}
+
+                  {/* ── Nested add-on wizard overlay ──────────────────────── */}
+                  {creatingAddon && listingId && (
+                    <div className="fixed inset-0 z-[200] bg-[#ffffff]">
+                      <CreateListingWizard
+                        initialListingType="addon"
+                        parentListingId={listingId}
+                        onClose={() => setCreatingAddon(false)}
+                        onComplete={() => setCreatingAddon(false)}
+                      />
+                    </div>
+                  )}
+
+                  {/* ── Media tab ─────────────────────────────────────────── */}
+                  {activeTab === "media" && (
+                    <Card className={creamSectionCardClass}>
+                      <div className="space-y-4">
+                        <div>
+                          <div className="text-xl font-semibold">{t("vendorListingEdit.photos")}</div>
+                          <div className="text-sm text-muted-foreground">
+                            Add at least {MIN_LISTING_PHOTO_COUNT} photos before publish.
+                          </div>
+                        </div>
+
+                        <input
+                          ref={photoInputRef}
+                          type="file"
+                          accept="image/*"
+                          multiple
+                          className="hidden"
+                          onChange={(e) => addPhotos(e.target.files)}
+                        />
+
+                        <div className="flex items-center gap-2">
+                          <Button
+                            type="button"
+                            className={activeFillButtonClass}
+                            onClick={() => photoInputRef.current?.click()}
+                          >
+                            {t("vendorListingEdit.photos")}
+                          </Button>
+                          <div className="text-sm text-muted-foreground">Count: {photoNames.length}</div>
+                        </div>
+
+                        <InlinePhotoEditor
+                          photos={inlinePhotos}
+                          coverRatio={coverPhotoRatio}
+                          cropsByPhotoId={
+                            draft?.photos?.cropsByName && typeof draft.photos.cropsByName === "object"
+                              ? draft.photos.cropsByName
+                              : {}
+                          }
+                          onAddPhotos={() => photoInputRef.current?.click()}
+                          showAddPhotosButton={false}
+                          onRemovePhoto={removePhotoByName}
+                          onReorderPhotos={reorderPhotosByName}
+                          onCoverRatioChange={(ratio) =>
+                            setDraft((d: any) => ({
+                              ...d,
+                              photos: {
+                                ...(d.photos || {}),
+                                names: Array.isArray(d?.photos?.names) ? d.photos.names : [],
+                                count: Array.isArray(d?.photos?.names) ? d.photos.names.length : 0,
+                                coverPhotoIndex: Array.isArray(d?.photos?.names) && d.photos.names.length > 0 ? 0 : 0,
+                                coverPhotoRatio: normalizePhotoCoverRatio(ratio),
+                                coverPhotoName:
+                                  Array.isArray(d?.photos?.names) && d.photos.names.length > 0 ? d.photos.names[0] : null,
+                                cropsByName:
+                                  d?.photos?.cropsByName && typeof d.photos.cropsByName === "object"
+                                    ? d.photos.cropsByName
+                                    : {},
+                              },
+                            }))
+                          }
+                          onCropChange={setPhotoCropByName}
+                        />
+                      </div>
+                    </Card>
+                  )}
+
+                  {/* ── Listing Info tab ──────────────────────────────────── */}
+                  {activeTab === "info" && <>
+
                   {/* 0) Listing Classification */}
                   <Card className={creamSectionCardClass}>
                     <div className="space-y-4">
                       <div>
-                        <div className="text-xl font-semibold">Listing Classification</div>
+                        <div className="text-xl font-semibold">{t("vendorListingEdit.listingClassification")}</div>
                       </div>
 
                       <div className="grid grid-cols-1 gap-4">
                         <div className="space-y-2">
-                          <Label>Category</Label>
+                          <Label>{t("vendorListingEdit.category")}</Label>
                           <Select
                             value={draft.category || undefined}
                             onValueChange={(value) =>
@@ -1569,7 +1756,7 @@ export default function VendorListingEdit() {
                             }
                           >
                             <SelectTrigger className={fieldSurfaceClass}>
-                              <SelectValue placeholder="Select category" />
+                              <SelectValue placeholder={t("vendorListingEdit.selectCategoryPlaceholder")} />
                             </SelectTrigger>
                             <SelectContent>
                               {LISTING_CATEGORY_OPTIONS.map((category) => (
@@ -1609,11 +1796,11 @@ export default function VendorListingEdit() {
                   <Card className={creamSectionCardClass}>
                     <div className="space-y-4">
                       <div>
-                        <div className="text-xl font-semibold">Title &amp; Description</div>
+                        <div className="text-xl font-semibold">{t("vendorListingEdit.titleAndDescription")}</div>
                       </div>
 
                       <div className="space-y-2">
-                        <Label>Title</Label>
+                        <Label>{t("vendorListingEdit.title")}</Label>
                         <Input
                           value={draft.listingTitle}
                           onChange={(e) =>
@@ -1622,13 +1809,13 @@ export default function VendorListingEdit() {
                               listingTitle: normalizeListingTitleInput(e.target.value),
                             }))
                           }
-                          placeholder="Listing title"
+                          placeholder={t("vendorListingEdit.listingTitlePlaceholder")}
                           className={fieldSurfaceClass}
                         />
                       </div>
 
                       <div className="space-y-2">
-                        <Label>Description</Label>
+                        <Label>{t("vendorListingEdit.description")}</Label>
                         <Textarea
                           value={draft.listingDescription}
                           maxLength={LISTING_DESCRIPTION_MAX_CHARS}
@@ -1639,14 +1826,14 @@ export default function VendorListingEdit() {
                             }))
                           }
                           rows={6}
-                          placeholder="Describe this listing…"
+                          placeholder={t("vendorListingEdit.descriptionPlaceholder")}
                           className={fieldSurfaceClass}
                         />
                         <div className="text-sm text-muted-foreground">Max 1000 chars.</div>
                       </div>
 
                       <div className="space-y-3">
-                        <Label>What&apos;s Included</Label>
+                        <Label>{t("vendorListingEdit.whatsIncluded")}</Label>
 
                         {(Array.isArray(draft.whatsIncluded) ? draft.whatsIncluded : []).length > 0 && (
                           <ul className="space-y-1">
@@ -1673,7 +1860,7 @@ export default function VendorListingEdit() {
                           <Input
                             value={includedInput}
                             onChange={(e) => setIncludedInput(e.target.value)}
-                            placeholder="Type an included item…"
+                            placeholder={t("vendorListingEdit.includedItemPlaceholder")}
                             className={fieldSurfaceClass}
                             spellCheck={true}
                             autoCorrect="on"
@@ -1694,13 +1881,13 @@ export default function VendorListingEdit() {
                                 : "bg-muted text-muted-foreground"
                             }
                           >
-                            Add to listing
+                            {t("vendorListingEdit.addToListing")}
                           </Button>
                         </div>
                       </div>
 
                       <div className="space-y-3">
-                        <Label>What&apos;s Not Included</Label>
+                        <Label>{t("vendorListingEdit.whatsNotIncluded")}</Label>
 
                         {(Array.isArray(draft.whatsNotIncluded) ? draft.whatsNotIncluded : []).length > 0 && (
                           <ul className="space-y-1">
@@ -1727,7 +1914,7 @@ export default function VendorListingEdit() {
                           <Input
                             value={notIncludedInput}
                             onChange={(e) => setNotIncludedInput(e.target.value)}
-                            placeholder="Type a not-included item…"
+                            placeholder={t("vendorListingEdit.notIncludedItemPlaceholder")}
                             className={fieldSurfaceClass}
                             spellCheck={true}
                             autoCorrect="on"
@@ -1748,7 +1935,7 @@ export default function VendorListingEdit() {
                                 : "bg-muted text-muted-foreground"
                             }
                           >
-                            Add to listing
+                            {t("vendorListingEdit.addToListing")}
                           </Button>
                         </div>
                       </div>
@@ -1759,7 +1946,7 @@ export default function VendorListingEdit() {
                   <Card className={creamSectionCardClass}>
                     <div className="space-y-4">
                       <div>
-                        <div className="text-xl font-semibold">Popular For</div>
+                        <div className="text-xl font-semibold">{t("vendorListingEdit.popularFor")}</div>
                         <div className="mt-2 flex flex-wrap items-center justify-between gap-3">
                           <Button
                             type="button"
@@ -1767,7 +1954,7 @@ export default function VendorListingEdit() {
                             className={allPopularForSelected ? activeFillButtonClass : undefined}
                             onClick={toggleSelectAllPopularFor}
                           >
-                            {allPopularForSelected ? "Deselect all" : "Select all"}
+                            {allPopularForSelected ? t("vendorListingEdit.deselectAll") : t("vendorListingEdit.selectAll")}
                           </Button>
                         </div>
                       </div>
@@ -1803,16 +1990,16 @@ export default function VendorListingEdit() {
                     </div>
                   </Card>
 
-                  {/* 3) Pricing (baseline – you can expand later) */}
-                  <Card className={creamSectionCardClass}>
+                  {/* 3) Pricing — single listings only; package_container pricing is per-package */}
+                  {!isPackageContainer && <Card className={creamSectionCardClass}>
                     <div className="space-y-4">
                       <div>
-                        <div className="text-xl font-semibold">Pricing</div>
+                        <div className="text-xl font-semibold">{t("vendorListingEdit.pricing")}</div>
                       </div>
 
                       <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
                         <div className="space-y-2">
-                          <Label>Rate</Label>
+                          <Label>{t("vendorListingEdit.rate")}</Label>
                           <Input
                             value={toNumOrEmpty(draft.pricing?.rate)}
                             onChange={(e) =>
@@ -1828,7 +2015,7 @@ export default function VendorListingEdit() {
                         </div>
 
                         <div className="space-y-2">
-                          <Label>Unit</Label>
+                          <Label>{t("vendorListingEdit.unit")}</Label>
                           <Select
                             value={draft.pricing?.unit ?? "per_day"}
                             onValueChange={(v) =>
@@ -1840,11 +2027,11 @@ export default function VendorListingEdit() {
                             }
                           >
                             <SelectTrigger className={fieldSurfaceClass}>
-                              <SelectValue placeholder="Select unit" />
+                              <SelectValue placeholder={t("vendorListingEdit.selectUnitPlaceholder")} />
                             </SelectTrigger>
                             <SelectContent>
-                              <SelectItem value="per_day">Per day (flat)</SelectItem>
-                              <SelectItem value="per_hour">Per hour (+ minimum hours)</SelectItem>
+                              <SelectItem value="per_day">{t("vendorListingEdit.perDayFlat")}</SelectItem>
+                              <SelectItem value="per_hour">{t("vendorListingEdit.perHour")}</SelectItem>
                             </SelectContent>
                           </Select>
                         </div>
@@ -1852,7 +2039,7 @@ export default function VendorListingEdit() {
 
                       {(draft.pricing?.unit === "per_hour" || draft.pricingUnit === "per_hour") && (
                         <div className="space-y-2">
-                          <Label>Minimum hours</Label>
+                          <Label>{t("vendorListingEdit.minimumHours")}</Label>
                           <Input
                             value={toNumOrEmpty(draft.minimumHours)}
                             onChange={(e) =>
@@ -1868,82 +2055,67 @@ export default function VendorListingEdit() {
                         </div>
                       )}
                     </div>
-                  </Card>
+                  </Card>}
 
-                  {/* 6) Photos */}
-                  <Card className={creamSectionCardClass}>
-                    <div className="space-y-4">
-                      <div>
-                        <div className="text-xl font-semibold">Photos</div>
-                        <div className="text-sm text-muted-foreground">
-                          Add at least {MIN_LISTING_PHOTO_COUNT} photos before publish.
+                  {/* 3b) Security Deposit — single listings only */}
+                  {!isPackageContainer && (
+                    <Card className={creamSectionCardClass}>
+                      <div className="space-y-4">
+                        <div>
+                          <div className="text-xl font-semibold">Security Deposit</div>
                         </div>
+                        <div className="flex items-start justify-between gap-4">
+                          <div>
+                            <p className="text-sm text-muted-foreground">
+                              Require a refundable security deposit on top of the booking total. It is held by EventHub and returned to the customer after the event if no damage claim is filed.
+                            </p>
+                          </div>
+                          <Switch
+                            checked={Boolean(draft.securityDepositEnabled)}
+                            onCheckedChange={(checked) =>
+                              setDraft((d: any) => ({
+                                ...d,
+                                securityDepositEnabled: checked,
+                                securityDepositAmount: checked ? (d.securityDepositAmount ?? "") : "",
+                              }))
+                            }
+                          />
+                        </div>
+                        {draft.securityDepositEnabled && (
+                          <div className="space-y-2">
+                            <Label>Deposit Amount</Label>
+                            <div className="relative max-w-sm">
+                              <span className="pointer-events-none absolute left-3 top-1/2 -translate-y-1/2 text-muted-foreground">
+                                $
+                              </span>
+                              <Input
+                                className={`pl-7 ${fieldSurfaceClass}`}
+                                value={draft.securityDepositAmount ?? ""}
+                                inputMode="decimal"
+                                placeholder="e.g. 200"
+                                onChange={(e) =>
+                                  setDraft((d: any) => ({
+                                    ...d,
+                                    securityDepositAmount: e.target.value.replace(/[^\d.]/g, ""),
+                                  }))
+                                }
+                              />
+                            </div>
+                          </div>
+                        )}
                       </div>
+                    </Card>
+                  )}
 
-                      <input
-                        ref={photoInputRef}
-                        type="file"
-                        accept="image/*"
-                        multiple
-                        className="hidden"
-                        onChange={(e) => addPhotos(e.target.files)}
-                      />
-
-                      <div className="flex items-center gap-2">
-                        <Button
-                          type="button"
-                          className={activeFillButtonClass}
-                          onClick={() => photoInputRef.current?.click()}
-                        >
-                          Add photos
-                        </Button>
-                        <div className="text-sm text-muted-foreground">Count: {photoNames.length}</div>
-                      </div>
-
-                      <InlinePhotoEditor
-                        photos={inlinePhotos}
-                        coverRatio={coverPhotoRatio}
-                        cropsByPhotoId={
-                          draft?.photos?.cropsByName && typeof draft.photos.cropsByName === "object"
-                            ? draft.photos.cropsByName
-                            : {}
-                        }
-                        onAddPhotos={() => photoInputRef.current?.click()}
-                        showAddPhotosButton={false}
-                        onRemovePhoto={removePhotoByName}
-                        onReorderPhotos={reorderPhotosByName}
-                        onCoverRatioChange={(ratio) =>
-                          setDraft((d: any) => ({
-                            ...d,
-                            photos: {
-                              ...(d.photos || {}),
-                              names: Array.isArray(d?.photos?.names) ? d.photos.names : [],
-                              count: Array.isArray(d?.photos?.names) ? d.photos.names.length : 0,
-                              coverPhotoIndex: Array.isArray(d?.photos?.names) && d.photos.names.length > 0 ? 0 : 0,
-                              coverPhotoRatio: normalizePhotoCoverRatio(ratio),
-                              coverPhotoName:
-                                Array.isArray(d?.photos?.names) && d.photos.names.length > 0 ? d.photos.names[0] : null,
-                              cropsByName:
-                                d?.photos?.cropsByName && typeof d.photos.cropsByName === "object"
-                                  ? d.photos.cropsByName
-                                  : {},
-                            },
-                          }))
-                        }
-                        onCropChange={setPhotoCropByName}
-                      />
-                    </div>
-                  </Card>
-
-                  {/* 7) Delivery / Setup */}
+                  {/* 7) Service Area — all listing types */}
                   <Card className={creamSectionCardClass}>
                     <div className="space-y-6">
                       <div>
-                        <div className="text-xl font-semibold">Delivery / Setup</div>
+                        <div className="text-xl font-semibold">{t("vendorListingEdit.deliverySetup")}</div>
                       </div>
 
                       <div className="space-y-2">
-                        <Label>Service area center (listing-specific)</Label>
+                        <Label>{t("vendorListingEdit.serviceAreaCenter")}</Label>
                         <LocationPicker
                           value={draft.serviceLocation ?? null}
                           onChange={(loc) => {
@@ -1960,7 +2132,7 @@ export default function VendorListingEdit() {
                       </div>
 
                       <div className="space-y-2">
-                        <Label>Where do you provide these services?</Label>
+                        <Label>{t("vendorListingEdit.whereServicesLabel")}</Label>
                         <Select
                           value={draft.serviceAreaMode}
                           onValueChange={(v) => {
@@ -1973,12 +2145,12 @@ export default function VendorListingEdit() {
                           }}
                         >
                           <SelectTrigger className={fieldSurfaceClass}>
-                            <SelectValue placeholder="Select service area" />
+                            <SelectValue placeholder={t("vendorListingEdit.selectServiceAreaPlaceholder")} />
                           </SelectTrigger>
                           <SelectContent>
-                            <SelectItem value="radius">Set Radius</SelectItem>
-                            <SelectItem value="nationwide">Nationally</SelectItem>
-                            <SelectItem value="global">Globally</SelectItem>
+                            <SelectItem value="radius">{t("vendorListingEdit.serviceAreaRadius")}</SelectItem>
+                            <SelectItem value="nationwide">{t("vendorListingEdit.serviceAreaNationwide")}</SelectItem>
+                            <SelectItem value="global">{t("vendorListingEdit.serviceAreaGlobal")}</SelectItem>
                           </SelectContent>
                         </Select>
                       </div>
@@ -1986,7 +2158,7 @@ export default function VendorListingEdit() {
                       {draft.serviceAreaMode === "radius" && (
                         <div className="space-y-2">
                           <div className="flex items-center justify-between">
-                            <Label>Service radius</Label>
+                            <Label>{t("vendorListingEdit.serviceRadius")}</Label>
                             <span className="text-sm text-muted-foreground">{draft.serviceRadiusMiles} miles</span>
                           </div>
 
@@ -2007,7 +2179,7 @@ export default function VendorListingEdit() {
 
                             {!center && (
                               <div className="absolute inset-0 flex items-center justify-center text-sm text-muted-foreground pointer-events-none bg-background/40">
-                                Choose a location to preview your service radius.
+                                {t("vendorListingEdit.chooseLocation")}
                               </div>
                             )}
 
@@ -2019,16 +2191,16 @@ export default function VendorListingEdit() {
 
                             {!isMapReady && !errorMsg && (
                               <div className="absolute inset-0 flex items-center justify-center text-sm text-muted-foreground bg-background/50">
-                                Loading map…
+                                {t("vendorListingEdit.loadingMap")}
                               </div>
                             )}
                           </div>
                         </div>
                       )}
 
-                      <div className="border-t pt-6 space-y-6">
+                      {!isPackageContainer && <div className="border-t pt-6 space-y-6">
                         <div className="flex items-center justify-between gap-6">
-                          <Label>Do you deliver?</Label>
+                          <Label>{t("vendorListingEdit.doYouDeliver")}</Label>
                           <YesNoButtons
                             value={!!draft.deliverySetup?.deliveryIncluded}
                             onChange={(v) =>
@@ -2048,7 +2220,7 @@ export default function VendorListingEdit() {
                         {!!draft.deliverySetup?.deliveryIncluded && (
                           <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
                             <div className="md:col-span-2 flex items-center justify-between gap-6">
-                              <Label>Is there a delivery fee?</Label>
+                              <Label>{t("vendorListingEdit.isDeliveryFee")}</Label>
                               <YesNoButtons
                                 value={!!draft.deliverySetup?.deliveryFeeEnabled}
                                 onChange={(v) =>
@@ -2066,7 +2238,7 @@ export default function VendorListingEdit() {
 
                             {!!draft.deliverySetup?.deliveryFeeEnabled && (
                               <div className="md:col-start-2 space-y-2">
-                                <Label>Delivery fee amount</Label>
+                                <Label>{t("vendorListingEdit.deliveryFeeAmount")}</Label>
                                 <div className="relative">
                                   <span className="pointer-events-none absolute left-3 top-1/2 -translate-y-1/2 text-muted-foreground">$</span>
                                   <Input
@@ -2091,7 +2263,7 @@ export default function VendorListingEdit() {
                         )}
 
                         <div className="flex items-center justify-between gap-6">
-                          <Label>Do you offer setup?</Label>
+                          <Label>{t("vendorListingEdit.doYouSetup")}</Label>
                           <YesNoButtons
                             value={!!draft.deliverySetup?.setupIncluded}
                             onChange={(v) =>
@@ -2111,7 +2283,7 @@ export default function VendorListingEdit() {
                         {!!draft.deliverySetup?.setupIncluded && (
                           <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
                             <div className="md:col-span-2 flex items-center justify-between gap-6">
-                              <Label>Is there a setup fee?</Label>
+                              <Label>{t("vendorListingEdit.isSetupFee")}</Label>
                               <YesNoButtons
                                 value={!!draft.deliverySetup?.setupFeeEnabled}
                                 onChange={(v) =>
@@ -2129,7 +2301,7 @@ export default function VendorListingEdit() {
 
                             {!!draft.deliverySetup?.setupFeeEnabled && (
                               <div className="md:col-start-2 space-y-2">
-                                <Label>Setup fee amount</Label>
+                                <Label>{t("vendorListingEdit.setupFeeAmount")}</Label>
                                 <div className="relative">
                                   <span className="pointer-events-none absolute left-3 top-1/2 -translate-y-1/2 text-muted-foreground">$</span>
                                   <Input
@@ -2156,7 +2328,7 @@ export default function VendorListingEdit() {
                         {draft.category === "Rental" || draft.category === "Venue" || draft.category === "Catering" ? (
                           <>
                             <div className="flex items-center justify-between gap-6">
-                              <Label>Do you offer takedown?</Label>
+                              <Label>{t("vendorListingEdit.doYouTakedown")}</Label>
                               <YesNoButtons
                                 value={!!draft.deliverySetup?.takedownIncluded}
                                 onChange={(v) =>
@@ -2176,7 +2348,7 @@ export default function VendorListingEdit() {
                             {!!draft.deliverySetup?.takedownIncluded && (
                               <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
                                 <div className="md:col-span-2 flex items-center justify-between gap-6">
-                                  <Label>Is there a takedown fee?</Label>
+                                  <Label>{t("vendorListingEdit.isTakedownFee")}</Label>
                                   <YesNoButtons
                                     value={!!draft.deliverySetup?.takedownFeeEnabled}
                                     onChange={(v) =>
@@ -2194,7 +2366,7 @@ export default function VendorListingEdit() {
 
                                 {!!draft.deliverySetup?.takedownFeeEnabled && (
                                   <div className="md:col-start-2 space-y-2">
-                                    <Label>Takedown fee amount</Label>
+                                    <Label>{t("vendorListingEdit.takedownFeeAmount")}</Label>
                                     <div className="relative">
                                       <span className="pointer-events-none absolute left-3 top-1/2 -translate-y-1/2 text-muted-foreground">$</span>
                                       <Input
@@ -2219,28 +2391,82 @@ export default function VendorListingEdit() {
                             )}
                           </>
                         ) : null}
-                      </div>
+                      </div>}
                     </div>
                   </Card>
-                  {/* Status + publish gate */}
+                  {/* Cancellation Policy — single listings only */}
+                  {!isPackageContainer &&
+                  <Card className={creamSectionCardClass}>
+                    <div className="text-xl font-semibold mb-4">{t("vendorListingEdit.cancellationPolicy")}</div>
+                    <div className="flex flex-col gap-2">
+                      {(["cancel_anytime", "cancel_within_hours", "no_cancellations"] as const).map((option) => {
+                        const labels: Record<string, string> = {
+                          cancel_anytime: t("vendorListingEdit.cancelAnytime"),
+                          cancel_within_hours: t("vendorListingEdit.cancelWithinHours"),
+                          no_cancellations: t("vendorListingEdit.noCancellations"),
+                        };
+                        const isSelected = (draft?.cancellationPolicy ?? "cancel_anytime") === option;
+                        return (
+                          <button
+                            key={option}
+                            type="button"
+                            onClick={() => setDraft((d: any) => ({ ...d, cancellationPolicy: option }))}
+                            className={`text-left px-4 py-3 rounded-lg border text-sm font-medium transition-colors ${
+                              isSelected
+                                ? "border-[#3a7c6e] bg-[#f0faf7] text-[#3a7c6e]"
+                                : "border-border bg-background text-foreground hover:border-[#3a7c6e]/50"
+                            }`}
+                          >
+                            {labels[option]}
+                          </button>
+                        );
+                      })}
+                    </div>
+                    {(draft?.cancellationPolicy ?? "cancel_anytime") === "cancel_within_hours" && (
+                      <div className="mt-4 space-y-2">
+                        <Label>{t("vendorListingEdit.hoursBeforeEvent")}</Label>
+                        <Input
+                          type="number"
+                          min={1}
+                          value={draft?.cancellationPolicyHours ?? "48"}
+                          onChange={(e) =>
+                            setDraft((d: any) => ({ ...d, cancellationPolicyHours: e.target.value.replace(/[^\d]/g, "") }))
+                          }
+                          placeholder="e.g. 48"
+                          className={fieldSurfaceClass}
+                        />
+                      </div>
+                    )}
+                  </Card>}
+
+                  {/* close activeTab === "info" block */}
+                  </>}
+
+                  {/* Status + publish gate — always visible */}
                   <Card className={creamSectionCardClass}>
                     <div className="flex items-center justify-between gap-6">
                       <div>
-                        <div className="text-xl font-semibold">Status</div>
+                        <div className="text-xl font-semibold">{t("vendorListingEdit.status")}</div>
                         <div className="text-muted-foreground mt-1">
-                          Current status: <span className="font-medium">{status}</span>
+                          {t("vendorListingEdit.currentStatus")} <span className="font-medium">{status}</span>
                           <div className="text-sm mt-2">
-                            Publish is blocked until required fields are complete.
+                            {t("vendorListingEdit.publishBlocked")}
                           </div>
                         </div>
                       </div>
 
                       <Button
-                        disabled={!canPublish || publishMutation.isPending}
-                        onClick={() => publishMutation.mutate()}
+                        disabled={!canPublish || publishMutation.isPending || (isActive && !isDirty)}
+                        onClick={handlePublishClick}
                         className={mintActionButtonClass}
                       >
-                        {publishMutation.isPending ? "Publishing…" : "Publish"}
+                        {publishMutation.isPending
+                          ? t("vendorListingEdit.publishing")
+                          : isActive && !isDirty
+                            ? "Published"
+                            : isActive
+                              ? "Publish Changes"
+                              : t("vendorListingEdit.publish")}
                       </Button>
                     </div>
 
@@ -2249,10 +2475,9 @@ export default function VendorListingEdit() {
                         Missing:
                         {!hasCategory ? " category," : ""}
                         {!hasTitle ? " title," : ""}
-                        {!hasDescription ? " description," : ""}
-                        {!hasPricing ? " pricing rate," : ""}
-                        {!hasMinimumPhotos ? ` at least ${MIN_LISTING_PHOTO_COUNT} photos,` : ""}{" "}
-                        <span className="text-sm">(same gate everywhere)</span>
+                        {!isPackageContainer && !hasDescription ? " description," : ""}
+                        {!isPackageContainer && !hasPricing ? " pricing rate," : ""}
+                        {!hasMinimumPhotos ? ` at least ${MIN_LISTING_PHOTO_COUNT} photos,` : ""}
                       </div>
                     ) : null}
                   </Card>

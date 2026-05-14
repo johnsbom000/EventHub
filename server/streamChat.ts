@@ -79,6 +79,18 @@ export function isChatExpiredForEventDate(eventDate: string, now = new Date()) {
   return now.getTime() > expiresAt.getTime();
 }
 
+// Conversations are visible until 48 hours after the event ends.
+// After that they are removed from the list (chat data is retained for RETENTION_DAYS_AFTER_EVENT).
+const CONVERSATION_VISIBILITY_HOURS_AFTER_EVENT = 48;
+
+export function isChatWindowClosedForEventDate(eventDate: string, now = new Date()): boolean {
+  const eventEndOfDay = new Date(`${eventDate}T23:59:59.999Z`);
+  if (Number.isNaN(eventEndOfDay.getTime())) return false; // unknown date — keep visible
+  const windowCloseMs =
+    eventEndOfDay.getTime() + CONVERSATION_VISIBILITY_HOURS_AFTER_EVENT * 60 * 60 * 1000;
+  return now.getTime() > windowCloseMs;
+}
+
 export async function ensureStreamBookingChannel(params: {
   bookingId: string;
   eventDate: string;
@@ -171,6 +183,40 @@ export async function ensureStreamBookingChannel(params: {
   };
 }
 
+/**
+ * Posts a system message into a booking's Stream Chat channel.
+ * Uses a dedicated "system" user so the message is visually distinct
+ * from customer/vendor chat messages.
+ * Silent no-op if Stream Chat is not configured or the channel doesn't exist.
+ */
+export async function sendBookingSystemMessage(params: {
+  bookingId: string;
+  text: string;
+  /** Arbitrary key-value data attached to the message (e.g. proposal_id, proposal_status). */
+  metadata?: Record<string, unknown>;
+}) {
+  if (!isStreamChatConfigured()) return;
+
+  const client = getServerClient();
+  const channelId = toStreamBookingChannelId(params.bookingId);
+
+  try {
+    // Upsert a system user so Stream Chat accepts the send.
+    await client.upsertUser({ id: "system", name: "EventHub", role: "admin" });
+
+    const channel = client.channel(STREAM_CHANNEL_TYPE, channelId);
+    await channel.sendMessage({
+      text: params.text,
+      user_id: "system",
+      type: "system",
+      ...(params.metadata ? { eventhub: params.metadata } : {}),
+    } as any);
+  } catch {
+    // Non-blocking — system messages are informational only.
+    // A failure here should never prevent the proposal action from succeeding.
+  }
+}
+
 export async function deleteStreamBookingChannel(bookingId: string) {
   const client = getServerClient();
   const cid = toStreamBookingCid(bookingId);
@@ -205,20 +251,27 @@ export async function getStreamUnreadCountsForBookings(params: {
   const channelIds = uniqueBookingIds.map((bookingId) => toStreamBookingChannelId(bookingId));
   const client = getServerClient();
 
-  const channels = await client.queryChannels(
-    {
-      type: STREAM_CHANNEL_TYPE,
-      members: { $in: [streamUserId] },
-      id: { $in: channelIds },
-    } as any,
-    { last_message_at: -1 } as any,
-    {
-      state: true,
-      watch: false,
-      presence: false,
-      limit: Math.max(uniqueBookingIds.length, 30),
-    } as any
-  );
+  let channels: Awaited<ReturnType<typeof client.queryChannels>>;
+  try {
+    channels = await client.queryChannels(
+      {
+        type: STREAM_CHANNEL_TYPE,
+        members: { $in: [streamUserId] },
+        id: { $in: channelIds },
+      } as any,
+      { last_message_at: -1 } as any,
+      {
+        state: true,
+        watch: false,
+        presence: false,
+        limit: Math.max(uniqueBookingIds.length, 30),
+      } as any
+    );
+  } catch {
+    // Stream Chat unavailable or user not yet bootstrapped — return zero counts
+    // rather than propagating an error that would cause a 500 for every poll.
+    return { counts, totalUnread };
+  }
 
   for (const channel of channels) {
     const bookingIdFromData = String((channel.data as any)?.booking_id || "").trim();

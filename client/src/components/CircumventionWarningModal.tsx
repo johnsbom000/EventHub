@@ -1,4 +1,5 @@
 import { AlertTriangle, ShieldAlert, XCircle } from "lucide-react";
+import { useTranslation } from "react-i18next";
 import { Button } from "@/components/ui/button";
 import {
   Dialog,
@@ -31,6 +32,7 @@ export function HardBlockModal({
   suspended,
   suspensionEndsAt,
 }: HardBlockModalProps) {
+  const { t } = useTranslation();
   const warningsLeft = warningNumber != null ? Math.max(0, 3 - warningNumber) : null;
 
   const suspensionEndFormatted = suspensionEndsAt
@@ -47,7 +49,7 @@ export function HardBlockModal({
         <DialogHeader>
           <div className="flex items-center gap-2">
             <XCircle className="h-5 w-5 text-destructive" />
-            <DialogTitle className="text-destructive">Content blocked</DialogTitle>
+            <DialogTitle className="text-destructive">{t("circumventionWarning.hardBlockTitle")}</DialogTitle>
           </div>
           <DialogDescription asChild>
             <div className="space-y-3 pt-1 text-sm text-foreground">
@@ -57,50 +59,44 @@ export function HardBlockModal({
               </p>
               <p className="text-muted-foreground">{reason}</p>
               <div className="rounded-lg border border-amber-200 bg-amber-50 p-3 text-amber-900">
-                <p className="font-medium">Why this is not allowed</p>
+                <p className="font-medium">{t("circumventionWarning.whyNotAllowed")}</p>
                 <p className="mt-1 text-sm">
-                  Event Hub connects vendors and customers — sharing contact details
-                  directly bypasses the platform and violates our Terms of Service.
-                  Your official business contact information is visible through your
-                  approved vendor profile.
+                  {t("circumventionWarning.whyNotAllowedBody")}
                 </p>
               </div>
               {warningNumber != null && !suspended && (
                 <div className="rounded-lg border border-orange-200 bg-orange-50 p-3 text-orange-900">
                   <p className="font-medium">
-                    Warning {warningNumber} of 3 issued to your account
+                    {t("circumventionWarning.warningCount", { number: warningNumber })}
                   </p>
                   {warningsLeft != null && warningsLeft > 0 && (
                     <p className="mt-1 text-sm">
-                      You have {warningsLeft} warning{warningsLeft === 1 ? "" : "s"} remaining
-                      before your account is suspended.
+                      {t("circumventionWarning.warningsRemaining", { count: warningsLeft })}
                     </p>
                   )}
                   {warningsLeft === 0 && (
                     <p className="mt-1 text-sm">
-                      This is your final warning. One more violation will suspend your account.
+                      {t("circumventionWarning.finalWarning")}
                     </p>
                   )}
                 </div>
               )}
               {suspended && suspensionEndFormatted && (
                 <div className="rounded-lg border border-destructive/30 bg-destructive/10 p-3 text-destructive">
-                  <p className="font-medium">Your account has been suspended</p>
+                  <p className="font-medium">{t("circumventionWarning.accountSuspended")}</p>
                   <p className="mt-1 text-sm">
-                    Your listings are inactive and you cannot publish new listings until{" "}
-                    <strong>{suspensionEndFormatted}</strong>. Existing bookings are not
-                    affected. Please contact support if you believe this was an error.
+                    {t("circumventionWarning.suspendedBody", { date: suspensionEndFormatted })}
                   </p>
                 </div>
               )}
               <p className="text-sm text-muted-foreground">
-                Please remove the flagged content and save again.
+                {t("circumventionWarning.removeFlagged")}
               </p>
             </div>
           </DialogDescription>
         </DialogHeader>
         <DialogFooter>
-          <Button onClick={onClose}>Got it, I'll fix it</Button>
+          <Button onClick={onClose}>{t("circumventionWarning.gotIt")}</Button>
         </DialogFooter>
       </DialogContent>
     </Dialog>
@@ -117,35 +113,34 @@ type SoftFlagNoticeProps = {
 };
 
 export function SoftFlagNotice({ open, onClose, field }: SoftFlagNoticeProps) {
+  const { t } = useTranslation();
   return (
     <Dialog open={open} onOpenChange={(v) => !v && onClose()}>
       <DialogContent className="max-w-md">
         <DialogHeader>
           <div className="flex items-center gap-2">
             <AlertTriangle className="h-5 w-5 text-amber-600" />
-            <DialogTitle>Content submitted for review</DialogTitle>
+            <DialogTitle>{t("circumventionWarning.softBlockTitle")}</DialogTitle>
           </div>
           <DialogDescription asChild>
             <div className="space-y-3 pt-1 text-sm text-foreground">
               <p>
-                Your {field ? <strong>{field.toLowerCase()}</strong> : "content"} has been
-                saved and is now under review by the Event Hub team.
+                {field
+                  ? t("circumventionWarning.softBlockBody", { field: field.toLowerCase() })
+                  : t("circumventionWarning.softBlockBodyNoField")}
               </p>
               <p className="text-muted-foreground">
-                This happens when content includes phrasing that may direct customers
-                off-platform. Most reviews are completed quickly. If no issue is found,
-                no action will be taken on your account.
+                {t("circumventionWarning.softBlockReasonBody")}
               </p>
               <p className="text-muted-foreground">
-                If a violation is confirmed, you will receive a warning and be asked
-                to correct the content.
+                {t("circumventionWarning.softBlockViolationBody")}
               </p>
             </div>
           </DialogDescription>
         </DialogHeader>
         <DialogFooter>
           <Button variant="outline" onClick={onClose}>
-            OK, understood
+            {t("circumventionWarning.okUnderstood")}
           </Button>
         </DialogFooter>
       </DialogContent>
@@ -183,6 +178,7 @@ type SuspensionBannerProps = {
 };
 
 export function SuspensionBanner({ endsAt, reason }: SuspensionBannerProps) {
+  const { t } = useTranslation();
   const formatted = new Date(endsAt).toLocaleDateString("en-US", {
     month: "long",
     day: "numeric",
@@ -193,10 +189,10 @@ export function SuspensionBanner({ endsAt, reason }: SuspensionBannerProps) {
     <div className="flex items-start gap-3 border-b border-destructive/20 bg-destructive/10 px-6 py-3">
       <ShieldAlert className="mt-0.5 h-5 w-5 shrink-0 text-destructive" />
       <div className="text-sm text-destructive">
-        <p className="font-semibold">Account suspended until {formatted}</p>
+        <p className="font-semibold">{t("circumventionWarning.suspensionBannerTitle", { date: formatted })}</p>
         <p className="mt-0.5">
-          Your listings are inactive and you cannot publish new listings.{" "}
-          {reason ? `Reason: ${reason}.` : ""} Contact support to appeal.
+          {t("circumventionWarning.suspensionBannerBody")}{" "}
+          {reason ? t("circumventionWarning.suspensionBannerReason", { reason }) + " " : ""}{t("circumventionWarning.suspensionBannerContact")}
         </p>
       </div>
     </div>
@@ -211,6 +207,7 @@ type WarningCountBannerProps = {
 };
 
 export function WarningCountBanner({ warningCount }: WarningCountBannerProps) {
+  const { t } = useTranslation();
   const left = Math.max(0, 3 - warningCount);
   if (warningCount === 0) return null;
 
@@ -219,14 +216,13 @@ export function WarningCountBanner({ warningCount }: WarningCountBannerProps) {
       <AlertTriangle className="mt-0.5 h-5 w-5 shrink-0 text-amber-600" />
       <div className="text-sm text-amber-900">
         <p className="font-semibold">
-          Policy warning{warningCount > 1 ? "s" : ""} on your account ({warningCount} of 3)
+          {t("circumventionWarning.warningBannerTitle", { count: warningCount })}
         </p>
         <p className="mt-0.5">
           {left > 0
-            ? `You have ${left} warning${left === 1 ? "" : "s"} remaining before your account is suspended for 30 days.`
-            : "This is your final warning. The next violation will suspend your account for 30 days."}
-          {" "}These warnings are issued when content appears to share contact information or
-          redirect customers off Event Hub.
+            ? t("circumventionWarning.warningBannerBodyRemaining", { count: warningCount, left })
+            : t("circumventionWarning.warningBannerBodyFinal")}
+          {" "}{t("circumventionWarning.warningBannerTail")}
         </p>
       </div>
     </div>

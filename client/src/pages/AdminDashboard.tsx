@@ -336,44 +336,98 @@ function BookingsSection({ isAdmin }: { isAdmin: boolean }) {
 
 // ─── Section: Disputes ────────────────────────────────────────────────────────
 
-interface DisputeRow {
-  id: string; bookingId: string; status: string; reason: string;
-  details: string | null; vendorResponse: string | null;
-  adminDecision: string | null; adminNotes: string | null;
-  filedAt: string; vendorRespondedAt: string | null; resolvedAt: string | null;
-  customerName: string | null; customerEmail: string | null;
-  vendorBusinessName: string | null; bookingStatus: string;
-  bookingEndAt: string | null; payoutStatus: string | null;
+interface AdminDisputeFiling {
+  id: string;
+  case_id: string;
+  filed_by: "customer" | "vendor" | "admin";
+  dispute_type: string;
+  description: string | null;
+  attachment_urls: string[] | null;
+  claim_amount_cents: number | null;
+  created_at: string;
+  filer_customer_name: string | null;
+  filer_customer_email: string | null;
+  filer_vendor_name: string | null;
+  filer_vendor_email: string | null;
 }
-interface AdminNote { id: string; disputeId: string; content: string; createdAt: string; }
 
-function DisputeCard({ dispute }: { dispute: DisputeRow }) {
+interface AdminDisputeCase {
+  case_id: string;
+  booking_id: string;
+  case_status: string;
+  resolution: string | null;
+  resolved_at: string | null;
+  case_created_at: string;
+  case_updated_at: string;
+  booking_status: string;
+  event_date: string | null;
+  booking_end_at: string | null;
+  listing_title_snapshot: string | null;
+  payout_status: string | null;
+  payout_blocked_reason: string | null;
+  customer_name: string | null;
+  customer_email: string | null;
+  vendor_name: string | null;
+  vendor_email: string | null;
+  filings: AdminDisputeFiling[];
+}
+
+const DISPUTE_TYPE_LABELS: Record<string, string> = {
+  travel_cost_recovery: "Travel Cost Recovery",
+  damage_claim: "Damage Claim",
+  customer_no_show: "Customer No-Show",
+  service_not_as_described: "Service Not As Described",
+  vendor_no_show: "Vendor No-Show",
+  safety_concern: "Safety Concern",
+  admin_note: "Admin Note",
+  other: "Other",
+};
+
+function FilingTypeBadge({ type }: { type: string }) {
+  const colorMap: Record<string, string> = {
+    travel_cost_recovery: "bg-orange-100 text-orange-800",
+    damage_claim: "bg-red-100 text-red-800",
+    customer_no_show: "bg-yellow-100 text-yellow-800",
+    service_not_as_described: "bg-purple-100 text-purple-800",
+    vendor_no_show: "bg-pink-100 text-pink-800",
+    safety_concern: "bg-red-200 text-red-900",
+    admin_note: "bg-blue-100 text-blue-800",
+    other: "bg-gray-100 text-gray-700",
+  };
+  return (
+    <span className={`inline-block px-2 py-0.5 rounded text-xs font-semibold ${colorMap[type] ?? "bg-gray-100 text-gray-700"}`}>
+      {DISPUTE_TYPE_LABELS[type] ?? type.replace(/_/g, " ")}
+    </span>
+  );
+}
+
+function AdminDisputeCaseCard({ disputeCase }: { disputeCase: AdminDisputeCase }) {
   const [expanded, setExpanded] = useState(false);
   const [noteText, setNoteText] = useState("");
+  const [withheldInput, setWithheldInput] = useState("");
   const queryClient = useQueryClient();
 
-  const { data: notes = [] } = useQuery<AdminNote[]>({
-    queryKey: ["/api/admin/disputes", dispute.id, "notes"],
-    queryFn: () => apiRequest("GET", `/api/admin/disputes/${dispute.id}/notes`).then((r) => r.json()),
-    enabled: expanded,
-  });
+  const isResolved = disputeCase.case_status === "resolved";
 
   const addNote = useMutation({
     mutationFn: (content: string) =>
-      apiRequest("POST", `/api/admin/disputes/${dispute.id}/note`, { content }).then((r) => r.json()),
+      apiRequest("POST", `/api/admin/disputes/${disputeCase.case_id}/note`, { content }).then((r) => r.json()),
     onSuccess: () => {
       setNoteText("");
-      queryClient.invalidateQueries({ queryKey: ["/api/admin/disputes", dispute.id, "notes"] });
+      queryClient.invalidateQueries({ queryKey: ["/api/admin/disputes"] });
     },
   });
 
   const resolve = useMutation({
-    mutationFn: (decision: "refund" | "payout") =>
-      apiRequest("POST", `/api/admin/disputes/${dispute.id}/resolve`, { decision }).then((r) => r.json()),
+    mutationFn: ({ decision, withheldAmountCents }: { decision: "refund" | "payout"; withheldAmountCents?: number }) =>
+      apiRequest("POST", `/api/admin/disputes/${disputeCase.case_id}/resolve`, { decision, withheldAmountCents }).then((r) => r.json()),
     onSuccess: () => queryClient.invalidateQueries({ queryKey: ["/api/admin/disputes"] }),
   });
 
-  const isResolved = dispute.status === "resolved_refund" || dispute.status === "resolved_payout";
+  // Summary line: unique dispute types from all non-admin filings
+  const filingTypes = [...new Set(
+    disputeCase.filings.filter((f) => f.filed_by !== "admin").map((f) => f.dispute_type)
+  )];
 
   return (
     <Card className="mb-3">
@@ -381,14 +435,18 @@ function DisputeCard({ dispute }: { dispute: DisputeRow }) {
         <div className="flex items-start justify-between gap-3">
           <div className="flex-1 min-w-0">
             <div className="flex items-center gap-2 flex-wrap">
-              <StatusBadge status={dispute.status} />
-              <span className="text-sm font-semibold">{dispute.reason}</span>
+              <StatusBadge status={disputeCase.case_status} />
+              {filingTypes.map((t) => <FilingTypeBadge key={t} type={t} />)}
+              <span className="text-xs text-muted-foreground">{disputeCase.filings.length} filing{disputeCase.filings.length !== 1 ? "s" : ""}</span>
             </div>
             <p className="text-xs text-muted-foreground mt-1">
-              Filed {fmtDateTime(dispute.filedAt)} ·{" "}
-              <span className="font-medium">{dispute.customerName ?? "Unknown customer"}</span>
-              {dispute.customerEmail ? ` (${dispute.customerEmail})` : ""} vs{" "}
-              <span className="font-medium">{dispute.vendorBusinessName ?? "Unknown vendor"}</span>
+              <span className="font-medium">{disputeCase.customer_name ?? "Unknown customer"}</span>
+              {disputeCase.customer_email ? ` (${disputeCase.customer_email})` : ""} vs{" "}
+              <span className="font-medium">{disputeCase.vendor_name ?? "Unknown vendor"}</span>
+              {disputeCase.listing_title_snapshot ? ` · ${disputeCase.listing_title_snapshot}` : ""}
+            </p>
+            <p className="text-xs text-muted-foreground mt-0.5">
+              Last activity {fmtDateTime(disputeCase.case_updated_at)}
             </p>
           </div>
           {expanded ? <ChevronUp className="h-4 w-4 mt-1 shrink-0" /> : <ChevronDown className="h-4 w-4 mt-1 shrink-0" />}
@@ -397,40 +455,69 @@ function DisputeCard({ dispute }: { dispute: DisputeRow }) {
 
       {expanded && (
         <CardContent className="pt-0 space-y-5">
-          {/* Timeline */}
+          {/* Chronological filing timeline */}
           <div className="space-y-3 border-l-2 border-muted pl-4">
-            <div>
-              <p className="text-xs text-muted-foreground">{fmtDateTime(dispute.filedAt)} — Customer filed</p>
-              <p className="text-sm font-medium mt-0.5">{dispute.reason}</p>
-              {dispute.details && <p className="text-sm text-muted-foreground mt-1 whitespace-pre-wrap">{dispute.details}</p>}
-            </div>
-            {dispute.vendorResponse && (
-              <div>
-                <p className="text-xs text-muted-foreground">{fmtDateTime(dispute.vendorRespondedAt)} — Vendor responded</p>
-                <p className="text-sm mt-0.5 whitespace-pre-wrap">{dispute.vendorResponse}</p>
-              </div>
+            {disputeCase.filings.length === 0 ? (
+              <p className="text-sm text-muted-foreground italic">No filings yet.</p>
+            ) : (
+              disputeCase.filings.map((f) => {
+                const filerLabel =
+                  f.filed_by === "admin"
+                    ? "EventHub (admin)"
+                    : f.filed_by === "vendor"
+                    ? (f.filer_vendor_name ?? "Vendor")
+                    : (f.filer_customer_name ?? "Customer");
+                const attachments = Array.isArray(f.attachment_urls) ? f.attachment_urls : [];
+                return (
+                  <div key={f.id} className={f.filed_by === "admin" ? "bg-blue-50 rounded p-2" : ""}>
+                    <div className="flex items-center gap-2 flex-wrap">
+                      <p className="text-xs text-muted-foreground">{fmtDateTime(f.created_at)} — <span className="font-medium">{filerLabel}</span></p>
+                      <FilingTypeBadge type={f.dispute_type} />
+                      {f.claim_amount_cents ? (
+                        <span className="text-xs font-semibold text-orange-700">Claim: {fmt(f.claim_amount_cents)}</span>
+                      ) : null}
+                    </div>
+                    {f.description && (
+                      <p className="text-sm mt-1 whitespace-pre-wrap">{f.description}</p>
+                    )}
+                    {attachments.length > 0 && (
+                      <div className="mt-2 flex flex-wrap gap-2">
+                        {attachments.map((url, i) => {
+                          const isPdf = url.toLowerCase().includes(".pdf");
+                          return (
+                            <a
+                              key={i}
+                              href={url}
+                              target="_blank"
+                              rel="noopener noreferrer"
+                              className="inline-flex items-center gap-1 text-xs text-blue-700 underline hover:text-blue-900"
+                            >
+                              {isPdf ? "📄" : "🖼️"} Attachment {i + 1}
+                            </a>
+                          );
+                        })}
+                      </div>
+                    )}
+                  </div>
+                );
+              })
             )}
-            {notes.map((note) => (
-              <div key={note.id} className="bg-blue-50 rounded p-2">
-                <p className="text-xs text-muted-foreground">{fmtDateTime(note.createdAt)} — Your note</p>
-                <p className="text-sm mt-0.5 whitespace-pre-wrap">{note.content}</p>
-              </div>
-            ))}
             {isResolved && (
               <div className="bg-muted rounded p-2">
-                <p className="text-xs text-muted-foreground">{fmtDateTime(dispute.resolvedAt)} — Resolved</p>
-                <p className="text-sm font-medium mt-0.5">Decision: {dispute.adminDecision ?? "—"}</p>
-                {dispute.adminNotes && <p className="text-sm text-muted-foreground mt-1">{dispute.adminNotes}</p>}
+                <p className="text-xs text-muted-foreground">{fmtDateTime(disputeCase.resolved_at)} — Resolved</p>
+                {disputeCase.resolution && (
+                  <p className="text-sm mt-0.5 font-medium">{disputeCase.resolution}</p>
+                )}
               </div>
             )}
           </div>
 
           {/* Booking context */}
           <div className="rounded bg-muted/50 p-3 text-sm grid grid-cols-2 gap-2">
-            <div><span className="text-muted-foreground">Booking:</span> <span className="font-mono text-xs">{dispute.bookingId}</span></div>
-            <div><span className="text-muted-foreground">Status:</span> <StatusBadge status={dispute.bookingStatus} /></div>
-            <div><span className="text-muted-foreground">Event end:</span> {fmtDate(dispute.bookingEndAt)}</div>
-            <div><span className="text-muted-foreground">Payout:</span> {dispute.payoutStatus ? <StatusBadge status={dispute.payoutStatus} /> : "—"}</div>
+            <div><span className="text-muted-foreground">Booking:</span> <span className="font-mono text-xs">{disputeCase.booking_id}</span></div>
+            <div><span className="text-muted-foreground">Status:</span> <StatusBadge status={disputeCase.booking_status} /></div>
+            <div><span className="text-muted-foreground">Event date:</span> {fmtDate(disputeCase.event_date)}</div>
+            <div><span className="text-muted-foreground">Payout:</span> {disputeCase.payout_status ? <StatusBadge status={disputeCase.payout_status} /> : "—"}</div>
           </div>
 
           {!isResolved && (
@@ -438,7 +525,7 @@ function DisputeCard({ dispute }: { dispute: DisputeRow }) {
               <p className="text-sm font-medium">Add a note</p>
               <textarea
                 className="w-full rounded border p-2 text-sm min-h-[80px] resize-y"
-                placeholder="Internal note — visible only to you…"
+                placeholder="Internal note — visible to vendor and customer in their case timeline…"
                 value={noteText}
                 onChange={(e) => setNoteText(e.target.value)}
               />
@@ -453,22 +540,49 @@ function DisputeCard({ dispute }: { dispute: DisputeRow }) {
           )}
 
           {!isResolved && (
-            <div className="space-y-2">
+            <div className="space-y-3">
               <p className="text-sm font-medium">Case decision</p>
+
+              {/* Partial withhold — for damage claims where vendor keeps some of the deposit */}
+              <div className="rounded-lg border border-border bg-muted/40 px-3 py-2.5 space-y-2">
+                <p className="text-xs font-medium text-muted-foreground">Damage withhold (optional)</p>
+                <div className="flex items-center gap-2">
+                  <span className="text-sm text-muted-foreground">$</span>
+                  <input
+                    type="number"
+                    min="0"
+                    step="0.01"
+                    placeholder="0.00"
+                    value={withheldInput}
+                    onChange={(e) => setWithheldInput(e.target.value)}
+                    className="h-8 w-32 rounded border border-border px-2 text-sm"
+                  />
+                  <span className="text-xs text-muted-foreground">withheld for damages (leave blank for full refund)</span>
+                </div>
+              </div>
+
               <div className="flex gap-2 flex-wrap">
                 <button
                   className="px-3 py-1.5 text-sm bg-green-600 text-white rounded hover:bg-green-700 disabled:opacity-50"
                   disabled={resolve.isPending}
-                  onClick={() => resolve.mutate("payout")}
+                  onClick={() => resolve.mutate({ decision: "payout" })}
                 >
                   ✓ Approve payout to vendor
                 </button>
                 <button
                   className="px-3 py-1.5 text-sm bg-red-600 text-white rounded hover:bg-red-700 disabled:opacity-50"
                   disabled={resolve.isPending}
-                  onClick={() => { if (confirm("Issue a full refund to the customer?")) resolve.mutate("refund"); }}
+                  onClick={() => {
+                    const withheldCents = withheldInput.trim()
+                      ? Math.round(parseFloat(withheldInput) * 100)
+                      : 0;
+                    const label = withheldCents > 0
+                      ? `Refund customer with $${(withheldCents / 100).toFixed(2)} withheld for damages?`
+                      : "Issue a full refund to the customer?";
+                    if (confirm(label)) resolve.mutate({ decision: "refund", withheldAmountCents: withheldCents || undefined });
+                  }}
                 >
-                  ↩ Refund customer
+                  ↩ {withheldInput && parseFloat(withheldInput) > 0 ? "Partial refund + withhold" : "Full refund to customer"}
                 </button>
               </div>
               {resolve.isError && <p className="text-xs text-red-600">Failed. Please try again.</p>}
@@ -480,41 +594,84 @@ function DisputeCard({ dispute }: { dispute: DisputeRow }) {
   );
 }
 
-function DisputesSection({ isAdmin }: { isAdmin: boolean }) {
-  const [filter, setFilter] = useState("");
-  const { data: disputes = [] } = useQuery<DisputeRow[]>({ queryKey: ["/api/admin/disputes"], enabled: isAdmin });
+const DISPUTE_TYPE_FILTERS = [
+  { value: "", label: "All types" },
+  { value: "travel_cost_recovery", label: "Travel Cost Recovery" },
+  { value: "damage_claim", label: "Damage Claim" },
+  { value: "customer_no_show", label: "Customer No-Show" },
+  { value: "service_not_as_described", label: "Service Not As Described" },
+  { value: "vendor_no_show", label: "Vendor No-Show" },
+  { value: "safety_concern", label: "Safety Concern" },
+  { value: "other", label: "Other" },
+];
 
-  const filtered = filter ? disputes.filter((d) => d.status === filter) : disputes;
-  const openCount = disputes.filter((d) => d.status !== "resolved_refund" && d.status !== "resolved_payout").length;
+function DisputesSection({ isAdmin }: { isAdmin: boolean }) {
+  const [statusFilter, setStatusFilter] = useState("");
+  const [typeFilter, setTypeFilter] = useState("");
+
+  const { data: cases = [] } = useQuery<AdminDisputeCase[]>({
+    queryKey: ["/api/admin/disputes", statusFilter, typeFilter],
+    queryFn: () => {
+      const params = new URLSearchParams();
+      if (statusFilter) params.set("status", statusFilter);
+      if (typeFilter) params.set("type", typeFilter);
+      return apiRequest("GET", `/api/admin/disputes?${params.toString()}`).then((r) => r.json());
+    },
+    enabled: isAdmin,
+  });
+
+  const openCount = cases.filter((c) => c.case_status !== "resolved").length;
 
   return (
     <>
       <PageHeading title="Disputes" description={`${openCount} open case${openCount !== 1 ? "s" : ""} awaiting your review`} />
 
-      <div className="flex items-center gap-2 mb-5 flex-wrap">
-        {["", "filed", "vendor_responded", "resolved_refund", "resolved_payout"].map((f) => (
-          <button
-            key={f}
-            onClick={() => setFilter(f)}
-            className={`px-3 py-1 rounded text-xs font-medium border transition-colors ${
-              filter === f
-                ? "bg-[#1e2d3a] text-white border-[#1e2d3a]"
-                : "bg-background border-border hover:bg-muted"
-            }`}
-          >
-            {f === "" ? `All (${disputes.length})` : f.replace(/_/g, " ")}
-          </button>
-        ))}
+      <div className="space-y-3 mb-5">
+        <div className="flex items-center gap-2 flex-wrap">
+          {[
+            { value: "", label: `All (${cases.length})` },
+            { value: "open", label: "Open" },
+            { value: "pending_review", label: "Pending review" },
+            { value: "resolved", label: "Resolved" },
+          ].map((f) => (
+            <button
+              key={f.value}
+              onClick={() => setStatusFilter(f.value)}
+              className={`px-3 py-1 rounded text-xs font-medium border transition-colors ${
+                statusFilter === f.value
+                  ? "bg-[#1e2d3a] text-white border-[#1e2d3a]"
+                  : "bg-background border-border hover:bg-muted"
+              }`}
+            >
+              {f.label}
+            </button>
+          ))}
+        </div>
+        <div className="flex items-center gap-2 flex-wrap">
+          {DISPUTE_TYPE_FILTERS.map((f) => (
+            <button
+              key={f.value}
+              onClick={() => setTypeFilter(f.value)}
+              className={`px-3 py-1 rounded text-xs font-medium border transition-colors ${
+                typeFilter === f.value
+                  ? "bg-[#4a6a7d] text-white border-[#4a6a7d]"
+                  : "bg-background border-border hover:bg-muted"
+              }`}
+            >
+              {f.label}
+            </button>
+          ))}
+        </div>
       </div>
 
-      {filtered.length === 0 ? (
+      {cases.length === 0 ? (
         <Card>
           <CardContent className="py-10 text-center text-muted-foreground">
-            No disputes {filter ? `with status "${filter.replace(/_/g, " ")}"` : "found"}.
+            No dispute cases found{statusFilter || typeFilter ? " for the selected filters" : ""}.
           </CardContent>
         </Card>
       ) : (
-        filtered.map((d) => <DisputeCard key={d.id} dispute={d} />)
+        cases.map((c) => <AdminDisputeCaseCard key={c.case_id} disputeCase={c} />)
       )}
     </>
   );
@@ -1279,6 +1436,294 @@ function FeedbackSection({ isAdmin }: { isAdmin: boolean }) {
   );
 }
 
+// ─── Section: Platform Health ────────────────────────────────────────────────
+
+function HealthSection({ isAdmin }: { isAdmin: boolean }) {
+  const { data, isLoading } = useQuery<any>({
+    queryKey: ["/api/admin/health"],
+    enabled: isAdmin,
+    refetchInterval: 5 * 60 * 1000, // re-check every 5 min
+  });
+
+  if (isLoading) {
+    return <div className="text-sm text-muted-foreground py-8 text-center">Scanning platform…</div>;
+  }
+
+  const staleBookings: any[]  = data?.staleBookings  ?? [];
+  const unreadMessages: any[] = data?.unreadMessages ?? [];
+  const stalePayouts: any[]   = data?.stalePayouts   ?? [];
+  const doubleBookings: any[] = data?.doubleBookings ?? [];
+  const thresholds: any       = data?.thresholds     ?? {};
+
+  const totalAlerts = (data?.summary?.totalAlerts ?? 0);
+
+  return (
+    <>
+      <PageHeading
+        title="Platform Health"
+        description="Actionable items that have gone unattended past their expected response window."
+      />
+
+      {/* Summary row */}
+      <div className="grid gap-4 grid-cols-2 lg:grid-cols-4 mb-8">
+        <StatCard
+          title="Stale Bookings"
+          value={staleBookings.length}
+          sub={`Pending > ${thresholds.staleBookingHours ?? 6}h`}
+          icon={<Clock className="h-4 w-4 text-yellow-500" />}
+        />
+        <StatCard
+          title="Unread Messages"
+          value={unreadMessages.length}
+          sub={`Unread > ${thresholds.staleMessageHours ?? 4}h`}
+          icon={<AlertTriangle className="h-4 w-4 text-orange-500" />}
+        />
+        <StatCard
+          title="Stale Payouts"
+          value={stalePayouts.length}
+          sub={`Eligible > ${thresholds.stalePayoutHours ?? 48}h`}
+          icon={<DollarSign className="h-4 w-4 text-red-500" />}
+        />
+        <StatCard
+          title="Double Bookings"
+          value={doubleBookings.length}
+          sub="Should always be 0"
+          icon={<AlertTriangle className="h-4 w-4 text-red-600" />}
+        />
+      </div>
+
+      {totalAlerts === 0 && (
+        <Card className="border-green-200 bg-green-50/50">
+          <CardContent className="py-8 text-center">
+            <CheckCircle className="h-8 w-8 text-green-500 mx-auto mb-2" />
+            <p className="text-green-800 font-medium">All clear — no actionable items right now.</p>
+            <p className="text-green-600 text-xs mt-1">This page auto-refreshes every 5 minutes.</p>
+          </CardContent>
+        </Card>
+      )}
+
+      {/* ── Stale Pending Bookings ─────────────────────────────────────────── */}
+      {staleBookings.length > 0 && (
+        <Card className="mb-6">
+          <CardHeader className="pb-3">
+            <CardTitle className="text-base flex items-center gap-2">
+              <Clock className="h-4 w-4 text-yellow-500" />
+              Booking Requests Awaiting Vendor Response
+            </CardTitle>
+            <CardDescription>
+              Vendor has not accepted or declined. Auto-expiry will cancel these — intervene if needed.
+            </CardDescription>
+          </CardHeader>
+          <CardContent>
+            <table className="w-full text-sm">
+              <thead>
+                <tr className="text-xs text-muted-foreground border-b">
+                  <th className="text-left pb-2 font-medium">Listing</th>
+                  <th className="text-left pb-2 font-medium">Vendor</th>
+                  <th className="text-left pb-2 font-medium">Customer</th>
+                  <th className="text-left pb-2 font-medium">Event Date</th>
+                  <th className="text-right pb-2 font-medium">Value</th>
+                  <th className="text-right pb-2 font-medium">Waiting</th>
+                </tr>
+              </thead>
+              <tbody className="divide-y divide-border">
+                {staleBookings.map((b: any) => (
+                  <tr key={b.id} className="hover:bg-muted/30">
+                    <td className="py-2 pr-3">
+                      <span className="font-medium">{b.listing_title_snapshot ?? "—"}</span>
+                    </td>
+                    <td className="py-2 pr-3">
+                      <span>{b.vendor_name ?? "—"}</span>
+                      {b.vendor_email && (
+                        <span className="block text-xs text-muted-foreground">{b.vendor_email}</span>
+                      )}
+                    </td>
+                    <td className="py-2 pr-3">
+                      <span>{b.customer_name ?? "—"}</span>
+                      {b.customer_email && (
+                        <span className="block text-xs text-muted-foreground">{b.customer_email}</span>
+                      )}
+                    </td>
+                    <td className="py-2 pr-3 text-sm">{fmtDate(b.event_date)}</td>
+                    <td className="py-2 pr-3 text-right">{fmt(b.total_amount ?? 0)}</td>
+                    <td className="py-2 text-right">
+                      <span className="inline-block px-2 py-0.5 rounded text-xs font-semibold bg-yellow-100 text-yellow-800">
+                        {Math.round(Number(b.hours_waiting))}h
+                      </span>
+                    </td>
+                  </tr>
+                ))}
+              </tbody>
+            </table>
+          </CardContent>
+        </Card>
+      )}
+
+      {/* ── Unread Messages ───────────────────────────────────────────────────── */}
+      {unreadMessages.length > 0 && (
+        <Card className="mb-6">
+          <CardHeader className="pb-3">
+            <CardTitle className="text-base flex items-center gap-2">
+              <AlertTriangle className="h-4 w-4 text-orange-500" />
+              Conversations with Unread Messages
+            </CardTitle>
+            <CardDescription>
+              Active bookings where a message has gone unread past the response window.
+            </CardDescription>
+          </CardHeader>
+          <CardContent>
+            <table className="w-full text-sm">
+              <thead>
+                <tr className="text-xs text-muted-foreground border-b">
+                  <th className="text-left pb-2 font-medium">Booking / Listing</th>
+                  <th className="text-left pb-2 font-medium">Vendor</th>
+                  <th className="text-left pb-2 font-medium">Customer</th>
+                  <th className="text-left pb-2 font-medium">Status</th>
+                  <th className="text-right pb-2 font-medium">Unread</th>
+                  <th className="text-right pb-2 font-medium">Oldest</th>
+                </tr>
+              </thead>
+              <tbody className="divide-y divide-border">
+                {unreadMessages.map((m: any) => (
+                  <tr key={m.booking_id} className="hover:bg-muted/30">
+                    <td className="py-2 pr-3">
+                      <span className="font-medium">{m.listing_title_snapshot ?? "—"}</span>
+                      <span className="block text-xs text-muted-foreground font-mono">{m.booking_id}</span>
+                    </td>
+                    <td className="py-2 pr-3">
+                      <span>{m.vendor_name ?? "—"}</span>
+                      {m.vendor_email && (
+                        <span className="block text-xs text-muted-foreground">{m.vendor_email}</span>
+                      )}
+                    </td>
+                    <td className="py-2 pr-3">
+                      <span>{m.customer_name ?? "—"}</span>
+                      {m.customer_email && (
+                        <span className="block text-xs text-muted-foreground">{m.customer_email}</span>
+                      )}
+                    </td>
+                    <td className="py-2 pr-3"><StatusBadge status={m.booking_status} /></td>
+                    <td className="py-2 pr-3 text-right font-medium">{m.unread_count}</td>
+                    <td className="py-2 text-right">
+                      <span className="inline-block px-2 py-0.5 rounded text-xs font-semibold bg-orange-100 text-orange-800">
+                        {Math.round(Number(m.hours_waiting))}h
+                      </span>
+                    </td>
+                  </tr>
+                ))}
+              </tbody>
+            </table>
+          </CardContent>
+        </Card>
+      )}
+
+      {/* ── Stale Eligible Payouts ────────────────────────────────────────────── */}
+      {stalePayouts.length > 0 && (
+        <Card className="mb-6">
+          <CardHeader className="pb-3">
+            <CardTitle className="text-base flex items-center gap-2">
+              <DollarSign className="h-4 w-4 text-red-500" />
+              Payouts Eligible but Not Transferred
+            </CardTitle>
+            <CardDescription>
+              These payments passed the 24h post-event window and are eligible for payout, but the transfer has not completed. Go to Payouts to process them.
+            </CardDescription>
+          </CardHeader>
+          <CardContent>
+            <table className="w-full text-sm">
+              <thead>
+                <tr className="text-xs text-muted-foreground border-b">
+                  <th className="text-left pb-2 font-medium">Listing</th>
+                  <th className="text-left pb-2 font-medium">Vendor</th>
+                  <th className="text-left pb-2 font-medium">Event Date</th>
+                  <th className="text-right pb-2 font-medium">Vendor Amount</th>
+                  <th className="text-right pb-2 font-medium">Eligible For</th>
+                </tr>
+              </thead>
+              <tbody className="divide-y divide-border">
+                {stalePayouts.map((p: any) => (
+                  <tr key={p.id} className="hover:bg-muted/30">
+                    <td className="py-2 pr-3">
+                      <span className="font-medium">{p.listing_title_snapshot ?? "—"}</span>
+                    </td>
+                    <td className="py-2 pr-3">
+                      <span>{p.vendor_name ?? "—"}</span>
+                      {p.vendor_email && (
+                        <span className="block text-xs text-muted-foreground">{p.vendor_email}</span>
+                      )}
+                    </td>
+                    <td className="py-2 pr-3 text-sm">{fmtDate(p.event_date)}</td>
+                    <td className="py-2 pr-3 text-right font-medium">{fmt(p.vendor_net_payout_amount ?? 0)}</td>
+                    <td className="py-2 text-right">
+                      <span className="inline-block px-2 py-0.5 rounded text-xs font-semibold bg-red-100 text-red-800">
+                        {Math.round(Number(p.hours_waiting))}h
+                      </span>
+                    </td>
+                  </tr>
+                ))}
+              </tbody>
+            </table>
+          </CardContent>
+        </Card>
+      )}
+
+      {/* ── Suspected Double Bookings ─────────────────────────────────────────── */}
+      {doubleBookings.length > 0 && (
+        <Card className="mb-6 border-red-200">
+          <CardHeader className="pb-3">
+            <CardTitle className="text-base flex items-center gap-2 text-red-700">
+              <AlertTriangle className="h-4 w-4 text-red-600" />
+              Suspected Double Bookings — Investigate Immediately
+            </CardTitle>
+            <CardDescription>
+              Two active bookings overlap for the same listing. The system prevents these at creation — if any appear here, investigate the booking IDs immediately.
+            </CardDescription>
+          </CardHeader>
+          <CardContent>
+            <table className="w-full text-sm">
+              <thead>
+                <tr className="text-xs text-muted-foreground border-b">
+                  <th className="text-left pb-2 font-medium">Listing</th>
+                  <th className="text-left pb-2 font-medium">Vendor</th>
+                  <th className="text-left pb-2 font-medium">Booking A</th>
+                  <th className="text-left pb-2 font-medium">Booking B</th>
+                  <th className="text-left pb-2 font-medium">Overlap Window</th>
+                </tr>
+              </thead>
+              <tbody className="divide-y divide-border">
+                {doubleBookings.map((d: any) => (
+                  <tr key={`${d.booking_a_id}-${d.booking_b_id}`} className="hover:bg-red-50/50">
+                    <td className="py-2 pr-3">
+                      <span className="font-medium">{d.listing_title_snapshot ?? "—"}</span>
+                    </td>
+                    <td className="py-2 pr-3">
+                      <span>{d.vendor_name ?? "—"}</span>
+                      {d.vendor_email && (
+                        <span className="block text-xs text-muted-foreground">{d.vendor_email}</span>
+                      )}
+                    </td>
+                    <td className="py-2 pr-3">
+                      <span className="font-mono text-xs">{d.booking_a_id}</span>
+                      <StatusBadge status={d.status_a} />
+                    </td>
+                    <td className="py-2 pr-3">
+                      <span className="font-mono text-xs">{d.booking_b_id}</span>
+                      <StatusBadge status={d.status_b} />
+                    </td>
+                    <td className="py-2 text-xs">
+                      {fmtDateTime(d.start_a)} – {fmtDateTime(d.end_a)}
+                    </td>
+                  </tr>
+                ))}
+              </tbody>
+            </table>
+          </CardContent>
+        </Card>
+      )}
+    </>
+  );
+}
+
 // ─── Root: auth guard + section router ───────────────────────────────────────
 
 export default function AdminDashboard() {
@@ -1321,6 +1766,7 @@ export default function AdminDashboard() {
       {section === "traffic"    && <TrafficSection     isAdmin={isAdmin} />}
       {section === "moderation" && <ModerationSection  isAdmin={isAdmin} />}
       {section === "feedback"   && <FeedbackSection    isAdmin={isAdmin} />}
+      {section === "health"     && <HealthSection      isAdmin={isAdmin} />}
     </AdminShell>
   );
 }

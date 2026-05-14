@@ -3,7 +3,7 @@ import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { AlertTriangle, ArrowLeft, Flag, MessageSquare, ShieldAlert } from "lucide-react";
 import { Filter } from "bad-words";
 import { Chat, Channel, ChannelHeader, MessageInput, MessageList, Thread, Window } from "stream-chat-react";
-import { StreamChat, type Message as StreamMessage, type SendMessageOptions } from "stream-chat";
+import { StreamChat, type Message as StreamMessage, type SendMessageOptions, type LocalMessage } from "stream-chat";
 
 import { apiRequest } from "@/lib/queryClient";
 import { cn } from "@/lib/utils";
@@ -11,6 +11,7 @@ import { Badge } from "@/components/ui/badge";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { useToast } from "@/hooks/use-toast";
 import { chatBlockMessage } from "@/components/CircumventionWarningModal";
+import { useTranslation } from "react-i18next";
 
 type Role = "customer" | "vendor";
 
@@ -84,11 +85,11 @@ function detectChatCircumvention(text: string): { blocked: boolean; matches: str
   return { blocked: matches.length > 0, matches };
 }
 
-function formatDate(value: string | null) {
-  if (!value) return "Date TBD";
+function formatDate(value: string | null, fallback: string, locale?: string) {
+  if (!value) return fallback;
   const asDate = new Date(`${value}T00:00:00`);
   if (Number.isNaN(asDate.getTime())) return value;
-  return asDate.toLocaleDateString("en-US", {
+  return asDate.toLocaleDateString(locale || "en-US", {
     month: "short",
     day: "numeric",
     year: "numeric",
@@ -125,8 +126,9 @@ function getConversationEventKey(conversation: Conversation) {
   return `name:${title}|date:${date}`;
 }
 
-export function BookingChatWorkspace({ role }: { role: Role }) {
+export function BookingChatWorkspace({ role, initialBookingId }: { role: Role; initialBookingId?: string }) {
   const { toast } = useToast();
+  const { t, i18n } = useTranslation();
   const queryClient = useQueryClient();
   const [selectedBookingId, setSelectedBookingId] = useState<string>("");
   const [selectedEventKey, setSelectedEventKey] = useState<string | null>(null);
@@ -163,7 +165,7 @@ export function BookingChatWorkspace({ role }: { role: Role }) {
       grouped.set(key, {
         key,
         eventId: conversation.eventId,
-        eventTitle: conversation.eventTitle || "Untitled Event",
+        eventTitle: conversation.eventTitle || t("chat.untitledEvent"),
         eventDate: conversation.eventDate,
         conversations: [conversation],
         unreadCount: Math.max(0, conversation.unreadCount || 0),
@@ -234,6 +236,21 @@ export function BookingChatWorkspace({ role }: { role: Role }) {
     setSelectedEventKey(null);
   }, [eventGroups, role, selectedEventKey]);
 
+  // ── Deep-link: auto-select a specific booking when navigated from another page ──
+  const initialAppliedRef = useRef(false);
+  useEffect(() => {
+    if (!initialBookingId || initialAppliedRef.current) return;
+    if (loadingConversations || conversations.length === 0) return;
+    const match = conversations.find((c) => c.bookingId === initialBookingId);
+    if (!match) return;
+    initialAppliedRef.current = true;
+    setSelectedBookingId(match.bookingId);
+    if (role === "customer") {
+      const key = getConversationEventKey(match);
+      setSelectedEventKey(key);
+    }
+  }, [conversations, initialBookingId, loadingConversations, role]);
+
   const selectedConversation = useMemo(
     () => visibleConversations.find((c) => c.bookingId === selectedBookingId) ?? null,
     [selectedBookingId, visibleConversations]
@@ -246,12 +263,93 @@ export function BookingChatWorkspace({ role }: { role: Role }) {
     },
   });
 
+  // ── Travel fee proposals (customer-only) ──────────────────────────────────────
+  type TravelFeeProposal = {
+    id: string;
+    bookingId: string;
+    amountCents: number;
+    reason: string | null;
+    status: "pending" | "accepted" | "declined" | "cancelled";
+    paymentScheduleId: string | null;
+    proposedAt: string;
+    respondedAt: string | null;
+  };
+
+  const { data: proposals = [], refetch: refetchProposals } = useQuery<TravelFeeProposal[]>({
+    queryKey: [`/api/bookings/${selectedBookingId}/travel-fee-proposals`, selectedBookingId],
+    queryFn: async () => {
+      if (!selectedBookingId || role !== "customer") return [];
+      const res = await apiRequest("GET", `/api/bookings/${selectedBookingId}/travel-fee-proposals`);
+      if (!res.ok) return [];
+      return res.json();
+    },
+    enabled: role === "customer" && Boolean(selectedBookingId),
+    staleTime: 15_000,
+    refetchInterval: 20_000,
+  });
+
+  const pendingProposal = proposals.find((p) => p.status === "pending") ?? null;
+
+  const acceptProposalMutation = useMutation({
+    mutationFn: async ({ bookingId, proposalId }: { bookingId: string; proposalId: string }) => {
+      const res = await apiRequest(
+        "PATCH",
+        `/api/bookings/${bookingId}/travel-fee-proposals/${proposalId}/accept`
+      );
+      if (!res.ok) {
+        const body = await res.json().catch(() => ({}));
+        throw new Error(body?.error || "Failed to accept proposal");
+      }
+      return res.json();
+    },
+    onSuccess: async (data) => {
+      toast({ title: "Travel fee accepted", description: "You can now pay the travel/delivery fee." });
+      await refetchProposals();
+      if (data?.clientSecret && data?.listingId) {
+        // Seed the checkout's resume-payment draft in localStorage so checkout
+        // skips booking creation and goes straight to payment confirmation.
+        const draft = {
+          listingId: data.listingId,
+          bookingId: selectedBookingId,
+          idempotencyKey: `travel-fee-${selectedBookingId}`,
+          createdAt: new Date().toISOString(),
+        };
+        window.localStorage.setItem("eventhub.checkout.pending_payment.v1", JSON.stringify(draft));
+        window.location.href = `/checkout/${data.listingId}`;
+      }
+    },
+    onError: (err: Error) => {
+      toast({ title: "Error", description: err.message, variant: "destructive" });
+    },
+  });
+
+  const declineProposalMutation = useMutation({
+    mutationFn: async ({ bookingId, proposalId }: { bookingId: string; proposalId: string }) => {
+      const res = await apiRequest(
+        "PATCH",
+        `/api/bookings/${bookingId}/travel-fee-proposals/${proposalId}/decline`
+      );
+      if (!res.ok) {
+        const body = await res.json().catch(() => ({}));
+        throw new Error(body?.error || "Failed to decline proposal");
+      }
+      return res.json();
+    },
+    onSuccess: async () => {
+      toast({ title: "Travel fee declined", description: "The vendor has been notified." });
+      await refetchProposals();
+    },
+    onError: (err: Error) => {
+      toast({ title: "Error", description: err.message, variant: "destructive" });
+    },
+  });
+
   useEffect(() => {
     if (!selectedConversation || !selectedConversation.bookingId) return;
-    if (selectedConversation.expired || !selectedConversation.paymentInfoCollected) return;
+    if (selectedConversation.expired) return;
     bootstrapMutation.mutate(selectedConversation.bookingId);
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [selectedConversation?.bookingId, selectedConversation?.expired, selectedConversation?.paymentInfoCollected]);
+  }, [selectedConversation?.bookingId, selectedConversation?.expired]);
 
   useEffect(() => {
     const bootstrap = bootstrapMutation.data;
@@ -293,8 +391,8 @@ export function BookingChatWorkspace({ role }: { role: Role }) {
       if (!cancelled) {
         toast({
           variant: "destructive",
-          title: "Unable to open chat",
-          description: "Please refresh and try again.",
+          title: t("chat.errorOpenTitle"),
+          description: t("chat.errorOpenDesc"),
         });
       }
     });
@@ -361,12 +459,30 @@ export function BookingChatWorkspace({ role }: { role: Role }) {
     },
   });
 
+  const activeChannel = useMemo(() => {
+    if (!chatClient || !chatChannelId) return null;
+    try {
+      return chatClient.channel("messaging", chatChannelId);
+    } catch (error) {
+      // Guard against race conditions where a channel is requested after disconnect.
+      console.warn("Skipping stale Stream channel after disconnect", error);
+      return null;
+    }
+  }, [chatClient, chatChannelId]);
+
+  // ── overrideSubmitHandler: intercepts BEFORE Stream adds the optimistic message.
+  // Returning early here means the message never touches Stream state — no stuck
+  // "sending" message, no retry loop, no phantom unread-count polling.
   const sendModeratedMessage = useCallback(
-    async (
-      streamChannel: ReturnType<StreamChat["channel"]>,
-      message: StreamMessage,
-      sendOptions?: SendMessageOptions
-    ) => {
+    async ({
+      message,
+      sendOptions,
+    }: {
+      cid: string;
+      localMessage: LocalMessage;
+      message: StreamMessage;
+      sendOptions: SendMessageOptions;
+    }) => {
       const sourceText = String(message.text || "");
 
       // ── Circumvention check (hard block — runs before profanity filter) ──────
@@ -382,7 +498,7 @@ export function BookingChatWorkspace({ role }: { role: Role }) {
           .then((result) => {
             toast({
               variant: "destructive",
-              title: "Message blocked",
+              title: t("chat.messageBlockedTitle"),
               description: chatBlockMessage(result.warningNumber, result.suspended),
               duration: 8000,
             });
@@ -390,13 +506,15 @@ export function BookingChatWorkspace({ role }: { role: Role }) {
           .catch(() => {
             toast({
               variant: "destructive",
-              title: "Message blocked",
+              title: t("chat.messageBlockedTitle"),
               description: chatBlockMessage(),
               duration: 6000,
             });
           });
-        // Block the send — return without calling streamChannel.sendMessage
-        return Promise.resolve({} as any);
+        // Return without calling activeChannel.sendMessage — message is silently
+        // dropped. Because we're in overrideSubmitHandler, the optimistic message
+        // was never added to Stream channel state, so nothing lingers in the UI.
+        return;
       }
       // ── End circumvention check ───────────────────────────────────────────────
 
@@ -424,24 +542,16 @@ export function BookingChatWorkspace({ role }: { role: Role }) {
           });
 
         toast({
-          title: "Message adjusted for safety",
-          description: "Inappropriate language was masked and account activity was flagged.",
+          title: t("chat.messageSafetyTitle"),
+          description: t("chat.messageSafetyDesc"),
         });
       }
 
-      if (!safeText && !hasAttachments) {
-        return Promise.resolve({} as any);
-      }
+      if (!safeText && !hasAttachments) return;
 
-      return streamChannel.sendMessage(
-        {
-          ...message,
-          text: safeText,
-        },
-        sendOptions
-      );
+      await activeChannel?.sendMessage({ ...message, text: safeText }, sendOptions);
     },
-    [circumventionFlagMutation, moderationFlagMutation, profanityFilter, role, selectedConversation?.bookingId, toast]
+    [activeChannel, circumventionFlagMutation, moderationFlagMutation, profanityFilter, role, selectedConversation?.bookingId, t, toast]
   );
 
   const renderSafeText = useCallback(
@@ -451,17 +561,6 @@ export function BookingChatWorkspace({ role }: { role: Role }) {
     },
     [profanityFilter]
   );
-
-  const activeChannel = useMemo(() => {
-    if (!chatClient || !chatChannelId) return null;
-    try {
-      return chatClient.channel("messaging", chatChannelId);
-    } catch (error) {
-      // Guard against race conditions where a channel is requested after disconnect.
-      console.warn("Skipping stale Stream channel after disconnect", error);
-      return null;
-    }
-  }, [chatClient, chatChannelId]);
 
   useEffect(() => {
     if (!activeChannel || !selectedConversation?.bookingId) return;
@@ -491,16 +590,16 @@ export function BookingChatWorkspace({ role }: { role: Role }) {
       >
         <CardHeader className="shrink-0">
           <CardTitle className="text-[20px]">
-            {role === "customer" ? (showEventList ? "Events" : "Vendors") : "Conversations"}
+            {role === "customer" ? (showEventList ? t("chat.cardTitleEvents") : t("chat.cardTitleVendors")) : t("chat.cardTitleConversations")}
           </CardTitle>
         </CardHeader>
         <CardContent className="flex-1 min-h-0 space-y-2 overflow-y-auto p-3">
           {loadingConversations ? (
-            <p className="text-sm text-muted-foreground">Loading conversations...</p>
+            <p className="text-sm text-muted-foreground">{t("chat.loadingConversations")}</p>
           ) : conversations.length === 0 ? (
             <div className="pt-8 text-center">
               <MessageSquare className="mx-auto mb-2 h-8 w-8 text-muted-foreground" />
-              <p className="text-sm text-muted-foreground">No booking conversations available yet.</p>
+              <p className="text-sm text-muted-foreground">{t("chat.noConversations")}</p>
             </div>
           ) : showEventList ? (
             eventGroups.map((group) => (
@@ -522,10 +621,9 @@ export function BookingChatWorkspace({ role }: { role: Role }) {
                     </Badge>
                   ) : null}
                 </div>
-                <p className="text-sm text-muted-foreground">{formatDate(group.eventDate)}</p>
+                <p className="text-sm text-muted-foreground">{formatDate(group.eventDate, t("chat.dateUnknown"), i18n.language)}</p>
                 <p className="mt-1 text-sm text-muted-foreground">
-                  {group.conversations.length} vendor conversation
-                  {group.conversations.length === 1 ? "" : "s"}
+                  {t("chat.vendorCount", { count: group.conversations.length })}
                 </p>
               </button>
             ))
@@ -542,13 +640,13 @@ export function BookingChatWorkspace({ role }: { role: Role }) {
                   data-testid="chat-events-back"
                 >
                   <ArrowLeft className="h-4 w-4" />
-                  Back
+                  {t("chat.back")}
                 </button>
               ) : null}
               {role === "customer" && selectedEvent ? (
                 <div className="mb-2 rounded-lg bg-muted/60 px-3 py-2">
                   <p className="truncate text-sm font-medium">{selectedEvent.eventTitle}</p>
-                  <p className="text-sm text-muted-foreground">{formatDate(selectedEvent.eventDate)}</p>
+                  <p className="text-sm text-muted-foreground">{formatDate(selectedEvent.eventDate, t("chat.dateUnknown"), i18n.language)}</p>
                 </div>
               ) : null}
               {visibleConversations.map((conversation) => {
@@ -582,13 +680,13 @@ export function BookingChatWorkspace({ role }: { role: Role }) {
                     </div>
                   </div>
                   <p className="truncate text-sm text-muted-foreground">
-                    {conversation.eventTitle || "Booking chat"}
+                    {conversation.eventTitle || t("chat.bookingChatFallback")}
                   </p>
                   <p className="mt-1 text-sm text-muted-foreground">
-                    {formatDate(conversation.eventDate)}
+                    {formatDate(conversation.eventDate, t("chat.dateUnknown"), i18n.language)}
                   </p>
                   {conversation.expired && (
-                    <p className="mt-1 text-sm font-medium text-destructive">Expired</p>
+                    <p className="mt-1 text-sm font-medium text-destructive">{t("chat.expired")}</p>
                   )}
                 </button>
               );
@@ -610,30 +708,24 @@ export function BookingChatWorkspace({ role }: { role: Role }) {
       >
         {role === "customer" && showEventList ? (
           <CardContent className="flex min-h-0 flex-1 items-center justify-center text-muted-foreground">
-            Select an event to see vendor chats
+            {t("chat.selectEventPrompt")}
           </CardContent>
         ) : !selectedConversation ? (
           <CardContent className="flex min-h-0 flex-1 items-center justify-center text-muted-foreground">
-            Select a conversation
+            {t("chat.selectConversationPrompt")}
           </CardContent>
         ) : selectedConversation.expired ? (
           <CardContent className="flex min-h-0 flex-1 items-center justify-center px-10 text-center">
             <div className="space-y-3">
               <AlertTriangle className="mx-auto h-8 w-8 text-amber-600" />
               <p className="text-sm">
-                This conversation expired because chats are retained for 30 days after the event date.
+                {t("chat.expiredMessage")}
               </p>
             </div>
           </CardContent>
-        ) : !selectedConversation.paymentInfoCollected ? (
-          <CardContent className="flex min-h-0 flex-1 items-center justify-center px-10 text-center">
-            <p className="text-sm text-muted-foreground">
-              Chat will unlock after payment information is collected for this booking request.
-            </p>
-          </CardContent>
         ) : !chatClient || !activeChannel || bootstrapMutation.isPending ? (
           <CardContent className="flex min-h-0 flex-1 items-center justify-center text-muted-foreground">
-            Opening chat...
+            {t("chat.openingChat")}
           </CardContent>
         ) : (
           <CardContent className="flex min-h-0 flex-1 flex-col p-0">
@@ -641,14 +733,13 @@ export function BookingChatWorkspace({ role }: { role: Role }) {
               <div className="flex items-start gap-3">
                 <ShieldAlert className="mt-0.5 h-4 w-4 shrink-0 text-cyan-700" />
                 <p className="leading-relaxed">
-                  {bootstrapMutation.data?.policyWarning ||
-                    "For your safety, do not share personal information in chat."}
+                  {bootstrapMutation.data?.policyWarning || t("chat.policyFallback")}
                 </p>
               </div>
               {role === "customer" && selectedConversation?.bookingId && (
                 <div className="shrink-0">
                   {reportSent === selectedConversation.bookingId ? (
-                    <p className="text-xs text-cyan-700">Reported</p>
+                    <p className="text-xs text-cyan-700">{t("chat.reported")}</p>
                   ) : (
                     <button
                       type="button"
@@ -664,19 +755,103 @@ export function BookingChatWorkspace({ role }: { role: Role }) {
                       className="flex items-center gap-1 rounded px-2 py-1 text-xs text-cyan-700 hover:bg-cyan-100 transition-colors disabled:opacity-50"
                     >
                       <Flag className="h-3 w-3" />
-                      Report
+                      {t("chat.report")}
                     </button>
                   )}
                 </div>
               )}
             </div>
+            {/* Travel fee proposal banner — customer only */}
+            {role === "customer" && proposals.length > 0 ? (() => {
+              const fmt = (cents: number) =>
+                new Intl.NumberFormat("en-US", { style: "currency", currency: "USD" }).format(cents / 100);
+              const pastProposals = proposals.filter((p) => p.status !== "pending");
+              const hasDeclined = proposals.some((p) => p.status === "declined");
+
+              return (
+                <div className="shrink-0 border-b border-amber-200 bg-amber-50 px-4 py-3 space-y-3">
+                  {/* Active pending proposal */}
+                  {pendingProposal ? (
+                    <div>
+                      <p className="text-sm font-semibold text-amber-900">Travel / delivery fee proposed</p>
+                      <p className="mt-0.5 text-sm text-amber-800">
+                        {fmt(pendingProposal.amountCents)}
+                        {pendingProposal.reason ? ` — ${pendingProposal.reason}` : ""}
+                      </p>
+                      <div className="mt-2 flex items-center gap-2">
+                        <button
+                          type="button"
+                          disabled={acceptProposalMutation.isPending || declineProposalMutation.isPending}
+                          onClick={() =>
+                            acceptProposalMutation.mutate({
+                              bookingId: selectedBookingId,
+                              proposalId: pendingProposal.id,
+                            })
+                          }
+                          className="rounded-md bg-amber-700 px-3 py-1.5 text-xs font-medium text-white hover:bg-amber-800 disabled:opacity-50"
+                        >
+                          {acceptProposalMutation.isPending ? "Accepting…" : "Accept & pay"}
+                        </button>
+                        <button
+                          type="button"
+                          disabled={acceptProposalMutation.isPending || declineProposalMutation.isPending}
+                          onClick={() =>
+                            declineProposalMutation.mutate({
+                              bookingId: selectedBookingId,
+                              proposalId: pendingProposal.id,
+                            })
+                          }
+                          className="rounded-md border border-amber-300 bg-white px-3 py-1.5 text-xs font-medium text-amber-800 hover:bg-amber-50 disabled:opacity-50"
+                        >
+                          {declineProposalMutation.isPending ? "Declining…" : "Decline"}
+                        </button>
+                      </div>
+                    </div>
+                  ) : hasDeclined ? (
+                    /* Awaiting vendor response after a decline */
+                    <p className="text-sm font-medium text-amber-800">
+                      Travel fee declined — awaiting vendor response.
+                    </p>
+                  ) : null}
+
+                  {/* Proposal history */}
+                  {pastProposals.length > 0 && (
+                    <div className="space-y-1 border-t border-amber-200 pt-2">
+                      <p className="text-xs font-semibold uppercase tracking-wider text-amber-700">
+                        Proposal history
+                      </p>
+                      {pastProposals.map((p) => (
+                        <div key={p.id} className="flex items-center justify-between gap-2 text-xs text-amber-800">
+                          <span>
+                            {fmt(p.amountCents)}
+                            {p.reason ? ` — ${p.reason}` : ""}
+                          </span>
+                          <span
+                            className={`capitalize font-medium ${
+                              p.status === "accepted"
+                                ? "text-emerald-700"
+                                : p.status === "declined"
+                                ? "text-red-600"
+                                : "text-amber-600"
+                            }`}
+                          >
+                            {p.status}
+                          </span>
+                        </div>
+                      ))}
+                    </div>
+                  )}
+                </div>
+              );
+            })() : null}
+
             <div className="eventhub-stream-chat flex-1 min-h-0">
               <Chat client={chatClient} theme="str-chat__theme-light">
-                <Channel channel={activeChannel} doSendMessageRequest={sendModeratedMessage}>
+                <Channel channel={activeChannel}>
                   <Window>
                     <ChannelHeader />
                     <MessageList renderText={renderSafeText} />
-                    <MessageInput />
+                    <MessageInput overrideSubmitHandler={sendModeratedMessage} />
                   </Window>
                   <Thread />
                 </Channel>

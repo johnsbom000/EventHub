@@ -1,43 +1,28 @@
+import { logger } from "./lib/logger";
+import { bookingRequestedTemplate, type BookingRequestedParams } from "./emails/bookingRequested";
 import { bookingConfirmedTemplate, type BookingConfirmedParams } from "./emails/bookingConfirmed";
 import { bookingCancelledTemplate, type BookingCancelledParams } from "./emails/bookingCancelled";
 import { newMessageTemplate, type NewMessageParams } from "./emails/newMessage";
 import { reviewPromptTemplate, type ReviewPromptParams } from "./emails/reviewPrompt";
+import { circumventionWarningTemplate, type CircumventionWarningParams } from "./emails/circumventionWarning";
+import { accountSuspendedTemplate, type AccountSuspendedParams } from "./emails/accountSuspended";
+import { newReviewReceivedTemplate, type NewReviewReceivedParams } from "./emails/newReviewReceived";
+import { paymentReceiptTemplate, type PaymentReceiptParams } from "./emails/paymentReceipt";
+import { listingTakenDownTemplate, type ListingTakenDownParams } from "./emails/listingTakenDown";
+import { vendorWelcomeTemplate, type VendorWelcomeParams } from "./emails/vendorWelcome";
+import { eventDayReminderTemplate, type EventDayReminderParams } from "./emails/eventDayReminder";
+import { payoutProcessedTemplate, type PayoutProcessedParams } from "./emails/payoutProcessed";
+import { suspensionLiftedTemplate, type SuspensionLiftedParams } from "./emails/suspensionLifted";
+import { pendingRequestReminderTemplate, type PendingRequestReminderParams } from "./emails/pendingRequestReminder";
+import { disputeFiledTemplate, type DisputeFiledParams } from "./emails/disputeFiled";
+import { disputeVendorRespondedTemplate, type DisputeVendorRespondedParams } from "./emails/disputeVendorResponded";
+import { disputeResolvedTemplate, type DisputeResolvedParams } from "./emails/disputeResolved";
 
-type BookingConfirmationEmailParams = {
-  to: string;
-  recipientName: string;
-  counterpartName: string;
-  eventDate: string;
-  totalAmountCents: number;
-  role: "customer" | "vendor";
-};
-
-type EmailResult = {
+export type EmailResult = {
   sent: boolean;
   skipped: boolean;
   reason?: string;
 };
-
-type CircumventionWarningEmailParams = {
-  vendorName: string;
-  warningNumber: number;
-  reason: string;
-  serverUrl: string;
-};
-
-type SuspensionEmailParams = {
-  vendorName: string;
-  endsAt: Date;
-  reason: string;
-  serverUrl: string;
-};
-
-function centsToUsd(amountCents: number): string {
-  return new Intl.NumberFormat("en-US", {
-    style: "currency",
-    currency: "USD",
-  }).format((amountCents || 0) / 100);
-}
 
 function resendConfig(): { apiKey: string; from: string } | null {
   const apiKey = (process.env.RESEND_API_KEY || "").trim();
@@ -54,6 +39,11 @@ async function sendViaResend(params: {
 }): Promise<EmailResult> {
   const cfg = resendConfig();
   if (!cfg) {
+    logger.warn(
+      "[email] Skipping email send — RESEND_API_KEY or RESEND_FROM_EMAIL is not configured. To: %s | Subject: %s",
+      params.to,
+      params.subject
+    );
     return {
       sent: false,
       skipped: true,
@@ -90,36 +80,15 @@ async function sendViaResend(params: {
   return { sent: true, skipped: false };
 }
 
-// ── Existing function (unchanged) ──────────────────────────────────────────
+// ── Booking ────────────────────────────────────────────────────────────────
 
-export async function sendBookingConfirmationEmail(
-  params: BookingConfirmationEmailParams
+export async function sendBookingRequestedEmail(
+  to: string,
+  params: BookingRequestedParams
 ): Promise<EmailResult> {
-  const roleLine =
-    params.role === "customer"
-      ? `Your booking request with ${params.counterpartName} has been created.`
-      : `You have a new booking request from ${params.counterpartName}.`;
-
-  const subject =
-    params.role === "customer"
-      ? "Event Hub: Booking request received"
-      : "Event Hub: New booking request";
-
-  const html = `
-    <div style="font-family: Arial, sans-serif; line-height: 1.5;">
-      <h2>Booking Confirmation</h2>
-      <p>Hi ${params.recipientName},</p>
-      <p>${roleLine}</p>
-      <p><strong>Event date:</strong> ${params.eventDate}</p>
-      <p><strong>Total:</strong> ${centsToUsd(params.totalAmountCents)}</p>
-      <p>You can view this in your Event Hub dashboard.</p>
-    </div>
-  `;
-
-  return sendViaResend({ to: params.to, subject, html });
+  const { subject, html, text } = bookingRequestedTemplate(params);
+  return sendViaResend({ to, subject, html, text });
 }
-
-// ── New send functions ─────────────────────────────────────────────────────
 
 export async function sendBookingConfirmedEmail(
   to: string,
@@ -137,6 +106,8 @@ export async function sendBookingCancelledEmail(
   return sendViaResend({ to, subject, html, text });
 }
 
+// ── Messages ───────────────────────────────────────────────────────────────
+
 export async function sendNewMessageEmail(
   to: string,
   params: NewMessageParams
@@ -144,6 +115,8 @@ export async function sendNewMessageEmail(
   const { subject, html, text } = newMessageTemplate(params);
   return sendViaResend({ to, subject, html, text });
 }
+
+// ── Reviews ────────────────────────────────────────────────────────────────
 
 export async function sendReviewPromptEmail(
   to: string,
@@ -153,76 +126,116 @@ export async function sendReviewPromptEmail(
   return sendViaResend({ to, subject, html, text });
 }
 
-// ── Circumvention / Policy Emails ──────────────────────────────────────────
+export async function sendNewReviewReceivedEmail(
+  to: string,
+  params: NewReviewReceivedParams
+): Promise<EmailResult> {
+  const { subject, html, text } = newReviewReceivedTemplate(params);
+  return sendViaResend({ to, subject, html, text });
+}
+
+// ── Payments ───────────────────────────────────────────────────────────────
+
+export async function sendPaymentReceiptEmail(
+  to: string,
+  params: PaymentReceiptParams
+): Promise<EmailResult> {
+  const { subject, html, text } = paymentReceiptTemplate(params);
+  return sendViaResend({ to, subject, html, text });
+}
+
+export async function sendPayoutProcessedEmail(
+  to: string,
+  params: PayoutProcessedParams
+): Promise<EmailResult> {
+  const { subject, html, text } = payoutProcessedTemplate(params);
+  return sendViaResend({ to, subject, html, text });
+}
+
+// ── Policy / Circumvention ─────────────────────────────────────────────────
 
 export async function sendCircumventionWarningEmail(
   to: string,
-  params: CircumventionWarningEmailParams
+  params: CircumventionWarningParams
 ): Promise<EmailResult> {
-  const subject = `Event Hub: Policy warning (${params.warningNumber} of 3)`;
-  const dashboardUrl = `${(params.serverUrl || "").replace(/\/$/, "")}/vendor/dashboard`;
-
-  const warningsLeft = 3 - params.warningNumber;
-  const warningsLeftText =
-    warningsLeft > 0
-      ? `You have <strong>${warningsLeft} warning${warningsLeft === 1 ? "" : "s"}</strong> remaining before your account is suspended.`
-      : "This is your final warning. A further violation will result in a 30-day suspension.";
-
-  const html = `
-    <div style="font-family: Arial, sans-serif; line-height: 1.5; max-width: 600px;">
-      <h2 style="color: #b45309;">Policy Warning — Warning ${params.warningNumber} of 3</h2>
-      <p>Hi ${params.vendorName},</p>
-      <p>
-        Your account has received a policy warning because content you submitted
-        appeared to share contact information or redirect customers away from
-        Event Hub. Sharing contact details outside of your official business
-        profile is not permitted under our platform policy.
-      </p>
-      <p><strong>Reason:</strong> ${params.reason}</p>
-      <p>${warningsLeftText}</p>
-      <p>
-        If you believe this warning was issued in error, please contact our
-        support team. You can also review our policies in your vendor dashboard.
-      </p>
-      <p><a href="${dashboardUrl}">Open your dashboard</a></p>
-    </div>
-  `;
-
-  return sendViaResend({ to, subject, html });
+  const { subject, html, text } = circumventionWarningTemplate(params);
+  return sendViaResend({ to, subject, html, text });
 }
 
-export async function sendSuspensionEmail(
+export async function sendAccountSuspendedEmail(
   to: string,
-  params: SuspensionEmailParams
+  params: AccountSuspendedParams
 ): Promise<EmailResult> {
-  const subject = "Event Hub: Account suspended";
-  const endsAtFormatted = params.endsAt.toLocaleDateString("en-US", {
-    month: "long",
-    day: "numeric",
-    year: "numeric",
-  });
+  const { subject, html, text } = accountSuspendedTemplate(params);
+  return sendViaResend({ to, subject, html, text });
+}
 
-  const html = `
-    <div style="font-family: Arial, sans-serif; line-height: 1.5; max-width: 600px;">
-      <h2 style="color: #dc2626;">Account Suspended</h2>
-      <p>Hi ${params.vendorName},</p>
-      <p>
-        Your Event Hub vendor account has been suspended for 30 days due to
-        repeated policy violations related to sharing contact information or
-        redirecting customers off-platform.
-      </p>
-      <p><strong>Reason:</strong> ${params.reason}</p>
-      <p><strong>Suspension ends:</strong> ${endsAtFormatted}</p>
-      <p>
-        During your suspension, your listings have been made inactive and you
-        cannot publish new listings. Existing bookings are not affected.
-      </p>
-      <p>
-        If you believe this suspension was applied in error, please contact our
-        support team to appeal.
-      </p>
-    </div>
-  `;
+export async function sendSuspensionLiftedEmail(
+  to: string,
+  params: SuspensionLiftedParams
+): Promise<EmailResult> {
+  const { subject, html, text } = suspensionLiftedTemplate(params);
+  return sendViaResend({ to, subject, html, text });
+}
 
-  return sendViaResend({ to, subject, html });
+// ── Listings ───────────────────────────────────────────────────────────────
+
+export async function sendListingTakenDownEmail(
+  to: string,
+  params: ListingTakenDownParams
+): Promise<EmailResult> {
+  const { subject, html, text } = listingTakenDownTemplate(params);
+  return sendViaResend({ to, subject, html, text });
+}
+
+// ── Vendor onboarding ──────────────────────────────────────────────────────
+
+export async function sendVendorWelcomeEmail(
+  to: string,
+  params: VendorWelcomeParams
+): Promise<EmailResult> {
+  const { subject, html, text } = vendorWelcomeTemplate(params);
+  return sendViaResend({ to, subject, html, text });
+}
+
+// ── Reminders ─────────────────────────────────────────────────────────────
+
+export async function sendEventDayReminderEmail(
+  to: string,
+  params: EventDayReminderParams
+): Promise<EmailResult> {
+  const { subject, html, text } = eventDayReminderTemplate(params);
+  return sendViaResend({ to, subject, html, text });
+}
+
+export async function sendPendingRequestReminderEmail(
+  to: string,
+  params: PendingRequestReminderParams
+): Promise<EmailResult> {
+  const { subject, html, text } = pendingRequestReminderTemplate(params);
+  return sendViaResend({ to, subject, html, text });
+}
+
+export async function sendDisputeFiledEmail(
+  to: string,
+  params: DisputeFiledParams
+): Promise<EmailResult> {
+  const { subject, html, text } = disputeFiledTemplate(params);
+  return sendViaResend({ to, subject, html, text });
+}
+
+export async function sendDisputeVendorRespondedEmail(
+  to: string,
+  params: DisputeVendorRespondedParams
+): Promise<EmailResult> {
+  const { subject, html, text } = disputeVendorRespondedTemplate(params);
+  return sendViaResend({ to, subject, html, text });
+}
+
+export async function sendDisputeResolvedEmail(
+  to: string,
+  params: DisputeResolvedParams
+): Promise<EmailResult> {
+  const { subject, html, text } = disputeResolvedTemplate(params);
+  return sendViaResend({ to, subject, html, text });
 }

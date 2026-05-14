@@ -1,14 +1,36 @@
 import React, { useMemo, useState } from "react";
+import { useLocation } from "wouter";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { useAuth0 } from "@auth0/auth0-react";
+import { useTranslation } from "react-i18next";
 
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card";
 import { Tabs, TabsList, TabsTrigger } from "@/components/ui/tabs";
 import { Button } from "@/components/ui/button";
-import { Calendar, ChevronLeft, ChevronRight } from "lucide-react";
+import { Input } from "@/components/ui/input";
+import { Label } from "@/components/ui/label";
+import {
+  Dialog,
+  DialogContent,
+  DialogTitle,
+  DialogDescription,
+} from "@/components/ui/dialog";
+import { Textarea } from "@/components/ui/textarea";
+import { Calendar, ChevronLeft, ChevronRight, MapPin, MessageSquare } from "lucide-react";
 import VendorShell from "@/components/VendorShell";
 import { apiRequest } from "@/lib/queryClient";
 import { useToast } from "@/hooks/use-toast";
+
+type TravelFeeProposal = {
+  id: string;
+  bookingId: string;
+  amountCents: number;
+  reason: string | null;
+  status: "pending" | "accepted" | "declined" | "cancelled";
+  paymentScheduleId: string | null;
+  proposedAt: string;
+  respondedAt: string | null;
+};
 
 type VendorBooking = {
   id: string;
@@ -19,13 +41,17 @@ type VendorBooking = {
   createdAt?: string | null;
   eventDate?: string | null;
   eventStartTime?: string | null;
+  eventEndTime?: string | null;
   itemTitle?: string | null;
+  parentListingTitle?: string | null;
   customerEventTitle?: string | null;
   customerNotes?: string | null;
   customerQuestions?: string | null;
   googleSyncStatus?: string | null;
   googleEventId?: string | null;
   googleCalendarId?: string | null;
+  outsideServiceRadius?: boolean | null;
+  eventLocation?: string | null;
 };
 
 type TabKey = "all" | "upcoming" | "pending" | "completed" | "cancelled";
@@ -35,14 +61,13 @@ const STATUS_TAB_TRIGGER_ACTIVE_CLASSNAME =
 
 function normalizeAmountToCents(value: unknown) {
   const n = Number(value ?? 0);
-  // Keep MVP behavior stable while repairing mixed legacy rows:
-  // - new booking flow writes cents (usually >= 1,000)
-  // - older rows may be whole dollars (e.g. 370)
-  // - decimals are treated as dollars
+  // The current booking flow always writes amounts in cents.
+  // Decimal values (legacy dollars written as e.g. 370.00) are scaled up.
+  // Any legacy rows that stored whole-dollar integers will need a one-time
+  // data migration to correct the stored values — do not add heuristics here.
   if (!Number.isFinite(n) || n <= 0) return 0;
   if (!Number.isInteger(n)) return Math.round(n * 100);
-  if (n < 1000) return n * 100;
-  return n;
+  return Math.round(n);
 }
 
 function formatUsd(cents: number) {
@@ -50,6 +75,25 @@ function formatUsd(cents: number) {
     style: "currency",
     currency: "USD",
   }).format((cents || 0) / 100);
+}
+
+function formatTimeString(time: string | null | undefined): string | null {
+  if (!time) return null;
+  const [hourStr, minuteStr] = time.split(":");
+  const hour = parseInt(hourStr, 10);
+  const minute = parseInt(minuteStr ?? "0", 10);
+  if (Number.isNaN(hour) || Number.isNaN(minute)) return null;
+  const period = hour >= 12 ? "PM" : "AM";
+  const displayHour = hour % 12 === 0 ? 12 : hour % 12;
+  const displayMinute = minute === 0 ? "" : `:${String(minute).padStart(2, "0")}`;
+  return `${displayHour}${displayMinute} ${period}`;
+}
+
+function isChatWindowOpen(eventDate: string | null | undefined): boolean {
+  if (!eventDate) return true;
+  const endOfDay = new Date(`${eventDate}T23:59:59.999Z`);
+  if (Number.isNaN(endOfDay.getTime())) return true;
+  return Date.now() <= endOfDay.getTime() + 48 * 60 * 60 * 1000;
 }
 
 function deriveBookingAmounts(booking: VendorBooking) {
@@ -88,6 +132,8 @@ type VendorMe = {
 };
 
 export default function VendorBookings() {
+  const { t, i18n } = useTranslation();
+  const [, setLocation] = useLocation();
   const { isAuthenticated, getAccessTokenSilently } = useAuth0();
   const queryClient = useQueryClient();
   const { toast } = useToast();
@@ -118,6 +164,25 @@ export default function VendorBookings() {
   const [expandedBookingId, setExpandedBookingId] = useState<string | null>(null);
   const [isGoogleCalendarConnectLoading, setIsGoogleCalendarConnectLoading] = useState(false);
 
+  // Travel fee proposal state
+  const [proposalBookingId, setProposalBookingId] = useState<string | null>(null);
+  const [proposalAmount, setProposalAmount] = useState("");
+  const [proposalReason, setProposalReason] = useState("");
+  const [proposalError, setProposalError] = useState<string | null>(null);
+
+  // Cancellation reason modal state
+  const [cancelModalBookingId, setCancelModalBookingId] = useState<string | null>(null);
+  const [cancelReasonSelected, setCancelReasonSelected] = useState("");
+  const [cancelReasonOther, setCancelReasonOther] = useState("");
+
+  const VENDOR_CANCEL_REASONS = [
+    "Event is outside my service area",
+    "Scheduling conflict",
+    "Unable to fulfill the requirements",
+    "Emergency / force majeure",
+    "Other",
+  ] as const;
+
   // Handle ?google_calendar=connected|error after OAuth callback redirect
   React.useEffect(() => {
     const params = new URLSearchParams(window.location.search);
@@ -131,13 +196,13 @@ export default function VendorBookings() {
 
     if (googleCalendarParam === "connected") {
       toast({
-        title: "Google Calendar connected",
+        title: t("vendorBookings.calendarConnectedToast"),
         description: "Your Google Calendar has been successfully linked.",
       });
       queryClient.invalidateQueries({ queryKey: ["/api/vendor/me"] });
     } else if (googleCalendarParam === "error") {
       toast({
-        title: "Google Calendar connection failed",
+        title: t("vendorBookings.calendarError"),
         description: "Something went wrong connecting your calendar. Please try again.",
         variant: "destructive",
       });
@@ -146,9 +211,10 @@ export default function VendorBookings() {
   }, []);
 
   const bookingActionMutation = useMutation({
-    mutationFn: async (payload: { id: string; status: "confirmed" | "completed" | "cancelled" }) => {
+    mutationFn: async (payload: { id: string; status: "confirmed" | "completed" | "cancelled"; cancellationReason?: string }) => {
       const res = await apiRequest("PATCH", `/api/vendor/bookings/${payload.id}`, {
         status: payload.status,
+        ...(payload.cancellationReason ? { cancellationReason: payload.cancellationReason } : {}),
       });
       return res.json();
     },
@@ -157,6 +223,34 @@ export default function VendorBookings() {
     },
     onSettled: () => {
       setActionBookingId(null);
+      setCancelModalBookingId(null);
+      setCancelReasonSelected("");
+      setCancelReasonOther("");
+    },
+  });
+
+  const proposalMutation = useMutation({
+    mutationFn: async (payload: { bookingId: string; amountCents: number; reason?: string }) => {
+      const res = await apiRequest("POST", `/api/bookings/${payload.bookingId}/travel-fee-proposals`, {
+        amountCents: payload.amountCents,
+        reason: payload.reason || undefined,
+      });
+      if (!res.ok) {
+        const body = await res.json().catch(() => ({}));
+        throw new Error(body?.error || "Failed to submit proposal");
+      }
+      return res.json();
+    },
+    onSuccess: async () => {
+      toast({ title: "Travel fee proposed", description: "The customer has been notified." });
+      setProposalBookingId(null);
+      setProposalAmount("");
+      setProposalReason("");
+      setProposalError(null);
+      await queryClient.invalidateQueries({ queryKey: ["/api/vendor/bookings"] });
+    },
+    onError: (err: Error) => {
+      setProposalError(err.message);
     },
   });
 
@@ -218,7 +312,6 @@ export default function VendorBookings() {
   }, [parsedBookings, activeTab]);
 
   const summary = useMemo(() => {
-    const fmtTitle = (tab: TabKey) => tab.charAt(0).toUpperCase() + tab.slice(1);
     const sortAsc = [...tabFilteredItems].sort((a, b) => a.date.getTime() - b.date.getTime());
     const sortDesc = [...tabFilteredItems].sort((a, b) => b.date.getTime() - a.date.getTime());
     const totalAmount = tabFilteredItems.reduce((acc, x) => acc + (x.amount || 0), 0);
@@ -227,67 +320,57 @@ export default function VendorBookings() {
 
     if (activeTab === "upcoming") {
       return {
-        title: "Upcoming",
-        subtitle: "Quick snapshot of what's next.",
-        label1: "Next event",
+        label1: t("vendorBookings.summaryUpcomingLabel1"),
         value1: first?.date ?? null,
-        label2: "Upcoming bookings",
+        label2: t("vendorBookings.summaryUpcomingLabel2"),
         value2: tabFilteredItems.length,
-        label3: "Upcoming revenue",
+        label3: t("vendorBookings.summaryUpcomingLabel3"),
         value3: totalAmount,
       };
     }
 
     if (activeTab === "pending") {
       return {
-        title: "Pending",
-        subtitle: "Booking requests awaiting your action.",
-        label1: "Next pending event",
+        label1: t("vendorBookings.summaryPendingLabel1"),
         value1: first?.date ?? null,
-        label2: "Pending requests",
+        label2: t("vendorBookings.summaryPendingLabel2"),
         value2: tabFilteredItems.length,
-        label3: "Pending value",
+        label3: t("vendorBookings.summaryPendingLabel3"),
         value3: totalAmount,
       };
     }
 
     if (activeTab === "completed") {
       return {
-        title: "Completed",
-        subtitle: "Finished jobs and realized revenue.",
-        label1: "Last completed event",
+        label1: t("vendorBookings.summaryCompletedLabel1"),
         value1: last?.date ?? null,
-        label2: "Completed bookings",
+        label2: t("vendorBookings.summaryCompletedLabel2"),
         value2: tabFilteredItems.length,
-        label3: "Total revenue",
+        label3: t("vendorBookings.summaryCompletedLabel3"),
         value3: totalAmount,
       };
     }
 
     if (activeTab === "cancelled") {
       return {
-        title: "Cancelled",
-        subtitle: "Jobs that were cancelled.",
-        label1: "Last cancelled event",
+        label1: t("vendorBookings.summaryCancelledLabel1"),
         value1: last?.date ?? null,
-        label2: "Cancelled bookings",
+        label2: t("vendorBookings.summaryCancelledLabel2"),
         value2: tabFilteredItems.length,
-        label3: "Cancelled value",
+        label3: t("vendorBookings.summaryCancelledLabel3"),
         value3: totalAmount,
       };
     }
 
     return {
-      title: fmtTitle(activeTab),
-      subtitle: "Snapshot across all bookings.",
-      label1: "Most recent event",
+      label1: t("vendorBookings.summaryAllLabel1"),
       value1: last?.date ?? null,
-      label2: "Total bookings",
+      label2: t("vendorBookings.summaryAllLabel2"),
       value2: tabFilteredItems.length,
-      label3: "Total value",
+      label3: t("vendorBookings.summaryAllLabel3"),
       value3: totalAmount,
     };
-  }, [activeTab, tabFilteredItems]);
+  }, [activeTab, tabFilteredItems, t]);
 
   // Month being shown in the calendar (local time)
   const [monthCursor, setMonthCursor] = useState(() => {
@@ -404,7 +487,7 @@ export default function VendorBookings() {
     } catch (error: any) {
       setIsGoogleCalendarConnectLoading(false);
       toast({
-        title: "Unable to connect Google Calendar",
+        title: t("vendorBookings.calendarError"),
         description: error?.message || "Please try again.",
         variant: "destructive",
       });
@@ -416,25 +499,25 @@ export default function VendorBookings() {
       <div className="max-w-7xl mx-auto space-y-5">
         <div>
           <h1 className="text-3xl font-bold mb-2" data-testid="text-page-title">
-            Bookings & Jobs
+            {t("vendorBookings.pageTitle")}
           </h1>
         </div>
 
         <div className="flex items-start">
           <div className="w-full max-w-xl rounded-xl border border-[hsl(var(--secondary-accent)/0.45)] bg-[hsl(var(--secondary-accent)/0.12)] p-5 sm:p-6">
-            <h2 className="font-heading text-[20px] leading-none tracking-tight">Google Calendar</h2>
+            <h2 className="font-heading text-[20px] leading-none tracking-tight">{t("vendorBookings.googleCalendar")}</h2>
             {isGoogleConnected ? (
               <>
                 <div className="mt-3 text-sm">
-                  <span className="font-medium text-foreground">Status: </span>
-                  <span className="text-emerald-600">Connected</span>
+                  <span className="font-medium text-foreground">{t("vendorBookings.statusLabel")} </span>
+                  <span className="text-emerald-600">{t("vendorBookings.statusConnected")}</span>
                 </div>
               </>
             ) : (
               <>
                 <div className="mt-3 text-sm">
-                  <span className="font-medium text-foreground">Status: </span>
-                  <span className="text-muted-foreground">Not connected</span>
+                  <span className="font-medium text-foreground">{t("vendorBookings.statusLabel")} </span>
+                  <span className="text-muted-foreground">{t("vendorBookings.statusNotConnected")}</span>
                 </div>
                 <div className="mt-4">
                   <Button
@@ -442,7 +525,7 @@ export default function VendorBookings() {
                     disabled={isGoogleCalendarConnectLoading}
                     data-testid="button-connect-google-calendar-bookings"
                   >
-                    {isGoogleCalendarConnectLoading ? "Opening Google..." : "Connect Google Calendar"}
+                    {isGoogleCalendarConnectLoading ? t("vendorBookings.googleConnectLoading") : t("vendorBookings.googleConnectButton")}
                   </Button>
                 </div>
               </>
@@ -458,35 +541,35 @@ export default function VendorBookings() {
                 className={STATUS_TAB_TRIGGER_ACTIVE_CLASSNAME}
                 data-testid="tab-all"
               >
-                All
+                {t("vendorBookings.tabAll")}
               </TabsTrigger>
               <TabsTrigger
                 value="upcoming"
                 className={STATUS_TAB_TRIGGER_ACTIVE_CLASSNAME}
                 data-testid="tab-upcoming"
               >
-                Upcoming
+                {t("vendorBookings.tabUpcoming")}
               </TabsTrigger>
               <TabsTrigger
                 value="pending"
                 className={STATUS_TAB_TRIGGER_ACTIVE_CLASSNAME}
                 data-testid="tab-pending"
               >
-                Pending
+                {t("vendorBookings.tabPending")}
               </TabsTrigger>
               <TabsTrigger
                 value="completed"
                 className={STATUS_TAB_TRIGGER_ACTIVE_CLASSNAME}
                 data-testid="tab-completed"
               >
-                Completed
+                {t("vendorBookings.tabCompleted")}
               </TabsTrigger>
               <TabsTrigger
                 value="cancelled"
                 className={STATUS_TAB_TRIGGER_ACTIVE_CLASSNAME}
                 data-testid="tab-cancelled"
               >
-                Cancelled
+                {t("vendorBookings.tabCancelled")}
               </TabsTrigger>
             </TabsList>
           </Tabs>
@@ -501,7 +584,7 @@ export default function VendorBookings() {
                       day: "numeric",
                       year: "numeric",
                     })
-                  : "No matching bookings"}
+                  : t("vendorBookings.noMatchingDate")}
               </div>
             </div>
 
@@ -531,13 +614,13 @@ export default function VendorBookings() {
         </section>
 
         <Card>
-          <CardHeader className="flex flex-row items-center justify-between gap-4">
+          <CardHeader className="flex flex-row items-start justify-between gap-4">
             <div>
-              <CardTitle>{viewMode === "calendar" ? "Calendar" : "List"}</CardTitle>
+              <CardTitle>{viewMode === "calendar" ? t("vendorBookings.cardCalendarTitle") : t("vendorBookings.cardListTitle")}</CardTitle>
               <CardDescription>
                 {viewMode === "calendar"
-                  ? "Month view. Tabs filter which bookings appear."
-                  : "List view. Tabs filter which bookings appear."}
+                  ? t("vendorBookings.cardCalendarDesc")
+                  : t("vendorBookings.cardListDesc")}
               </CardDescription>
             </div>
 
@@ -546,16 +629,28 @@ export default function VendorBookings() {
                 variant={viewMode === "calendar" ? "default" : "outline"}
                 onClick={() => setViewMode("calendar")}
               >
-                Calendar view
+                {t("vendorBookings.viewCalendar")}
               </Button>
               <Button
                 variant={viewMode === "list" ? "default" : "outline"}
                 onClick={() => setViewMode("list")}
               >
-                List view
+                {t("vendorBookings.viewList")}
               </Button>
-              {viewMode === "calendar" ? (
-                <>
+            </div>
+          </CardHeader>
+
+          <CardContent>
+            {isLoading ? (
+              <div className="text-center py-12 text-muted-foreground">{t("vendorBookings.loading")}</div>
+            ) : isError ? (
+              <div className="text-center py-10 text-muted-foreground">
+                <Calendar className="h-10 w-10 mx-auto mb-3 opacity-70" />
+                {error instanceof Error ? error.message : "Unable to load bookings right now."}
+              </div>
+            ) : viewMode === "calendar" ? (
+              <>
+                <div className="mb-4 flex items-center justify-center gap-3">
                   <Button variant="outline" onClick={goPrevMonth} aria-label="Previous month">
                     <ChevronLeft className="h-4 w-4" />
                   </Button>
@@ -565,26 +660,17 @@ export default function VendorBookings() {
                   <Button variant="outline" onClick={goNextMonth} aria-label="Next month">
                     <ChevronRight className="h-4 w-4" />
                   </Button>
-                </>
-              ) : null}
-            </div>
-          </CardHeader>
+                </div>
 
-          <CardContent>
-            {isLoading ? (
-              <div className="text-center py-12 text-muted-foreground">Loading...</div>
-            ) : isError ? (
-              <div className="text-center py-10 text-muted-foreground">
-                <Calendar className="h-10 w-10 mx-auto mb-3 opacity-70" />
-                {error instanceof Error ? error.message : "Unable to load bookings right now."}
-              </div>
-            ) : viewMode === "calendar" ? (
-              <>
-                {/* Day-of-week header */}
+                {/* Day-of-week header — locale-aware via Intl */}
                 <div className="grid grid-cols-7 text-sm font-medium text-muted-foreground mb-2">
-                  {["Sun", "Mon", "Tue", "Wed", "Thu", "Fri", "Sat"].map((d) => (
-                    <div key={d} className="px-2 py-1">
-                      {d}
+                  {Array.from({ length: 7 }, (_, i) => {
+                    // Jan 7 2024 is a Sunday; offset by i to get Mon–Sat
+                    const d = new Date(2024, 0, 7 + i);
+                    return d.toLocaleString(i18n.language, { weekday: "short" });
+                  }).map((dayLabel) => (
+                    <div key={dayLabel} className="px-2 py-1">
+                      {dayLabel}
                     </div>
                   ))}
                 </div>
@@ -615,8 +701,8 @@ export default function VendorBookings() {
                           <div className="mt-2 space-y-1">
                             {items.slice(0, 3).map((it) => (
                               <div key={it.id} className="text-sm truncate">
-                                • {it.status || "booking"}
-                                {` · ${it.googleSyncLabel}`}
+                                • {it.status}
+                                {` · ${it.googleSyncLabel === "synced" ? t("vendorBookings.syncedLabel") : t("vendorBookings.unsyncedLabel")}`}
                                 {it.estimatedPayoutCents != null
                                   ? ` — ${formatUsd(it.estimatedPayoutCents)}`
                                   : ""}
@@ -624,7 +710,7 @@ export default function VendorBookings() {
                             ))}
                             {items.length > 3 ? (
                               <div className="text-sm text-muted-foreground">
-                                +{items.length - 3} more
+                                {t("vendorBookings.calendarMoreItems", { count: items.length - 3 })}
                               </div>
                             ) : null}
                           </div>
@@ -638,21 +724,25 @@ export default function VendorBookings() {
                 {calendarItems.length === 0 ? (
                   <div className="text-center py-10 text-muted-foreground">
                     <Calendar className="h-10 w-10 mx-auto mb-3 opacity-70" />
-                    No bookings match this filter/month yet.
+                    {t("vendorBookings.noBookings")}
                   </div>
                 ) : null}
               </>
             ) : listItems.length === 0 ? (
               <div className="text-center py-10 text-muted-foreground">
                 <Calendar className="h-10 w-10 mx-auto mb-3 opacity-70" />
-                No bookings match this filter yet.
+                {t("vendorBookings.noBookings")}
               </div>
             ) : (
               <div className="space-y-3">
                 {listItems.map((item) => (
                   <div key={item.id} className="rounded-lg border p-4">
                     <div className="flex items-center justify-between gap-3">
-                      <div className="font-medium">{item.raw.itemTitle || `Booking #${item.id.slice(0, 8)}`}</div>
+                      <div className="font-medium">
+                        {item.raw.parentListingTitle && item.raw.itemTitle
+                          ? `${item.raw.parentListingTitle} — ${item.raw.itemTitle}`
+                          : item.raw.itemTitle || `Booking #${item.id.slice(0, 8)}`}
+                      </div>
                       <div className="flex items-center gap-2 text-sm">
                         <span className="capitalize text-muted-foreground">{item.status || "unknown"}</span>
                         <span
@@ -663,77 +753,97 @@ export default function VendorBookings() {
                               : "border-amber-200 bg-amber-50 text-amber-700",
                           ].join(" ")}
                         >
-                          {item.googleSyncLabel === "synced" ? "Synced" : "Unsynced"}
+                          {item.googleSyncLabel === "synced" ? t("vendorBookings.syncedLabel") : t("vendorBookings.unsyncedLabel")}
                         </span>
                       </div>
                     </div>
                     <div className="mt-2 text-sm text-muted-foreground">
-                      {item.date.toLocaleString(undefined, {
+                      {item.date.toLocaleString(i18n.language, {
                         month: "short",
                         day: "numeric",
                         year: "numeric",
                       })}
+                      {(() => {
+                        const start = formatTimeString(item.raw.eventStartTime);
+                        const end = formatTimeString(item.raw.eventEndTime);
+                        if (!start) return null;
+                        return (
+                          <span> · {start}{end ? ` – ${end}` : ""}</span>
+                        );
+                      })()}
                     </div>
                     {item.raw.customerEventTitle ? (
                       <div className="mt-1 text-sm text-foreground font-medium">{item.raw.customerEventTitle}</div>
                     ) : null}
                     <div className="mt-1 text-sm">
-                      <span className="text-muted-foreground">Estimated payout: </span>
+                      <span className="text-muted-foreground">{t("vendorBookings.estimatedPayoutLabel")} </span>
                       <span className="font-medium">{formatUsd(item.estimatedPayoutCents || 0)}</span>
                     </div>
-                    <div className="mt-3">
+                    <div className="mt-3 flex flex-wrap items-center gap-2">
                       <Button
                         size="sm"
                         variant="outline"
                         onClick={() => setExpandedBookingId(expandedBookingId === item.id ? null : item.id)}
                       >
-                        {expandedBookingId === item.id ? "Hide details" : "View details"}
+                        {expandedBookingId === item.id ? t("vendorBookings.hideDetails") : t("vendorBookings.viewDetails")}
                       </Button>
-
-                      {expandedBookingId === item.id ? (
-                        <div className="mt-3 rounded-md border bg-muted/30 p-3 space-y-3">
-                          <div className="space-y-1">
-                            <div className="text-sm uppercase tracking-wide text-muted-foreground">Fee Breakdown</div>
-                            <div className="text-sm flex items-center justify-between gap-3">
-                              <span className="text-muted-foreground">Google Calendar</span>
-                              <span>{item.googleSyncLabel === "synced" ? "Synced" : "Unsynced"}</span>
-                            </div>
-                            <div className="text-sm flex items-center justify-between gap-3">
-                              <span className="text-muted-foreground">Listing price</span>
-                              <span>{formatUsd(item.listingPriceCents)}</span>
-                            </div>
-                            <div className="text-sm flex items-center justify-between gap-3">
-                              <span className="text-muted-foreground">Customer service fee (5%)</span>
-                              <span>{formatUsd(item.customerFeeCents)}</span>
-                            </div>
-                            <div className="text-sm flex items-center justify-between gap-3">
-                              <span className="text-muted-foreground">Customer total</span>
-                              <span>{formatUsd(item.customerTotalCents)}</span>
-                            </div>
-                            <div className="text-sm flex items-center justify-between gap-3">
-                              <span className="text-muted-foreground">EventHub fee (8%)</span>
-                              <span>-{formatUsd(item.vendorFeeCents)}</span>
-                            </div>
-                            <div className="pt-1 text-sm font-medium flex items-center justify-between gap-3">
-                              <span>Estimated payout</span>
-                              <span>{formatUsd(item.estimatedPayoutCents)}</span>
-                            </div>
-                          </div>
-                          {item.raw.customerNotes ? (
-                            <div>
-                              <div className="text-sm uppercase tracking-wide text-muted-foreground">Notes</div>
-                              <div className="text-sm">{item.raw.customerNotes}</div>
-                            </div>
-                          ) : null}
-                          {item.raw.customerQuestions ? (
-                            <div>
-                              <div className="text-sm uppercase tracking-wide text-muted-foreground">Questions</div>
-                              <div className="text-sm">{item.raw.customerQuestions}</div>
-                            </div>
-                          ) : null}
-                        </div>
-                      ) : null}
+                      {isChatWindowOpen(item.raw.eventDate) &&
+                        item.status !== "cancelled" &&
+                        item.status !== "failed" &&
+                        item.status !== "expired" && (
+                          <Button
+                            size="sm"
+                            variant="outline"
+                            onClick={() => setLocation(`/vendor/messages?bookingId=${item.id}`)}
+                          >
+                            <MessageSquare className="mr-1.5 h-3.5 w-3.5" />
+                            Message Customer
+                          </Button>
+                        )}
                     </div>
+                    {expandedBookingId === item.id ? (
+                      <div className="mt-3 rounded-md border bg-muted/30 p-3 space-y-3">
+                        <div className="space-y-1">
+                          <div className="text-sm uppercase tracking-wide text-muted-foreground">{t("vendorBookings.feeBreakdown")}</div>
+                          <div className="text-sm flex items-center justify-between gap-3">
+                            <span className="text-muted-foreground">{t("vendorBookings.googleCalendar")}</span>
+                            <span>{item.googleSyncLabel === "synced" ? t("vendorBookings.syncedLabel") : t("vendorBookings.unsyncedLabel")}</span>
+                          </div>
+                          <div className="text-sm flex items-center justify-between gap-3">
+                            <span className="text-muted-foreground">{t("vendorBookings.listingPrice")}</span>
+                            <span>{formatUsd(item.listingPriceCents)}</span>
+                          </div>
+                          <div className="text-sm flex items-center justify-between gap-3">
+                            <span className="text-muted-foreground">{t("vendorBookings.customerServiceFee")}</span>
+                            <span>{formatUsd(item.customerFeeCents)}</span>
+                          </div>
+                          <div className="text-sm flex items-center justify-between gap-3">
+                            <span className="text-muted-foreground">{t("vendorBookings.customerTotal")}</span>
+                            <span>{formatUsd(item.customerTotalCents)}</span>
+                          </div>
+                          <div className="text-sm flex items-center justify-between gap-3">
+                            <span className="text-muted-foreground">{t("vendorBookings.eventhubFee")}</span>
+                            <span>-{formatUsd(item.vendorFeeCents)}</span>
+                          </div>
+                          <div className="pt-1 text-sm font-medium flex items-center justify-between gap-3">
+                            <span>{t("vendorBookings.estimatedPayout")}</span>
+                            <span>{formatUsd(item.estimatedPayoutCents)}</span>
+                          </div>
+                        </div>
+                        {item.raw.customerNotes ? (
+                          <div>
+                            <div className="text-sm uppercase tracking-wide text-muted-foreground">{t("vendorBookings.notes")}</div>
+                            <div className="text-sm">{item.raw.customerNotes}</div>
+                          </div>
+                        ) : null}
+                        {item.raw.customerQuestions ? (
+                          <div>
+                            <div className="text-sm uppercase tracking-wide text-muted-foreground">{t("vendorBookings.questions")}</div>
+                            <div className="text-sm">{item.raw.customerQuestions}</div>
+                          </div>
+                        ) : null}
+                      </div>
+                    ) : null}
                     {item.status === "pending" ? (
                       <div className="mt-3 flex items-center gap-2">
                         <Button
@@ -745,25 +855,20 @@ export default function VendorBookings() {
                           disabled={bookingActionMutation.isPending}
                         >
                           {bookingActionMutation.isPending && actionBookingId === item.id
-                            ? "Accepting..."
-                            : "Accept"}
+                            ? t("vendorBookings.accepting")
+                            : t("vendorBookings.accept")}
                         </Button>
                         <Button
                           size="sm"
                           variant="outline"
-                          onClick={() => {
-                            setActionBookingId(item.id);
-                            bookingActionMutation.mutate({ id: item.id, status: "cancelled" });
-                          }}
+                          onClick={() => setCancelModalBookingId(item.id)}
                           disabled={bookingActionMutation.isPending}
                         >
-                          {bookingActionMutation.isPending && actionBookingId === item.id
-                            ? "Declining..."
-                            : "Decline"}
+                          {t("vendorBookings.decline")}
                         </Button>
                       </div>
                     ) : null}
-                    {activeTab === "upcoming" && item.status === "confirmed" ? (
+                    {item.status === "confirmed" ? (
                       <div className="mt-3 flex items-center gap-2">
                         <Button
                           size="sm"
@@ -774,21 +879,18 @@ export default function VendorBookings() {
                           disabled={bookingActionMutation.isPending}
                         >
                           {bookingActionMutation.isPending && actionBookingId === item.id
-                            ? "Completing..."
-                            : "Completed"}
+                            ? t("vendorBookings.completing")
+                            : t("vendorBookings.completed")}
                         </Button>
                         <Button
                           size="sm"
                           variant="outline"
-                          onClick={() => {
-                            setActionBookingId(item.id);
-                            bookingActionMutation.mutate({ id: item.id, status: "cancelled" });
-                          }}
+                          onClick={() => setCancelModalBookingId(item.id)}
                           disabled={bookingActionMutation.isPending}
                         >
                           {bookingActionMutation.isPending && actionBookingId === item.id
-                            ? "Declining..."
-                            : "Decline"}
+                            ? t("vendorBookings.declining")
+                            : t("vendorBookings.decline")}
                         </Button>
                       </div>
                     ) : null}
@@ -796,7 +898,99 @@ export default function VendorBookings() {
                       <div className="mt-2 text-sm text-destructive">
                         {bookingActionMutation.error instanceof Error
                           ? bookingActionMutation.error.message
-                          : "Failed to update booking"}
+                          : t("vendorBookings.failedToUpdate")}
+                      </div>
+                    ) : null}
+
+                    {/* Travel / delivery fee proposal */}
+                    {item.raw.outsideServiceRadius &&
+                      (item.status === "pending" || item.status === "confirmed") ? (
+                      <div className="mt-3 rounded-lg border border-amber-200 bg-amber-50 p-3 space-y-2">
+                        <div className="flex items-center gap-2 text-sm font-medium text-amber-800">
+                          <MapPin className="h-4 w-4 shrink-0" />
+                          Event is outside your service radius
+                        </div>
+                        {item.raw.eventLocation ? (
+                          <p className="text-xs text-amber-700">{item.raw.eventLocation}</p>
+                        ) : null}
+                        {proposalBookingId === item.id ? (
+                          <div className="space-y-2 pt-1">
+                            <div className="space-y-1">
+                              <Label className="text-xs">Fee amount (USD)</Label>
+                              <div className="relative max-w-[160px]">
+                                <span className="pointer-events-none absolute left-3 top-1/2 -translate-y-1/2 text-muted-foreground text-sm">$</span>
+                                <Input
+                                  className="pl-7 h-8 text-sm"
+                                  inputMode="decimal"
+                                  placeholder="e.g. 75"
+                                  value={proposalAmount}
+                                  onChange={(e) => setProposalAmount(e.target.value.replace(/[^\d.]/g, ""))}
+                                />
+                              </div>
+                            </div>
+                            <div className="space-y-1">
+                              <Label className="text-xs">Reason (optional)</Label>
+                              <Input
+                                className="h-8 text-sm"
+                                placeholder="e.g. 45 miles outside service area"
+                                value={proposalReason}
+                                onChange={(e) => setProposalReason(e.target.value)}
+                              />
+                            </div>
+                            {proposalError ? (
+                              <p className="text-xs text-destructive">{proposalError}</p>
+                            ) : null}
+                            <div className="flex gap-2">
+                              <Button
+                                size="sm"
+                                className="h-7 text-xs"
+                                disabled={proposalMutation.isPending || !proposalAmount}
+                                onClick={() => {
+                                  const cents = Math.round(parseFloat(proposalAmount) * 100);
+                                  if (!cents || cents <= 0) {
+                                    setProposalError("Enter a valid amount");
+                                    return;
+                                  }
+                                  setProposalError(null);
+                                  proposalMutation.mutate({
+                                    bookingId: item.id,
+                                    amountCents: cents,
+                                    reason: proposalReason || undefined,
+                                  });
+                                }}
+                              >
+                                {proposalMutation.isPending ? "Sending…" : "Send proposal"}
+                              </Button>
+                              <Button
+                                size="sm"
+                                variant="ghost"
+                                className="h-7 text-xs"
+                                onClick={() => {
+                                  setProposalBookingId(null);
+                                  setProposalAmount("");
+                                  setProposalReason("");
+                                  setProposalError(null);
+                                }}
+                              >
+                                Cancel
+                              </Button>
+                            </div>
+                          </div>
+                        ) : (
+                          <Button
+                            size="sm"
+                            variant="outline"
+                            className="h-7 text-xs border-amber-300 hover:bg-amber-100"
+                            onClick={() => {
+                              setProposalAmount("");
+                              setProposalReason("");
+                              setProposalError(null);
+                              setProposalBookingId(item.id);
+                            }}
+                          >
+                            Propose travel/delivery fee
+                          </Button>
+                        )}
                       </div>
                     ) : null}
                   </div>
@@ -806,6 +1000,85 @@ export default function VendorBookings() {
           </CardContent>
         </Card>
       </div>
+
+      {/* Cancellation reason modal */}
+      <Dialog
+        open={Boolean(cancelModalBookingId)}
+        onOpenChange={(open) => {
+          if (!open) {
+            setCancelModalBookingId(null);
+            setCancelReasonSelected("");
+            setCancelReasonOther("");
+          }
+        }}
+      >
+        <DialogContent className="sm:max-w-md">
+          <DialogTitle>Why are you cancelling this booking?</DialogTitle>
+          <DialogDescription>
+            This reason will be shared with the customer and saved for our records.
+          </DialogDescription>
+          <div className="mt-3 space-y-2">
+            {VENDOR_CANCEL_REASONS.map((r) => (
+              <label key={r} className="flex items-center gap-2.5 cursor-pointer text-sm">
+                <input
+                  type="radio"
+                  name="vendor-cancel-reason"
+                  value={r}
+                  checked={cancelReasonSelected === r}
+                  onChange={() => setCancelReasonSelected(r)}
+                  className="accent-[#e07a6a]"
+                />
+                {r}
+              </label>
+            ))}
+            {cancelReasonSelected === "Other" && (
+              <Textarea
+                className="mt-2 text-sm"
+                placeholder="Please describe your reason…"
+                value={cancelReasonOther}
+                onChange={(e) => setCancelReasonOther(e.target.value)}
+                maxLength={500}
+                rows={3}
+              />
+            )}
+          </div>
+          <div className="mt-4 flex justify-end gap-2">
+            <Button
+              variant="outline"
+              size="sm"
+              onClick={() => {
+                setCancelModalBookingId(null);
+                setCancelReasonSelected("");
+                setCancelReasonOther("");
+              }}
+            >
+              Go back
+            </Button>
+            <Button
+              size="sm"
+              variant="destructive"
+              disabled={
+                !cancelReasonSelected ||
+                (cancelReasonSelected === "Other" && !cancelReasonOther.trim()) ||
+                bookingActionMutation.isPending
+              }
+              onClick={() => {
+                if (!cancelModalBookingId || !cancelReasonSelected) return;
+                const reason =
+                  cancelReasonSelected === "Other" ? cancelReasonOther.trim() : cancelReasonSelected;
+                setActionBookingId(cancelModalBookingId);
+                bookingActionMutation.mutate({
+                  id: cancelModalBookingId,
+                  status: "cancelled",
+                  cancellationReason: reason,
+                });
+              }}
+            >
+              {bookingActionMutation.isPending ? "Cancelling…" : "Confirm cancellation"}
+            </Button>
+          </div>
+        </DialogContent>
+      </Dialog>
     </VendorShell>
   );
 }

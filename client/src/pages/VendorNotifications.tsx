@@ -1,7 +1,9 @@
 import { useMemo, useState } from "react";
 import { useAuth0 } from "@auth0/auth0-react";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
-import { Bell } from "lucide-react";
+import { useTranslation } from "react-i18next";
+import { Bell, CalendarClock } from "lucide-react";
+import { Link } from "wouter";
 
 import VendorShell from "@/components/VendorShell";
 import { Button } from "@/components/ui/button";
@@ -12,9 +14,12 @@ import {
   DialogHeader,
   DialogTitle,
 } from "@/components/ui/dialog";
-import { Label } from "@/components/ui/label";
-import { Switch } from "@/components/ui/switch";
+import { Tabs, TabsList, TabsTrigger } from "@/components/ui/tabs";
 import { apiRequest } from "@/lib/queryClient";
+import { useToast } from "@/hooks/use-toast";
+
+const FILTER_TAB_ACTIVE_CLASSNAME =
+  "data-[state=active]:bg-primary data-[state=active]:text-primary-foreground data-[state=active]:shadow-sm data-[state=active]:hover:bg-primary";
 
 type VendorNotification = {
   id: string;
@@ -46,6 +51,42 @@ type VendorBooking = {
   deliveryIncluded?: boolean | null;
   setupIncluded?: boolean | null;
 };
+
+// ---------- filter config ----------
+
+type FilterKey = "all" | "bookings" | "messages" | "payments" | "reviews" | "calendar";
+
+const FILTER_TYPES: Record<FilterKey, string[]> = {
+  all: [],
+  bookings: [
+    "new_booking",
+    "booking_confirmed",
+    "booking_cancelled",
+    "booking_rescheduled",
+    "travel_fee_proposed",
+    "travel_fee_accepted",
+    "travel_fee_declined",
+  ],
+  messages: ["new_message"],
+  payments: ["payment_received", "payout_processed"],
+  reviews: ["review_received"],
+  calendar: [
+    "google_calendar_booking_updated",
+    "google_calendar_booking_deleted",
+    "google_calendar_sync_error",
+  ],
+};
+
+const FILTER_LABELS: Record<FilterKey, string> = {
+  all: "All",
+  bookings: "Bookings",
+  messages: "Messages",
+  payments: "Payments",
+  reviews: "Reviews",
+  calendar: "Calendar",
+};
+
+// ---------- helpers ----------
 
 function normalizeAmountToCents(value: unknown) {
   const n = Number(value ?? 0);
@@ -102,6 +143,14 @@ function isBookingNotificationType(type: string | null | undefined) {
     "booking_confirmed",
     "booking_cancelled",
     "booking_rescheduled",
+  ].includes(String(type || "").trim());
+}
+
+function isGoogleCalendarNotificationType(type: string | null | undefined) {
+  return [
+    "google_calendar_booking_updated",
+    "google_calendar_booking_deleted",
+    "google_calendar_sync_error",
   ].includes(String(type || "").trim());
 }
 
@@ -180,13 +229,22 @@ function formatTimeLabel(dateString: string | null | undefined, timeString?: str
   });
 }
 
+// ---------- component ----------
+
 export default function VendorNotifications() {
+  const { t } = useTranslation();
   const { isAuthenticated } = useAuth0();
   const queryClient = useQueryClient();
+  const { toast } = useToast();
+
   const [activeBookingNotificationId, setActiveBookingNotificationId] = useState<string | null>(null);
+  const [readTab, setReadTab] = useState<"unread" | "read">("unread");
+  const [activeFilter, setActiveFilter] = useState<FilterKey>("all");
+
+  const NOTIFICATIONS_KEY = ["/api/vendor/notifications"];
 
   const { data: notifications = [], isLoading } = useQuery<VendorNotification[]>({
-    queryKey: ["/api/vendor/notifications"],
+    queryKey: NOTIFICATIONS_KEY,
     enabled: isAuthenticated,
   });
 
@@ -200,8 +258,26 @@ export default function VendorNotifications() {
       const res = await apiRequest("PATCH", `/api/vendor/notifications/${id}/read`);
       return res.json();
     },
-    onSuccess: () => {
-      queryClient.invalidateQueries({ queryKey: ["/api/vendor/notifications"] });
+    onMutate: async (id: string) => {
+      await queryClient.cancelQueries({ queryKey: NOTIFICATIONS_KEY });
+      const previous = queryClient.getQueryData<VendorNotification[]>(NOTIFICATIONS_KEY);
+      queryClient.setQueryData<VendorNotification[]>(NOTIFICATIONS_KEY, (old = []) =>
+        old.map((n) => (n.id === id ? { ...n, read: true } : n)),
+      );
+      return { previous };
+    },
+    onError: (_err, _id, context) => {
+      if (context?.previous !== undefined) {
+        queryClient.setQueryData(NOTIFICATIONS_KEY, context.previous);
+      }
+      toast({
+        title: "Couldn't mark as read",
+        description: "Something went wrong. Please try again.",
+        variant: "destructive",
+      });
+    },
+    onSettled: () => {
+      queryClient.invalidateQueries({ queryKey: NOTIFICATIONS_KEY });
     },
   });
 
@@ -209,6 +285,7 @@ export default function VendorNotifications() {
     () =>
       notifications.map((notification) => {
         const isBookingRelated = isBookingNotificationType(notification.type);
+        const isGoogleCalendar = isGoogleCalendarNotificationType(notification.type);
         const booking = isBookingRelated
           ? resolveBookingForNotification(notification, bookings)
           : null;
@@ -221,11 +298,31 @@ export default function VendorNotifications() {
           ...notification,
           title: normalizedTitle,
           isBookingRelated,
+          isGoogleCalendar,
           booking,
         };
       }),
     [bookings, notifications],
   );
+
+  // Split into unread / read, then apply type filter
+  const filterByType = (list: typeof resolvedNotifications) => {
+    if (activeFilter === "all") return list;
+    const allowed = FILTER_TYPES[activeFilter];
+    return list.filter((n) => allowed.includes(String(n.type || "").trim()));
+  };
+
+  const unreadNotifications = filterByType(
+    resolvedNotifications.filter((n) => n.read === false || n.read === null),
+  );
+
+  const readNotifications = filterByType(
+    resolvedNotifications.filter((n) => n.read === true),
+  );
+
+  const visibleNotifications = readTab === "unread" ? unreadNotifications : readNotifications;
+
+  const unreadTotal = resolvedNotifications.filter((n) => n.read === false || n.read === null).length;
 
   const activeBookingNotification = useMemo(
     () =>
@@ -267,26 +364,86 @@ export default function VendorNotifications() {
         <div className="max-w-7xl mx-auto space-y-6">
           <div>
             <h1 className="text-3xl font-bold mb-2" data-testid="text-page-title">
-              Notifications
+              {t("vendorNotifications.pageTitle")}
             </h1>
           </div>
 
-          <section className="px-4 py-2">
-            <h2 className="text-2xl font-semibold text-foreground">Recent Notifications</h2>
-            <div className="mt-5">
+          {/* Unread / Read tab toggle */}
+          <div className="flex items-center gap-1 border-b">
+            <button
+              type="button"
+              onClick={() => setReadTab("unread")}
+              className={`px-4 py-2 text-sm font-medium transition-colors relative ${
+                readTab === "unread"
+                  ? "text-foreground"
+                  : "text-muted-foreground hover:text-foreground"
+              }`}
+            >
+              Unread
+              {unreadTotal > 0 && (
+                <span className="ml-1.5 inline-flex items-center justify-center rounded-full bg-primary px-1.5 py-0.5 text-[10px] font-semibold text-primary-foreground leading-none">
+                  {unreadTotal}
+                </span>
+              )}
+              {readTab === "unread" && (
+                <span className="absolute bottom-0 left-0 right-0 h-0.5 bg-primary rounded-full" />
+              )}
+            </button>
+            <button
+              type="button"
+              onClick={() => setReadTab("read")}
+              className={`px-4 py-2 text-sm font-medium transition-colors relative ${
+                readTab === "read"
+                  ? "text-foreground"
+                  : "text-muted-foreground hover:text-foreground"
+              }`}
+            >
+              Read
+              {readTab === "read" && (
+                <span className="absolute bottom-0 left-0 right-0 h-0.5 bg-primary rounded-full" />
+              )}
+            </button>
+          </div>
+
+          {/* Type filter tabs */}
+          <Tabs value={activeFilter} onValueChange={(v) => setActiveFilter(v as FilterKey)}>
+            <TabsList className="h-auto w-full flex-wrap justify-start gap-2 rounded-none bg-transparent p-0">
+              {(Object.keys(FILTER_LABELS) as FilterKey[]).map((key) => (
+                <TabsTrigger
+                  key={key}
+                  value={key}
+                  className={FILTER_TAB_ACTIVE_CLASSNAME}
+                >
+                  {FILTER_LABELS[key]}
+                </TabsTrigger>
+              ))}
+            </TabsList>
+          </Tabs>
+
+          {/* Notification list */}
+          <section className="px-1">
+            <div>
               {isLoading ? (
-                <div className="text-center py-12 text-muted-foreground">Loading...</div>
-              ) : resolvedNotifications.length === 0 ? (
+                <div className="text-center py-12 text-muted-foreground">{t("vendorNotifications.loading")}</div>
+              ) : visibleNotifications.length === 0 ? (
                 <div className="text-center py-12">
                   <Bell className="h-12 w-12 mx-auto text-muted-foreground mb-4" />
-                  <h3 className="text-lg font-semibold mb-2">No notifications</h3>
+                  <h3 className="text-lg font-semibold mb-2">
+                    {readTab === "unread" ? "All caught up" : "No read notifications"}
+                  </h3>
                   <p className="text-muted-foreground">
-                    You&apos;re all caught up! Notifications will appear here.
+                    {readTab === "unread"
+                      ? activeFilter === "all"
+                        ? "You have no unread notifications."
+                        : `No unread ${FILTER_LABELS[activeFilter].toLowerCase()} notifications.`
+                      : activeFilter === "all"
+                        ? "Notifications you've read will appear here."
+                        : `No read ${FILTER_LABELS[activeFilter].toLowerCase()} notifications.`}
                   </p>
                 </div>
               ) : (
                 <div className="space-y-2">
-                  {resolvedNotifications.map((notification) => {
+                  {visibleNotifications.map((notification) => {
                     const created = notification.createdAt ? new Date(notification.createdAt) : null;
                     const timeLabel = created
                       ? created.toLocaleString(undefined, {
@@ -309,10 +466,13 @@ export default function VendorNotifications() {
                           <div className="min-w-0">
                             <div className="flex items-center gap-2">
                               <div
-                                className={`h-2 w-2 rounded-full ${
+                                className={`h-2 w-2 rounded-full shrink-0 ${
                                   isUnread ? "bg-primary" : "bg-transparent"
                                 }`}
                               />
+                              {notification.isGoogleCalendar ? (
+                                <CalendarClock className="h-4 w-4 shrink-0 text-muted-foreground" />
+                              ) : null}
                               <div className="font-medium truncate">
                                 {notification.title || "Notification"}
                               </div>
@@ -335,7 +495,7 @@ export default function VendorNotifications() {
                           </div>
                         </div>
 
-                        {(isUnread || notification.isBookingRelated) && (
+                        {(isUnread || notification.isBookingRelated || notification.isGoogleCalendar) && (
                           <div className="mt-3 flex flex-wrap items-center gap-2">
                             {isUnread ? (
                               <Button
@@ -345,7 +505,7 @@ export default function VendorNotifications() {
                                 onClick={() => handleMarkRead(notification.id)}
                                 disabled={markRead.isPending}
                               >
-                                Mark as read
+                                {t("vendorNotifications.markAsRead")}
                               </Button>
                             ) : null}
 
@@ -358,15 +518,26 @@ export default function VendorNotifications() {
                                   onClick={() => handleOpenBookingDetails(notification.id)}
                                   data-testid={`button-open-booking-notification-${notification.id}`}
                                 >
-                                  View booking details
+                                  {t("vendorNotifications.viewBookingDetails")}
                                 </Button>
                               ) : (
                                 <span className="text-sm text-muted-foreground">
                                   {bookingsLoading
-                                    ? "Loading booking details..."
-                                    : "Booking details unavailable"}
+                                    ? t("vendorNotifications.loadingBookingDetails")
+                                    : t("vendorNotifications.bookingDetailsUnavailable")}
                                 </span>
                               )
+                            ) : null}
+
+                            {notification.isGoogleCalendar && notification.link ? (
+                              <Button
+                                type="button"
+                                size="sm"
+                                variant="outline"
+                                asChild
+                              >
+                                <Link href={notification.link}>{t("vendorNotifications.goToDashboard")}</Link>
+                              </Button>
                             ) : null}
                           </div>
                         )}
@@ -377,87 +548,23 @@ export default function VendorNotifications() {
               )}
             </div>
           </section>
-
-          <div className="h-px w-full bg-[var(--dashboard-divider-blue)]" aria-hidden />
-
-          <section className="px-4 py-2">
-            <h2 className="text-2xl font-semibold text-foreground">Notification Preferences</h2>
-            <p className="mt-3 text-sm text-muted-foreground">Choose what alerts you want to receive</p>
-            <div className="mt-5 space-y-4">
-              <div className="flex items-center justify-between">
-                <div>
-                  <Label htmlFor="new-bookings">New Bookings</Label>
-                  <p className="text-sm text-muted-foreground">
-                    Get notified when customers book your services
-                  </p>
-                </div>
-                <Switch
-                  id="new-bookings"
-                  defaultChecked
-                  data-testid="switch-new-bookings"
-                />
-              </div>
-
-              <div className="flex items-center justify-between">
-                <div>
-                  <Label htmlFor="reschedules">Reschedule Requests</Label>
-                  <p className="text-sm text-muted-foreground">
-                    When customers request to change event dates
-                  </p>
-                </div>
-                <Switch
-                  id="reschedules"
-                  defaultChecked
-                  data-testid="switch-reschedules"
-                />
-              </div>
-
-              <div className="flex items-center justify-between">
-                <div>
-                  <Label htmlFor="cancellations">Cancellations</Label>
-                  <p className="text-sm text-muted-foreground">
-                    Alert when bookings are cancelled
-                  </p>
-                </div>
-                <Switch
-                  id="cancellations"
-                  defaultChecked
-                  data-testid="switch-cancellations"
-                />
-              </div>
-
-              <div className="flex items-center justify-between">
-                <div>
-                  <Label htmlFor="payments">Payment Updates</Label>
-                  <p className="text-sm text-muted-foreground">
-                    Notifications about payment receipts and payouts
-                  </p>
-                </div>
-                <Switch
-                  id="payments"
-                  defaultChecked
-                  data-testid="switch-payments"
-                />
-              </div>
-            </div>
-          </section>
         </div>
 
         {activeBooking ? (
           <DialogContent className="max-h-[85vh] max-w-3xl overflow-y-auto">
             <DialogHeader>
               <DialogTitle>
-                {activeBookingNotification?.title || "Booking details"}
+                {activeBookingNotification?.title || t("vendorNotifications.bookingDetailsTitle")}
               </DialogTitle>
               <DialogDescription>
-                Read-only booking summary for notification review.
+                {t("vendorNotifications.bookingDetailsDesc")}
               </DialogDescription>
             </DialogHeader>
 
             <div className="grid gap-3 sm:grid-cols-2">
               <div className="rounded-lg border p-3">
                 <div className="text-sm uppercase tracking-wide text-muted-foreground">
-                  Booking number
+                  {t("vendorNotifications.bookingNumber")}
                 </div>
                 <div className="mt-1 font-medium">
                   #{activeBooking.id.slice(0, 8).toUpperCase()}
@@ -465,7 +572,7 @@ export default function VendorNotifications() {
               </div>
               <div className="rounded-lg border p-3">
                 <div className="text-sm uppercase tracking-wide text-muted-foreground">
-                  Status
+                  {t("vendorNotifications.status")}
                 </div>
                 <div className="mt-1 font-medium">
                   {formatStatusLabel(activeBooking.status)}
@@ -473,23 +580,23 @@ export default function VendorNotifications() {
               </div>
               <div className="rounded-lg border p-3">
                 <div className="text-sm uppercase tracking-wide text-muted-foreground">
-                  Listing
+                  {t("vendorNotifications.listingLabel")}
                 </div>
                 <div className="mt-1 font-medium">
-                  {activeBooking.itemTitle || "Listing"}
+                  {activeBooking.itemTitle || t("vendorNotifications.listingLabel")}
                 </div>
               </div>
               <div className="rounded-lg border p-3">
                 <div className="text-sm uppercase tracking-wide text-muted-foreground">
-                  Event
+                  {t("vendorNotifications.event")}
                 </div>
                 <div className="mt-1 font-medium">
-                  {activeBooking.customerEventTitle || "Not set"}
+                  {activeBooking.customerEventTitle || t("vendorNotifications.notSet")}
                 </div>
               </div>
               <div className="rounded-lg border p-3">
                 <div className="text-sm uppercase tracking-wide text-muted-foreground">
-                  Event date
+                  {t("vendorNotifications.eventDate")}
                 </div>
                 <div className="mt-1 font-medium">
                   {formatDateLabel(activeBooking.eventDate, activeBooking.eventStartTime)}
@@ -497,7 +604,7 @@ export default function VendorNotifications() {
               </div>
               <div className="rounded-lg border p-3">
                 <div className="text-sm uppercase tracking-wide text-muted-foreground">
-                  Event time
+                  {t("vendorNotifications.eventTime")}
                 </div>
                 <div className="mt-1 font-medium">
                   {formatTimeLabel(activeBooking.eventDate, activeBooking.eventStartTime)}
@@ -506,7 +613,7 @@ export default function VendorNotifications() {
               {activeBooking.eventLocation ? (
                 <div className="rounded-lg border p-3 sm:col-span-2">
                   <div className="text-sm uppercase tracking-wide text-muted-foreground">
-                    Event location
+                    {t("vendorNotifications.eventLocation")}
                   </div>
                   <div className="mt-1 font-medium">
                     {activeBooking.eventLocation}
@@ -516,7 +623,7 @@ export default function VendorNotifications() {
               {typeof activeBooking.guestCount === "number" && activeBooking.guestCount > 0 ? (
                 <div className="rounded-lg border p-3">
                   <div className="text-sm uppercase tracking-wide text-muted-foreground">
-                    Guest count
+                    {t("vendorNotifications.guestCount")}
                   </div>
                   <div className="mt-1 font-medium">
                     {activeBooking.guestCount}
@@ -528,26 +635,26 @@ export default function VendorNotifications() {
             {activeBookingAmounts ? (
               <div className="rounded-lg border p-4 space-y-2">
                 <div className="text-sm uppercase tracking-wide text-muted-foreground">
-                  Price details
+                  {t("vendorNotifications.priceDetails")}
                 </div>
                 <div className="text-sm flex items-center justify-between gap-3">
-                  <span className="text-muted-foreground">Listing price</span>
+                  <span className="text-muted-foreground">{t("vendorNotifications.listingPrice")}</span>
                   <span>{formatUsd(activeBookingAmounts.listingPriceCents)}</span>
                 </div>
                 <div className="text-sm flex items-center justify-between gap-3">
-                  <span className="text-muted-foreground">Customer service fee</span>
+                  <span className="text-muted-foreground">{t("vendorNotifications.customerServiceFee")}</span>
                   <span>{formatUsd(activeBookingAmounts.customerFeeCents)}</span>
                 </div>
                 <div className="text-sm flex items-center justify-between gap-3">
-                  <span className="text-muted-foreground">Customer total</span>
+                  <span className="text-muted-foreground">{t("vendorNotifications.customerTotal")}</span>
                   <span>{formatUsd(activeBookingAmounts.customerTotalCents)}</span>
                 </div>
                 <div className="text-sm flex items-center justify-between gap-3">
-                  <span className="text-muted-foreground">EventHub fee</span>
+                  <span className="text-muted-foreground">{t("vendorNotifications.eventhubFee")}</span>
                   <span>-{formatUsd(activeBookingAmounts.vendorFeeCents)}</span>
                 </div>
                 <div className="pt-1 text-sm font-medium flex items-center justify-between gap-3">
-                  <span>Estimated payout</span>
+                  <span>{t("vendorNotifications.estimatedPayout")}</span>
                   <span>{formatUsd(activeBookingAmounts.estimatedPayoutCents)}</span>
                 </div>
               </div>
@@ -556,7 +663,7 @@ export default function VendorNotifications() {
             {activeBooking.listingDescription ? (
               <div className="rounded-lg border p-4">
                 <div className="text-sm uppercase tracking-wide text-muted-foreground">
-                  Description
+                  {t("vendorNotifications.description")}
                 </div>
                 <div className="mt-2 text-sm whitespace-pre-wrap">
                   {activeBooking.listingDescription}
@@ -567,7 +674,7 @@ export default function VendorNotifications() {
             {activeIncludedItems.length > 0 ? (
               <div className="rounded-lg border p-4">
                 <div className="text-sm uppercase tracking-wide text-muted-foreground">
-                  What&apos;s included
+                  {t("vendorNotifications.whatsIncluded")}
                 </div>
                 <div className="mt-2 flex flex-wrap gap-2">
                   {activeIncludedItems.map((item) => (
@@ -586,20 +693,20 @@ export default function VendorNotifications() {
               {activeBooking.deliveryIncluded !== null ? (
                 <div className="rounded-lg border p-3">
                   <div className="text-sm uppercase tracking-wide text-muted-foreground">
-                    Delivery
+                    {t("vendorNotifications.delivery")}
                   </div>
                   <div className="mt-1 font-medium">
-                    {activeBooking.deliveryIncluded ? "Included" : "Not included"}
+                    {activeBooking.deliveryIncluded ? t("vendorNotifications.included") : t("vendorNotifications.notIncluded")}
                   </div>
                 </div>
               ) : null}
               {activeBooking.setupIncluded !== null ? (
                 <div className="rounded-lg border p-3">
                   <div className="text-sm uppercase tracking-wide text-muted-foreground">
-                    Setup
+                    {t("vendorNotifications.setup")}
                   </div>
                   <div className="mt-1 font-medium">
-                    {activeBooking.setupIncluded ? "Included" : "Not included"}
+                    {activeBooking.setupIncluded ? t("vendorNotifications.included") : t("vendorNotifications.notIncluded")}
                   </div>
                 </div>
               ) : null}
@@ -608,7 +715,7 @@ export default function VendorNotifications() {
             {activeBooking.customerNotes ? (
               <div className="rounded-lg border p-4">
                 <div className="text-sm uppercase tracking-wide text-muted-foreground">
-                  Customer notes
+                  {t("vendorNotifications.customerNotes")}
                 </div>
                 <div className="mt-2 text-sm whitespace-pre-wrap">
                   {activeBooking.customerNotes}
@@ -619,7 +726,7 @@ export default function VendorNotifications() {
             {activeBooking.customerQuestions ? (
               <div className="rounded-lg border p-4">
                 <div className="text-sm uppercase tracking-wide text-muted-foreground">
-                  Customer questions
+                  {t("vendorNotifications.customerQuestions")}
                 </div>
                 <div className="mt-2 text-sm whitespace-pre-wrap">
                   {activeBooking.customerQuestions}
@@ -633,7 +740,7 @@ export default function VendorNotifications() {
                 variant="outline"
                 onClick={() => setActiveBookingNotificationId(null)}
               >
-                Close
+                {t("vendorNotifications.close")}
               </Button>
             </div>
           </DialogContent>

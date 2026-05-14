@@ -1,11 +1,10 @@
 import React, { useEffect, useMemo, useState } from "react";
-import { Link, useLocation } from "wouter";
+import { Link, useLocation, useSearch } from "wouter";
 import { useQuery } from "@tanstack/react-query";
 import { useAuth0 } from "@auth0/auth0-react";
 import {
   ArrowLeft,
   Calendar,
-  Globe,
   HelpCircle,
   Home,
   Loader2,
@@ -15,16 +14,19 @@ import {
   Settings,
   User,
 } from "lucide-react";
+import { useTranslation } from "react-i18next";
 import { SidebarProvider } from "@/components/ui/sidebar";
 import { Button } from "@/components/ui/button";
 import { CustomerSidebar } from "@/components/customer-sidebar";
 import BrandWordmark from "@/components/BrandWordmark";
-import { ApiRequestError } from "@/lib/queryClient";
+import { ApiRequestError, apiRequest } from "@/lib/queryClient";
 import { deriveVendorDetection, type VendorMeState } from "@/lib/vendorState";
 import CustomerProfile from "./customer/CustomerProfile";
 import CustomerEvents from "./customer/CustomerEvents";
 import CustomerMessages from "./customer/CustomerMessages";
 import CustomerPlanEvent from "./customer/CustomerPlanEvent";
+import CustomerDisputes from "./customer/CustomerDisputes";
+import { SuspensionBanner, WarningCountBanner } from "@/components/CircumventionWarningModal";
 import {
   DropdownMenu,
   DropdownMenuContent,
@@ -33,6 +35,7 @@ import {
   DropdownMenuSeparator,
   DropdownMenuTrigger,
 } from "@/components/ui/dropdown-menu";
+import { LanguageSection } from "@/components/LanguageSection";
 import { Avatar, AvatarFallback, AvatarImage } from "@/components/ui/avatar";
 
 interface Customer {
@@ -44,7 +47,9 @@ interface Customer {
   createdAt: string;
 }
 
-type Section = "profile" | "events" | "messages" | "plan";
+type Section = "profile" | "events" | "messages" | "plan" | "disputes";
+
+const POLICY_WARNING_LAST_SHOWN_COUNT_KEY = "eventhub:policy-warning-last-shown-count";
 
 function CustomerMobileNavLink({
   href,
@@ -90,8 +95,14 @@ function getPersonInitials(value: string) {
 }
 
 export default function CustomerDashboard() {
+  const { t } = useTranslation();
   const [location, setLocation] = useLocation();
-  const { isAuthenticated, isLoading: isAuthLoading, getAccessTokenSilently, logout } = useAuth0();
+  const searchString = useSearch();
+  const newBookingId = useMemo(() => {
+    const params = new URLSearchParams(searchString);
+    return params.get("bookingId") ?? undefined;
+  }, [searchString]);
+  const { isAuthenticated, isLoading: isAuthLoading, getAccessTokenSilently, loginWithRedirect, logout } = useAuth0();
   const [lastKnownVendorAccount] = useState<boolean>(() => {
     if (typeof window === "undefined") return false;
     return window.localStorage.getItem("eventhub:last-known-vendor-account") === "1";
@@ -150,15 +161,19 @@ export default function CustomerDashboard() {
         typeof window !== "undefined"
           ? `${window.location.pathname}${window.location.search}${window.location.hash}`
           : "/dashboard";
-      setLocation(`/vendor/login?returnTo=${encodeURIComponent(returnTo)}`);
+      void loginWithRedirect({
+        appState: { returnTo },
+        authorizationParams: { prompt: "login" },
+      });
     }
-  }, [isAuthLoading, isAuthenticated, setLocation]);
+  }, [isAuthLoading, isAuthenticated, loginWithRedirect]);
 
   // Derive active section from URL (single source of truth)
   const activeSection = useMemo<Section>(() => {
     if (location.startsWith("/dashboard/events")) return "events";
     if (location.startsWith("/dashboard/messages")) return "messages";
     if (location.startsWith("/dashboard/plan")) return "plan";
+    if (location.startsWith("/dashboard/disputes")) return "disputes";
     // Default to profile for /dashboard and /dashboard/profile
     return "profile";
   }, [location]);
@@ -166,6 +181,24 @@ export default function CustomerDashboard() {
     vendorDetection.status === "vendor" ||
     (lastKnownVendorAccount &&
       (vendorDetection.status === "auth_error" || vendorDetection.status === "transient_error"));
+  const { data: circumventionStatus } = useQuery<{
+    warningCount: number;
+    suspension: { id: string; reason: string; endsAt: string; startsAt: string } | null;
+  }>({
+    queryKey: ["/api/vendor/circumvention/status", "customer-dashboard"],
+    enabled: isAuthenticated && !isAuthLoading && hasVendorAccount,
+    retry: false,
+    staleTime: 60_000,
+    queryFn: async () => {
+      const res = await apiRequest("GET", "/api/vendor/circumvention/status");
+      if (!res.ok) return { warningCount: 0, suspension: null, warnings: [], removedListings: [] };
+      return res.json();
+    },
+  });
+  const hasActivePolicyWarning = Boolean(
+    circumventionStatus && !circumventionStatus.suspension && circumventionStatus.warningCount > 0
+  );
+  const [showWarningBanner, setShowWarningBanner] = useState(false);
   const shouldShowCustomerPhoto =
     !isVendorAccountLoading &&
     !isVendorAccountFetching &&
@@ -173,6 +206,45 @@ export default function CustomerDashboard() {
     vendorDetection.status === "non_vendor";
   const realName = customer?.displayName?.trim() || customer?.name || "Customer";
   const initials = getPersonInitials(realName);
+
+  useEffect(() => {
+    if (!circumventionStatus || circumventionStatus.suspension) {
+      setShowWarningBanner(false);
+      return;
+    }
+
+    const warningCount = Number(circumventionStatus.warningCount || 0);
+    if (warningCount <= 0) {
+      setShowWarningBanner(false);
+      return;
+    }
+
+    const rawLastShownCount = window.localStorage.getItem(POLICY_WARNING_LAST_SHOWN_COUNT_KEY);
+    const lastShownCount = Number(rawLastShownCount);
+
+    // First hydration with existing warnings should not auto-show.
+    if (!Number.isFinite(lastShownCount)) {
+      window.localStorage.setItem(POLICY_WARNING_LAST_SHOWN_COUNT_KEY, String(warningCount));
+      setShowWarningBanner(false);
+      return;
+    }
+
+    if (warningCount > lastShownCount) {
+      window.localStorage.setItem(POLICY_WARNING_LAST_SHOWN_COUNT_KEY, String(warningCount));
+      setShowWarningBanner(true);
+      return;
+    }
+
+    setShowWarningBanner(false);
+  }, [circumventionStatus]);
+
+  useEffect(() => {
+    if (!hasActivePolicyWarning || !showWarningBanner) return;
+    const timeoutId = window.setTimeout(() => {
+      setShowWarningBanner(false);
+    }, 15000);
+    return () => window.clearTimeout(timeoutId);
+  }, [hasActivePolicyWarning, showWarningBanner]);
 
   if (isLoading || isAuthLoading) {
     return (
@@ -224,7 +296,7 @@ export default function CustomerDashboard() {
               data-testid="button-back-marketplace"
             >
               <ArrowLeft />
-              Back to Marketplace
+              {t("customerDashboard.backToMarketplace")}
             </Button>
             <DropdownMenu>
               <DropdownMenuTrigger asChild>
@@ -256,21 +328,21 @@ export default function CustomerDashboard() {
                 className="w-64"
                 data-testid="dropdown-customer-dashboard-menu"
               >
-                <DropdownMenuLabel>{hasVendorAccount ? "Vendor Account" : "My Account"}</DropdownMenuLabel>
+                <DropdownMenuLabel>{hasVendorAccount ? t("customerDashboard.vendorAccount") : t("customerDashboard.myAccount")}</DropdownMenuLabel>
                 <DropdownMenuSeparator />
                 <DropdownMenuItem
                   onClick={() => setLocation(hasVendorAccount ? "/vendor/dashboard" : "/dashboard/profile")}
                   data-testid="menu-item-customer-dashboard-profile"
                 >
                   <User className="mr-2 h-4 w-4" />
-                  <span>Profile</span>
+                  <span>{t("customerDashboard.profile")}</span>
                 </DropdownMenuItem>
                 <DropdownMenuItem
                   onClick={() => setLocation("/dashboard/events")}
                   data-testid="menu-item-customer-dashboard-events"
                 >
                   <Calendar className="mr-2 h-4 w-4" />
-                  <span>My Events</span>
+                  <span>{t("customerDashboard.myEvents")}</span>
                 </DropdownMenuItem>
                 {hasVendorAccount ? (
                   <DropdownMenuItem
@@ -278,7 +350,7 @@ export default function CustomerDashboard() {
                     data-testid="menu-item-customer-dashboard-vendor-dashboard"
                   >
                     <Home className="mr-2 h-4 w-4" />
-                    <span>Vendor Dashboard</span>
+                    <span>{t("customerDashboard.vendorDashboard")}</span>
                   </DropdownMenuItem>
                 ) : null}
                 <DropdownMenuSeparator />
@@ -287,47 +359,64 @@ export default function CustomerDashboard() {
                   data-testid="menu-item-customer-dashboard-account-settings"
                 >
                   <Settings className="mr-2 h-4 w-4" />
-                  <span>Account settings</span>
+                  <span>{t("customerDashboard.accountSettings")}</span>
                 </DropdownMenuItem>
-                <DropdownMenuItem data-testid="menu-item-customer-dashboard-languages">
-                  <Globe className="mr-2 h-4 w-4" />
-                  <span>Languages & currency</span>
-                </DropdownMenuItem>
+                <LanguageSection />
                 <DropdownMenuSeparator />
                 <DropdownMenuItem data-testid="menu-item-customer-dashboard-help">
                   <HelpCircle className="mr-2 h-4 w-4" />
-                  <span>Help Center</span>
+                  <span>{t("customerDashboard.helpCenter")}</span>
                 </DropdownMenuItem>
                 <DropdownMenuItem
                   onClick={() => logout({ logoutParams: { returnTo: window.location.origin } })}
                   data-testid="menu-item-customer-dashboard-sign-out"
                 >
                   <LogOut className="mr-2 h-4 w-4" />
-                  <span>Sign out</span>
+                  <span>{t("customerDashboard.signOut")}</span>
                 </DropdownMenuItem>
               </DropdownMenuContent>
             </DropdownMenu>
           </div>
         </header>
 
+        {circumventionStatus?.suspension ? (
+          <SuspensionBanner
+            endsAt={circumventionStatus.suspension.endsAt}
+            reason={circumventionStatus.suspension.reason}
+          />
+        ) : hasActivePolicyWarning && showWarningBanner ? (
+          <WarningCountBanner warningCount={circumventionStatus?.warningCount ?? 0} />
+        ) : null}
+
         <div className="flex min-h-0 flex-1">
-          <CustomerSidebar className="hidden lg:flex shrink-0" />
+          <CustomerSidebar
+            className="hidden lg:flex shrink-0"
+            showWarningBadge={hasActivePolicyWarning && !showWarningBanner}
+            onWarningBadgeClick={
+              hasActivePolicyWarning
+                ? () => {
+                    setShowWarningBanner(true);
+                  }
+                : undefined
+            }
+          />
           <main className="flex-1 overflow-auto p-4 pb-20 lg:p-6 lg:pb-6">
             <div className="max-w-7xl mx-auto">
               {activeSection === "profile" && <CustomerProfile customer={customer} />}
-              {activeSection === "events" && <CustomerEvents customer={customer} />}
-              {activeSection === "messages" && <CustomerMessages customer={customer} />}
+              {activeSection === "events" && <CustomerEvents customer={customer} newBookingId={newBookingId} />}
+              {activeSection === "messages" && <CustomerMessages customer={customer} initialBookingId={newBookingId} />}
               {activeSection === "plan" && <CustomerPlanEvent />}
+              {activeSection === "disputes" && <CustomerDisputes />}
             </div>
           </main>
         </div>
 
         {/* Mobile bottom navigation */}
         <nav className="lg:hidden fixed bottom-0 left-0 right-0 z-50 flex items-center justify-around border-t border-[rgba(74,106,125,0.22)] bg-[#ffffff] px-2 py-2">
-          <CustomerMobileNavLink href="/dashboard/events" icon={Calendar} label="Events" currentPath={location} />
-          <CustomerMobileNavLink href="/dashboard/messages" icon={MessageSquare} label="Messages" currentPath={location} />
-          <CustomerMobileNavLink href="/dashboard/plan" icon={PlusCircle} label="Plan Event" currentPath={location} />
-          <CustomerMobileNavLink href="/dashboard/profile" icon={User} label="Profile" currentPath={location} />
+          <CustomerMobileNavLink href="/dashboard/events" icon={Calendar} label={t("customerDashboard.mobile.events")} currentPath={location} />
+          <CustomerMobileNavLink href="/dashboard/messages" icon={MessageSquare} label={t("customerDashboard.mobile.messages")} currentPath={location} />
+          <CustomerMobileNavLink href="/dashboard/plan" icon={PlusCircle} label={t("customerDashboard.mobile.planEvent")} currentPath={location} />
+          <CustomerMobileNavLink href="/dashboard/profile" icon={User} label={t("customerDashboard.mobile.profile")} currentPath={location} />
         </nav>
       </div>
     </SidebarProvider>

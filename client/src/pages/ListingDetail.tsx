@@ -3,7 +3,9 @@ import { useLocation, useRoute } from "wouter";
 import { useQuery, useMutation } from "@tanstack/react-query";
 import { apiRequest } from "@/lib/queryClient";
 import HeartBoardPopover from "@/components/HeartBoardPopover";
-import { ChevronLeft, Heart, MapPin, Star, CheckCircle, XCircle, Truck, Wrench } from "lucide-react";
+import ListingCard from "@/components/ListingCard";
+import MasonryListingGrid from "@/components/MasonryListingGrid";
+import { ChevronLeft, Heart, MapPin, Shield, Star, CheckCircle, XCircle, Truck, Wrench } from "lucide-react";
 import { useAuth0 } from "@auth0/auth0-react";
 import { format } from "date-fns";
 import {
@@ -13,6 +15,8 @@ import {
  moveCoverToFront,
 } from "@/lib/listingPhotos";
 import { resolveAssetUrl } from "@/lib/runtimeUrls";
+import { useTranslation } from "react-i18next";
+import { useLanguage } from "@/context/LanguageContext";
 
 type RouteParams = { id: string };
 const LISTING_DETAIL_GALLERY_HEIGHT_CLASS = "h-[60vh] min-h-[320px] max-h-[520px]";
@@ -171,6 +175,8 @@ function getPhotoRenderMetaByUrl(photoUrls: string[], cropsByName: Record<string
 }
 
 export default function ListingDetailPage() {
+ const { t } = useTranslation();
+ const { language } = useLanguage();
  const [, setLocation] = useLocation();
  const [, params] = useRoute<RouteParams>("/listing/:id");
  const listingId = params?.id;
@@ -178,6 +184,10 @@ export default function ListingDetailPage() {
  const [galleryOpen, setGalleryOpen] = useState(false);
  const [heartOpen, setHeartOpen] = useState(false);
  const [reportSent, setReportSent] = useState(false);
+ const [selectedPackageId, setSelectedPackageId] = useState<string | null>(null);
+ const [selectedAddonIds, setSelectedAddonIds] = useState<string[]>([]);
+ const toggleAddon = (id: string) =>
+   setSelectedAddonIds((prev) => prev.includes(id) ? prev.filter((x) => x !== id) : [...prev, id]);
  const { isAuthenticated } = useAuth0();
 
  const reportMutation = useMutation({
@@ -196,11 +206,20 @@ export default function ListingDetailPage() {
  });
  const isSaved = Boolean(listingId && savedIdsData?.listingIds.includes(listingId));
 
+ const { data: activeSalePageData } = useQuery<{ sale: { percentOff: number; endsAt: string } | null }>({
+ queryKey: [`/api/listings/${listingId}/active-sale`],
+ enabled: !!listingId,
+ staleTime: 60_000,
+ });
+ const activeSalePage = activeSalePageData?.sale ?? null;
+
  const { data, isLoading, error } = useQuery<any>({
- queryKey: ["/api/listings/public", listingId],
+ // Include language in the query key so the query re-runs when the user switches language.
+ queryKey: ["/api/listings/public", listingId, language],
  enabled: !!listingId,
  queryFn: async () => {
- const res = await fetch(`/api/listings/public/${listingId}`, {
+ const langParam = language !== "en" ? `?lang=${language}` : "";
+ const res = await fetch(`/api/listings/public/${listingId}${langParam}`, {
  headers: { Accept: "application/json" },
  });
 
@@ -274,12 +293,13 @@ export default function ListingDetailPage() {
  const description = raw?.description ?? ld?.listingDescription ?? "";
  const vendorName = raw?.vendorName ?? raw?.vendor?.businessName ?? "Vendor";
 
- const city =
- raw?.city ??
- raw?.listingServiceCenterLabel ??
- ld?.serviceLocation?.city ??
- (typeof ld?.serviceLocation?.label === "string" ? ld.serviceLocation.label : "") ??
- "";
+ const city = (() => {
+   if (raw?.listingServiceCenterLabel) return raw.listingServiceCenterLabel.split(",")[0].trim();
+   if (ld?.serviceLocation?.city) return ld.serviceLocation.city;
+   if (typeof ld?.serviceLocation?.label === "string") return ld.serviceLocation.label.split(",")[0].trim();
+   if (raw?.city) return raw.city;
+   return "";
+ })();
 
  const rating = Number(raw?.rating ?? 0);
  const reviewCount = Number(raw?.reviewCount ?? 0);
@@ -418,6 +438,40 @@ export default function ListingDetailPage() {
  },
  shopActive,
  vacationBlocks,
+ cancellationPolicy: (ld?.cancellationPolicy ?? raw?.cancellationPolicy ?? "cancel_anytime") as string,
+ cancellationPolicyHours: Number(ld?.cancellationPolicyHours ?? raw?.cancellationPolicyHours ?? 48),
+ securityDepositEnabled: parseBooleanLike(raw?.securityDepositEnabled ?? ld?.securityDepositEnabled) === true,
+ securityDepositCents: toFiniteNumber(raw?.securityDepositCents ?? ld?.securityDepositCents),
+ listingType: (raw?.listingType ?? "single") as string,
+ packages: Array.isArray(raw?.packages)
+ ? (raw.packages as Array<{
+     id: string;
+     title: string | null;
+     description: string | null;
+     priceCents: number | null;
+     pricingUnit: string | null;
+     whatsIncluded: string[];
+     whatsNotIncluded: string[];
+     sortOrder: number;
+     deliveryOffered: boolean;
+     deliveryFeeEnabled: boolean;
+     deliveryFeeAmountCents: number | null;
+     setupOffered: boolean;
+     setupFeeEnabled: boolean;
+     setupFeeAmountCents: number | null;
+     takedownOffered: boolean;
+     takedownFeeEnabled: boolean;
+     takedownFeeAmountCents: number | null;
+     travelOffered: boolean;
+     travelFeeEnabled: boolean;
+     travelFeeType: string | null;
+     travelFeeAmountCents: number | null;
+     cancellationPolicyOverride: { policy: string; hours?: number } | null;
+   }>)
+ : [],
+ attachedAddons: Array.isArray(raw?.attachedAddons)
+ ? (raw.attachedAddons as Array<{ id: string; title: string | null; priceCents: number | null; pricingUnit: string | null; quantity: number }>)
+ : [],
  };
  },
  });
@@ -431,10 +485,10 @@ export default function ListingDetailPage() {
  };
  }, [galleryOpen]);
 
- if (!listingId) return <div className="no-global-scale p-6">Missing listing id</div>;
+ if (!listingId) return <div className="no-global-scale p-6">{t("listing.missingListingId")}</div>;
  if (isLoading) return <div className="no-global-scale p-6">Loading…</div>;
- if (error) return <div className="no-global-scale p-6">Error loading listing</div>;
- if (!data) return <div className="no-global-scale p-6">Listing not found</div>;
+ if (error) return <div className="no-global-scale p-6">{t("listing.errorLoading")}</div>;
+ if (!data) return <div className="no-global-scale p-6">{t("listing.notFound")}</div>;
 
  const photos = Array.isArray(data.photos) ? data.photos : [];
  const hasPhotos = photos.length > 0;
@@ -462,11 +516,17 @@ export default function ListingDetailPage() {
  {/* Back + heart */}
  <div className="mb-6 flex items-center justify-between">
  <button
- onClick={() => setLocation("/browse")}
+ onClick={() => {
+   if (window.history.length > 1) {
+     window.history.back();
+   } else {
+     setLocation("/browse");
+   }
+ }}
  className="flex items-center text-muted-foreground hover:text-foreground"
  >
  <ChevronLeft className="w-5 h-5 mr-1" />
- Back
+ {t("listing.back")}
  </button>
 
  {isAuthenticated && listingId ? (
@@ -474,7 +534,7 @@ export default function ListingDetailPage() {
  <button
  type="button"
  onMouseDown={() => setHeartOpen((v) => !v)}
- aria-label={isSaved ? "Saved to event" : "Save to event"}
+ aria-label={isSaved ? t("listing.savedToEvent") : t("listing.saveToEvent")}
  >
  <Heart
  className={`h-5 w-5 transition-colors ${
@@ -504,7 +564,7 @@ export default function ListingDetailPage() {
  className="relative block h-full w-full overflow-hidden bg-transparent"
  style={usesSavedCoverAspectRatio ? { aspectRatio: coverAspectRatio } : undefined}
  onClick={() => setGalleryOpen(true)}
- title="Show all photos"
+ title={t("listing.showAllPhotos")}
  >
  <img
  src={photos[0]}
@@ -523,7 +583,7 @@ export default function ListingDetailPage() {
  className="relative block h-full w-full overflow-hidden bg-transparent"
  style={usesSavedCoverAspectRatio ? { aspectRatio: coverAspectRatio } : undefined}
  onClick={() => setGalleryOpen(true)}
- title="Show all photos"
+ title={t("listing.showAllPhotos")}
  >
  <img
  src={photos[0]}
@@ -540,7 +600,7 @@ export default function ListingDetailPage() {
  <button
  className="relative block h-full w-full overflow-hidden bg-transparent"
  onClick={() => setGalleryOpen(true)}
- title="Show all photos"
+ title={t("listing.showAllPhotos")}
  >
  <img
  src={photos[0]}
@@ -556,7 +616,7 @@ export default function ListingDetailPage() {
  key={`${src}-${i}`}
  className="relative block h-full w-full overflow-hidden bg-transparent"
  onClick={() => setGalleryOpen(true)}
- title="Show all photos"
+ title={t("listing.showAllPhotos")}
  >
  <img
  src={src}
@@ -576,7 +636,7 @@ export default function ListingDetailPage() {
  <button
  className="relative col-span-2 row-span-2 block h-full w-full overflow-hidden bg-transparent"
  onClick={() => setGalleryOpen(true)}
- title="Show all photos"
+ title={t("listing.showAllPhotos")}
  >
  <img
  src={photos[0]}
@@ -591,7 +651,7 @@ export default function ListingDetailPage() {
  key={`${src}-${i}`}
  className="relative block h-full w-full overflow-hidden bg-transparent"
  onClick={() => setGalleryOpen(true)}
- title="Show all photos"
+ title={t("listing.showAllPhotos")}
  >
  <img
  src={src}
@@ -611,13 +671,13 @@ export default function ListingDetailPage() {
  onClick={() => setGalleryOpen(true)}
  className="bg-white/95 hover:bg-white text-foreground border border-border rounded-lg px-3 py-2 text-sm font-medium shadow-sm"
  >
- Show all photos
+ {t("listing.showAllPhotos")}
  </button>
  </div>
  </div>
  ) : (
  <div className="rounded-2xl bg-muted h-[320px] md:h-[420px] flex items-center justify-center text-muted-foreground">
- No photos yet
+ {t("listing.noPhotosYet")}
  </div>
  )}
  </div>
@@ -654,16 +714,25 @@ export default function ListingDetailPage() {
 
  {/* Description */}
  <section className="space-y-3">
- <h2 className="text-xl font-semibold">Description</h2>
- {isNonEmptyString(data.description) ? (
- <p className="text-muted-foreground leading-relaxed">{data.description}</p>
+ <h2 className="text-xl font-semibold">{t("listing.description")}</h2>
+ {data.listingType === "package_container" ? (
+   (() => {
+     const selectedPkg = data.packages.find((p: { id: string }) => p.id === selectedPackageId);
+     return selectedPkg
+       ? isNonEmptyString(selectedPkg.description)
+         ? <p className="text-muted-foreground leading-relaxed">{selectedPkg.description}</p>
+         : <p className="text-muted-foreground italic">No description for this package.</p>
+       : <p className="text-muted-foreground italic">Select a package below to see its description.</p>;
+   })()
+ ) : isNonEmptyString(data.description) ? (
+   <p className="text-muted-foreground leading-relaxed">{data.description}</p>
  ) : (
- <p className="text-muted-foreground">Not configured yet</p>
+   <p className="text-muted-foreground">{t("listing.descriptionNotConfigured")}</p>
  )}
- {isAuthenticated && (
+ {isAuthenticated && data.listingType !== "package_container" && (
    <div className="pt-1">
      {reportSent ? (
-       <p className="text-xs text-muted-foreground">Report submitted. Thank you — our team will review this listing.</p>
+       <p className="text-xs text-muted-foreground">{t("listing.reportSubmitted")}</p>
      ) : (
        <button
          type="button"
@@ -679,7 +748,7 @@ export default function ListingDetailPage() {
          disabled={reportMutation.isPending}
          className="text-xs text-muted-foreground underline-offset-2 hover:underline disabled:opacity-50"
        >
-         Report this listing for contact information
+         {t("listing.reportListing")}
        </button>
      )}
    </div>
@@ -688,88 +757,224 @@ export default function ListingDetailPage() {
 
  <div className="border-t border-border" />
 
- {/* What’s Included */}
- <section className="space-y-3">
- <h2 className="text-xl font-semibold">What’s Included</h2>
- {Array.isArray(data.included) && data.included.length > 0 ? (
- <ul className="grid grid-cols-1 sm:grid-cols-2 gap-2">
- {data.included.slice(0, 10).map((item: string, i: number) => (
- <li key={i} className="flex items-start gap-2 text-sm text-muted-foreground">
- <CheckCircle className="w-4 h-4 mt-0.5" />
- <span>{item}</span>
- </li>
- ))}
- </ul>
- ) : (
- <p className="text-muted-foreground">Not configured yet</p>
+ {/* Package Cards — full-width, shown for package_container listings */}
+ {data.listingType === "package_container" && data.packages.length > 0 && (
+   <>
+     <section className="space-y-6">
+       <h2 className="text-xl font-semibold">Choose a Package</h2>
+       <div className={[
+         "grid gap-5",
+         data.packages.length === 1 ? "grid-cols-1 max-w-sm" : "grid-cols-1 sm:grid-cols-2",
+       ].join(" ")}>
+         {[...data.packages]
+           .sort((a, b) => (a.sortOrder ?? 0) - (b.sortOrder ?? 0))
+           .map((pkg) => {
+             const pkgPrice = pkg.priceCents != null ? pkg.priceCents / 100 : null;
+             const isSelected = selectedPackageId === pkg.id;
+             return (
+               <button
+                 key={pkg.id}
+                 type="button"
+                 onClick={() => setSelectedPackageId(isSelected ? null : pkg.id)}
+                 className={[
+                   "relative rounded-2xl border-2 p-6 flex flex-col gap-5 transition text-left w-full",
+                   isSelected
+                     ? "border-secondary bg-secondary/10 shadow-md"
+                     : "border-border bg-white hover:border-secondary/60",
+                 ].join(" ")}
+               >
+                 <div className="space-y-3 text-center">
+                   <h3 className="text-lg font-bold tracking-tight">{pkg.title ?? "Package"}</h3>
+                   {pkgPrice != null ? (
+                     <div className="text-4xl font-bold text-foreground">{money(pkgPrice)}</div>
+                   ) : (
+                     <div className="text-2xl font-semibold text-muted-foreground">—</div>
+                   )}
+                 </div>
+
+                 <div className="border-t border-border" />
+
+                 {pkg.whatsIncluded?.length > 0 && (
+                   <ul className="space-y-2 flex-1">
+                     {pkg.whatsIncluded.map((item: string) => (
+                       <li key={item} className="flex items-start gap-2 text-sm text-foreground/80">
+                         <CheckCircle className={["mt-0.5 h-4 w-4 shrink-0", isSelected ? "text-secondary-foreground" : "text-secondary"].join(" ")} />
+                         {item}
+                       </li>
+                     ))}
+                   </ul>
+                 )}
+
+                 {pkg.whatsNotIncluded?.length > 0 && (
+                   <ul className="space-y-2">
+                     {pkg.whatsNotIncluded.map((item: string) => (
+                       <li key={item} className="flex items-start gap-2 text-sm text-muted-foreground">
+                         <XCircle className="mt-0.5 h-4 w-4 shrink-0 text-muted-foreground/60" />
+                         {item}
+                       </li>
+                     ))}
+                   </ul>
+                 )}
+               </button>
+             );
+         })}
+       </div>
+     </section>
+     <div className="border-t border-border" />
+   </>
  )}
- </section>
 
- {Array.isArray(data.notIncluded) && data.notIncluded.length > 0 ? (
- <>
- <div className="border-t border-border" />
- <section className="space-y-3">
- <h2 className="text-xl font-semibold">What’s Not Included</h2>
- <ul className="grid grid-cols-1 sm:grid-cols-2 gap-2">
- {data.notIncluded.slice(0, 10).map((item: string, i: number) => (
- <li key={i} className="flex items-start gap-2 text-sm text-muted-foreground">
- <XCircle className="w-4 h-4 mt-0.5 text-muted-foreground" />
- <span>{item}</span>
- </li>
- ))}
- </ul>
- </section>
- </>
- ) : null}
+ {/* What’s Included / Not Included — single + addon only */}
+ {data.listingType !== "package_container" && (
+   <>
+     <section className="space-y-3">
+     <h2 className="text-xl font-semibold">{t("listing.whatsIncluded")}</h2>
+     {Array.isArray(data.included) && data.included.length > 0 ? (
+     <ul className="grid grid-cols-1 sm:grid-cols-2 gap-2">
+     {data.included.slice(0, 10).map((item: string, i: number) => (
+     <li key={i} className="flex items-start gap-2 text-sm text-muted-foreground">
+     <CheckCircle className="w-4 h-4 mt-0.5" />
+     <span>{item}</span>
+     </li>
+     ))}
+     </ul>
+     ) : (
+     <p className="text-muted-foreground">{t("listing.whatsIncludedNotConfigured")}</p>
+     )}
+     </section>
 
- <div className="border-t border-border" />
+     {Array.isArray(data.notIncluded) && data.notIncluded.length > 0 ? (
+     <>
+     <div className="border-t border-border" />
+     <section className="space-y-3">
+     <h2 className="text-xl font-semibold">{t("listing.whatsNotIncluded")}</h2>
+     <ul className="grid grid-cols-1 sm:grid-cols-2 gap-2">
+     {data.notIncluded.slice(0, 10).map((item: string, i: number) => (
+     <li key={i} className="flex items-start gap-2 text-sm text-muted-foreground">
+     <XCircle className="w-4 h-4 mt-0.5 text-muted-foreground" />
+     <span>{item}</span>
+     </li>
+     ))}
+     </ul>
+     </section>
+     </>
+     ) : null}
+   </>
+ )}
 
- {/* Logistics */}
- <section className="space-y-3">
- <h2 className="text-xl font-semibold">Logistics</h2>
-
- <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
- <div className="rounded-xl border border-border p-4">
- <div className="flex items-center gap-2 font-medium">
- <Truck className="w-4 h-4" />
- Delivery
- </div>
- <p className="mt-2 text-sm text-muted-foreground">
- {data.logistics?.deliveryLabel ?? "Not configured yet"}
- </p>
- </div>
-
- <div className="rounded-xl border border-border p-4">
- <div className="flex items-center gap-2 font-medium">
- <Wrench className="w-4 h-4" />
- Setup
- </div>
- <p className="mt-2 text-sm text-muted-foreground">
- {data.logistics?.setupLabel ?? "Not configured yet"}
- </p>
- </div>
-
- <div className="rounded-xl border border-border p-4">
- <div className="flex items-center gap-2 font-medium">
- <Wrench className="w-4 h-4" />
- Takedown
- </div>
- <p className="mt-2 text-sm text-muted-foreground">
- {data.logistics?.takedownLabel ?? "Not configured yet"}
- </p>
- </div>
- </div>
-
- {data.logistics?.radiusMiles ? (
- <p className="text-sm text-muted-foreground">Service area: within {data.logistics.radiusMiles} miles</p>
- ) : null}
- </section>
+ {/* Logistics — container-level for single/addon; package-level (reactive) for package_container */}
+ {data.listingType === "package_container" ? (() => {
+   const pkg = data.packages.find((p: { id: string }) => p.id === selectedPackageId);
+   if (!pkg) return null;
+   const items: Array<{ icon: typeof Truck; title: string; desc: string }> = [];
+   if (pkg.deliveryFeeEnabled) {
+     items.push({ icon: Truck, title: t("listing.deliveryLabel"), desc: `Delivery fee: ${money(pkg.deliveryFeeAmountCents != null ? pkg.deliveryFeeAmountCents / 100 : null) ?? "Applies"}` });
+   } else if (pkg.deliveryOffered === true) {
+     items.push({ icon: Truck, title: t("listing.deliveryLabel"), desc: "Delivery included" });
+   } else if (pkg.deliveryOffered === false) {
+     items.push({ icon: Truck, title: t("listing.deliveryLabel"), desc: "Delivery not included" });
+   }
+   if (pkg.setupFeeEnabled) {
+     items.push({ icon: Wrench, title: t("listing.setupLabel"), desc: `Setup fee: ${money(pkg.setupFeeAmountCents != null ? pkg.setupFeeAmountCents / 100 : null) ?? "Applies"}` });
+   } else if (pkg.setupOffered === true) {
+     items.push({ icon: Wrench, title: t("listing.setupLabel"), desc: "Setup included" });
+   } else if (pkg.setupOffered === false) {
+     items.push({ icon: Wrench, title: t("listing.setupLabel"), desc: "Setup not included" });
+   }
+   if (pkg.takedownFeeEnabled) {
+     items.push({ icon: Wrench, title: t("listing.takedownLabel"), desc: `Takedown fee: ${money(pkg.takedownFeeAmountCents != null ? pkg.takedownFeeAmountCents / 100 : null) ?? "Applies"}` });
+   } else if (pkg.takedownOffered === true) {
+     items.push({ icon: Wrench, title: t("listing.takedownLabel"), desc: "Takedown included" });
+   } else if (pkg.takedownOffered === false) {
+     items.push({ icon: Wrench, title: t("listing.takedownLabel"), desc: "Takedown not included" });
+   }
+   if (data.category === "Service") {
+     if (pkg.travelFeeEnabled) {
+       const feeType = pkg.travelFeeType === "per_mile" ? "per mile" : pkg.travelFeeType === "per_hour" ? "per hour" : "flat rate";
+       items.push({ icon: Truck, title: "Travel", desc: `Travel fee: ${money(pkg.travelFeeAmountCents != null ? pkg.travelFeeAmountCents / 100 : null) ?? "Applies"} (${feeType})` });
+     } else if (pkg.travelOffered === true) {
+       items.push({ icon: Truck, title: "Travel", desc: "Travel included" });
+     } else if (pkg.travelOffered === false) {
+       items.push({ icon: Truck, title: "Travel", desc: "Travel not offered" });
+     }
+   }
+   if (data.securityDepositEnabled && (data.securityDepositCents ?? 0) > 0) {
+     items.push({ icon: Shield, title: "Security Deposit", desc: `${money((data.securityDepositCents ?? 0) / 100)} — Refundable after your event.` });
+   }
+   if (items.length === 0) return null;
+   return (
+     <>
+       <div className="border-t border-border" />
+       <section className="space-y-3">
+         <h2 className="text-xl font-semibold">{t("listing.logistics")}</h2>
+         <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
+           {items.map((item, i) => (
+             <div key={i} className="rounded-xl border border-border p-4">
+               <div className="flex items-center gap-2 font-medium">
+                 <item.icon className="w-4 h-4" />
+                 {item.title}
+               </div>
+               <p className="mt-2 text-sm text-muted-foreground">{item.desc}</p>
+             </div>
+           ))}
+         </div>
+       </section>
+     </>
+   );
+ })() : (() => {
+   const deliveryLabel = data.logistics?.deliveryLabel;
+   const setupLabel = data.logistics?.setupLabel;
+   const takedownLabel = data.logistics?.takedownLabel;
+   const showDelivery = deliveryLabel && deliveryLabel !== "Not configured yet";
+   const showSetup = setupLabel && setupLabel !== "Not configured yet";
+   const showTakedown = takedownLabel && takedownLabel !== "Not configured yet";
+   const showRadius = Boolean(data.logistics?.radiusMiles);
+   const showSecurityDeposit = Boolean(data.securityDepositEnabled) && (data.securityDepositCents ?? 0) > 0;
+   if (!showDelivery && !showSetup && !showTakedown && !showRadius && !showSecurityDeposit) return null;
+   return (
+     <>
+       <div className="border-t border-border" />
+       <section className="space-y-3">
+         <h2 className="text-xl font-semibold">{t("listing.logistics")}</h2>
+         <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
+           {showDelivery ? (
+             <div className="rounded-xl border border-border p-4">
+               <div className="flex items-center gap-2 font-medium"><Truck className="w-4 h-4" />{t("listing.deliveryLabel")}</div>
+               <p className="mt-2 text-sm text-muted-foreground">{deliveryLabel}</p>
+             </div>
+           ) : null}
+           {showSetup ? (
+             <div className="rounded-xl border border-border p-4">
+               <div className="flex items-center gap-2 font-medium"><Wrench className="w-4 h-4" />{t("listing.setupLabel")}</div>
+               <p className="mt-2 text-sm text-muted-foreground">{setupLabel}</p>
+             </div>
+           ) : null}
+           {showTakedown ? (
+             <div className="rounded-xl border border-border p-4">
+               <div className="flex items-center gap-2 font-medium"><Wrench className="w-4 h-4" />{t("listing.takedownLabel")}</div>
+               <p className="mt-2 text-sm text-muted-foreground">{takedownLabel}</p>
+             </div>
+           ) : null}
+           {showSecurityDeposit ? (
+             <div className="rounded-xl border border-border p-4">
+               <div className="flex items-center gap-2 font-medium"><Shield className="w-4 h-4" />Security Deposit</div>
+               <p className="mt-2 text-sm text-muted-foreground">{money((data.securityDepositCents ?? 0) / 100)} — Refundable after your event.</p>
+             </div>
+           ) : null}
+         </div>
+         {showRadius ? (
+           <p className="text-sm text-muted-foreground">{t("listing.serviceArea", { miles: data.logistics.radiusMiles })}</p>
+         ) : null}
+       </section>
+     </>
+   );
+ })()}
 
  <div className="border-t border-border" />
 
  {/* Reviews */}
  <section className="space-y-3">
- <h2 className="text-xl font-semibold">Reviews</h2>
+ <h2 className="text-xl font-semibold">{t("listing.reviews")}</h2>
  {Array.isArray(data.reviews) && data.reviews.length > 0 ? (
  <div className="space-y-4">
  {data.reviews.map((review: any) => (
@@ -799,26 +1004,7 @@ export default function ListingDetailPage() {
  ))}
  </div>
  ) : (
- <p className="text-muted-foreground">No reviews yet</p>
- )}
- </section>
-
- <div className="border-t border-border" />
-
- {/* Tags */}
- <section className="space-y-3">
- <h2 className="text-xl font-semibold">Tags</h2>
- {Array.isArray(data.tags) && data.tags.length > 0 ? (
- <ul className="grid grid-cols-1 sm:grid-cols-2 gap-2">
- {data.tags.slice(0, 15).map((tag: string, i: number) => (
- <li key={i} className="flex items-start gap-2 text-sm text-muted-foreground">
- <CheckCircle className="w-4 h-4 mt-0.5" />
- <span>{tag}</span>
- </li>
- ))}
- </ul>
- ) : (
- <p className="text-muted-foreground">No tags yet</p>
+ <p className="text-muted-foreground">{t("listing.noReviewsYet")}</p>
  )}
  </section>
 
@@ -826,54 +1012,153 @@ export default function ListingDetailPage() {
 
  {/* Vendor */}
  <section className="space-y-3">
- <h2 className="text-xl font-semibold">Vendor</h2>
- <p className="text-muted-foreground">Hosted by {data.vendorName}</p>
+ <h2 className="text-xl font-semibold">{t("listing.vendor")}</h2>
+ <p className="text-muted-foreground">{t("listing.vendorHostedBy", { vendorName: data.vendorName })}</p>
  {data.vendorId ? (
  <button
  type="button"
  onClick={() => setLocation(`/shop/${data.vendorId}`)}
  className="inline-flex items-center rounded-full border border-[rgba(74,106,125,0.24)] bg-white/90 px-4 py-2 text-sm font-medium text-[#2a3a42] transition-colors hover:bg-white "
  >
- Visit {data.vendorName}
+ {t("listing.vendorVisit", { vendorName: data.vendorName })}
  </button>
  ) : null}
  </section>
  </div>
 
  {/* Right sticky reservation card */}
- <aside id="reservation-card" className="lg:sticky lg:top-8">
+ <aside id="reservation-card" className="lg:sticky lg:top-8 space-y-4">
  {data.shopActive === false ? (
  <div className="rounded-2xl border border-border bg-muted/40 p-6 text-center space-y-2">
- <div className="text-lg font-semibold text-muted-foreground">Currently unavailable</div>
+ <div className="text-lg font-semibold text-muted-foreground">{t("listing.currentlyUnavailable")}</div>
  <p className="text-sm text-muted-foreground">
- This vendor's shop is temporarily closed. Check back later or explore other vendors.
+ {t("listing.shopClosedMessage")}
  </p>
  </div>
  ) : (
  <ReservationCard
  listingId={data.id}
  vendorId={data.vendorId}
- price={data.price}
+ price={
+ selectedPackageId
+ ? ((data.packages.find((p: { id: string; priceCents: number | null }) => p.id === selectedPackageId)?.priceCents ?? null) != null
+ ? (data.packages.find((p: { id: string; priceCents: number | null }) => p.id === selectedPackageId)!.priceCents! / 100)
+ : data.price)
+ : data.price
+ }
  pricingUnit={data.pricingUnit}
  instantBookEnabled={Boolean(data.instantBookEnabled)}
  availableQuantity={Number(data.availableQuantity) || 1}
  vacationBlocks={data.vacationBlocks ?? []}
- onStartCheckout={({ listingId, eventDate, quantity }) => {
- setLocation(
- `/checkout/${listingId}?date=${encodeURIComponent(eventDate)}&quantity=${encodeURIComponent(String(quantity))}`,
- );
+ cancellationPolicy={(() => {
+   if (selectedPackageId) {
+     const pkg = data.packages.find((p: { id: string }) => p.id === selectedPackageId);
+     if (pkg?.cancellationPolicyOverride?.policy) return pkg.cancellationPolicyOverride.policy;
+   }
+   return data.cancellationPolicy ?? "cancel_anytime";
+ })()}
+ cancellationPolicyHours={(() => {
+   if (selectedPackageId) {
+     const pkg = data.packages.find((p: { id: string }) => p.id === selectedPackageId);
+     if (pkg?.cancellationPolicyOverride?.policy === "cancel_within_hours") return pkg.cancellationPolicyOverride.hours ?? 48;
+   }
+   return data.cancellationPolicyHours ?? 48;
+ })()}
+ onStartCheckout={({ listingId, eventDate, quantity, startTime, endTime }) => {
+ const params = new URLSearchParams({
+ date: eventDate,
+ quantity: String(quantity),
+ });
+ if (startTime) params.set("startTime", startTime);
+ if (endTime) params.set("endTime", endTime);
+ if (selectedPackageId) params.set("packageId", selectedPackageId);
+ setLocation(`/checkout/${listingId}?${params.toString()}`);
  }}
  />
  )}
+
+ {/* Reactive price summary — shown when a package is selected */}
+ {selectedPackageId && (() => {
+ const selectedPkg = data.packages.find((p: { id: string; priceCents: number | null }) => p.id === selectedPackageId);
+ const pkgPrice = selectedPkg?.priceCents != null ? selectedPkg.priceCents / 100 : (data.price ?? null);
+ return (
+ <div className="rounded-2xl border border-border bg-muted/30 p-5 space-y-3">
+ <h3 className="text-sm font-semibold text-foreground">Price breakdown</h3>
+ <div className="space-y-1.5 text-sm">
+ {selectedPkg && (
+ <div className="flex justify-between gap-2">
+ <span className="text-muted-foreground">{selectedPkg.title ?? "Package"}</span>
+ <span className="font-medium">{money(pkgPrice)}</span>
+ </div>
+ )}
+ {!selectedPkg && data.price != null && (
+ <div className="flex justify-between gap-2">
+ <span className="text-muted-foreground">Base price</span>
+ <span className="font-medium">{money(data.price)}</span>
+ </div>
+ )}
+ </div>
+ <div className="border-t border-border pt-2.5 flex justify-between gap-2">
+ <span className="text-sm font-semibold">Total</span>
+ <span className="text-sm font-bold text-primary">{money(pkgPrice)}</span>
+ </div>
+ </div>
+ );
+ })()}
  </aside>
  </div>
+
+ {/* Add-ons */}
+ {data.attachedAddons.length > 0 && (
+   <div className="mt-10 space-y-4">
+     <h2 className="text-xl font-semibold">Add-ons</h2>
+     <MasonryListingGrid
+       listings={data.attachedAddons}
+       maxColumns={5}
+       desktopColumns={5}
+       preserveInputOrder
+       minCardWidthPx={240}
+       cardMaxWidthPx={290}
+       renderCard={(listing) => {
+         const addonId = String((listing as any).id ?? "");
+         const isSelected = selectedAddonIds.includes(addonId);
+         return (
+           <ListingCard
+             listing={listing}
+             titleSizeClassName="text-[1.518rem] md:text-[2rem]"
+             priceSizeClassName="text-[1.5rem] leading-none md:text-[2.25rem] md:leading-none"
+             titleFont="heading"
+             primaryActionLabel={isSelected ? "✓ Added" : "+ Add"}
+             onPrimaryAction={() => toggleAddon(addonId)}
+             primaryActionActive={isSelected}
+           />
+         );
+       }}
+     />
+   </div>
+ )}
 
  {/* Mobile sticky Book Now bar */}
  {data.price && data.shopActive !== false && (
  <div className="fixed bottom-0 left-0 right-0 z-40 flex items-center justify-between border-t border-border bg-background px-4 py-3 lg:hidden">
  <div>
- <span className="text-lg font-bold text-foreground">{money(data.price)}</span>
- <span className="text-sm text-muted-foreground"> {formatPricingUnit(data.pricingUnit)}</span>
+ {activeSalePage ? (
+ <>
+   <div className="flex items-center gap-1.5">
+   <span className="rounded-full bg-[#e07a6a] px-1.5 py-0.5 text-[10px] font-bold text-white">{activeSalePage.percentOff}% OFF</span>
+   <span className="text-xs text-muted-foreground line-through">{money(data.price)}</span>
+   </div>
+   <span className="text-lg font-bold text-[#e07a6a]">
+   {money(Math.round(data.price * (1 - activeSalePage.percentOff / 100)))}
+   </span>
+   <span className="text-sm text-muted-foreground"> {formatPricingUnit(data.pricingUnit)}</span>
+ </>
+ ) : (
+ <>
+   <span className="text-lg font-bold text-foreground">{money(data.price)}</span>
+   <span className="text-sm text-muted-foreground"> {formatPricingUnit(data.pricingUnit)}</span>
+ </>
+ )}
  </div>
  <button
  onClick={() => document.getElementById("reservation-card")?.scrollIntoView({ behavior: "smooth" })}
@@ -927,7 +1212,7 @@ export default function ListingDetailPage() {
  })}
  </div>
  ) : (
- <div className="text-muted-foreground">No photos yet</div>
+ <div className="text-muted-foreground">{t("listing.noPhotosYet")}</div>
  )}
  </div>
  </div>
@@ -945,6 +1230,8 @@ function ReservationCard({
  instantBookEnabled,
  availableQuantity,
  vacationBlocks,
+ cancellationPolicy,
+ cancellationPolicyHours,
  onStartCheckout,
 }: {
  listingId: string;
@@ -954,12 +1241,46 @@ function ReservationCard({
  instantBookEnabled: boolean;
  availableQuantity: number;
  vacationBlocks: Array<{ id: string; startDate: string; endDate: string }>;
- onStartCheckout: (params: { listingId: string; vendorId: string; eventDate: string; quantity: number }) => void;
+ cancellationPolicy: string;
+ cancellationPolicyHours: number;
+ onStartCheckout: (params: { listingId: string; vendorId: string; eventDate: string; quantity: number; startTime?: string; endTime?: string }) => void;
 }) {
- const [date, setDate] = useState("");
+ const { t } = useTranslation();
+ const draftKey = `eventhub.listing.draft.v1:${listingId}`;
+
+ function readDraft() {
+   try {
+     const raw = sessionStorage.getItem(draftKey);
+     if (!raw) return null;
+     return JSON.parse(raw) as { date?: string; startTime?: string; endTime?: string };
+   } catch { return null; }
+ }
+
+ const [date, setDate] = useState(() => readDraft()?.date ?? "");
  const [quantity, setQuantity] = useState(1);
+ const [startTime, setStartTime] = useState(() => readDraft()?.startTime ?? "");
+ const [endTime, setEndTime] = useState(() => readDraft()?.endTime ?? "");
  const [isRouting, setIsRouting] = useState(false);
  const [bookingError, setBookingError] = useState<string | null>(null);
+
+ useEffect(() => {
+   try {
+     sessionStorage.setItem(draftKey, JSON.stringify({ date, startTime, endTime }));
+   } catch {}
+ }, [draftKey, date, startTime, endTime]);
+
+ const isHourly = pricingUnit === "per_hour";
+ const hoursSelected = isHourly && startTime && endTime
+   ? (() => {
+       const [sh, sm] = startTime.split(":").map(Number);
+       const [eh, em] = endTime.split(":").map(Number);
+       const diff = (eh * 60 + em) - (sh * 60 + sm);
+       return diff > 0 ? diff / 60 : null;
+     })()
+   : null;
+ const timeRangeError = isHourly && startTime && endTime && hoursSelected === null
+   ? "End time must be after start time."
+   : null;
 
  const vacationConflict = date
  ? vacationBlocks.find((b) => date >= b.startDate && date <= b.endDate) ?? null
@@ -967,19 +1288,34 @@ function ReservationCard({
 
  const { isAuthenticated, loginWithRedirect } = useAuth0();
 
- const priceText = money(price);
+ // Active sale for this listing
+ const { data: activeSaleData } = useQuery<{ sale: { percentOff: number; endsAt: string } | null }>({
+ queryKey: [`/api/listings/${listingId}/active-sale`],
+ staleTime: 60_000,
+ });
+ const activeSale = activeSaleData?.sale ?? null;
+ const salePrice =
+ activeSale && typeof price === "number"
+   ? Math.round(price * (1 - activeSale.percentOff / 100))
+   : null;
+
+ const priceText = salePrice !== null ? money(salePrice) : money(price);
  const unitText = formatPricingUnit(pricingUnit);
  const normalizedAvailableQuantity =
  Number.isFinite(availableQuantity) && availableQuantity > 0 ? Math.floor(availableQuantity) : 1;
+ const effectivePricePerUnit = salePrice !== null ? salePrice : (typeof price === "number" ? price : null);
  const quantityTotalText =
- typeof price === "number" && Number.isFinite(price) ? money(price * quantity) : null;
+ effectivePricePerUnit !== null
+   ? isHourly
+     ? hoursSelected != null ? money(effectivePricePerUnit * hoursSelected) : null
+     : money(effectivePricePerUnit * quantity)
+   : null;
 
  const canBook =
  Boolean(date) &&
  Boolean(priceText) &&
  Boolean(vendorId) &&
- quantity >= 1 &&
- quantity <= normalizedAvailableQuantity &&
+ (isHourly ? hoursSelected != null && hoursSelected > 0 : quantity >= 1 && quantity <= normalizedAvailableQuantity) &&
  !isRouting &&
  !vacationConflict;
 
@@ -1021,6 +1357,7 @@ function ReservationCard({
  vendorId,
  eventDate: date,
  quantity,
+ ...(isHourly && startTime && endTime ? { startTime, endTime } : {}),
  });
  } catch (e: any) {
  setBookingError(e?.message || "Failed to continue to checkout");
@@ -1032,15 +1369,35 @@ function ReservationCard({
  return (
  <div className="rounded-2xl border border-border bg-background shadow-sm p-5">
  <div className="flex items-end justify-between">
- <div className="text-2xl font-semibold">
- {priceText ?? "Not configured"}
- {priceText ? <span className="text-sm font-normal text-muted-foreground"> {unitText}</span> : null}
+ <div>
+ {activeSale && salePrice !== null && typeof price === "number" ? (
+   <div className="flex flex-col gap-0.5">
+   <div className="flex items-center gap-2">
+   <span className="rounded-full bg-[#e07a6a] px-2 py-0.5 text-xs font-bold text-white">
+   {activeSale.percentOff}% OFF
+   </span>
+   <span className="text-sm text-muted-foreground line-through">{money(price)}</span>
+   </div>
+   <div className="text-2xl font-semibold text-[#e07a6a]">
+   {priceText}
+   <span className="text-sm font-normal text-muted-foreground"> {unitText}</span>
+   </div>
+   <p className="text-xs text-muted-foreground">
+   Sale ends {new Date(activeSale.endsAt).toLocaleDateString("en-US", { month: "short", day: "numeric" })}
+   </p>
+   </div>
+ ) : (
+   <div className="text-2xl font-semibold">
+   {priceText ?? t("listing.reservationCard.notConfigured")}
+   {priceText ? <span className="text-sm font-normal text-muted-foreground"> {unitText}</span> : null}
+   </div>
+ )}
  </div>
  </div>
 
  <div className="mt-4 space-y-3">
  <div className="space-y-1">
- <div className="text-sm font-medium">Event Date</div>
+ <div className="text-sm font-medium">{t("listing.reservationCard.eventDate")}</div>
  <input
  type="date"
  value={date}
@@ -1058,9 +1415,41 @@ function ReservationCard({
  )}
  </div>
 
- {normalizedAvailableQuantity > 1 ? (
+ {isHourly && (
  <div className="space-y-1">
- <div className="text-sm font-medium">Quantity</div>
+ <div className="text-sm font-medium">Time range</div>
+ <div className="grid grid-cols-2 gap-2">
+ <div className="space-y-1">
+ <div className="text-xs text-muted-foreground">Start</div>
+ <input
+ type="time"
+ value={startTime}
+ onChange={(e) => setStartTime(e.target.value)}
+ className="w-full rounded-md border border-border bg-background px-3 py-2 text-sm"
+ />
+ </div>
+ <div className="space-y-1">
+ <div className="text-xs text-muted-foreground">End</div>
+ <input
+ type="time"
+ value={endTime}
+ onChange={(e) => setEndTime(e.target.value)}
+ className="w-full rounded-md border border-border bg-background px-3 py-2 text-sm"
+ />
+ </div>
+ </div>
+ {timeRangeError && (
+ <p className="text-sm text-destructive">{timeRangeError}</p>
+ )}
+ {hoursSelected != null && (
+ <p className="text-sm text-muted-foreground">{hoursSelected % 1 === 0 ? hoursSelected : hoursSelected.toFixed(1)} hr{hoursSelected !== 1 ? "s" : ""} selected</p>
+ )}
+ </div>
+ )}
+
+ {!isHourly && normalizedAvailableQuantity > 1 ? (
+ <div className="space-y-1">
+ <div className="text-sm font-medium">{t("listing.reservationCard.quantity")}</div>
  <select
  value={String(quantity)}
  onChange={(event) => setQuantity(Number(event.target.value))}
@@ -1073,17 +1462,27 @@ function ReservationCard({
  ))}
  </select>
  <div className="text-sm text-muted-foreground">
- {normalizedAvailableQuantity} identical unit{normalizedAvailableQuantity === 1 ? "" : "s"} available
+ {t("listing.reservationCard.availableQuantity", { count: normalizedAvailableQuantity })}
  </div>
  </div>
  ) : null}
 
+
  <div className="border-t border-border pt-3">
  <div className="flex items-center justify-between text-sm">
- <span className="text-muted-foreground">Total</span>
- <span className="font-medium">{quantityTotalText ?? "Not configured yet"}</span>
+ <span className="text-muted-foreground">{t("listing.reservationCard.total")}</span>
+ <span className="font-medium">{quantityTotalText ?? t("listing.reservationCard.notConfigured")}</span>
  </div>
- <div className="text-sm text-muted-foreground mt-1">Taxes/fees/deposit: Not configured yet</div>
+ <div className="text-sm text-muted-foreground mt-1">{t("listing.reservationCard.serviceFee")}</div>
+ </div>
+
+ <div className="border-t border-border pt-3 text-sm text-muted-foreground">
+ <span className="font-medium text-foreground">{t("listing.reservationCard.cancellationPolicy")}</span>
+ {cancellationPolicy === "no_cancellations"
+  ? t("listing.reservationCard.cancellationNone")
+  : cancellationPolicy === "cancel_within_hours"
+  ? t("listing.reservationCard.cancellationWithinHours", { hours: cancellationPolicyHours })
+  : t("listing.reservationCard.cancellationAnytime")}
  </div>
 
  <button
@@ -1094,18 +1493,13 @@ function ReservationCard({
  !canBook ? "bg-muted text-muted-foreground cursor-not-allowed" : "bg-rose-600 hover:bg-rose-700 text-white",
  ].join(" ")}
  >
- {isRouting ? "Loading..." : instantBookEnabled ? "Book Now" : "Request to Book"}
+ {isRouting ? t("listing.reservationCard.loadingButton") : instantBookEnabled ? t("listing.reservationCard.bookButton") : t("listing.reservationCard.requestButton")}
  </button>
 
  {bookingError ? <p className="text-sm text-red-600 text-center">{bookingError}</p> : null}
 
- <div className="border-t border-border pt-3">
- <div className="text-sm font-medium">Cancellation Policy</div>
- <div className="text-sm text-muted-foreground">Not configured yet</div>
- </div>
-
  <p className="text-xs text-muted-foreground leading-relaxed">
-  Listings are provided by independent vendors and have not been verified by EventHub.{" "}
+  {t("listing.reservationCard.disclaimer")}{" "}
   <a href="/terms" className="underline underline-offset-2 hover:text-foreground">
    Terms of Service
   </a>

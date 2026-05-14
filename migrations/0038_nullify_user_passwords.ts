@@ -15,6 +15,18 @@ import { db } from "../server/db";
  * - Passwords cannot be restored (intentionally irreversible, same as 0034).
  */
 export async function up() {
+  // Guard: 0035_drop_password_columns.ts may have already dropped this column.
+  // If it no longer exists, skip gracefully — the goal (removing passwords) is achieved.
+  const colCheck: any = await db.execute(sql`
+    SELECT 1 FROM information_schema.columns
+    WHERE table_name = 'users' AND column_name = 'password';
+  `);
+  const exists = (colCheck?.rows ?? colCheck ?? []).length > 0;
+  if (!exists) {
+    console.log("[0038] users.password column already removed — skipping.");
+    return;
+  }
+
   // 1. Clear all password values
   await db.execute(sql`
     UPDATE users

@@ -36,7 +36,16 @@ export const paymentStatusEnum = pgEnum("payment_status", [
   "failed",
   "disputed",
 ]);
-export const paymentTypeEnum = pgEnum("payment_type", ["deposit", "final", "installment"]);
+export const paymentTypeEnum = pgEnum("payment_type", [
+  // Active values
+  "booking",          // full booking total (base + add-ons + platform fee)
+  "security_deposit", // fixed-amount hold; refunded 48h post-event if no damage claim
+  "travel_fee",       // vendor-proposed travel/delivery fee for out-of-radius bookings
+  // Legacy values — still in DB for existing rows; new rows use 'booking' instead of 'deposit'
+  "deposit",
+  "final",
+  "installment",
+]);
 export const listingStatusEnum = pgEnum("listing_status", ["draft", "pending", "active", "inactive", "deleted"]);
 export const payoutStatusEnum = pgEnum("payout_status", [
   "not_ready",
@@ -55,6 +64,12 @@ export const notificationTypeEnum = pgEnum("notification_type", [
   "payment_received",
   "review_received",
   "payout_processed",
+  "google_calendar_booking_updated",
+  "google_calendar_booking_deleted",
+  "google_calendar_sync_error",
+  "travel_fee_proposed",
+  "travel_fee_accepted",
+  "travel_fee_declined",
 ]);
 export const bookingDisputeStatusEnum = pgEnum("booking_dispute_status", [
   "filed",
@@ -65,6 +80,11 @@ export const bookingDisputeStatusEnum = pgEnum("booking_dispute_status", [
 export const messageSenderTypeEnum = pgEnum("message_sender_type", ["customer", "vendor"]);
 export const notificationRecipientTypeEnum = pgEnum("notification_recipient_type", ["customer", "vendor"]);
 
+// Shared identity table for all principals — customers, vendors, and admins.
+// Vendors have an additional vendor_accounts row linked via vendor_accounts.user_id.
+// In routes and application code, non-vendor users are referred to as "customers",
+// but the DB table is "users" because vendors also have a users row.
+// Always JOIN users — never "customers".
 export const users = pgTable(
   "users",
   {
@@ -76,6 +96,8 @@ export const users = pgTable(
     displayName: text("display_name"),
     lastLoginAt: timestamp("last_login_at"),
     defaultLocation: jsonb("default_location"),
+    preferredLanguage: varchar("preferred_language", { length: 10 }).notNull().default("en"),
+    stripeCustomerId: text("stripe_customer_id"),
     createdAt: timestamp("created_at").defaultNow().notNull(),
     updatedAt: timestamp("updated_at").defaultNow().notNull(),
   },
@@ -260,6 +282,29 @@ export const insertVendorAccountSchema = createInsertSchema(vendorAccounts).omit
 export type InsertVendorAccount = z.infer<typeof insertVendorAccountSchema>;
 export type VendorAccount = typeof vendorAccounts.$inferSelect;
 
+// ─── Vendor Cancellation Policies ─────────────────────────────────────────────
+// One row per vendor account (unique). Stores tiered refund rules as JSON.
+// preset_type is informational (drives UI). Tiers are sorted descending by
+// days_before_event. At booking time the effective policy is snapshotted onto
+// the booking record — refund calculations always use the snapshot, never the live policy.
+
+export const vendorCancellationPolicies = pgTable("vendor_cancellation_policies", {
+  id: varchar("id").primaryKey().default(sql`gen_random_uuid()`),
+  vendorId: varchar("vendor_id").notNull().unique().references(() => vendorAccounts.id, { onDelete: "cascade" }),
+  presetType: text("preset_type").notNull().default("moderate"),
+  tiers: jsonb("tiers").notNull().default(sql`'[]'::jsonb`),
+  allowReschedule: boolean("allow_reschedule").notNull().default(false),
+  rescheduleWindowMonths: integer("reschedule_window_months").notNull().default(12),
+  weatherClause: boolean("weather_clause").notNull().default(false),
+  forceMajeureClause: boolean("force_majeure_clause").notNull().default(false),
+  notes: text("notes"),
+  createdAt: timestamp("created_at").notNull().defaultNow(),
+  updatedAt: timestamp("updated_at").notNull().defaultNow(),
+});
+
+export type VendorCancellationPolicy = typeof vendorCancellationPolicies.$inferSelect;
+export type InsertVendorCancellationPolicy = typeof vendorCancellationPolicies.$inferInsert;
+
 // Vendor Profiles (1:n with vendor_accounts, stores onboarding/profile details)
 export const vendorProfiles = pgTable("vendor_profiles", {
   id: varchar("id").primaryKey().default(sql`gen_random_uuid()`),
@@ -348,6 +393,27 @@ export const vendorListings = pgTable("vendor_listings", {
   takedownFeeAmountCents: integer("takedown_fee_amount_cents"),
   photos: text("photos").array().notNull().default(sql`'{}'`),
   listingData: jsonb("listing_data"), // Complete listing wizard form data
+  cancellationPolicyOverride: jsonb("cancellation_policy_override"), // null = use vendor default
+  // ─── Dimensions (Rental listings and package_item rows) ───────────────────
+  dimensionUnit: text("dimension_unit"),
+  dimensionWidth: doublePrecision("dimension_width"),
+  dimensionLength: doublePrecision("dimension_length"),
+  dimensionHeight: doublePrecision("dimension_height"),
+  // ─── Listing type architecture ─────────────────────────────────────────────
+  // listing_type: 'single' (default) | 'package_container' | 'package_item' | 'addon'
+  // Browse queries MUST filter: WHERE listing_type NOT IN ('package_item', 'addon')
+  listingType: text("listing_type").notNull().default("single"),
+  // parentListingId: set on package_item and addon child rows
+  parentListingId: varchar("parent_listing_id"), // self-referential FK — added in migration 0063
+  // package_availability_mode: 'dependent' | 'independent' — only on package_container
+  packageAvailabilityMode: text("package_availability_mode"),
+  // serviceAreaOverride: when true on a package_item, use its own service area fields
+  serviceAreaOverride: boolean("service_area_override").notNull().default(false),
+  // sortOrder: display ordering for package_item children
+  sortOrder: integer("sort_order").notNull().default(0),
+  // ─── Security deposit ──────────────────────────────────────────────────────
+  securityDepositEnabled: boolean("security_deposit_enabled").notNull().default(false),
+  securityDepositCents: integer("security_deposit_cents"),
   createdAt: timestamp("created_at").defaultNow(),
   updatedAt: timestamp("updated_at").defaultNow(),
 });
@@ -374,7 +440,7 @@ export type VendorListing = typeof vendorListings.$inferSelect;
 // Bookings
 export const bookings = pgTable("bookings", {
   id: varchar("id").primaryKey().default(sql`gen_random_uuid()`),
-  customerId: varchar("customer_id").references(() => users.id),
+  customerId: varchar("customer_id").references(() => users.id, { onDelete: "set null" }),
 
   // ✅ migrated from legacy vendors -> vendor_accounts
   vendorAccountId: varchar("vendor_account_id").references(() => vendorAccounts.id, { onDelete: "set null" }),
@@ -387,13 +453,15 @@ export const bookings = pgTable("bookings", {
   eventDate: text("event_date").notNull(),
   eventStartTime: text("event_start_time"),
   eventEndTime: text("event_end_time"),
-  itemNeededByTime: text("item_needed_by_time"),
-  itemDoneByTime: text("item_done_by_time"),
   eventLocation: text("event_location"),
+  eventLocationLat: doublePrecision("event_location_lat"),
+  eventLocationLng: doublePrecision("event_location_lng"),
+  outsideServiceRadius: boolean("outside_service_radius").notNull().default(false),
+  eventTimezone: text("event_timezone"),
   guestCount: integer("guest_count"),
   specialRequests: text("special_requests"),
-  bookingStartAt: timestamp("booking_start_at"),
-  bookingEndAt: timestamp("booking_end_at"),
+  bookingStartAt: timestamp("booking_start_at", { withTimezone: true }),
+  bookingEndAt: timestamp("booking_end_at", { withTimezone: true }),
   vendorTimezoneSnapshot: text("vendor_timezone_snapshot").default("UTC"),
   listingTitleSnapshot: text("listing_title_snapshot"),
   pricingUnitSnapshot: text("pricing_unit_snapshot"),
@@ -413,6 +481,8 @@ export const bookings = pgTable("bookings", {
   depositAmount: integer("deposit_amount").notNull(), // down payment
   depositPaidAt: timestamp("deposit_paid_at"), // track when deposit was paid for 48hr refund policy
   finalPaymentStrategy: text("final_payment_strategy"), // 'immediately', '2_weeks_prior', 'day_of_event'
+  securityDepositCents: integer("security_deposit_cents"), // refundable security deposit (snapshotted at booking time)
+  securityDepositRefundedAt: timestamp("security_deposit_refunded_at", { withTimezone: true }), // when security deposit was refunded to customer
   status: bookingStatusEnum("status").notNull().default("pending"),
   paymentStatus: paymentStatusEnum("payment_status").notNull().default("pending"),
   payoutStatus: payoutStatusEnum("payout_status").notNull().default("not_ready"),
@@ -429,6 +499,15 @@ export const bookings = pgTable("bookings", {
   confirmedAt: timestamp("confirmed_at"),
   completedAt: timestamp("completed_at"),
   reviewPromptSent: boolean("review_prompt_sent").notNull().default(false),
+  pendingReminder6pmSent: boolean("pending_reminder_6pm_sent").notNull().default(false),
+  pendingReminder9amSent: boolean("pending_reminder_9am_sent").notNull().default(false),
+  pendingReminder24hSent: boolean("pending_reminder_24h_sent").notNull().default(false),
+  eventDayReminderSent: boolean("event_day_reminder_sent").notNull().default(false),
+  vendorMsgEmailLastSentAt: timestamp("vendor_msg_email_last_sent_at"),
+  customerMsgEmailLastSentAt: timestamp("customer_msg_email_last_sent_at"),
+  cancellationPolicySnapshot: jsonb("cancellation_policy_snapshot"),
+  appliedDiscountId: varchar("applied_discount_id"),
+  discountAmountCents: integer("discount_amount_cents"),
   createdAt: timestamp("created_at").defaultNow(),
   updatedAt: timestamp("updated_at").defaultNow(),
 });
@@ -457,6 +536,8 @@ export const bookingDisputes = pgTable(
       .references(() => vendorAccounts.id, { onDelete: "set null" }),
     reason: text("reason").notNull(),
     details: text("details"),
+    // 'damage_claim' | 'travel_fee_cancellation' | 'not_as_advertised'
+    disputeType: text("dispute_type").notNull().default("damage_claim"),
     status: bookingDisputeStatusEnum("status").notNull().default("filed"),
     vendorResponse: text("vendor_response"),
     adminDecision: text("admin_decision"),
@@ -510,6 +591,8 @@ export const bookingItems = pgTable(
       .notNull()
       .references(() => bookings.id, { onDelete: "cascade" }),
     listingId: varchar("listing_id").references(() => vendorListings.id, { onDelete: "set null" }),
+    // item_type: 'base' (primary listing/package) | 'addon' (add-on line item)
+    itemType: text("item_type").notNull().default("base"),
     title: text("title"),
     quantity: integer("quantity").notNull().default(1),
     unitPriceCents: integer("unit_price_cents").notNull().default(0),
@@ -532,6 +615,36 @@ export const insertBookingItemSchema = createInsertSchema(bookingItems).omit({
 
 export type InsertBookingItem = z.infer<typeof insertBookingItemSchema>;
 export type BookingItem = typeof bookingItems.$inferSelect;
+
+// ─── Listing Add-on Links ──────────────────────────────────────────────────────
+// Many-to-many: parent listings ↔ add-on listings.
+// A vendor attaches add-ons to a listing via the "Attach Add-ons" wizard step.
+// The same add-on can be attached to multiple parent listings — its quantity
+// pool is shared across all of them (checked via booking_items).
+export const listingAddonLinks = pgTable(
+  "listing_addon_links",
+  {
+    id: varchar("id").primaryKey().default(sql`gen_random_uuid()`),
+    parentListingId: varchar("parent_listing_id")
+      .notNull()
+      .references(() => vendorListings.id, { onDelete: "cascade" }),
+    addonListingId: varchar("addon_listing_id")
+      .notNull()
+      .references(() => vendorListings.id, { onDelete: "cascade" }),
+    createdAt: timestamp("created_at", { withTimezone: true }).defaultNow().notNull(),
+  },
+  (table) => ({
+    parentAddonUnique: uniqueIndex("listing_addon_links_parent_addon_unique").on(
+      table.parentListingId,
+      table.addonListingId
+    ),
+    parentIdx: index("idx_addon_links_parent").on(table.parentListingId),
+    addonIdx: index("idx_addon_links_addon").on(table.addonListingId),
+  })
+);
+
+export type ListingAddonLink = typeof listingAddonLinks.$inferSelect;
+export type InsertListingAddonLink = typeof listingAddonLinks.$inferInsert;
 
 export const googleCalendarEventMappings = pgTable(
   "google_calendar_event_mappings",
@@ -588,34 +701,11 @@ export const insertMessageSchema = createInsertSchema(messages).omit({
 export type InsertMessage = z.infer<typeof insertMessageSchema>;
 export type Message = typeof messages.$inferSelect;
 
-// Payment Schedule (tracks multiple installments per booking)
-export const paymentSchedules = pgTable("payment_schedules", {
-  id: varchar("id").primaryKey().default(sql`gen_random_uuid()`),
-  bookingId: varchar("booking_id").references(() => bookings.id).notNull(),
-  installmentNumber: integer("installment_number").notNull(), // 1 for deposit, 2+ for subsequent payments
-  amount: integer("amount").notNull(), // in cents
-  dueDate: text("due_date").notNull(),
-  paymentType: paymentTypeEnum("payment_type").notNull(),
-  status: paymentStatusEnum("status").notNull().default("pending"),
-  stripePaymentIntentId: text("stripe_payment_intent_id"),
-  paidAt: timestamp("paid_at"),
-  createdAt: timestamp("created_at").defaultNow(),
-});
-
-export const insertPaymentScheduleSchema = createInsertSchema(paymentSchedules).omit({
-  id: true,
-  createdAt: true,
-});
-
-export type InsertPaymentSchedule = z.infer<typeof insertPaymentScheduleSchema>;
-export type PaymentSchedule = typeof paymentSchedules.$inferSelect;
-
 // Payments (records of actual transactions)
 export const payments = pgTable("payments", {
   id: varchar("id").primaryKey().default(sql`gen_random_uuid()`),
   bookingId: varchar("booking_id").references(() => bookings.id).notNull(),
-  scheduleId: varchar("schedule_id").references(() => paymentSchedules.id),
-  customerId: varchar("customer_id").references(() => users.id),
+  customerId: varchar("customer_id").references(() => users.id, { onDelete: "set null" }),
 
   // ✅ migrated from legacy vendors -> vendor_accounts
   vendorAccountId: varchar("vendor_account_id").references(() => vendorAccounts.id),
@@ -645,6 +735,7 @@ export const payments = pgTable("payments", {
   refundReason: text("refund_reason"),
   refundedAt: timestamp("refunded_at"),
   paidAt: timestamp("paid_at"),
+  payoutEmailSent: boolean("payout_email_sent").notNull().default(false),
   createdAt: timestamp("created_at").defaultNow(),
 });
 
@@ -667,6 +758,7 @@ export const notifications = pgTable("notifications", {
   link: text("link"), // URL to relevant page
   read: boolean("read").default(false).notNull(),
   createdAt: timestamp("created_at").defaultNow(),
+  expiresAt: timestamp("expires_at", { withTimezone: true }).default(sql`now() + interval '90 days'`),
 });
 
 export const insertNotificationSchema = createInsertSchema(notifications).omit({
@@ -809,6 +901,10 @@ export const vendorVacationBlocks = pgTable("vendor_vacation_blocks", {
     .references(() => vendorAccounts.id, { onDelete: "cascade" }),
   startDate: text("start_date").notNull(), // YYYY-MM-DD
   endDate: text("end_date").notNull(),     // YYYY-MM-DD
+  // Google Calendar sync linkage (added migration 0057)
+  googleEventId: text("google_event_id"),
+  googleCalendarId: text("google_calendar_id"),
+  source: text("source").notNull().default("manual"), // 'manual' | 'google_calendar'
   createdAt: timestamp("created_at", { withTimezone: true }).defaultNow().notNull(),
 });
 
@@ -833,7 +929,7 @@ export const rentalTypes = pgTable("rental_types", {
 // Planning Boards — customer-created boards for saving vendor listings
 export const planningBoards = pgTable("planning_boards", {
   id: varchar("id").primaryKey().default(sql`gen_random_uuid()`),
-  customerId: varchar("customer_id").notNull().references(() => users.id),
+  customerId: varchar("customer_id").notNull().references(() => users.id, { onDelete: "cascade" }),
   name: text("name").notNull(),
   createdAt: timestamp("created_at", { withTimezone: true }).defaultNow().notNull(),
 });
@@ -892,11 +988,11 @@ export const circumventionFlags = pgTable("circumvention_flags", {
   contentType: varchar("content_type").notNull(),
   contentSnapshot: text("content_snapshot").notNull(),
   matches: text("matches").array().notNull().default(sql`'{}'`),
-  vendorAccountId: varchar("vendor_account_id").references(() => vendorAccounts.id),
-  userId: varchar("user_id").references(() => users.id),
-  reportedByUserId: varchar("reported_by_user_id").references(() => users.id),
-  listingId: varchar("listing_id").references(() => vendorListings.id),
-  bookingId: varchar("booking_id").references(() => bookings.id),
+  vendorAccountId: varchar("vendor_account_id").references(() => vendorAccounts.id, { onDelete: "set null" }),
+  userId: varchar("user_id").references(() => users.id, { onDelete: "set null" }),
+  reportedByUserId: varchar("reported_by_user_id").references(() => users.id, { onDelete: "set null" }),
+  listingId: varchar("listing_id").references(() => vendorListings.id, { onDelete: "set null" }),
+  bookingId: varchar("booking_id").references(() => bookings.id, { onDelete: "set null" }),
   status: varchar("status").notNull().default("pending"),
   reviewedBy: varchar("reviewed_by"),
   reviewedAt: timestamp("reviewed_at"),
@@ -923,6 +1019,7 @@ export const vendorSuspensions = pgTable("vendor_suspensions", {
   endsAt: timestamp("ends_at").notNull(),
   createdBy: varchar("created_by").notNull().default("system"),
   notifiedEmail: boolean("notified_email").notNull().default(false),
+  liftEmailSent: boolean("lift_email_sent").notNull().default(false),
   liftedAt: timestamp("lifted_at"),
   liftedBy: varchar("lifted_by"),
   createdAt: timestamp("created_at").notNull().defaultNow(),
@@ -968,3 +1065,360 @@ export const insertFeedbackSubmissionSchema = createInsertSchema(feedbackSubmiss
 
 export type FeedbackSubmission = typeof feedbackSubmissions.$inferSelect;
 export type InsertFeedbackSubmission = z.infer<typeof insertFeedbackSubmissionSchema>;
+
+// ─── Vendor Discount System ────────────────────────────────────────────────────
+
+export const vendorDiscounts = pgTable(
+  "vendor_discounts",
+  {
+    id: varchar("id").primaryKey().default(sql`gen_random_uuid()`),
+    vendorAccountId: varchar("vendor_account_id")
+      .notNull()
+      .references(() => vendorAccounts.id, { onDelete: "cascade" }),
+    discountType: varchar("discount_type").notNull(), // 'promo_code' | 'public_sale'
+    code: varchar("code"), // uppercase alphanumeric, promo codes only
+    percentOff: integer("percent_off").notNull(),
+    startsAt: timestamp("starts_at").notNull(),
+    endsAt: timestamp("ends_at").notNull(),
+    maxUses: integer("max_uses"), // null = unlimited
+    usedCount: integer("used_count").notNull().default(0),
+    active: boolean("active").notNull().default(true),
+    createdAt: timestamp("created_at").notNull().defaultNow(),
+    updatedAt: timestamp("updated_at").notNull().defaultNow(),
+  },
+  (table) => ({
+    vendorActiveIdx: index("vendor_discounts_vendor_active_idx").on(
+      table.vendorAccountId,
+      table.active,
+      table.startsAt,
+    ),
+  }),
+);
+
+export const discountListings = pgTable(
+  "discount_listings",
+  {
+    discountId: varchar("discount_id")
+      .notNull()
+      .references(() => vendorDiscounts.id, { onDelete: "cascade" }),
+    listingId: varchar("listing_id")
+      .notNull()
+      .references(() => vendorListings.id, { onDelete: "cascade" }),
+  },
+  (table) => ({
+    pk: uniqueIndex("discount_listings_pk").on(table.discountId, table.listingId),
+    listingIdx: index("discount_listings_listing_idx").on(table.listingId),
+  }),
+);
+
+export const discountRedemptions = pgTable(
+  "discount_redemptions",
+  {
+    id: varchar("id").primaryKey().default(sql`gen_random_uuid()`),
+    discountId: varchar("discount_id")
+      .notNull()
+      .references(() => vendorDiscounts.id, { onDelete: "cascade" }),
+    bookingId: varchar("booking_id")
+      .notNull()
+      .references(() => bookings.id, { onDelete: "cascade" }),
+    redeemedAt: timestamp("redeemed_at").notNull().defaultNow(),
+  },
+  (table) => ({
+    discountIdx: index("discount_redemptions_discount_idx").on(table.discountId, table.redeemedAt),
+    bookingUniqueIdx: uniqueIndex("discount_redemptions_booking_unique_idx").on(table.bookingId),
+  }),
+);
+
+export const insertVendorDiscountSchema = createInsertSchema(vendorDiscounts).omit({
+  id: true,
+  usedCount: true,
+  createdAt: true,
+  updatedAt: true,
+});
+
+export type VendorDiscount = typeof vendorDiscounts.$inferSelect;
+export type InsertVendorDiscount = z.infer<typeof insertVendorDiscountSchema>;
+export type DiscountListing = typeof discountListings.$inferSelect;
+export type DiscountRedemption = typeof discountRedemptions.$inferSelect;
+
+// ─── Listing Translations ──────────────────────────────────────────────────────
+// One row per (listing_id, language). Written async after a vendor saves a
+// listing. Read by listing GET endpoints when a non-English language is wanted.
+// Supported language codes: 'es' (Spanish), 'pt' (Portuguese).
+
+export const listingTranslations = pgTable(
+  "listing_translations",
+  {
+    id: varchar("id").primaryKey().default(sql`gen_random_uuid()`),
+    listingId: varchar("listing_id")
+      .notNull()
+      .references(() => vendorListings.id, { onDelete: "cascade" }),
+    language: varchar("language", { length: 10 }).notNull(),
+    title: text("title"),
+    description: text("description"),
+    whatsIncluded: text("whats_included").array().notNull().default(sql`'{}'`),
+    whatsNotIncluded: text("whats_not_included").array().notNull().default(sql`'{}'`),
+    // 'pending' | 'completed' | 'failed'
+    status: varchar("status", { length: 20 }).notNull().default("pending"),
+    translatedAt: timestamp("translated_at", { withTimezone: true }),
+    createdAt: timestamp("created_at", { withTimezone: true }).defaultNow().notNull(),
+    updatedAt: timestamp("updated_at", { withTimezone: true }).defaultNow().notNull(),
+  },
+  (table) => ({
+    listingLangUnique: uniqueIndex("listing_translations_listing_lang_unique").on(
+      table.listingId,
+      table.language
+    ),
+    listingIdIdx: index("idx_listing_translations_listing_id").on(table.listingId, table.language),
+  })
+);
+
+// ─── Google Calendar Watch Channels ────────────────────────────────────────────
+// One active watch channel per vendor calendar connection.
+// Google sends webhook notifications to /api/google/webhooks/calendar whenever
+// anything changes in the watched calendar. We validate incoming notifications
+// by looking up channelId + channelToken here.
+
+export const googleCalendarWatchChannels = pgTable(
+  "google_calendar_watch_channels",
+  {
+    id: varchar("id").primaryKey().default(sql`gen_random_uuid()`),
+    vendorAccountId: varchar("vendor_account_id")
+      .notNull()
+      .references(() => vendorAccounts.id, { onDelete: "cascade" }),
+    calendarId: text("calendar_id").notNull(),
+    channelId: text("channel_id").notNull(),
+    channelToken: text("channel_token").notNull(),
+    resourceId: text("resource_id"),
+    expiresAt: timestamp("expires_at", { withTimezone: true }).notNull(),
+    // Incremental sync bookmark — store after every successful event fetch
+    syncToken: text("sync_token"),
+    lastSyncAt: timestamp("last_sync_at", { withTimezone: true }),
+    createdAt: timestamp("created_at", { withTimezone: true }).defaultNow().notNull(),
+    updatedAt: timestamp("updated_at", { withTimezone: true }).defaultNow().notNull(),
+  },
+  (table) => ({
+    channelIdUnique: uniqueIndex("google_calendar_watch_channels_channel_id_unique").on(
+      table.channelId
+    ),
+    vendorCalendarUnique: uniqueIndex("google_calendar_watch_channels_vendor_calendar_unique").on(
+      table.vendorAccountId,
+      table.calendarId
+    ),
+    expiresAtIdx: index("idx_google_watch_channels_expires_at").on(table.expiresAt),
+    vendorAccountIdx: index("idx_google_watch_channels_vendor_account").on(table.vendorAccountId),
+  })
+);
+
+export const insertGoogleCalendarWatchChannelSchema = createInsertSchema(googleCalendarWatchChannels).omit({
+  id: true,
+  createdAt: true,
+  updatedAt: true,
+});
+
+export type InsertGoogleCalendarWatchChannel = z.infer<typeof insertGoogleCalendarWatchChannelSchema>;
+export type GoogleCalendarWatchChannel = typeof googleCalendarWatchChannels.$inferSelect;
+
+// ─── Google Webhook Notification Dedup Log ─────────────────────────────────────
+// Google can deliver the same notification more than once. We insert each
+// (channelId, messageNumber) with a unique constraint; duplicate inserts are
+// silently ignored via onConflictDoNothing().
+
+export const googleWebhookNotifications = pgTable(
+  "google_webhook_notifications",
+  {
+    id: varchar("id").primaryKey().default(sql`gen_random_uuid()`),
+    vendorAccountId: varchar("vendor_account_id").notNull(),
+    channelId: text("channel_id").notNull(),
+    messageNumber: text("message_number").notNull(), // bigint stored as text to avoid JS precision loss
+    resourceId: text("resource_id").notNull(),
+    resourceState: text("resource_state"),
+    processedAt: timestamp("processed_at", { withTimezone: true }).defaultNow().notNull(),
+  },
+  (table) => ({
+    channelMessageUnique: uniqueIndex("google_webhook_notifications_channel_message_unique").on(
+      table.channelId,
+      table.messageNumber
+    ),
+    channelIdIdx: index("idx_google_webhook_notifications_channel_id").on(table.channelId),
+  })
+);
+
+export type GoogleWebhookNotification = typeof googleWebhookNotifications.$inferSelect;
+
+// ─── Google Calendar Vacation Mappings ─────────────────────────────────────────
+// Links a Google Calendar event to a vendor vacation block.
+// Kept separate from google_calendar_event_mappings (listing-scoped) intentionally.
+// Used to find and delete the vacation block when the Google event is removed.
+
+export const googleCalendarVacationMappings = pgTable(
+  "google_calendar_vacation_mappings",
+  {
+    id: varchar("id").primaryKey().default(sql`gen_random_uuid()`),
+    vendorAccountId: varchar("vendor_account_id")
+      .notNull()
+      .references(() => vendorAccounts.id, { onDelete: "cascade" }),
+    googleEventId: text("google_event_id").notNull(),
+    googleCalendarId: text("google_calendar_id").notNull(),
+    vacationBlockId: varchar("vacation_block_id")
+      .notNull()
+      .references(() => vendorVacationBlocks.id, { onDelete: "cascade" }),
+    mappingSource: text("mapping_source").notNull().default("google_calendar"),
+    createdAt: timestamp("created_at", { withTimezone: true }).defaultNow().notNull(),
+    updatedAt: timestamp("updated_at", { withTimezone: true }).defaultNow().notNull(),
+  },
+  (table) => ({
+    vendorCalendarEventUnique: uniqueIndex("google_calendar_vacation_mappings_unique").on(
+      table.vendorAccountId,
+      table.googleCalendarId,
+      table.googleEventId
+    ),
+    vendorCalendarIdx: index("idx_google_vacation_mappings_vendor_calendar").on(
+      table.vendorAccountId,
+      table.googleCalendarId
+    ),
+    vacationBlockIdx: index("idx_google_vacation_mappings_vacation_block").on(
+      table.vacationBlockId
+    ),
+  })
+);
+
+export const insertGoogleCalendarVacationMappingSchema = createInsertSchema(googleCalendarVacationMappings).omit({
+  id: true,
+  createdAt: true,
+  updatedAt: true,
+});
+
+export type InsertGoogleCalendarVacationMapping = z.infer<typeof insertGoogleCalendarVacationMappingSchema>;
+export type GoogleCalendarVacationMapping = typeof googleCalendarVacationMappings.$inferSelect;
+
+export type ListingTranslation = typeof listingTranslations.$inferSelect;
+
+// ─── Travel Fee Proposals ──────────────────────────────────────────────────────
+// Created by the vendor after a booking when the customer's event address falls
+// outside the listing's service radius. The customer must accept before a
+// payment schedule entry and Stripe payment intent are created.
+//
+// status lifecycle: 'pending' → 'accepted' | 'declined' | 'cancelled'
+// Only one 'pending' row per booking is allowed (enforced by partial unique index).
+
+export const travelFeeProposals = pgTable(
+  "travel_fee_proposals",
+  {
+    id: varchar("id").primaryKey().default(sql`gen_random_uuid()`),
+    bookingId: varchar("booking_id")
+      .notNull()
+      .references(() => bookings.id, { onDelete: "cascade" }),
+    vendorAccountId: varchar("vendor_account_id")
+      .notNull()
+      .references(() => vendorAccounts.id, { onDelete: "cascade" }),
+    amountCents: integer("amount_cents").notNull(),
+    reason: text("reason"),
+    // 'pending' | 'accepted' | 'declined' | 'cancelled'
+    status: varchar("status", { length: 20 }).notNull().default("pending"),
+    proposedAt: timestamp("proposed_at", { withTimezone: true }).notNull().defaultNow(),
+    respondedAt: timestamp("responded_at", { withTimezone: true }),
+    createdAt: timestamp("created_at", { withTimezone: true }).notNull().defaultNow(),
+    updatedAt: timestamp("updated_at", { withTimezone: true }).notNull().defaultNow(),
+  },
+  (table) => ({
+    bookingIdIdx: index("idx_travel_fee_proposals_booking_id").on(table.bookingId, table.createdAt),
+    vendorAccountIdx: index("idx_travel_fee_proposals_vendor_account_id").on(table.vendorAccountId),
+  })
+);
+
+export const insertTravelFeeProposalSchema = createInsertSchema(travelFeeProposals).omit({
+  id: true,
+  proposedAt: true,
+  createdAt: true,
+  updatedAt: true,
+});
+
+export type TravelFeeProposal = typeof travelFeeProposals.$inferSelect;
+export type InsertTravelFeeProposal = z.infer<typeof insertTravelFeeProposalSchema>;
+
+// ── Dispute Cases (structured dispute resolution system) ───────────────────
+// dispute_cases: one per booking, tracks the overall case status and resolution
+// dispute_filings: individual filings within a case (customer, vendor, or admin notes)
+
+export const disputeCaseStatusEnum = pgEnum("dispute_case_status", [
+  "open",
+  "pending_review",
+  "resolved",
+]);
+
+export const disputeFilingFiledByEnum = pgEnum("dispute_filing_filed_by", [
+  "customer",
+  "vendor",
+  "admin",
+]);
+
+export const disputeFilingDisputeTypeEnum = pgEnum("dispute_filing_dispute_type", [
+  // Customer-filed types
+  "service_not_as_described",
+  "vendor_no_show",
+  "safety_concern",
+  // Vendor-filed types
+  "travel_cost_recovery",
+  "damage_claim",
+  "customer_no_show",
+  // Shared
+  "other",
+]);
+
+export const disputeCases = pgTable(
+  "dispute_cases",
+  {
+    id: varchar("id").primaryKey().default(sql`gen_random_uuid()`),
+    bookingId: varchar("booking_id")
+      .notNull()
+      .unique()
+      .references(() => bookings.id, { onDelete: "cascade" }),
+    status: disputeCaseStatusEnum("status").notNull().default("open"),
+    resolution: text("resolution"),
+    resolvedAt: timestamp("resolved_at", { withTimezone: true }),
+    withheldAmountCents: integer("withheld_amount_cents"),
+    createdAt: timestamp("created_at", { withTimezone: true }).notNull().defaultNow(),
+    updatedAt: timestamp("updated_at", { withTimezone: true }).notNull().defaultNow(),
+  },
+  (table) => ({
+    bookingIdIdx: index("dispute_cases_booking_id_idx").on(table.bookingId),
+    statusIdx: index("dispute_cases_status_idx").on(table.status),
+  })
+);
+
+export const disputeFilings = pgTable(
+  "dispute_filings",
+  {
+    id: varchar("id").primaryKey().default(sql`gen_random_uuid()`),
+    caseId: varchar("case_id")
+      .notNull()
+      .references(() => disputeCases.id, { onDelete: "cascade" }),
+    bookingId: varchar("booking_id")
+      .notNull()
+      .references(() => bookings.id, { onDelete: "cascade" }),
+    filedBy: disputeFilingFiledByEnum("filed_by").notNull(),
+    filerCustomerId: varchar("filer_customer_id").references(() => users.id, {
+      onDelete: "set null",
+    }),
+    filerVendorAccountId: varchar("filer_vendor_account_id").references(
+      () => vendorAccounts.id,
+      { onDelete: "set null" }
+    ),
+    disputeType: disputeFilingDisputeTypeEnum("dispute_type").notNull().default("other"),
+    description: text("description").notNull().default(""),
+    attachmentUrls: text("attachment_urls").array().notNull().default(sql`'{}'`),
+    claimAmountCents: integer("claim_amount_cents"),
+    createdAt: timestamp("created_at", { withTimezone: true }).notNull().defaultNow(),
+    updatedAt: timestamp("updated_at", { withTimezone: true }).notNull().defaultNow(),
+  },
+  (table) => ({
+    caseIdIdx: index("dispute_filings_case_id_idx").on(table.caseId, table.createdAt),
+    bookingIdIdx: index("dispute_filings_booking_id_idx").on(table.bookingId),
+  })
+);
+
+export type DisputeCase = typeof disputeCases.$inferSelect;
+export type InsertDisputeCase = typeof disputeCases.$inferInsert;
+export type DisputeFiling = typeof disputeFilings.$inferSelect;
+export type InsertDisputeFiling = typeof disputeFilings.$inferInsert;

@@ -8,6 +8,7 @@
  * legitimate traffic, only log a warning.
  */
 
+import { logger } from "./logger";
 import { db } from "../db";
 import { sql as drizzleSql } from "drizzle-orm";
 import type { Request, Response, NextFunction } from "express";
@@ -53,8 +54,16 @@ function getRequestIp(req: Request): string {
 export function createDbRateLimiter(options: {
   label: string;
   maxPerMinute: number;
+  /**
+   * When true, a DB failure causes a 503 response instead of passing the
+   * request through. Use this for endpoints where bypassing the limit is
+   * worse than a brief outage (e.g. payment creation, booking creation).
+   * Defaults to false (fail-open) so read-heavy public endpoints stay up.
+   */
+  failClosed?: boolean;
 }): (req: Request, res: Response, next: NextFunction) => Promise<void> {
   const max = Math.max(1, Math.min(options.maxPerMinute, 1000));
+  const failClosed = options.failClosed === true;
 
   return async (req: Request, res: Response, next: NextFunction): Promise<void> => {
     const ip = getRequestIp(req);
@@ -93,12 +102,21 @@ export function createDbRateLimiter(options: {
       // Probabilistic cleanup: run roughly once per 200 requests to keep the table small.
       if (Math.random() < 0.005) {
         void pruneOldRows().catch((e: any) =>
-          console.warn("[dbRateLimiter] prune failed:", e?.message || e)
+          logger.warn("[dbRateLimiter] prune failed:", e?.message || e)
         );
       }
     } catch (err: any) {
-      // Fail open: a DB hiccup should not block legitimate users.
-      console.warn(`[dbRateLimiter] DB error for ${key}:`, err?.message || err);
+      if (failClosed) {
+        // For payment and booking endpoints, a DB failure means we cannot
+        // enforce limits — return 503 rather than allow unlimited requests.
+        const retryAfterSeconds = 30;
+        logger.error(`[dbRateLimiter] DB error on fail-closed limiter "${options.label}":`, err?.message || err);
+        res.setHeader("Retry-After", String(retryAfterSeconds));
+        res.status(503).json({ error: "Service temporarily unavailable. Please try again shortly." });
+        return;
+      }
+      // Fail open for non-critical endpoints: log loudly but let the request through.
+      logger.warn(`[dbRateLimiter] DB error for "${options.label}" (failing open):`, err?.message || err);
     }
 
     next();

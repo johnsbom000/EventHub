@@ -1,3 +1,4 @@
+import { useTranslation } from "react-i18next";
 import { useEffect, useMemo, useRef, useState } from "react";
 import { useLocation } from "wouter";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
@@ -411,6 +412,7 @@ async function uploadShopPhotoDataUrl(dataUrl: string): Promise<string> {
 }
 
 export default function MyHub() {
+  const { t } = useTranslation();
   const [, setLocation] = useLocation();
   const queryClient = useQueryClient();
   const { toast } = useToast();
@@ -741,7 +743,9 @@ export default function MyHub() {
   const listingsForShop: ListingPublic[] = useMemo(() => {
     const fallbackVendorName = asTrimmedString(businessNameDraft) || persistedProfileBusinessName || "Vendor";
 
-    return (Array.isArray(activeListings) ? activeListings : []).map((listing) => ({
+    return (Array.isArray(activeListings) ? activeListings : [])
+      .filter((listing) => (listing as any).listingType !== "package_item")
+      .map((listing) => ({
       ...(listing as any),
       id: listing.id,
       vendorId: vendorId || String(listing.accountId || ""),
@@ -1581,7 +1585,7 @@ export default function MyHub() {
           </>
         ) : (
           <div className="flex h-full w-full items-center justify-center text-sm text-muted-foreground">
-            Upload a cover photo
+            {t("myHub.uploadCoverPhotoText")}
           </div>
         )}
       </div>
@@ -1596,14 +1600,14 @@ export default function MyHub() {
         {!isVendorLoading && !hasVendorAccount ? (
           <Card>
             <CardContent className="py-6 text-sm text-muted-foreground">
-              Vendor account unavailable. Re-open onboarding to finish account setup.
+              {t("myHub.vendorAccountUnavailable")}
             </CardContent>
           </Card>
         ) : null}
 
         <div className="grid gap-3 lg:grid-cols-3 lg:items-end">
           <div className="lg:col-span-2">
-            <h1 className="text-3xl font-bold text-foreground">My Hub</h1>
+            <h1 className="text-3xl font-bold text-foreground">{t("myHub.pageTitle")}</h1>
           </div>
 
           <div className="flex flex-wrap items-center gap-2 lg:flex-nowrap lg:justify-between">
@@ -1614,7 +1618,7 @@ export default function MyHub() {
               data-testid="button-copy-vendor-shop-link"
             >
               <Copy className="mr-2 h-4 w-4" />
-              Copy Shop Link
+              {t("myHub.copyShopLink")}
             </Button>
             <Button
               onClick={() => {
@@ -1625,22 +1629,22 @@ export default function MyHub() {
               data-testid="button-enter-customer-mode"
             >
               <Eye className="mr-2 h-4 w-4" />
-              Enter Customer Mode
+              {t("myHub.enterCustomerMode")}
             </Button>
           </div>
         </div>
 
         <div className="grid gap-6 lg:grid-cols-3">
           <section className="space-y-4 lg:col-span-2">
-            <h2 className="text-2xl font-semibold text-foreground">Active Listings</h2>
+            <h2 className="text-2xl font-semibold text-foreground">{t("myHub.activeListings")}</h2>
             {isListingsLoading ? (
               <Card>
-                <CardContent className="py-8 text-sm text-muted-foreground">Loading listings...</CardContent>
+                <CardContent className="py-8 text-sm text-muted-foreground">{t("myHub.loadingListings")}</CardContent>
               </Card>
             ) : listingsForShop.length === 0 ? (
               <Card>
                 <CardContent className="py-8 text-sm text-muted-foreground">
-                  No active listings yet. Publish a listing to show it in your My Hub.
+                  {t("myHub.noActiveListings")}
                 </CardContent>
               </Card>
             ) : (
@@ -1673,7 +1677,7 @@ export default function MyHub() {
           <aside className="space-y-4">
             <Card>
               <CardHeader>
-                <CardTitle>Shop Details</CardTitle>
+                <CardTitle>{t("myHub.shopDetails")}</CardTitle>
               </CardHeader>
               <CardContent className="space-y-4">
                 <Button
@@ -1696,7 +1700,7 @@ export default function MyHub() {
                   className="w-full"
                   data-testid="button-save-vendor-shop"
                 >
-                  {saveMutation.isPending || isUploadingPhoto ? "Saving..." : "Save Shop Details"}
+                  {saveMutation.isPending || isUploadingPhoto ? t("myHub.saving") : t("myHub.saveShopDetails")}
                 </Button>
 
                 {validationError ? (
@@ -1707,13 +1711,13 @@ export default function MyHub() {
                 ) : null}
 
                 <div className="space-y-2">
-                  <Label htmlFor="vendor-shop-name">Business Name</Label>
+                  <Label htmlFor="vendor-shop-name">{t("myHub.businessName")}</Label>
                   <Input
                     id="vendor-shop-name"
                     value={businessNameDraft}
                     onChange={(event) => setBusinessNameDraft(event.target.value)}
                     onBlur={(event) => setBusinessNameDraft(normalizeProfileNameInput(event.target.value))}
-                    placeholder="Business name"
+                    placeholder={t("myHub.businessNamePlaceholder")}
                     maxLength={120}
                     disabled={isVendorLoading || saveMutation.isPending}
                     data-testid="input-vendor-shop-business-name"
@@ -1721,7 +1725,7 @@ export default function MyHub() {
                 </div>
 
                 <div>
-                  <Label htmlFor="vendor-shop-cover-photo">Cover Photo</Label>
+                  <Label htmlFor="vendor-shop-cover-photo">{t("myHub.coverPhoto")}</Label>
                   <div className="mt-1.5 rounded-lg border border-dashed border-border p-4">
                     {coverPhotoSource ? (
                       <div
@@ -1760,7 +1764,7 @@ export default function MyHub() {
                         data-testid="button-upload-shop-cover-photo"
                       >
                         <ImagePlus className="mr-2 h-4 w-4" />
-                        {coverPhotoSource ? "Change cover photo" : "Upload cover photo"}
+                        {coverPhotoSource ? t("myHub.changeCoverPhoto") : t("myHub.uploadCoverPhoto")}
                       </Button>
                       {coverPhotoSource ? (
                         <Button
@@ -1771,7 +1775,7 @@ export default function MyHub() {
                           disabled={saveMutation.isPending || isPreparingCoverPhoto || isUploadingPhoto}
                           data-testid="button-edit-shop-cover-photo-position"
                         >
-                          Edit position
+                          {t("myHub.editPosition")}
                         </Button>
                       ) : null}
                       {coverPhotoSource ? (
@@ -1785,7 +1789,7 @@ export default function MyHub() {
                           disabled={saveMutation.isPending || isPreparingCoverPhoto || isUploadingPhoto}
                         >
                           <Trash2 className="mr-2 h-4 w-4" />
-                          Remove cover
+                          {t("myHub.removeCoverPhoto")}
                         </Button>
                       ) : null}
                     </div>
@@ -1793,7 +1797,7 @@ export default function MyHub() {
                 </div>
 
                 <div>
-                  <Label htmlFor="vendor-shop-photo">Shop Profile Image</Label>
+                  <Label htmlFor="vendor-shop-photo">{t("myHub.shopProfileImage")}</Label>
                   <div className="mt-1.5 rounded-lg border border-dashed border-border p-4">
                     <div className="flex flex-wrap items-center gap-3">
                       {shopPhotoSource
@@ -1838,7 +1842,7 @@ export default function MyHub() {
                             data-testid="button-upload-shop-profile-image"
                           >
                             <ImagePlus className="mr-2 h-4 w-4" />
-                            {shopPhotoSource ? "Edit photo" : "Upload photo"}
+                            {shopPhotoSource ? t("myHub.changeProfilePhoto") : t("myHub.uploadProfilePhoto")}
                           </Button>
                           {shopPhotoSource ? (
                             <Button
@@ -1849,7 +1853,7 @@ export default function MyHub() {
                               disabled={saveMutation.isPending || isPreparingPhoto || isUploadingPhoto}
                               data-testid="button-change-shop-photo"
                             >
-                              Change Photo
+                              {t("myHub.changePhotoButton")}
                             </Button>
                           ) : null}
                         </div>
@@ -1865,7 +1869,7 @@ export default function MyHub() {
                             data-testid="button-remove-shop-profile-image"
                           >
                             <Trash2 className="mr-2 h-4 w-4" />
-                            Remove photo
+                            {t("myHub.removeProfilePhoto")}
                           </Button>
                         ) : null}
                       </div>
@@ -1874,29 +1878,29 @@ export default function MyHub() {
                 </div>
 
                 <div className="space-y-2">
-                  <Label htmlFor="vendor-shop-tagline">Tagline</Label>
+                  <Label htmlFor="vendor-shop-tagline">{t("myHub.tagline")}</Label>
                   <Input
                     id="vendor-shop-tagline"
                     value={taglineDraft}
                     onChange={(event) => setTaglineDraft(event.target.value)}
-                    placeholder="Example: Making your events unforgettable, one detail at a time."
+                    placeholder={t("myHub.taglinePlaceholder")}
                     disabled={isProfileLoading || saveMutation.isPending}
                   />
                 </div>
 
                 <div className="space-y-2">
-                  <Label htmlFor="vendor-shop-service-area">Service Area</Label>
+                  <Label htmlFor="vendor-shop-service-area">{t("myHub.serviceArea")}</Label>
                   <Input
                     id="vendor-shop-service-area"
                     value={serviceAreaDraft}
                     onChange={(event) => setServiceAreaDraft(event.target.value)}
-                    placeholder="Example: Salt Lake City, UT"
+                    placeholder={t("myHub.serviceAreaPlaceholder")}
                     disabled={isProfileLoading || saveMutation.isPending}
                   />
                 </div>
 
                 <div className="space-y-2">
-                  <Label htmlFor="vendor-shop-service-radius">Service Radius (miles)</Label>
+                  <Label htmlFor="vendor-shop-service-radius">{t("myHub.serviceRadius")}</Label>
                   <Input
                     id="vendor-shop-service-radius"
                     type="number"
@@ -1904,35 +1908,35 @@ export default function MyHub() {
                     step={1}
                     value={serviceRadiusMilesDraft}
                     onChange={(event) => setServiceRadiusMilesDraft(event.target.value.replace(/[^\d]/g, ""))}
-                    placeholder="Example: 100"
+                    placeholder={t("myHub.serviceRadiusPlaceholder")}
                     disabled={isProfileLoading || saveMutation.isPending}
                   />
                 </div>
 
                 <div className="space-y-2">
-                  <Label htmlFor="vendor-shop-in-business-since">In Business Since (Year)</Label>
+                  <Label htmlFor="vendor-shop-in-business-since">{t("myHub.inBusinessSince")}</Label>
                   <Input
                     id="vendor-shop-in-business-since"
                     value={inBusinessSinceYearDraft}
                     onChange={(event) => setInBusinessSinceYearDraft(event.target.value.replace(/[^\d]/g, "").slice(0, 4))}
-                    placeholder="Example: 2018"
+                    placeholder={t("myHub.inBusinessSincePlaceholder")}
                     disabled={isProfileLoading || saveMutation.isPending}
                   />
                 </div>
 
                 <div className="space-y-2">
-                  <Label htmlFor="vendor-shop-specialties">Specialties</Label>
+                  <Label htmlFor="vendor-shop-specialties">{t("myHub.specialties")}</Label>
                   <Input
                     id="vendor-shop-specialties"
                     value={specialtiesDraft}
                     onChange={(event) => setSpecialtiesDraft(event.target.value)}
-                    placeholder="Comma separated (e.g. Weddings, Garden Parties, Baby Showers)"
+                    placeholder={t("myHub.specialtiesPlaceholder")}
                     disabled={isProfileLoading || saveMutation.isPending}
                   />
                 </div>
 
                 <div className="space-y-2">
-                  <Label htmlFor="vendor-shop-events-baseline">Events Served (Starting Count)</Label>
+                  <Label htmlFor="vendor-shop-events-baseline">{t("myHub.eventsServed")}</Label>
                   <Input
                     id="vendor-shop-events-baseline"
                     value={eventsServedBaselineDraft}
@@ -1943,12 +1947,12 @@ export default function MyHub() {
                 </div>
 
                 <div className="space-y-2">
-                  <Label htmlFor="vendor-shop-about-business">About the Business</Label>
+                  <Label htmlFor="vendor-shop-about-business">{t("myHub.aboutBusiness")}</Label>
                   <Textarea
                     id="vendor-shop-about-business"
                     value={aboutBusinessDraft}
                     onChange={(event) => setAboutBusinessDraft(event.target.value)}
-                    placeholder="Tell customers about your business."
+                    placeholder={t("myHub.aboutBusinessPlaceholder")}
                     rows={4}
                     disabled={isProfileLoading || saveMutation.isPending}
                     data-testid="textarea-vendor-shop-about-business"
@@ -1956,12 +1960,12 @@ export default function MyHub() {
                 </div>
 
                 <div className="space-y-2">
-                  <Label htmlFor="vendor-shop-about-owner">About the Owner</Label>
+                  <Label htmlFor="vendor-shop-about-owner">{t("myHub.aboutOwner")}</Label>
                   <Textarea
                     id="vendor-shop-about-owner"
                     value={aboutOwnerDraft}
                     onChange={(event) => setAboutOwnerDraft(event.target.value)}
-                    placeholder="Share a short intro about the owner."
+                    placeholder={t("myHub.aboutOwnerPlaceholder")}
                     rows={4}
                     disabled={isProfileLoading || saveMutation.isPending}
                     data-testid="textarea-vendor-shop-about-owner"
@@ -1969,12 +1973,12 @@ export default function MyHub() {
                 </div>
 
                 <div className="space-y-2">
-                  <Label htmlFor="vendor-shop-hobbies">Hobbies</Label>
+                  <Label htmlFor="vendor-shop-hobbies">{t("myHub.hobbies")}</Label>
                   <HobbyPillInput
                     id="vendor-shop-hobbies"
                     value={hobbiesDraft}
                     onChange={setHobbiesDraft}
-                    placeholder="Type a hobby and press Enter"
+                    placeholder={t("myHub.hobbiesPlaceholder")}
                     disabled={isProfileLoading || saveMutation.isPending}
                     inputTestId="textarea-vendor-shop-hobbies"
                     pillClassName="border-[#E07A6A] bg-[#E07A6A] text-[#ffffff]"
@@ -1983,24 +1987,24 @@ export default function MyHub() {
                 </div>
 
                 <div className="space-y-2">
-                  <Label htmlFor="vendor-shop-home-state">Home State</Label>
+                  <Label htmlFor="vendor-shop-home-state">{t("myHub.homeState")}</Label>
                   <Input
                     id="vendor-shop-home-state"
                     value={homeStateDraft}
                     onChange={(event) => setHomeStateDraft(event.target.value)}
-                    placeholder="Example: Utah"
+                    placeholder={t("myHub.homeStatePlaceholder")}
                     disabled={isProfileLoading || saveMutation.isPending}
                     data-testid="input-vendor-shop-home-state"
                   />
                 </div>
 
                 <div className="space-y-2">
-                  <Label htmlFor="vendor-shop-fun-facts">Fun Facts</Label>
+                  <Label htmlFor="vendor-shop-fun-facts">{t("myHub.funFacts")}</Label>
                   <Textarea
                     id="vendor-shop-fun-facts"
                     value={funFactsDraft}
                     onChange={(event) => setFunFactsDraft(event.target.value)}
-                    placeholder="Optional fun facts customers can read."
+                    placeholder={t("myHub.funFactsPlaceholder")}
                     rows={3}
                     disabled={isProfileLoading || saveMutation.isPending}
                     data-testid="textarea-vendor-shop-fun-facts"
@@ -2016,8 +2020,8 @@ export default function MyHub() {
       <Dialog open={isCoverPhotoEditorOpen} onOpenChange={closeCoverPhotoEditor}>
         <DialogContent className="sm:max-w-2xl" data-testid="dialog-shop-cover-photo-editor">
           <DialogHeader>
-            <DialogTitle>Edit cover photo</DialogTitle>
-            <DialogDescription>Drag to position your photo inside the cover frame.</DialogDescription>
+            <DialogTitle>{t("myHub.editCoverPhotoTitle")}</DialogTitle>
+            <DialogDescription>{t("myHub.coverPhotoDragHint")}</DialogDescription>
           </DialogHeader>
 
           <div className="space-y-4">
@@ -2040,10 +2044,10 @@ export default function MyHub() {
 
           <DialogFooter>
             <Button type="button" variant="outline" onClick={() => closeCoverPhotoEditor(false)}>
-              Cancel
+              {t("myHub.cancel")}
             </Button>
             <Button type="button" onClick={applyCoverPhotoEditorChanges} disabled={!editorCoverPhotoSource}>
-              Save
+              {t("myHub.save")}
             </Button>
           </DialogFooter>
         </DialogContent>
@@ -2052,9 +2056,9 @@ export default function MyHub() {
       <Dialog open={isPhotoEditorOpen} onOpenChange={setIsPhotoEditorOpen}>
         <DialogContent className="sm:max-w-md" data-testid="dialog-shop-photo-editor">
           <DialogHeader>
-            <DialogTitle>Edit photo</DialogTitle>
+            <DialogTitle>{t("myHub.editPhotoTitle")}</DialogTitle>
             <DialogDescription>
-              Drag to move your photo and use the slider to scale it inside the circle.
+              {t("myHub.photoDragHint")}
             </DialogDescription>
           </DialogHeader>
 
@@ -2075,7 +2079,7 @@ export default function MyHub() {
             </div>
 
             <div className="space-y-2">
-              <Label htmlFor="shop-photo-scale">Scale</Label>
+              <Label htmlFor="shop-photo-scale">{t("myHub.scale")}</Label>
               <input
                 id="shop-photo-scale"
                 type="range"
@@ -2095,10 +2099,10 @@ export default function MyHub() {
 
           <DialogFooter>
             <Button type="button" variant="outline" onClick={() => setIsPhotoEditorOpen(false)}>
-              Cancel
+              {t("myHub.cancel")}
             </Button>
             <Button type="button" onClick={applyPhotoEditorChanges}>
-              Save
+              {t("myHub.save")}
             </Button>
           </DialogFooter>
         </DialogContent>

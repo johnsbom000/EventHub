@@ -1,4 +1,5 @@
 import type { Request, Response, NextFunction } from "express";
+import { logger } from "./lib/logger";
 import { requireAuth0 } from "./auth0";
 import { db } from "./db";
 import { eq, and, isNull, sql as drizzleSql } from "drizzle-orm";
@@ -38,10 +39,10 @@ function logVendorResolver(
     ...fields,
   };
   if (level === "warn") {
-    console.warn("[vendor-resolver]", JSON.stringify(payload));
+    logger.warn({ payload }, "[vendor-resolver]");
     return;
   }
-  console.info("[vendor-resolver]", JSON.stringify(payload));
+  logger.info({ payload }, "[vendor-resolver]");
 }
 
 async function resolveSingleUserByAuth0Sub(
@@ -403,7 +404,7 @@ export async function requireAdminAuth(req: Request, res: Response, next: NextFu
 
     return next();
   } catch (err: any) {
-    console.error("requireAdminAuth error:", err?.message || err);
+    logger.error("requireAdminAuth error:", err?.message || err);
     return res.status(401).json({ message: "Unauthorized" });
   }
 }
@@ -518,7 +519,7 @@ export async function requireDualAuthAuth0(
     (req as any).auth0Only = true;
     return next();
   } catch (err: any) {
-    console.error("requireDualAuthAuth0 CATCH:", err?.name, err?.message, err);
+    logger.error("requireDualAuthAuth0 CATCH:", err?.name, err?.message, err);
     return res.status(401).json({ message: "Invalid or expired Auth0 token" });
   }
 

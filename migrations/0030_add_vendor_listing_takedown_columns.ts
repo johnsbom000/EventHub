@@ -2,6 +2,13 @@ import { sql } from "drizzle-orm";
 
 import { db } from "../server/db";
 
+/**
+ * NOTE: This file shares the 0030 prefix with 0030_missing_indexes.ts.
+ * Both run correctly because the migration runner tracks by full filename.
+ * Alphabetical sort means this file (add_vendor_listing_takedown_columns)
+ * runs BEFORE 0030_missing_indexes.ts — no dependency between them.
+ * Future migrations must use strictly sequential numbers (0048, 0049, ...).
+ */
 export async function up() {
   await db.execute(sql`
     alter table vendor_listings

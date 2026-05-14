@@ -5,11 +5,13 @@ import { useAuth0 } from "@auth0/auth0-react";
 import { CardElement, Elements, useElements, useStripe } from "@stripe/react-stripe-js";
 import { loadStripe } from "@stripe/stripe-js";
 import { ChevronLeft, Calendar, CheckCircle2, MapPin } from "lucide-react";
+import { useTranslation } from "react-i18next";
 
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
 import { Textarea } from "@/components/ui/textarea";
+import { useToast } from "@/hooks/use-toast";
 import {
   Select,
   SelectContent,
@@ -53,7 +55,6 @@ const CHECKOUT_IDEMPOTENCY_KEY_PREFIX = "eventhub.checkout.idempotency.v1";
 type CheckoutPendingPaymentDraft = {
   listingId: string;
   bookingId: string;
-  depositScheduleId: string;
   idempotencyKey: string;
   createdAt: string;
 };
@@ -262,6 +263,7 @@ function CheckoutContent({
   stripeConfigured: boolean;
   stripeConfigError: string | null;
 }) {
+  const { t } = useTranslation();
   const [path, setLocation] = useLocation();
   const [, params] = useRoute<CheckoutRouteParams>("/checkout/:listingId");
   const listingId =
@@ -284,13 +286,27 @@ function CheckoutContent({
     if (!Number.isFinite(parsed) || parsed < 1) return 1;
     return Math.floor(parsed);
   }, [searchParams]);
+  const initialStartTime = useMemo(() => {
+    const raw = searchParams.get("startTime");
+    if (raw && /^\d{2}:\d{2}$/.test(raw)) return raw;
+    return "";
+  }, [searchParams]);
+  const initialEndTime = useMemo(() => {
+    const raw = searchParams.get("endTime");
+    if (raw && /^\d{2}:\d{2}$/.test(raw)) return raw;
+    return "";
+  }, [searchParams]);
+  const selectedPackageId = useMemo(() => searchParams.get("packageId") || undefined, [searchParams]);
+  const selectedAddonIds = useMemo(() => {
+    const raw = searchParams.get("addonIds");
+    if (!raw) return [];
+    return raw.split(",").filter(Boolean);
+  }, [searchParams]);
 
   const [eventDate, setEventDate] = useState(initialDate);
   const [quantity, setQuantity] = useState(initialQuantity);
-  const [eventStartTime, setEventStartTime] = useState("");
-  const [eventEndTime, setEventEndTime] = useState("");
-  const [itemNeededByTime, setItemNeededByTime] = useState("");
-  const [itemDoneByTime, setItemDoneByTime] = useState("");
+  const [eventStartTime, setEventStartTime] = useState(initialStartTime);
+  const [eventEndTime, setEventEndTime] = useState(initialEndTime);
   const [contactName, setContactName] = useState("");
   const [contactEmail, setContactEmail] = useState("");
   const [deliveryAddress, setDeliveryAddress] = useState("");
@@ -306,15 +322,21 @@ function CheckoutContent({
   const [customerQuestions, setCustomerQuestions] = useState("");
 
   const [cardComplete, setCardComplete] = useState(false);
+  const [hasAttemptedSubmit, setHasAttemptedSubmit] = useState(false);
   const [isSubmitting, setIsSubmitting] = useState(false);
   const [submitStage, setSubmitStage] = useState<"idle" | "creating-booking" | "initializing-payment" | "confirming-payment">("idle");
   const [submitError, setSubmitError] = useState<string | null>(null);
   const [pendingPaymentDraft, setPendingPaymentDraft] = useState<CheckoutPendingPaymentDraft | null>(null);
   const [checkoutIdempotencyKey, setCheckoutIdempotencyKey] = useState("");
+  const [promoCodeInput, setPromoCodeInput] = useState("");
+  const [appliedPromo, setAppliedPromo] = useState<{ code: string; percentOff: number; discountId: string } | null>(null);
+  const [promoError, setPromoError] = useState<string | null>(null);
+  const [promoLoading, setPromoLoading] = useState(false);
 
   const stripe = useStripe();
   const elements = useElements();
   const { isAuthenticated, loginWithRedirect, getAccessTokenSilently, user } = useAuth0();
+  const { toast } = useToast();
 
   // Fetch vendor account so we can use the owner's real name when a vendor is the one booking.
   const { data: vendorMe } = useQuery<{
@@ -381,7 +403,6 @@ function CheckoutContent({
         parsed &&
         parsed.listingId === listingId &&
         typeof parsed.bookingId === "string" &&
-        typeof parsed.depositScheduleId === "string" &&
         typeof parsed.idempotencyKey === "string"
       ) {
         setPendingPaymentDraft(parsed);
@@ -421,9 +442,11 @@ function CheckoutContent({
     );
   };
 
+  const isAlaCarte = listingId === "alacarte";
+
   const { data, isLoading, error } = useQuery<any>({
     queryKey: ["/api/listings/public", listingId],
-    enabled: Boolean(listingId),
+    enabled: Boolean(listingId) && !isAlaCarte,
     queryFn: async () => {
       const res = await fetch(`/api/listings/public/${listingId}`, {
         headers: { Accept: "application/json" },
@@ -602,6 +625,12 @@ function CheckoutContent({
         setupFeeAmountCents,
         takedownFeeEnabled,
         takedownFeeAmountCents,
+        securityDepositEnabled: parseBooleanLike(raw?.securityDepositEnabled ?? ld?.securityDepositEnabled),
+        securityDepositCents: parseOptionalNumber(raw?.securityDepositCents ?? ld?.securityDepositCents) ?? null,
+        // Package children — used to resolve selected package price in checkout
+        packages: Array.isArray(raw?.packages)
+          ? (raw.packages as Array<{ id: string; title: string | null; priceCents: number | null; pricingUnit: string | null; whatsIncluded: string[] }>)
+          : [],
       };
     },
   });
@@ -629,8 +658,10 @@ function CheckoutContent({
     staleTime: 60_000,
     retry: false,
   });
-  const { data: customerEvents = [] } = useQuery<CustomerEventOption[]>({
-    queryKey: ["/api/customer/events", "checkout-event-options"],
+  // Fetch planning boards — these are the "events" customers create when saving listings.
+  // My Events groups bookings under boards by name-matching, so we use board names here.
+  const { data: customerEvents = [] } = useQuery<{ id: string; name: string }[]>({
+    queryKey: ["/api/boards", "checkout-event-options"],
     enabled: Boolean(isAuthenticated),
     queryFn: async () => {
       const token = await getAccessTokenSilently({
@@ -640,18 +671,59 @@ function CheckoutContent({
         },
       });
 
-      const res = await fetch("/api/customer/events", {
+      const res = await fetch("/api/boards", {
         headers: {
           Authorization: `Bearer ${token}`,
           Accept: "application/json",
         },
       });
-      if (!res.ok) throw new Error("Failed to load customer events");
-      return res.json();
+      if (!res.ok) throw new Error("Failed to load planning events");
+      const boards: { id: string; name: string }[] = await res.json();
+      return boards;
     },
     staleTime: 30_000,
     retry: false,
   });
+
+  // Active sale for auto-applied discount
+  const { data: activeSaleData } = useQuery<{ sale: { percentOff: number; endsAt: string } | null }>({
+    queryKey: [`/api/listings/${listingId}/active-sale`],
+    enabled: Boolean(listingId),
+    staleTime: 60_000,
+  });
+  const activeSale = activeSaleData?.sale ?? null;
+
+  async function handleApplyPromoCode() {
+    const code = promoCodeInput.trim().toUpperCase();
+    if (!code || !listingId) return;
+    setPromoError(null);
+    setPromoLoading(true);
+    try {
+      const res = await fetch("/api/discounts/validate-code", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ code, listingId }),
+      });
+      const json = await res.json();
+      if (json.valid) {
+        setAppliedPromo({ code, percentOff: json.percentOff, discountId: json.discountId });
+        setPromoError(null);
+      } else {
+        setAppliedPromo(null);
+        const messages: Record<string, string> = {
+          not_found: "Promo code not found or not valid for this listing.",
+          not_active: "This promo code is no longer active.",
+          expired: "This promo code has expired.",
+          cap_reached: "This promo code has reached its usage limit.",
+        };
+        setPromoError(messages[json.reason] ?? "Invalid promo code.");
+      }
+    } catch {
+      setPromoError("Could not validate promo code. Please try again.");
+    } finally {
+      setPromoLoading(false);
+    }
+  }
 
   useEffect(() => {
     if (!Array.isArray(customerEvents) || customerEvents.length === 0) {
@@ -660,7 +732,7 @@ function CheckoutContent({
       return;
     }
     if (eventMode === "new") return;
-    const selectedStillExists = customerEvents.some((evt) => evt.id === selectedCustomerEventId);
+    const selectedStillExists = customerEvents.some((b) => b.id === selectedCustomerEventId);
     if (eventMode === "existing" && selectedStillExists) return;
     if (!selectedStillExists) {
       setEventMode("existing");
@@ -733,7 +805,15 @@ function CheckoutContent({
     window.localStorage.setItem(CHECKOUT_DELIVERY_DRAFT_KEY, JSON.stringify(draft));
   }, [deliveryAddress, deliveryCity, deliveryState, deliveryZip, deliveryLocation]);
 
-  const isHourlyBooking = data?.pricingUnit === "per_hour";
+  // When a package is selected, use that package's price/unit instead of the container's.
+  const selectedPackage = selectedPackageId && data?.packages
+    ? (data.packages as Array<{ id: string; title: string | null; priceCents: number | null; pricingUnit: string | null }>).find((p) => p.id === selectedPackageId) ?? null
+    : null;
+  const effectivePriceCents = selectedPackage?.priceCents ?? data?.priceCents ?? 0;
+  const effectivePricingUnit: "per_day" | "per_hour" =
+    selectedPackage?.pricingUnit === "per_hour" ? "per_hour" : (data?.pricingUnit as "per_day" | "per_hour") ?? "per_day";
+
+  const isHourlyBooking = effectivePricingUnit === "per_hour";
   const shouldShowPerDayLogistics = Boolean(data && !isHourlyBooking);
   const maxAvailableQuantity =
     typeof data?.availableQuantity === "number" && Number.isFinite(data.availableQuantity) && data.availableQuantity > 0
@@ -758,48 +838,21 @@ function CheckoutContent({
   const hourlyTimeRangeError = useMemo(() => {
     if (!isHourlyBooking) return null;
     if (!eventStartTime || !eventEndTime) {
-      return "Select a start time and end time.";
+      return t("checkout.errorSelectTimes");
     }
     const startMinutes = parseTimeToMinutes(eventStartTime);
     const endMinutes = parseTimeToMinutes(eventEndTime);
     if (startMinutes == null || endMinutes == null) {
-      return "Hourly booking time range is invalid.";
+      return t("checkout.errorTimeRangeInvalid");
     }
     if (endMinutes <= startMinutes) {
-      return "End time must be after start time.";
+      return t("checkout.errorEndBeforeStart");
     }
     if (hourlyMinimumHours != null && (endMinutes - startMinutes) / 60 < hourlyMinimumHours) {
-      return `This listing requires at least ${hourlyMinimumHours} hour${hourlyMinimumHours === 1 ? "" : "s"}.`;
+      return t("checkout.errorMinimumHours", { count: hourlyMinimumHours, hours: hourlyMinimumHours });
     }
     return null;
-  }, [isHourlyBooking, eventStartTime, eventEndTime, hourlyMinimumHours]);
-  const perDayLogisticsError = useMemo(() => {
-    if (!shouldShowPerDayLogistics) return null;
-    if (!eventStartTime || !eventEndTime || !itemNeededByTime || !itemDoneByTime) {
-      return "Add the event times and the rental possession window.";
-    }
-
-    const actualEventStartMinutes = parseTimeToMinutes(eventStartTime);
-    const actualEventEndMinutes = parseTimeToMinutes(eventEndTime);
-    const neededByMinutes = parseTimeToMinutes(itemNeededByTime);
-    const doneByMinutes = parseTimeToMinutes(itemDoneByTime);
-
-    if (
-      actualEventStartMinutes == null ||
-      actualEventEndMinutes == null ||
-      neededByMinutes == null ||
-      doneByMinutes == null
-    ) {
-      return "One or more logistics times are invalid.";
-    }
-    if (actualEventEndMinutes <= actualEventStartMinutes) {
-      return "Event end time must be after the event start time.";
-    }
-    if (doneByMinutes <= neededByMinutes) {
-      return "Done-with time must be after the needed-by time.";
-    }
-    return null;
-  }, [shouldShowPerDayLogistics, eventStartTime, eventEndTime, itemNeededByTime, itemDoneByTime]);
+  }, [isHourlyBooking, eventStartTime, eventEndTime, hourlyMinimumHours, t]);
   const hourlyWindowGuidance = useMemo(() => {
     if (!data?.title) return "";
     return buildHourlyWindowGuidance({
@@ -813,14 +866,13 @@ function CheckoutContent({
 
   const hasPendingPaymentToResume =
     Boolean(pendingPaymentDraft?.bookingId) &&
-    Boolean(pendingPaymentDraft?.depositScheduleId) &&
     pendingPaymentDraft?.listingId === data?.id;
 
   const canSubmit =
     (hasPendingPaymentToResume
       ? true
       : Boolean(listingId) &&
-        Boolean(data?.priceCents) &&
+        Boolean(effectivePriceCents) &&
         Boolean(eventDate) &&
         normalizedQuantity >= 1 &&
         normalizedQuantity <= maxAvailableQuantity &&
@@ -831,7 +883,7 @@ function CheckoutContent({
             : newEventTitle.trim().length > 0
         ) &&
         (!isHourlyBooking || !hourlyTimeRangeError) &&
-        (!shouldShowPerDayLogistics || !perDayLogisticsError) &&
+        Boolean(deliveryLocation) &&
         (!data?.deliveryIncluded || (deliveryAddress && deliveryCity && deliveryState && deliveryZip))) &&
     stripeConfigured &&
     !stripeConfigError &&
@@ -839,7 +891,9 @@ function CheckoutContent({
     Boolean(elements) &&
     cardComplete &&
     !isSubmitting;
-  const baseSubtotal = (data?.priceCents || 0) * normalizedQuantity;
+  const baseSubtotal = isHourlyBooking && hourlyDurationHours != null
+    ? Math.round(effectivePriceCents * hourlyDurationHours)
+    : effectivePriceCents * normalizedQuantity;
   const deliveryFeeCents =
     data?.deliveryIncluded && data?.deliveryFeeEnabled
       ? Math.max(0, Math.round(data?.deliveryFeeAmountCents || 0))
@@ -861,13 +915,50 @@ function CheckoutContent({
     data?.travelFeeEnabled &&
     (data?.travelFeeType === "per_mile" || data?.travelFeeType === "per_hour");
   const logisticsSubtotal = deliveryFeeCents + setupFeeCents + takedownFeeCents + travelFlatFeeCents;
-  const customerFeeAmount = Math.round((baseSubtotal + logisticsSubtotal) * CUSTOMER_FEE_RATE);
-  const customerTotal = baseSubtotal + logisticsSubtotal + customerFeeAmount;
+  const securityDepositCents =
+    data?.securityDepositEnabled && (data?.securityDepositCents ?? 0) > 0
+      ? Math.max(0, Math.round(data?.securityDepositCents || 0))
+      : 0;
+  const combinedLogisticsCents = deliveryFeeCents + setupFeeCents + takedownFeeCents;
+  const logisticsLineLabels = [
+    deliveryFeeCents > 0 ? "delivery" : null,
+    setupFeeCents > 0 ? "setup" : null,
+    takedownFeeCents > 0 ? "takedown" : null,
+  ].filter(Boolean) as string[];
+
+  // Resolve which discount applies (promo wins over sale)
+  const activeDiscountPercent = appliedPromo
+    ? appliedPromo.percentOff
+    : activeSale
+      ? activeSale.percentOff
+      : 0;
+  const activeDiscountLabel = appliedPromo
+    ? `Promo code "${appliedPromo.code}"`
+    : activeSale
+      ? "Sale discount"
+      : null;
+  const discountAmountCents =
+    activeDiscountPercent > 0
+      ? Math.round((baseSubtotal + logisticsSubtotal) * activeDiscountPercent / 100)
+      : 0;
+  const discountedSubtotal = Math.max(0, baseSubtotal + logisticsSubtotal - discountAmountCents);
+  const customerFeeAmount = Math.round(discountedSubtotal * CUSTOMER_FEE_RATE);
+  const customerTotal = discountedSubtotal + customerFeeAmount;
 
   async function handleSubmitOrder() {
     setSubmitError(null);
 
-    if (!listingId || !data) return;
+    if (!listingId || (!data && !isAlaCarte)) return;
+
+    if (!canSubmit && !isSubmitting) {
+      setHasAttemptedSubmit(true);
+      toast({
+        title: "Please fill in required fields",
+        description: "Complete all highlighted fields before placing your order.",
+        variant: "destructive",
+      });
+      return;
+    }
 
     if (!isAuthenticated) {
       const returnTo = `${window.location.pathname}${window.location.search}${window.location.hash}`;
@@ -892,16 +983,12 @@ function CheckoutContent({
       setSubmitError("Payment form is still loading. Please try again.");
       return;
     }
-    if (!hasPendingPaymentToResume && (!data.priceCents || data.priceCents <= 0)) {
+    if (!hasPendingPaymentToResume && !isAlaCarte && (!effectivePriceCents || effectivePriceCents <= 0)) {
       setSubmitError("This listing does not have a valid price.");
       return;
     }
     if (!hasPendingPaymentToResume && isHourlyBooking && hourlyTimeRangeError) {
       setSubmitError(hourlyTimeRangeError);
-      return;
-    }
-    if (!hasPendingPaymentToResume && shouldShowPerDayLogistics && perDayLogisticsError) {
-      setSubmitError(perDayLogisticsError);
       return;
     }
 
@@ -914,10 +1001,14 @@ function CheckoutContent({
     setIsSubmitting(true);
     setSubmitStage("creating-booking");
     try {
-      const eventLocation =
-        data.deliveryIncluded && deliveryAddress
-          ? `${deliveryAddress}, ${deliveryCity}, ${deliveryState} ${deliveryZip}`.trim()
-          : undefined;
+      // For delivery bookings use the structured address fields; for all others
+      // use the label from the LocationPicker (which the customer is always
+      // asked to fill in so we have an event timezone).
+      const eventLocation = data.deliveryIncluded && deliveryAddress
+        ? `${deliveryAddress}, ${deliveryCity}, ${deliveryState} ${deliveryZip}`.trim()
+        : (deliveryLocation as any)?.label || undefined;
+      const eventLocationLat = (deliveryLocation as any)?.lat as number | undefined;
+      const eventLocationLng = (deliveryLocation as any)?.lng as number | undefined;
 
       const token = await getAccessTokenSilently({
         authorizationParams: {
@@ -958,9 +1049,8 @@ function CheckoutContent({
       }
 
       let bookingId = pendingPaymentDraft?.bookingId || "";
-      let depositScheduleId = pendingPaymentDraft?.depositScheduleId || "";
 
-      if (!bookingId || !depositScheduleId) {
+      if (!bookingId) {
         const bookingRes = await fetch("/api/bookings", {
           method: "POST",
           headers: {
@@ -968,50 +1058,47 @@ function CheckoutContent({
             Authorization: `Bearer ${token}`,
           },
           body: JSON.stringify({
-            listingId: data.id,
-            vendorId: data.vendorId,
+            listingId: isAlaCarte ? null : (data?.id ?? null),
+            vendorId: data?.vendorId ?? searchParams.get("vendorId") ?? null,
             quantity: normalizedQuantity,
             eventDate,
             eventStartTime: eventStartTime || undefined,
             eventEndTime: eventEndTime || undefined,
-            itemNeededByTime:
-              shouldShowPerDayLogistics
-                ? itemNeededByTime || undefined
-                : eventStartTime || undefined,
-            itemDoneByTime:
-              shouldShowPerDayLogistics
-                ? itemDoneByTime || undefined
-                : eventEndTime || undefined,
             eventLocation,
-            customerEventId: eventMode === "existing" ? selectedCustomerEventId : undefined,
-            customerEventTitle: eventMode === "new" ? newEventTitle.trim() : undefined,
+            eventLocationLat,
+            eventLocationLng,
+            // Always send customerEventTitle — we use board name for existing boards so My Events
+            // can group the booking under the right board by name-matching.
+            customerEventId: undefined,
+            customerEventTitle: eventMode === "existing"
+              ? (customerEvents.find((b) => b.id === selectedCustomerEventId)?.name ?? undefined)
+              : (newEventTitle.trim() || undefined),
             specialRequests: customerNotes?.trim() || undefined,
             customerNotes: customerNotes?.trim() || undefined,
             customerQuestions: customerQuestions?.trim() || undefined,
             idempotencyKey: activeIdempotencyKey,
             finalPaymentStrategy: "immediately",
+            promoCode: appliedPromo ? appliedPromo.code : undefined,
+            packageId: selectedPackageId || undefined,
+            addOnIds: selectedAddonIds.length > 0 ? selectedAddonIds : undefined,
           }),
         });
 
         const bookingJson = await bookingRes.json().catch(() => ({}));
         if (!bookingRes.ok) {
-          throw new Error(bookingJson?.error || "Checkout failed");
+          const detail = typeof bookingJson?.detail === "string" ? ` (${bookingJson.detail})` : "";
+          throw new Error((bookingJson?.error || "Checkout failed") + detail);
         }
 
         bookingId = typeof bookingJson?.id === "string" ? bookingJson.id : "";
-        depositScheduleId =
-          typeof bookingJson?.payment?.depositScheduleId === "string"
-            ? bookingJson.payment.depositScheduleId
-            : "";
-        if (!bookingId || !depositScheduleId) {
-          throw new Error("Booking was created, but payment setup is incomplete. Please try again.");
+        if (!bookingId) {
+          throw new Error("Booking was created, but booking ID is missing. Please try again.");
         }
       }
 
       const pendingDraft: CheckoutPendingPaymentDraft = {
-        listingId: data.id,
+        listingId: data?.id ?? listingId ?? "",
         bookingId,
-        depositScheduleId,
         idempotencyKey: activeIdempotencyKey,
         createdAt: new Date().toISOString(),
       };
@@ -1019,7 +1106,7 @@ function CheckoutContent({
 
       setSubmitStage("initializing-payment");
       const initPaymentRes = await fetch(
-        `/api/bookings/${encodeURIComponent(bookingId)}/payments/${encodeURIComponent(depositScheduleId)}`,
+        `/api/bookings/${encodeURIComponent(bookingId)}/initialize-payment`,
         {
           method: "POST",
           headers: {
@@ -1059,6 +1146,9 @@ function CheckoutContent({
                 : undefined,
           },
         },
+        // Save the card off-session so the server can charge the security deposit
+        // automatically after booking confirmation without another card entry.
+        setup_future_usage: securityDepositCents > 0 ? "off_session" : undefined,
       });
 
       if (confirmResult.error) {
@@ -1077,10 +1167,7 @@ function CheckoutContent({
       );
     } catch (e: any) {
       const message = e?.message || "Checkout failed";
-      if (
-        typeof message === "string" &&
-        (message.includes("Booking not found") || message.includes("schedule not found"))
-      ) {
+      if (typeof message === "string" && message.includes("Booking not found")) {
         persistPendingPaymentDraft(null);
       }
       setSubmitError(e?.message || "Checkout failed");
@@ -1090,22 +1177,47 @@ function CheckoutContent({
     }
   }
 
-  if (!listingId) return <div className="p-6">Missing listing id</div>;
-  if (isLoading) return <div className="p-6">Loading checkout…</div>;
-  if (error) return <div className="p-6">Error loading checkout</div>;
-  if (!data) return <div className="p-6">Listing not found</div>;
+  if (!listingId) return <div className="p-6">{t("checkout.missingListingId")}</div>;
+  if (isLoading) return <div className="p-6">{t("checkout.loading")}</div>;
+  if (error) return <div className="p-6">{t("checkout.errorLoading")}</div>;
+  if (!data && !isAlaCarte) return <div className="p-6">{t("checkout.listingNotFound")}</div>;
 
-  const cover = data.photos?.[0];
+  // Synthetic data for a-la-carte bundle checkout (no single parent listing)
+  const effectiveData = data ?? {
+    id: null,
+    vendorId: searchParams.get("vendorId") || null,
+    title: "A-la-carte Bundle",
+    priceCents: 0,
+    deliveryIncluded: false,
+    instantBookEnabled: false,
+    cancellationPolicy: "cancel_anytime",
+    cancellationPolicyHours: 48,
+    photos: [],
+    pricingUnit: "per_day",
+    availableQuantity: 999,
+    shopActive: true,
+    vacationBlocks: [],
+    category: null,
+    serviceCenter: null,
+  };
+
+  const cover = effectiveData.photos?.[0];
 
   return (
     <div className="w-full min-h-screen">
       <div className="mx-auto flex w-full max-w-[1600px] flex-col px-4 py-4 sm:px-6">
       <button
-        onClick={() => setLocation(`/listing/${listingId}`)}
+        onClick={() => {
+          if (window.history.length > 1) {
+            window.history.back();
+          } else {
+            setLocation(`/listing/${listingId}`);
+          }
+        }}
         className="mb-3 flex items-center text-muted-foreground hover:text-foreground"
       >
         <ChevronLeft className="w-5 h-5 mr-1" />
-        Back to listing
+        {t("checkout.backToListing")}
       </button>
 
     <div className="grid grid-cols-1 gap-6 lg:grid-cols-[minmax(0,1fr)_520px]">
@@ -1113,96 +1225,128 @@ function CheckoutContent({
       <div className="space-y-4">
         {/* Billing Details */}
         <section>
-          <h2 className="mb-2 text-xl font-semibold">Billing Details</h2>
+          <h2 className="mb-2 text-xl font-semibold">{t("checkout.billingDetails")}</h2>
 
           <div className="space-y-3 p-4">
             <div className="space-y-2">
-              <Label htmlFor="contact-name">Full name</Label>
+              <Label htmlFor="contact-name">{t("checkout.fullName")}</Label>
               <Input
                 id="contact-name"
                 value={contactName}
                 onChange={(e) => setContactName(e.target.value)}
-                placeholder="Jane Doe"
+                placeholder={t("checkout.fullNamePlaceholder")}
                 className="h-10"
               />
             </div>
 
             <div className="space-y-2">
-              <Label htmlFor="contact-email">Email</Label>
+              <Label htmlFor="contact-email">{t("checkout.email")} <span className="text-red-500">*</span></Label>
               <Input
                 id="contact-email"
                 type="email"
                 value={contactEmail}
                 onChange={(e) => setContactEmail(e.target.value)}
-                placeholder="jane@email.com"
-                className="h-10"
+                placeholder={t("checkout.emailPlaceholder")}
+                className={`h-10 ${hasAttemptedSubmit && !contactEmail ? "border-red-500 focus-visible:ring-red-500" : ""}`}
               />
+              {hasAttemptedSubmit && !contactEmail && (
+                <p className="text-xs text-red-600">Email is required.</p>
+              )}
             </div>
 
-            {data.deliveryIncluded ? (
+            {/* Event / delivery address — always shown.
+                Label and helper text differ based on whether the listing includes delivery. */}
+            <div className="space-y-2">
+              <Label htmlFor="delivery-line1">
+                {effectiveData.deliveryIncluded
+                  ? `Where would you like ${effectiveData.title || "this"} delivered?`
+                  : "Where will the event be taking place?"}
+                {" "}<span className="text-red-500">*</span>
+              </Label>
+              <LocationPicker
+                value={deliveryLocation}
+                onChange={(loc) => {
+                  setDeliveryLocation(loc);
+                  if (!loc) {
+                    setDeliveryAddress("");
+                    setDeliveryCity("");
+                    setDeliveryState("");
+                    setDeliveryZip("");
+                    return;
+                  }
+
+                  const label = (loc as any).label || (loc as any).place_name || "";
+                  const parsed = parseAddressFromLabel(label);
+
+                  setDeliveryAddress(parsed.streetAddress || label);
+                  setDeliveryCity((loc as any).city || parsed.city || "");
+                  setDeliveryState((loc as any).state || parsed.state || "");
+                  setDeliveryZip((loc as any).zipCode || parsed.zipCode || "");
+                }}
+                placeholder={
+                  effectiveData.deliveryIncluded
+                    ? t("checkout.deliveryAddressPlaceholder")
+                    : "Search for the event location..."
+                }
+              />
+              {!effectiveData.deliveryIncluded && (
+                <p className="text-xs text-muted-foreground">
+                  Collected for logistics — helps make sure timing is correct for your event.
+                </p>
+              )}
+              {hasAttemptedSubmit && !deliveryLocation && (
+                <p className="text-xs text-red-600">Please enter the event location.</p>
+              )}
+            </div>
+
+            {/* City / ZIP / State breakdown — only needed for delivery bookings */}
+            {effectiveData.deliveryIncluded && (
               <>
-                <div className="space-y-2">
-                  <Label htmlFor="delivery-line1">Delivery address</Label>
-                  <LocationPicker
-                    value={deliveryLocation}
-                    onChange={(loc) => {
-                      setDeliveryLocation(loc);
-                      if (!loc) {
-                        setDeliveryAddress("");
-                        setDeliveryCity("");
-                        setDeliveryState("");
-                        setDeliveryZip("");
-                        return;
-                      }
-
-                      const label = (loc as any).label || (loc as any).place_name || "";
-                      const parsed = parseAddressFromLabel(label);
-
-                      setDeliveryAddress(parsed.streetAddress || label);
-                      setDeliveryCity((loc as any).city || parsed.city || "");
-                      setDeliveryState((loc as any).state || parsed.state || "");
-                      setDeliveryZip((loc as any).zipCode || parsed.zipCode || "");
-                    }}
-                    placeholder="Start typing your delivery address"
-                  />
-                </div>
-
                 <div className="grid grid-cols-1 gap-3 md:grid-cols-2">
                   <div className="space-y-2">
-                    <Label htmlFor="delivery-city">City</Label>
+                    <Label htmlFor="delivery-city">{t("checkout.deliveryCity")} <span className="text-red-500">*</span></Label>
                     <Input
                       id="delivery-city"
                       value={deliveryCity}
                       onChange={(e) => setDeliveryCity(e.target.value)}
-                      placeholder="City"
-                      className="h-10"
+                      placeholder={t("checkout.deliveryCity")}
+                      className={`h-10 ${hasAttemptedSubmit && !deliveryCity ? "border-red-500 focus-visible:ring-red-500" : ""}`}
                     />
+                    {hasAttemptedSubmit && !deliveryCity && (
+                      <p className="text-xs text-red-600">City is required.</p>
+                    )}
                   </div>
 
                   <div className="space-y-2">
-                    <Label htmlFor="delivery-zip">Zip/Postal Code</Label>
+                    <Label htmlFor="delivery-zip">{t("checkout.deliveryZip")} <span className="text-red-500">*</span></Label>
                     <Input
                       id="delivery-zip"
                       value={deliveryZip}
                       onChange={(e) => setDeliveryZip(e.target.value)}
                       placeholder="ZIP"
-                      className="h-10"
+                      className={`h-10 ${hasAttemptedSubmit && !deliveryZip ? "border-red-500 focus-visible:ring-red-500" : ""}`}
                     />
+                    {hasAttemptedSubmit && !deliveryZip && (
+                      <p className="text-xs text-red-600">ZIP code is required.</p>
+                    )}
                   </div>
                 </div>
 
                 <div className="space-y-2">
-                  <Label htmlFor="delivery-state">State</Label>
+                  <Label htmlFor="delivery-state">{t("checkout.deliveryState")} <span className="text-red-500">*</span></Label>
                   <Input
                     id="delivery-state"
                     value={deliveryState}
                     onChange={(e) => setDeliveryState(e.target.value)}
-                    placeholder="State"
-                    className="h-10"
+                    placeholder={t("checkout.deliveryState")}
+                    className={`h-10 ${hasAttemptedSubmit && !deliveryState ? "border-red-500 focus-visible:ring-red-500" : ""}`}
                   />
+                  {hasAttemptedSubmit && !deliveryState && (
+                    <p className="text-xs text-red-600">State is required.</p>
+                  )}
                 </div>
               </>
-            ) : null}
+            )}
           </div>
         </section>
 
@@ -1210,12 +1354,12 @@ function CheckoutContent({
 
         {/* Booking Notes */}
         <section>
-          <h2 className="mb-2 text-xl font-semibold">Event</h2>
+          <h2 className="mb-2 text-xl font-semibold">{t("checkout.event")}</h2>
 
           <div className="mb-4 space-y-3 p-4">
             {customerEvents.length > 0 ? (
               <div className="space-y-2">
-                <Label htmlFor="existing-event">Add to existing event</Label>
+                <Label htmlFor="existing-event">{t("checkout.eventAddToExisting")}</Label>
                 <Select
                   value={selectedCustomerEventId || undefined}
                   onValueChange={(value) => {
@@ -1225,28 +1369,28 @@ function CheckoutContent({
                   }}
                 >
                   <SelectTrigger id="existing-event" className="h-10 w-full text-sm">
-                    <SelectValue placeholder="Select an event" />
+                    <SelectValue placeholder={t("checkout.eventSelectPlaceholder")} />
                   </SelectTrigger>
                   <SelectContent>
-                    {customerEvents.map((evt) => (
-                      <SelectItem key={evt.id} value={evt.id}>
-                        {evt.title}
+                    {customerEvents.map((board) => (
+                      <SelectItem key={board.id} value={board.id}>
+                        {board.name}
                       </SelectItem>
                     ))}
                   </SelectContent>
                 </Select>
               </div>
             ) : (
-              <div className="text-sm text-muted-foreground">Create your first event</div>
+              <div className="text-sm text-muted-foreground">{t("checkout.eventCreateFirst")}</div>
             )}
 
             <div className="space-y-2">
-              <Label htmlFor="new-event-title">Event name</Label>
+              <Label htmlFor="new-event-title">{t("checkout.eventName")}</Label>
               <Input
                 id="new-event-title"
                 value={newEventTitle}
                 onChange={(e) => setNewEventTitle(e.target.value)}
-                placeholder="Ex: Maddie and Joshes Wedding"
+                placeholder={t("checkout.eventNamePlaceholder")}
                 className="h-10"
               />
             </div>
@@ -1261,26 +1405,42 @@ function CheckoutContent({
                     : undefined
                 }
                 disabled={newEventTitle.trim().length === 0}
-                onClick={() => {
+                onClick={async () => {
                   const nextTitle = newEventTitle.trim();
                   if (!nextTitle) return;
                   setEventMode("new");
                   setSelectedCustomerEventId("");
                   setNewEventQueuedTitle(nextTitle);
+                  // Create a planning board so the booking appears grouped under it in My Events
+                  try {
+                    const token = await getAccessTokenSilently({
+                      authorizationParams: { audience: "https://eventhub-api", scope: "openid profile email" },
+                    });
+                    await fetch("/api/boards", {
+                      method: "POST",
+                      headers: { "Content-Type": "application/json", Authorization: `Bearer ${token}` },
+                      body: JSON.stringify({ name: nextTitle }),
+                    });
+                  } catch {
+                    // Non-blocking — booking still gets the event title even if board creation fails
+                  }
                 }}
               >
-                Create New Event
+                {t("checkout.eventCreateButton")}
               </Button>
               {eventMode === "new" && newEventQueuedTitle ? (
                 <span className="text-sm text-primary">
-                  {data.title} will be added to {newEventQueuedTitle}.
+                  {t("checkout.listingWillBeAdded", { title: effectiveData.title, event: newEventQueuedTitle })}
                 </span>
               ) : null}
             </div>
+            {hasAttemptedSubmit && !(eventMode === "existing" ? selectedCustomerEventId : newEventTitle.trim().length > 0) && (
+              <p className="text-xs text-red-600">Please select an existing event or create a new one.</p>
+            )}
 
             {maxAvailableQuantity > 1 ? (
               <div className="space-y-2">
-                <Label htmlFor="booking-quantity">Quantity</Label>
+                <Label htmlFor="booking-quantity">{t("checkout.quantity")}</Label>
                 <Select
                   value={String(normalizedQuantity)}
                   onValueChange={(value) => {
@@ -1290,7 +1450,7 @@ function CheckoutContent({
                   }}
                 >
                   <SelectTrigger id="booking-quantity" className="h-10 w-full text-sm md:w-[220px]">
-                    <SelectValue placeholder="Select quantity" />
+                    <SelectValue placeholder={t("checkout.quantitySelectPlaceholder")} />
                   </SelectTrigger>
                   <SelectContent>
                     {Array.from({ length: maxAvailableQuantity }, (_, index) => index + 1).map((value) => (
@@ -1301,7 +1461,7 @@ function CheckoutContent({
                   </SelectContent>
                 </Select>
                 <p className="text-sm text-muted-foreground">
-                  {maxAvailableQuantity} identical unit{maxAvailableQuantity === 1 ? "" : "s"} available.
+                  {t("checkout.unitsAvailable", { count: maxAvailableQuantity })}
                 </p>
               </div>
             ) : null}
@@ -1309,7 +1469,7 @@ function CheckoutContent({
             {isHourlyBooking ? (
               <div className="grid grid-cols-1 gap-3 md:grid-cols-2">
                 <div className="space-y-2">
-                    <Label htmlFor="event-start-time">When do you need this setup by?</Label>
+                  <Label htmlFor="event-start-time">{t("checkout.hourlySetupByLabel")}</Label>
                   <Input
                     id="event-start-time"
                     type="time"
@@ -1341,7 +1501,7 @@ function CheckoutContent({
                 </div>
 
                 <div className="space-y-2">
-                    <Label htmlFor="event-end-time">When can it be taken down?</Label>
+                  <Label htmlFor="event-end-time">{t("checkout.hourlyTakedownLabel")}</Label>
                   <Input
                     id="event-end-time"
                     type="time"
@@ -1353,29 +1513,29 @@ function CheckoutContent({
 
                 <div className="md:col-span-2 text-sm text-muted-foreground">
                   {hourlyMinimumHours != null
-                    ? `${hourlyWindowGuidance} These two times are used as booking start/end for calendar sync. Minimum ${hourlyMinimumHours} hour${hourlyMinimumHours === 1 ? "" : "s"}.`
-                    : `${hourlyWindowGuidance} These two times are used as booking start/end for calendar sync.`}
+                    ? t("checkout.hourlyCalendarNoteMin", { count: hourlyMinimumHours })
+                    : t("checkout.hourlyCalendarNote")}
                 </div>
                 {hourlyTimeRangeError ? (
                   <div className="md:col-span-2 text-sm text-red-600">{hourlyTimeRangeError}</div>
                 ) : hourlyDurationHours != null ? (
                   <div className="md:col-span-2 text-sm text-muted-foreground">
-                    Reserved window: {hourlyDurationHours} hour{hourlyDurationHours === 1 ? "" : "s"}
+                    {t("checkout.hourlyReservedWindow", { count: hourlyDurationHours, start: eventStartTime, end: eventEndTime })}
                   </div>
                 ) : null}
               </div>
             ) : shouldShowPerDayLogistics ? (
               <div className="space-y-4">
                 <div className="space-y-1">
-                  <h3 className="text-base font-medium">Logistics</h3>
+                  <h3 className="text-base font-medium">{t("checkout.logisticsHeading")}</h3>
                   <p className="text-sm text-muted-foreground">
-                    Tell the vendor when your event happens and when you need {data.title} in your possession.
+                    {t("checkout.logisticsTip", { title: effectiveData.title })}
                   </p>
                 </div>
 
                 <div className="grid grid-cols-1 gap-3 md:grid-cols-2">
                   <div className="space-y-2">
-                    <Label htmlFor="event-start-time">When does your event start?</Label>
+                    <Label htmlFor="event-start-time">{t("checkout.eventStartLabel")}</Label>
                     <Input
                       id="event-start-time"
                       type="time"
@@ -1386,7 +1546,7 @@ function CheckoutContent({
                   </div>
 
                   <div className="space-y-2">
-                    <Label htmlFor="event-end-time">When does your event end?</Label>
+                    <Label htmlFor="event-end-time">{t("checkout.eventEndLabel")}</Label>
                     <Input
                       id="event-end-time"
                       type="time"
@@ -1396,43 +1556,6 @@ function CheckoutContent({
                     />
                   </div>
 
-                  <div className="space-y-2">
-                    <Label htmlFor="item-needed-by-time">When do you need this setup by?</Label>
-                    <Input
-                      id="item-needed-by-time"
-                      type="time"
-                      value={itemNeededByTime}
-                      onChange={(e) => setItemNeededByTime(e.target.value)}
-                      className="h-10"
-                    />
-                  </div>
-
-                  <div className="space-y-2">
-                    <Label htmlFor="item-done-by-time">When can it be taken down?</Label>
-                    <Input
-                      id="item-done-by-time"
-                      type="time"
-                      value={itemDoneByTime}
-                      onChange={(e) => setItemDoneByTime(e.target.value)}
-                      className="h-10"
-                    />
-                  </div>
-
-                  <div className="md:col-span-2 text-sm text-muted-foreground">
-                    Use the needed-by and done-with window for the actual rental possession period. Include buffer for{" "}
-                    {data.deliveryIncluded ? "delivery" : data.pickupEnabled ? "pickup" : "service access"}
-                    {data.setupIncluded && (data as any)?.takedownIncluded
-                      ? ", setup, and takedown"
-                      : data.setupIncluded
-                        ? ", setup"
-                        : (data as any)?.takedownIncluded
-                          ? ", takedown"
-                          : ""}{" "}
-                    so the vendor has enough time on both sides.
-                  </div>
-                  {perDayLogisticsError ? (
-                    <div className="md:col-span-2 text-sm text-red-600">{perDayLogisticsError}</div>
-                  ) : null}
                 </div>
               </div>
             ) : null}
@@ -1442,27 +1565,27 @@ function CheckoutContent({
         <div className="h-px w-full bg-[rgba(74,106,125,0.22)]" aria-hidden />
 
         <section>
-          <h2 className="mb-2 text-xl font-semibold">Notes and Questions</h2>
+          <h2 className="mb-2 text-xl font-semibold">{t("checkout.notesAndQuestions")}</h2>
 
           <div className="space-y-3 p-4">
             <div className="space-y-2">
-              <Label htmlFor="customer-notes">Notes for vendor</Label>
+              <Label htmlFor="customer-notes">{t("checkout.notesForVendor")}</Label>
               <Textarea
                 id="customer-notes"
                 value={customerNotes}
                 onChange={(e) => setCustomerNotes(e.target.value)}
-                placeholder="Add setup notes, preferences, venue rules, etc."
+                placeholder={t("checkout.notesForVendorPlaceholder")}
                 className="min-h-[72px]"
               />
             </div>
 
             <div className="space-y-2">
-              <Label htmlFor="customer-questions">Questions for vendor</Label>
+              <Label htmlFor="customer-questions">{t("checkout.questionsForVendor")}</Label>
               <Textarea
                 id="customer-questions"
                 value={customerQuestions}
                 onChange={(e) => setCustomerQuestions(e.target.value)}
-                placeholder="Ask any questions you want the vendor to answer."
+                placeholder={t("checkout.questionsForVendorPlaceholder")}
                 className="min-h-[72px]"
               />
             </div>
@@ -1474,45 +1597,40 @@ function CheckoutContent({
       {/* RIGHT: Order Summary */}
       <aside className="space-y-4">
         <div className="p-4">
-          <h2 className="mb-2 text-xl font-semibold">Order Summary</h2>
+          <h2 className="mb-2 text-xl font-semibold">{t("checkout.orderSummary")}</h2>
 
           <div className="space-y-3">
             <div className="flex items-start justify-between gap-4">
               <div className="flex gap-3">
                 <div className="w-16 h-16 rounded-lg overflow-hidden bg-muted shrink-0">
-                  {cover ? <img src={cover} alt={data.title} className="w-full h-full object-cover" /> : null}
+                  {cover ? <img src={cover} alt={effectiveData.title} className="w-full h-full object-cover" /> : null}
                 </div>
                 <div>
-                  <div className="font-medium leading-tight">{data.title}</div>
-                  <div className="text-sm text-muted-foreground">{data.vendorName}</div>
+                  <div className="font-medium leading-tight">
+                    {effectiveData.title}
+                    {selectedPackage?.title ? (
+                      <span className="ml-2 text-xs font-normal text-muted-foreground">— {selectedPackage.title}</span>
+                    ) : null}
+                  </div>
+                  <div className="text-sm text-muted-foreground">{effectiveData.vendorName}</div>
                   <div className="text-sm text-muted-foreground mt-2 flex items-center gap-2">
                     <Calendar className="w-4 h-4" />
                     <span>{eventDate}</span>
                   </div>
                   {normalizedQuantity > 1 ? (
                     <div className="text-sm text-muted-foreground mt-1">
-                      Quantity: {normalizedQuantity}
+                      {t("checkout.quantityDisplay", { count: normalizedQuantity })}
                     </div>
                   ) : null}
-                  {isHourlyBooking && eventStartTime && eventEndTime ? (
+                  {eventStartTime && eventEndTime ? (
                     <div className="text-sm text-muted-foreground mt-1">
-                      Rental window: {eventStartTime} - {eventEndTime}
+                      {t("checkout.rentalWindow", { start: eventStartTime, end: eventEndTime })}
                     </div>
                   ) : null}
-                  {shouldShowPerDayLogistics && itemNeededByTime && itemDoneByTime ? (
-                    <div className="text-sm text-muted-foreground mt-1">
-                      Rental window: {itemNeededByTime} - {itemDoneByTime}
-                    </div>
-                  ) : null}
-                  {shouldShowPerDayLogistics && eventStartTime && eventEndTime ? (
-                    <div className="text-sm text-muted-foreground mt-1">
-                      Event time: {eventStartTime} - {eventEndTime}
-                    </div>
-                  ) : null}
-                  {data.deliveryIncluded ? (
+                  {effectiveData.deliveryIncluded ? (
                     <div className="text-sm text-muted-foreground mt-1 flex items-center gap-2">
                       <MapPin className="w-4 h-4" />
-                      <span>Delivery Included</span>
+                      <span>{t("checkout.deliveryIncluded")}</span>
                     </div>
                   ) : null}
                 </div>
@@ -1525,65 +1643,125 @@ function CheckoutContent({
 
             <div className="border-t border-[rgba(74,106,125,0.22)]" />
 
+            {/* Promo code input */}
+            {!appliedPromo && (
+              <div className="flex gap-2">
+                <Input
+                  value={promoCodeInput}
+                  onChange={(e) => {
+                    setPromoCodeInput(e.target.value.toUpperCase().replace(/[^A-Z0-9]/g, ""));
+                    setPromoError(null);
+                  }}
+                  placeholder={t("checkout.promoCode")}
+                  className="font-mono tracking-widest uppercase h-9 text-sm"
+                  maxLength={32}
+                  onKeyDown={(e) => { if (e.key === "Enter") handleApplyPromoCode(); }}
+                />
+                <Button
+                  type="button"
+                  variant="outline"
+                  size="sm"
+                  className="h-9 shrink-0 border-[rgba(74,106,125,0.22)] text-[#4a6a7d]"
+                  onClick={handleApplyPromoCode}
+                  disabled={!promoCodeInput.trim() || promoLoading}
+                >
+                  {promoLoading ? t("checkout.promoCodeApplying") : t("checkout.promoCodeApply")}
+                </Button>
+              </div>
+            )}
+            {appliedPromo && (
+              <div className="flex items-center justify-between rounded-lg bg-green-50 border border-green-200 px-3 py-2 text-sm text-green-800">
+                <span>{t("checkout.promoApplied", { code: appliedPromo.code, percent: appliedPromo.percentOff })}</span>
+                <button
+                  type="button"
+                  onClick={() => { setAppliedPromo(null); setPromoCodeInput(""); }}
+                  className="ml-2 text-green-600 hover:text-green-800 font-medium underline text-xs"
+                >
+                  {t("checkout.promoCodeRemove")}
+                </button>
+              </div>
+            )}
+            {promoError && (
+              <p className="text-sm text-red-600">{promoError}</p>
+            )}
+            {!appliedPromo && activeSale && (
+              <div className="flex items-center gap-2 rounded-lg bg-[#e07a6a]/10 border border-[#e07a6a]/30 px-3 py-2 text-sm text-[#c9695a]">
+                {t("checkout.saleApplied", { percent: activeSale.percentOff })}
+              </div>
+            )}
+
             <div className="space-y-3">
               <div className="flex items-center justify-between">
                 <span className="text-sm text-muted-foreground">
-                  Sub total{normalizedQuantity > 1 ? ` (${normalizedQuantity} x ${formatUsdFromCents(data.priceCents || 0)})` : ""}
+                  {t("checkout.orderSummarySubtotal")}
+                  {isHourlyBooking && hourlyDurationHours != null
+                    ? ` (${hourlyDurationHours % 1 === 0 ? hourlyDurationHours : hourlyDurationHours.toFixed(1)} hrs × ${formatUsdFromCents(effectivePriceCents)})`
+                    : normalizedQuantity > 1
+                      ? ` (${normalizedQuantity} x ${formatUsdFromCents(effectivePriceCents)})`
+                      : ""}
                 </span>
                 <span className="font-medium">{formatUsdFromCents(baseSubtotal)}</span>
               </div>
 
-              {deliveryFeeCents > 0 ? (
+              {combinedLogisticsCents > 0 ? (
                 <div className="flex items-center justify-between">
-                  <span className="text-sm text-muted-foreground">Delivery fee</span>
-                  <span className="font-medium">{formatUsdFromCents(deliveryFeeCents)}</span>
-                </div>
-              ) : null}
-
-              {setupFeeCents > 0 ? (
-                <div className="flex items-center justify-between">
-                  <span className="text-sm text-muted-foreground">Setup fee</span>
-                  <span className="font-medium">{formatUsdFromCents(setupFeeCents)}</span>
-                </div>
-              ) : null}
-
-              {takedownFeeCents > 0 ? (
-                <div className="flex items-center justify-between">
-                  <span className="text-sm text-muted-foreground">Takedown fee</span>
-                  <span className="font-medium">{formatUsdFromCents(takedownFeeCents)}</span>
+                  <span className="text-sm text-muted-foreground">
+                    {`Logistics (${logisticsLineLabels.join(", ")})`}
+                  </span>
+                  <span className="font-medium">{formatUsdFromCents(combinedLogisticsCents)}</span>
                 </div>
               ) : null}
 
               {travelFlatFeeCents > 0 ? (
                 <div className="flex items-center justify-between">
-                  <span className="text-sm text-muted-foreground">Travel fee</span>
+                  <span className="text-sm text-muted-foreground">{t("checkout.orderSummaryTravelFee")}</span>
                   <span className="font-medium">{formatUsdFromCents(travelFlatFeeCents)}</span>
                 </div>
               ) : null}
 
               {variableTravelFeePending ? (
                 <div className="text-sm text-muted-foreground">
-                  Travel fee is configured as {data?.travelFeeType === "per_mile" ? "per mile" : "per hour"} and will
-                  be finalized by the vendor.
+                  {data?.travelFeeType === "per_mile"
+                    ? t("checkout.travelFeePerMileNote")
+                    : t("checkout.travelFeePerHourNote")}
+                </div>
+              ) : null}
+
+              {discountAmountCents > 0 && activeDiscountLabel ? (
+                <div className="flex items-center justify-between text-[#e07a6a]">
+                  <span className="text-sm font-medium">{activeDiscountLabel}</span>
+                  <span className="font-medium">−{formatUsdFromCents(discountAmountCents)}</span>
                 </div>
               ) : null}
 
               <div className="flex items-center justify-between">
-                <span className="text-sm text-muted-foreground">Service fee (5%)</span>
+                <span className="text-sm text-muted-foreground">{t("checkout.orderSummaryServiceFee")}</span>
                 <span className="font-medium">{formatUsdFromCents(customerFeeAmount)}</span>
               </div>
 
               <div className="border-t border-[rgba(74,106,125,0.22)] pt-4 flex items-end justify-between">
                 <div>
-                  <div className="text-xl font-semibold">Total</div>
-                  <div className="text-sm text-muted-foreground">Taxes calculated later</div>
+                  <div className="text-xl font-semibold">{t("checkout.orderSummaryTotal")}</div>
+                  <div className="text-sm text-muted-foreground">{t("checkout.orderSummaryTaxesLater")}</div>
                 </div>
                 <div className="text-3xl font-bold">{formatUsdFromCents(customerTotal)}</div>
               </div>
 
+              {securityDepositCents > 0 ? (
+                <div className="rounded-lg border border-border bg-muted/40 px-4 py-3 space-y-0.5">
+                  <div className="flex items-center justify-between text-sm">
+                    <span className="font-medium">Security deposit (refundable)</span>
+                    <span className="font-medium">{formatUsdFromCents(securityDepositCents)}</span>
+                  </div>
+                  <p className="text-xs text-muted-foreground">
+                    Charged separately after booking confirmation. Refunded automatically after your event if no dispute is filed.
+                  </p>
+                </div>
+              ) : null}
+
               <div className="space-y-2">
-                <Label>Card Number</Label>
-                <div className="rounded-md border border-border p-3">
+                <Label>{t("checkout.cardNumber")}</Label>
+                <div className={`rounded-md border p-3 ${hasAttemptedSubmit && !cardComplete ? "border-red-500" : "border-border"}`}>
                   <CardElement
                     options={{ hidePostalCode: true, disableLink: true }}
                     onChange={(event) => {
@@ -1595,12 +1773,15 @@ function CheckoutContent({
                 </div>
               </div>
 
-              <p className="text-sm text-muted-foreground">Use Stripe test card `4242 4242 4242 4242`.</p>
+              <p className="text-sm text-muted-foreground">{t("checkout.testCardNote")}</p>
 
+              {hasAttemptedSubmit && !cardComplete && !submitError && (
+                <p className="text-xs text-red-600">Please enter your card details.</p>
+              )}
               {submitError ? <p className="text-sm text-red-600">{submitError}</p> : null}
               {pendingPaymentDraft && !submitError ? (
                 <p className="text-sm text-amber-700">
-                  A previous payment attempt is pending. Submitting again will safely resume it.
+                  {t("checkout.pendingPaymentNote")}
                 </p>
               ) : null}
 
@@ -1611,28 +1792,32 @@ function CheckoutContent({
               ) : null}
 
               <p className="text-xs text-muted-foreground leading-relaxed">
-                By confirming this booking you agree to our{" "}
+                {t("checkout.termsDisclaimer").split("Terms of Service")[0]}
                 <a href="/terms" target="_blank" rel="noopener noreferrer" className="underline underline-offset-2 hover:text-foreground">
-                  Terms of Service
+                  {t("terms.title") || "Terms of Service"}
                 </a>
-                , including payment authorization, the 48-hour dispute window from your event date, damage responsibility, and assumption of risk for personal injury.
+                {t("checkout.termsDisclaimer").split("Terms of Service")[1]}{" "}
+                <a href="/privacy" target="_blank" rel="noopener noreferrer" className="underline underline-offset-2 hover:text-foreground">
+                  Privacy Policy
+                </a>
+                {" "}applies.
               </p>
 
               <Button
                 className="w-full h-12 text-base"
-                disabled={!canSubmit}
+                disabled={isSubmitting}
                 onClick={handleSubmitOrder}
                 data-testid="button-place-order"
               >
                 {isSubmitting
                   ? submitStage === "creating-booking"
-                    ? "Creating booking..."
+                    ? t("checkout.placeOrderLoading.creatingBooking")
                     : submitStage === "initializing-payment"
-                      ? "Preparing payment..."
-                      : "Confirming payment..."
+                      ? t("checkout.placeOrderLoading.preparingPayment")
+                      : t("checkout.placeOrderLoading.confirmingPayment")
                   : pendingPaymentDraft
-                    ? `Resume payment ${formatUsdFromCents(customerTotal)}`
-                    : `Pay ${formatUsdFromCents(customerTotal)}`}
+                    ? t("checkout.placeOrderResume", { total: formatUsdFromCents(customerTotal) })
+                    : t("checkout.placeOrder", { total: formatUsdFromCents(customerTotal) })}
               </Button>
             </div>
           </div>

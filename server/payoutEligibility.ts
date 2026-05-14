@@ -1,4 +1,4 @@
-export const DISPUTE_WINDOW_HOURS = 24;
+export const DISPUTE_WINDOW_HOURS = 72;
 
 export type BookingDisputeLifecycleStatus =
   | "filed"

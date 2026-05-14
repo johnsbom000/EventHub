@@ -1,3 +1,4 @@
+import { useTranslation } from "react-i18next";
 import { apiRequest } from "@/lib/queryClient";
 import React, { useState } from "react";
 import { Card } from "@/components/ui/card";
@@ -44,6 +45,7 @@ const buildPublishPayloadFromListing = (listing: AnyListing) => {
 };
 
 export default function VendorListings() {
+  const { t } = useTranslation();
   const [showCreateWizard, setShowCreateWizard] = useState(false);
   const [, setLocation] = useLocation();
   const { toast } = useToast();
@@ -60,7 +62,9 @@ export default function VendorListings() {
     },
   });
 
-  const allListingRows: AnyListing[] = Array.isArray(listings) ? listings : [];
+  const allListingRows: AnyListing[] = (Array.isArray(listings) ? listings : []).filter(
+    (l) => l?.listingType !== "package_item"
+  );
   const activeListingRows = allListingRows.filter(
     (listing) => String(listing?.status || "").toLowerCase() === "active"
   );
@@ -170,6 +174,7 @@ export default function VendorListings() {
       listing?.listingData?.serviceType ??
       "Untitled Listing";
 
+    const isPackageContainer = listing?.listingType === "package_container";
     const canonicalPriceCents =
       typeof listing?.priceCents === "number" && Number.isFinite(listing.priceCents) ? Math.round(listing.priceCents) : null;
     const legacyPrice =
@@ -180,12 +185,13 @@ export default function VendorListings() {
           : listing?.listingData?.offerings?.[0]?.price
             ? Number(listing.listingData.offerings[0].price)
             : null;
-    const price =
+    const rawPriceString =
       canonicalPriceCents != null && canonicalPriceCents > 0
         ? `$${(canonicalPriceCents / 100).toLocaleString()}`
         : typeof legacyPrice === "number" && Number.isFinite(legacyPrice)
           ? `$${Number(legacyPrice).toLocaleString()}`
-          : "Price not set";
+          : t("vendorListings.priceNotSet");
+    const price = isPackageContainer ? `From ${rawPriceString}` : rawPriceString;
 
     const photoUrls = getListingPhotoUrls(listing);
     const coverIndex = getCoverPhotoIndex(listing, photoUrls);
@@ -214,7 +220,7 @@ export default function VendorListings() {
             />
           ) : (
             <div className="w-full h-full flex items-center justify-center text-muted-foreground text-sm bg-muted">
-              No photo yet
+              {t("vendorListings.noPhotoYet")}
             </div>
           )}
 
@@ -235,7 +241,7 @@ export default function VendorListings() {
             aria-label={`Edit ${title}`}
           >
             <Edit className="w-3.5 h-3.5" />
-            Edit
+            {t("vendorListings.edit")}
           </button>
         </div>
 
@@ -254,7 +260,7 @@ export default function VendorListings() {
             </div>
             <div className="flex items-center gap-1">
               <span className="font-medium">{listing?.bookings || 0}</span>
-              <span>bookings</span>
+              <span>{t("vendorListings.bookings")}</span>
             </div>
           </div>
 
@@ -269,7 +275,7 @@ export default function VendorListings() {
               data-testid={`button-delete-${listing.id}`}
               disabled={deleteMutation.isPending || publishMutation.isPending || unpublishMutation.isPending}
             >
-              {deleteMutation.isPending ? "Deleting..." : "Delete"}
+              {deleteMutation.isPending ? t("vendorListings.deleting") : t("vendorListings.delete")}
             </Button>
 
             {isActive ? (
@@ -283,7 +289,7 @@ export default function VendorListings() {
                 data-testid={`button-unpublish-${listing.id}`}
                 disabled={deleteMutation.isPending || publishMutation.isPending || unpublishMutation.isPending}
               >
-                {unpublishMutation.isPending ? "Unpublishing..." : "Unpublish"}
+                {unpublishMutation.isPending ? t("vendorListings.unpublishing") : t("vendorListings.unpublish")}
               </Button>
             ) : (
               <Button
@@ -296,7 +302,7 @@ export default function VendorListings() {
                 data-testid={`button-publish-${listing.id}`}
                 disabled={deleteMutation.isPending || publishMutation.isPending || unpublishMutation.isPending}
               >
-                {publishMutation.isPending ? "Publishing..." : "Publish"}
+                {publishMutation.isPending ? t("vendorListings.publishing") : t("vendorListings.publish")}
               </Button>
             )}
           </div>
@@ -324,13 +330,13 @@ export default function VendorListings() {
       <div className="flex items-center justify-between mb-6">
         <h2 className="text-2xl font-semibold text-foreground">{title}</h2>
         <span className="text-sm text-muted-foreground">
-          {listings.length} {listings.length === 1 ? "listing" : "listings"}
+          {listings.length} {listings.length === 1 ? t("vendorListings.listing") : t("vendorListings.listings")}
         </span>
       </div>
 
       {isLoading ? (
         <Card className="p-8 text-center">
-          <p className="text-muted-foreground">Loading...</p>
+          <p className="text-muted-foreground">{t("vendorListings.loading")}</p>
         </Card>
       ) : listings.length > 0 ? (
         <div className="overflow-x-auto -mx-6 px-6">
@@ -361,7 +367,7 @@ export default function VendorListings() {
           <div className="flex items-start justify-between gap-4">
             <div>
               <h1 className="text-3xl font-bold mb-2" data-testid="text-page-title">
-                Listings Management
+                {t("vendorListings.pageTitle")}
               </h1>
             </div>
 
@@ -370,33 +376,33 @@ export default function VendorListings() {
               data-testid="button-create-listing"
             >
               <Plus className="w-4 h-4 mr-2" />
-              Create Listing
+              {t("vendorListings.createListing")}
             </Button>
           </div>
 
           <ListingSection
-            title="Active Listings"
+            title={t("vendorListings.activeListings")}
             listings={activeListingRows}
             status="active"
-            emptyMessage="No active listings. Create a listing to get started."
+            emptyMessage={t("vendorListings.noActiveListings")}
             isLoading={loadingListings}
             showSectionDivider={draftListingRows.length > 0 || inactiveListingRows.length > 0}
           />
 
           <ListingSection
-            title="Inactive Listings"
+            title={t("vendorListings.inactiveListings")}
             listings={inactiveListingRows}
             status="inactive"
-            emptyMessage="No inactive listings."
+            emptyMessage={t("vendorListings.noInactiveListings")}
             isLoading={loadingListings}
             showSectionDivider={draftListingRows.length > 0}
           />
 
           <ListingSection
-            title="Draft Listings"
+            title={t("vendorListings.draftListings")}
             listings={draftListingRows}
             status="draft"
-            emptyMessage="No draft listings."
+            emptyMessage={t("vendorListings.noDraftListings")}
             isLoading={loadingListings}
           />
         </div>

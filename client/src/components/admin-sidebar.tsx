@@ -1,6 +1,6 @@
 import {
   LayoutDashboard, TrendingUp, Calendar, AlertTriangle,
-  ArrowRightLeft, Users, LayoutGrid, Eye, Shield, LogOut, MessageSquarePlus,
+  ArrowRightLeft, Users, LayoutGrid, Eye, Shield, LogOut, MessageSquarePlus, Activity,
 } from "lucide-react";
 import { Link, useLocation } from "wouter";
 import { useQuery } from "@tanstack/react-query";
@@ -22,7 +22,8 @@ const menuItems = [
   { title: "Listings",    url: "/admin/listings",   icon: LayoutGrid },
   { title: "Traffic",     url: "/admin/traffic",    icon: Eye },
   { title: "Moderation",  url: "/admin/moderation", icon: Shield },
-  { title: "Feedback",    url: "/admin/feedback",    icon: MessageSquarePlus },
+  { title: "Feedback",    url: "/admin/feedback",   icon: MessageSquarePlus },
+  { title: "Health",      url: "/admin/health",     icon: Activity },
 ];
 
 export function AdminSidebar({ className }: { className?: string }) {
@@ -37,6 +38,14 @@ export function AdminSidebar({ className }: { className?: string }) {
   const openDisputes = disputes.filter(
     (d: any) => d.status !== "resolved_refund" && d.status !== "resolved_payout"
   ).length;
+
+  // Live health alert count for the badge
+  const { data: healthData } = useQuery<any>({
+    queryKey: ["/api/admin/health"],
+    staleTime: 5 * 60_000, // re-check every 5 min
+    refetchInterval: 5 * 60_000,
+  });
+  const healthAlerts: number = healthData?.summary?.totalAlerts ?? 0;
 
   const isActive = (url: string) =>
     url === "/admin" ? location === "/admin" : location.startsWith(url);
@@ -55,7 +64,10 @@ export function AdminSidebar({ className }: { className?: string }) {
             <SidebarMenu className="items-center gap-3">
               {menuItems.map((item) => {
                 const active = isActive(item.url);
-                const badge = item.title === "Disputes" && openDisputes > 0 ? openDisputes : null;
+                const badge =
+                  item.title === "Disputes" && openDisputes > 0 ? openDisputes :
+                  item.title === "Health"   && healthAlerts > 0 ? healthAlerts :
+                  null;
                 return (
                   <SidebarMenuItem key={item.title} className="group/menu-item relative overflow-visible">
                     <SidebarMenuButton

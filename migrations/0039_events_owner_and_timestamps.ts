@@ -54,7 +54,7 @@ export async function up() {
   await db.execute(sql`
     ALTER TABLE events
       ADD CONSTRAINT events_date_format_check
-      CHECK (date ~ '^\d{4}-\d{2}-\d{2}$')
+      CHECK (date ~ '^[0-9]{4}-[0-9]{2}-[0-9]{2}$')
       NOT VALID;
   `);
 

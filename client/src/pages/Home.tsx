@@ -4,27 +4,23 @@ import type { ListingPublic } from "@/types/listing";
 import { useMemo } from "react";
 import { useQuery } from "@tanstack/react-query";
 import { apiRequest } from "@/lib/queryClient";
+import { useTranslation } from "react-i18next";
 
 import Navigation from "@/components/Navigation";
 import Hero from "@/components/Hero";
 import Footer from "@/components/Footer";
 
 export default function Home() {
- const { data: publicListings = [], isLoading } = useQuery<ListingPublic[]>({
- queryKey: ["/api/listings/public"],
+ const { t } = useTranslation();
+ const { data, isLoading } = useQuery<{ listings: ListingPublic[]; total: number }>({
+ queryKey: ["/api/listings/public", { limit: 12, sort: "recommended" }],
  queryFn: async () => {
- const res = await apiRequest("GET", "/api/listings/public");
+ const res = await apiRequest("GET", "/api/listings/public?limit=12&sort=recommended");
  return res.json();
  },
  });
 
- // Optional: show newest first (or whatever you want)
- // If your ListingPublic has createdAt/updatedAt you can sort by that.
- // If not, just keep as-is.
- const featuredListings = useMemo(() => {
- // Show first 20 so Home doesn’t become huge
- return publicListings.slice(0, 20);
- }, [publicListings]);
+ const featuredListings = useMemo(() => data?.listings ?? [], [data]);
 
  return (
  <div className="min-h-screen flex flex-col bg-[#ffffff] ">
@@ -38,7 +34,7 @@ export default function Home() {
  <div className="mb-5 flex items-end justify-between gap-4">
  <div>
  <h2 className="font-heading font-normal text-[#2a3a42] ">
- Featured Listings
+ {t("home.featured.title")}
  </h2>
  </div>
 
@@ -48,7 +44,7 @@ export default function Home() {
  className="font-sans text-sm font-medium uppercase tracking-[0.1em] text-[#e07a6a]"
  data-testid="link-view-all"
  >
- View all
+ {t("home.featured.viewAll")}
  </a>
  </div>
 
@@ -56,12 +52,12 @@ export default function Home() {
  <div className="flex items-center justify-center py-12">
  <div className="text-center space-y-4">
  <div className="h-8 w-8 border-4 border-primary border-t-transparent rounded-full animate-spin mx-auto" />
- <p className="text-muted-foreground">Loading listings...</p>
+ <p className="text-muted-foreground">{t("home.loading")}</p>
  </div>
  </div>
  ) : featuredListings.length === 0 ? (
  <div className="text-center py-12">
- <p className="text-muted-foreground">No listings available yet.</p>
+ <p className="text-muted-foreground">{t("home.noListings")}</p>
  </div>
  ) : (
  <MasonryListingGrid

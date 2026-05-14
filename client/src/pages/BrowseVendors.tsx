@@ -13,6 +13,7 @@ import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@
 import { Label } from "@/components/ui/label";
 import { Switch } from "@/components/ui/switch";
 import { Search, SlidersHorizontal, ChevronDown, ChevronRight, Check } from "lucide-react";
+import { useTranslation } from "react-i18next";
 import { POPULAR_FOR_OPTIONS, EVENT_TYPE_SLUG_TO_LABEL } from "@/constants/eventTypes";
 import { getListingDisplayPrice } from "@/lib/listingPrice";
 import { isTwoLevel, toCategoryKey } from "@/constants/subcategories";
@@ -98,22 +99,28 @@ const getListingTitle = (listing: ListingPublic) => {
  );
 };
 
-const getListingCategoryKey = (listing: ListingPublic): BrowseCategoryKey | "" => {
+const getListingDescription = (listing: ListingPublic) => {
  const listingAny = listing as any;
- const rawCategory =
- listingAny?.category ??
- listingAny?.listingData?.category ??
- "";
+ const ld = listingAny?.listingData ?? {};
+ return (
+ listingAny?.description ??
+ ld?.listingDescription ??
+ ld?.description ??
+ ld?.serviceDescription ??
+ ""
+ );
+};
 
- return parseCategoryParam(String(rawCategory));
+const getListingVendorName = (listing: ListingPublic) => {
+ const listingAny = listing as any;
+ return (
+ listingAny?.vendorName ??
+ listingAny?.vendor?.businessName ??
+ ""
+ );
 };
 
 const getListingPrice = (listing: ListingPublic): number | null => getListingDisplayPrice(listing);
-
-const getMinOfferingPrice = (listing: ListingPublic) => {
- const price = getListingPrice(listing);
- return price == null ? Number.POSITIVE_INFINITY : price;
-};
 
 const getListingLocation = (listing: ListingPublic) => {
  const listingAny = listing as any;
@@ -256,6 +263,7 @@ const milesBetween = (lat1: number, lng1: number, lat2: number, lng2: number) =>
 };
 
 export default function BrowseVendors() {
+ const { t } = useTranslation();
  const [, setLocation] = useLocation();
  const searchString = useSearch();
  const hydratedFromUrlRef = useRef(false);
@@ -292,15 +300,37 @@ export default function BrowseVendors() {
  // Track which subcategory groups are expanded in the filter panel
  const [expandedSubcatGroups, setExpandedSubcatGroups] = useState<string[]>([]);
 
- const { data: publicListings = [], isLoading } = useQuery<ListingPublic[]>({
- queryKey: ["/api/listings/public"],
+ // Build server-side filter params — category, subcategory, price range, and sort
+ // are handled by the server. Text search, location, tags, bestFor, availability,
+ // delivery, and setup remain as client-side post-filters.
+ const serverParams = useMemo(() => {
+ const p: Record<string, string> = { sort: sortBy, limit: "200" };
+ if (selectedCategory) p.category = selectedCategory;
+ if (selectedSubcategories.length > 0) p.subs = selectedSubcategories.join(",");
+ if (selectedSubcategoryDetails.length > 0) p.details = selectedSubcategoryDetails.join(",");
+ if (minPrice.trim()) p.minPrice = minPrice.trim();
+ if (maxPrice.trim()) p.maxPrice = maxPrice.trim();
+ return p;
+ }, [selectedCategory, selectedSubcategories, selectedSubcategoryDetails, minPrice, maxPrice, sortBy]);
+
+ const { data: listingPage, isLoading } = useQuery<{
+ listings: ListingPublic[];
+ total: number;
+ offset: number;
+ limit: number;
+ }>({
+ queryKey: ["/api/listings/public", serverParams],
  queryFn: async () => {
- const res = await apiRequest("GET", "/api/listings/public");
+ const qs = new URLSearchParams(serverParams).toString();
+ const res = await apiRequest("GET", `/api/listings/public?${qs}`);
  return res.json();
  },
  staleTime: 0,
  refetchOnMount: "always",
  });
+
+ const publicListings: ListingPublic[] = listingPage?.listings ?? [];
+ const serverTotal: number = listingPage?.total ?? 0;
 
  const { data: availableSubcategories = {} } = useQuery<AvailableSubcategories>({
  queryKey: ["/api/listings/available-subcategories"],
@@ -502,55 +532,34 @@ export default function BrowseVendors() {
  );
  };
 
+ // Client-side post-filter: text search, location text, tags, bestFor, availability,
+ // delivery, setup, and radius. Category, subcategory, price, and sort are handled
+ // server-side so they are intentionally omitted here.
  const filteredListings = useMemo(() => {
  let filtered = [...publicListings];
  const normalizedQuery = normalizeText(searchQuery);
  const normalizedLocation = normalizeText(locationQuery);
- const minPriceNumber = parseOptionalNumber(minPrice);
- const maxPriceNumber = parseOptionalNumber(maxPrice);
  const normalizedSelectedTags = selectedTags.map((tag) => normalizeText(tag));
  const normalizedSelectedBestFor = selectedBestFor.map((eventType) => normalizeText(eventType));
 
  filtered = filtered.filter((listing) => getListingPrice(listing) != null);
 
- if (selectedCategory) {
- filtered = filtered.filter((listing) => getListingCategoryKey(listing) === selectedCategory);
- }
-
- if (selectedSubcategories.length > 0) {
- const normalizedSubs = selectedSubcategories.map(normalizeText);
- filtered = filtered.filter((listing) => {
- const sub = normalizeText((listing as any)?.subcategory ?? "");
- return sub && normalizedSubs.includes(sub);
- });
- }
-
- if (selectedSubcategoryDetails.length > 0) {
- const normalizedDetails = selectedSubcategoryDetails.map(normalizeText);
- filtered = filtered.filter((listing) => {
- const detail = normalizeText((listing as any)?.subcategoryDetail ?? "");
- return detail && normalizedDetails.includes(detail);
- });
- }
-
  if (normalizedQuery) {
- filtered = filtered.filter((listing) => normalizeText(getListingTitle(listing)).includes(normalizedQuery));
+ filtered = filtered.filter((listing) => {
+ const searchableText = [
+ getListingTitle(listing),
+ getListingDescription(listing),
+ getListingVendorName(listing),
+ ...getListingTags(listing),
+ ].map(normalizeText).join(" ");
+ return searchableText.includes(normalizedQuery);
+ });
  }
 
  if (normalizedLocation) {
  filtered = filtered.filter((listing) =>
  normalizeText(`${getListingLocation(listing)} ${listing.city ?? ""}`).includes(normalizedLocation)
  );
- }
-
- if (minPriceNumber != null || maxPriceNumber != null) {
- filtered = filtered.filter((listing) => {
- const price = getListingPrice(listing);
- if (price == null) return false;
- if (minPriceNumber != null && price < minPriceNumber) return false;
- if (maxPriceNumber != null && price > maxPriceNumber) return false;
- return true;
- });
  }
 
  if (deliveryIncludedOnly) {
@@ -579,7 +588,7 @@ export default function BrowseVendors() {
  });
  }
 
- // Radius / service area filtering (listing-specific), if lat/lng was passed in query.
+ // Radius / service area filtering, if lat/lng was passed in query.
  if (searchLat != null && searchLng != null) {
  filtered = filtered.filter((listing) => {
  const listingAny = listing as any;
@@ -589,7 +598,6 @@ export default function BrowseVendors() {
  listingData?.deliverySetup?.serviceAreaMode ??
  listingData?.serviceAreaMode;
 
- // Global listings always visible if country matches.
  if (mode === "nationwide") {
  const searchLabel = searchLocationLabel.toLowerCase();
  const searchCountry = searchLabel.split(",").pop()?.trim();
@@ -633,23 +641,11 @@ export default function BrowseVendors() {
  });
  }
 
- const sorted = [...filtered];
- if (sortBy === "price-asc") {
- sorted.sort((a, b) => getMinOfferingPrice(a) - getMinOfferingPrice(b));
- } else if (sortBy === "price-desc") {
- sorted.sort((a, b) => getMinOfferingPrice(b) - getMinOfferingPrice(a));
- }
-
- return sorted;
+ return filtered;
  }, [
  publicListings,
  searchQuery,
- selectedCategory,
- selectedSubcategories,
- selectedSubcategoryDetails,
  locationQuery,
- minPrice,
- maxPrice,
  deliveryIncludedOnly,
  setupIncludedOnly,
  selectedTags,
@@ -659,13 +655,12 @@ export default function BrowseVendors() {
  searchLng,
  searchRadiusMiles,
  searchLocationLabel,
- sortBy,
  ]);
 
  const browseSearchBarContent = (
  <div className="relative">
  <Input
- placeholder="Search listings..."
+ placeholder={t("browse.searchPlaceholder")}
  value={searchQuery}
  onChange={(e) => setSearchQuery(e.target.value)}
  className={`${browseInputClass} h-[56px] pr-12 text-[1.725rem] leading-none placeholder:text-[1.725rem]`}
@@ -755,19 +750,19 @@ export default function BrowseVendors() {
  <div className="space-y-8 lg:sticky lg:top-0 text-[#2a3a42] ">
  {/* Mobile close button at top of filter panel */}
  <div className="flex items-center justify-between lg:hidden">
- <span className="text-[18px] font-heading text-[#2a3a42] ">Filters</span>
+ <span className="text-[18px] font-heading text-[#2a3a42] ">{t("browse.filtersPanel")}</span>
  <button
  type="button"
  onClick={() => setShowFilters(false)}
  className="rounded-full border border-[rgba(74,106,125,0.24)] px-4 py-1.5 text-sm font-medium text-[#2a3a42] "
  >
- Close
+ {t("browse.filterClose")}
  </button>
  </div>
 
  {/* Category & Subcategory multi-select */}
  <section className="space-y-3">
- <h2 className="text-[20px] font-heading">Category</h2>
+ <h2 className="text-[20px] font-heading">{t("browse.categorySection")}</h2>
  <div className="space-y-1">
  {(["rentals", "services", "venues", "catering"] as BrowseCategoryKey[]).map((catKey) => {
  const catLabel = catKey.charAt(0).toUpperCase() + catKey.slice(1);
@@ -914,26 +909,26 @@ export default function BrowseVendors() {
  </section>
 
  <section className="space-y-3">
- <h2 className="text-[20px] font-heading">Sort</h2>
+ <h2 className="text-[20px] font-heading">{t("browse.sortSection")}</h2>
  <Select value={sortBy} onValueChange={(value) => setSortBy(value as SortBy)}>
  <SelectTrigger className={`w-full ${browseInputClass}`} data-testid="select-sort">
- <SelectValue placeholder="Sort by" />
+ <SelectValue placeholder={t("browse.sortSortByPlaceholder")} />
  </SelectTrigger>
  <SelectContent>
- <SelectItem value="recommended">Recommended</SelectItem>
- <SelectItem value="price-asc">Price: Low to High</SelectItem>
- <SelectItem value="price-desc">Price: High to Low</SelectItem>
+ <SelectItem value="recommended">{t("browse.sortRecommended")}</SelectItem>
+ <SelectItem value="price-asc">{t("browse.sortPriceLowToHigh")}</SelectItem>
+ <SelectItem value="price-desc">{t("browse.sortPriceHighToLow")}</SelectItem>
  </SelectContent>
  </Select>
  </section>
 
  <section className="space-y-6">
- <h2 className="text-[20px] font-heading">Filters</h2>
+ <h2 className="text-[20px] font-heading">{t("browse.filtersSection")}</h2>
  <div className="space-y-2">
- <Label htmlFor="filter-location" className={browseFilterLabelClass}>Location</Label>
+ <Label htmlFor="filter-location" className={browseFilterLabelClass}>{t("browse.filterLocation")}</Label>
  <Input
  id="filter-location"
- placeholder="City or address"
+ placeholder={t("browse.filterLocationPlaceholder")}
  value={locationQuery}
  onChange={(e) => {
  setLocationQuery(e.target.value);
@@ -945,12 +940,12 @@ export default function BrowseVendors() {
  </div>
 
  <div className="space-y-2">
- <Label className={browseFilterLabelClass}>Price range</Label>
+ <Label className={browseFilterLabelClass}>{t("browse.filterPriceRange")}</Label>
  <div className="grid grid-cols-2 gap-2">
  <Input
  type="number"
  min="0"
- placeholder="Min"
+ placeholder={t("browse.filterPriceMin")}
  className={`${browseInputClass} [appearance:textfield] [&::-webkit-inner-spin-button]:appearance-none [&::-webkit-outer-spin-button]:appearance-none`}
  value={minPrice}
  onChange={(e) => setMinPrice(e.target.value)}
@@ -959,7 +954,7 @@ export default function BrowseVendors() {
  <Input
  type="number"
  min="0"
- placeholder="Max"
+ placeholder={t("browse.filterPriceMax")}
  className={`${browseInputClass} [appearance:textfield] [&::-webkit-inner-spin-button]:appearance-none [&::-webkit-outer-spin-button]:appearance-none`}
  value={maxPrice}
  onChange={(e) => setMaxPrice(e.target.value)}
@@ -970,9 +965,9 @@ export default function BrowseVendors() {
 
  <div className="space-y-3">
  <div className="flex items-center justify-between">
- <Label htmlFor="filter-delivery" className={browseFilterLabelClass}>Delivery included?</Label>
+ <Label htmlFor="filter-delivery" className={browseFilterLabelClass}>{t("browse.filterDeliveryIncluded")}</Label>
  <div className="flex items-center gap-2">
- <span className="text-sm font-medium">{deliveryIncludedOnly ? "Yes" : "No"}</span>
+ <span className="text-sm font-medium">{deliveryIncludedOnly ? t("browse.filterDeliveryYes") : t("browse.filterDeliveryNo")}</span>
  <Switch
  id="filter-delivery"
  checked={deliveryIncludedOnly}
@@ -982,9 +977,9 @@ export default function BrowseVendors() {
  </div>
  </div>
  <div className="flex items-center justify-between">
- <Label htmlFor="filter-setup" className={browseFilterLabelClass}>Setup included?</Label>
+ <Label htmlFor="filter-setup" className={browseFilterLabelClass}>{t("browse.filterSetupIncluded")}</Label>
  <div className="flex items-center gap-2">
- <span className="text-sm font-medium">{setupIncludedOnly ? "Yes" : "No"}</span>
+ <span className="text-sm font-medium">{setupIncludedOnly ? t("browse.filterSetupYes") : t("browse.filterSetupNo")}</span>
  <Switch
  id="filter-setup"
  checked={setupIncludedOnly}
@@ -996,7 +991,7 @@ export default function BrowseVendors() {
  </div>
 
  <div className="space-y-2">
- <Label htmlFor="filter-availability-date" className={browseFilterLabelClass}>Availability date</Label>
+ <Label htmlFor="filter-availability-date" className={browseFilterLabelClass}>{t("browse.filterAvailabilityDate")}</Label>
  <Input
  id="filter-availability-date"
  type="date"
@@ -1008,7 +1003,7 @@ export default function BrowseVendors() {
  </div>
 
  <div className="space-y-2">
- <Label className={browseFilterLabelClass}>Best for event types</Label>
+ <Label className={browseFilterLabelClass}>{t("browse.filterBestForEventTypes")}</Label>
  <div className="flex flex-wrap gap-2">
  {availableBestFor.map((eventType) => {
  const token = toIdToken(eventType);
@@ -1048,13 +1043,13 @@ export default function BrowseVendors() {
  onClick={clearFilters}
  data-testid="button-clear-all-filters"
  >
- Clear filters
+ {t("browse.filterClearAll")}
  </Button>
  <Button
  onClick={() => setShowFilters(false)}
  data-testid="button-apply-filters"
  >
- Apply filters
+ {t("browse.filterApply")}
  </Button>
  </div>
  </section>
@@ -1064,7 +1059,11 @@ export default function BrowseVendors() {
  <div className="min-w-0 flex-1">
  <div className="flex items-center mb-4">
  <p className="text-sm text-muted-foreground" data-testid="text-results-count">
- {isLoading ? "Loading..." : `${filteredListings.length} listings found`}
+ {isLoading
+ ? t("browse.resultsLoading")
+ : serverTotal > filteredListings.length
+ ? t("browse.resultsShowingCount", { count: filteredListings.length, total: serverTotal })
+ : t("browse.resultsCount", { count: filteredListings.length })}
  </p>
  </div>
 
@@ -1072,12 +1071,12 @@ export default function BrowseVendors() {
  <div className="flex items-center justify-center py-12">
  <div className="text-center space-y-4">
  <div className="h-8 w-8 border-4 border-primary border-t-transparent rounded-full animate-spin mx-auto" />
- <p className="text-muted-foreground">Loading listings...</p>
+ <p className="text-muted-foreground">{t("browse.resultsLoading")}</p>
  </div>
  </div>
  ) : filteredListings.length === 0 ? (
  <div className="text-center py-12">
- <p className="text-muted-foreground">No listings found matching your criteria.</p>
+ <p className="text-muted-foreground">{t("browse.noResults")}</p>
  </div>
  ) : (
  <MasonryListingGrid

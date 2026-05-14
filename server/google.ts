@@ -1,6 +1,14 @@
-import { eq, sql as drizzleSql } from "drizzle-orm";
+import { logger } from "./lib/logger";
+import { and, eq, lt, sql as drizzleSql } from "drizzle-orm";
 
-import { bookings, vendorAccounts } from "@shared/schema";
+import {
+  bookings,
+  googleCalendarVacationMappings,
+  googleCalendarWatchChannels,
+  googleWebhookNotifications,
+  vendorAccounts,
+  vendorVacationBlocks,
+} from "@shared/schema";
 
 import { db } from "./db";
 import { decryptToken, encryptToken } from "./lib/tokenEncryption";
@@ -85,6 +93,7 @@ type BookingGoogleSyncRecord = {
   id: string;
   vendorAccountId: string | null;
   vendorTimezone: string | null;
+  eventTimezone: string | null;
   status: string | null;
   eventDate: string | null;
   eventStartTime: string | null;
@@ -92,9 +101,11 @@ type BookingGoogleSyncRecord = {
   bookingEndAt: Date | null;
   eventLocation: string | null;
   specialRequests: string | null;
+  customerQuestions: string | null;
   googleEventId: string | null;
   googleCalendarId: string | null;
   itemTitle: string | null;
+  parentListingTitle: string | null;
   listingId: string | null;
   vendorBusinessName: string | null;
 };
@@ -321,8 +332,27 @@ function isValidDate(value: Date | null | undefined): value is Date {
   return value instanceof Date && !Number.isNaN(value.getTime());
 }
 
+// The raw SQL in loadBookingGoogleSyncRecord returns timestamp columns as strings
+// from the DB driver rather than Date objects. Coerce before calling isValidDate.
+function toDate(value: unknown): Date | null {
+  if (value instanceof Date) return isValidDate(value) ? value : null;
+  if (typeof value === "string" && value.trim()) {
+    const parsed = new Date(value);
+    return Number.isNaN(parsed.getTime()) ? null : parsed;
+  }
+  return null;
+}
+
 function getRecordVendorTimeZone(record: BookingGoogleSyncRecord) {
   return normalizeIanaTimeZone(record.vendorTimezone);
+}
+
+// Returns the timezone that should be used to represent booking times.
+// Prefers the event location timezone (where the event is happening) so that
+// cross-timezone bookings (e.g. California event, Utah vendor) display correctly.
+// Falls back to vendor timezone for legacy bookings where event_timezone is NULL.
+function getRecordBookingTimeZone(record: BookingGoogleSyncRecord) {
+  return normalizeIanaTimeZone(record.eventTimezone, record.vendorTimezone ?? undefined);
 }
 
 function getLegacyBookingTimeLabels(eventDate: string | null, eventStartTime: string | null) {
@@ -374,11 +404,13 @@ function formatCanonicalBookingLabel(value: Date, timeZone: string) {
 }
 
 function getBookingTimeLabels(record: BookingGoogleSyncRecord) {
-  const timeZone = getRecordVendorTimeZone(record);
-  if (isValidDate(record.bookingStartAt) && isValidDate(record.bookingEndAt)) {
-    if (isWholeDayBookingRange(record.bookingStartAt, record.bookingEndAt, timeZone)) {
-      const startDate = formatDateInTimeZone(record.bookingStartAt, timeZone);
-      const endDate = formatDateInTimeZone(record.bookingEndAt, timeZone);
+  const timeZone = getRecordBookingTimeZone(record);
+  const bookingStartAt = toDate(record.bookingStartAt);
+  const bookingEndAt = toDate(record.bookingEndAt);
+  if (bookingStartAt && bookingEndAt) {
+    if (isWholeDayBookingRange(bookingStartAt, bookingEndAt, timeZone)) {
+      const startDate = formatDateInTimeZone(bookingStartAt, timeZone);
+      const endDate = formatDateInTimeZone(bookingEndAt, timeZone);
       return {
         startLabel: `${startDate || "TBD"} (all day)`,
         endLabel: `${endDate || "TBD"} (all day end)`,
@@ -386,8 +418,8 @@ function getBookingTimeLabels(record: BookingGoogleSyncRecord) {
     }
 
     return {
-      startLabel: formatCanonicalBookingLabel(record.bookingStartAt, timeZone),
-      endLabel: formatCanonicalBookingLabel(record.bookingEndAt, timeZone),
+      startLabel: formatCanonicalBookingLabel(bookingStartAt, timeZone),
+      endLabel: formatCanonicalBookingLabel(bookingEndAt, timeZone),
     };
   }
 
@@ -396,16 +428,15 @@ function getBookingTimeLabels(record: BookingGoogleSyncRecord) {
 
 function buildGoogleBookingDescription(record: BookingGoogleSyncRecord) {
   const timing = getBookingTimeLabels(record);
-  const vendorTimeZone = getRecordVendorTimeZone(record);
+  const bookingTimeZone = getRecordBookingTimeZone(record);
   const lines = [
     "EventHub booking",
     `Booking ID: ${record.id}`,
     `Listing ID: ${asTrimmedString(record.listingId) || "unknown"}`,
-    `Vendor Account ID: ${asTrimmedString(record.vendorAccountId) || "unknown"}`,
     `Listing: ${asTrimmedString(record.itemTitle) || "Listing"}`,
     `Start: ${timing.startLabel}`,
     `End: ${timing.endLabel}`,
-    `Timezone: ${vendorTimeZone}`,
+    `Timezone: ${bookingTimeZone}`,
     `Status: ${asTrimmedString(record.status) || "pending"}`,
   ];
 
@@ -419,30 +450,40 @@ function buildGoogleBookingDescription(record: BookingGoogleSyncRecord) {
     lines.push(`Notes: ${specialRequests}`);
   }
 
+  const customerQuestions = asTrimmedString(record.customerQuestions);
+  if (customerQuestions) {
+    lines.push(`Questions: ${customerQuestions}`);
+  }
+
   return lines.join("\n");
 }
 
 function buildGoogleBookingSummary(record: BookingGoogleSyncRecord) {
-  const listingTitle = asTrimmedString(record.itemTitle) || "Listing";
-  return `EventHub Booking - ${listingTitle}`;
+  const packageTitle = asTrimmedString(record.itemTitle) || "Listing";
+  const parentTitle = asTrimmedString(record.parentListingTitle);
+  const displayTitle = parentTitle ? `${parentTitle} — ${packageTitle}` : packageTitle;
+  return `EventHub Booking - ${displayTitle}`;
 }
 
 function buildGoogleBookingEventTimes(
   record: BookingGoogleSyncRecord
 ): Pick<GoogleCalendarEventPayload, "start" | "end"> {
-  const timeZone = getRecordVendorTimeZone(record);
+  const timeZone = getRecordBookingTimeZone(record);
+  // Coerce to Date — raw SQL queries return timestamp columns as strings from the DB driver.
+  const bookingStartAt = toDate(record.bookingStartAt);
+  const bookingEndAt = toDate(record.bookingEndAt);
 
-  if (isValidDate(record.bookingStartAt) && isValidDate(record.bookingEndAt)) {
-    if (record.bookingEndAt.getTime() <= record.bookingStartAt.getTime()) {
+  if (bookingStartAt && bookingEndAt) {
+    if (bookingEndAt.getTime() <= bookingStartAt.getTime()) {
       throw new GoogleCalendarConnectionError("Canonical booking time range is invalid", {
         statusCode: 400,
         code: "booking_time_range_invalid",
       });
     }
 
-    if (isWholeDayBookingRange(record.bookingStartAt, record.bookingEndAt, timeZone)) {
-      const startDate = formatDateInTimeZone(record.bookingStartAt, timeZone);
-      const endDate = formatDateInTimeZone(record.bookingEndAt, timeZone);
+    if (isWholeDayBookingRange(bookingStartAt, bookingEndAt, timeZone)) {
+      const startDate = formatDateInTimeZone(bookingStartAt, timeZone);
+      const endDate = formatDateInTimeZone(bookingEndAt, timeZone);
       if (!startDate || !endDate) {
         throw new GoogleCalendarConnectionError("Canonical booking date range could not be converted to vendor timezone", {
           statusCode: 400,
@@ -455,8 +496,8 @@ function buildGoogleBookingEventTimes(
       };
     }
 
-    const startDateTime = formatDateTimeInTimeZone(record.bookingStartAt, timeZone);
-    const endDateTime = formatDateTimeInTimeZone(record.bookingEndAt, timeZone);
+    const startDateTime = formatDateTimeInTimeZone(bookingStartAt, timeZone);
+    const endDateTime = formatDateTimeInTimeZone(bookingEndAt, timeZone);
     if (!startDateTime || !endDateTime) {
       throw new GoogleCalendarConnectionError("Canonical booking time range could not be converted to vendor timezone", {
         statusCode: 400,
@@ -577,8 +618,10 @@ async function loadBookingGoogleSyncRecord(
       b.event_start_time as "eventStartTime",
       b.booking_start_at as "bookingStartAt",
       b.booking_end_at as "bookingEndAt",
+      b.event_timezone as "eventTimezone",
       b.event_location as "eventLocation",
       b.special_requests as "specialRequests",
+      first_item.item_questions as "customerQuestions",
       b.google_event_id as "googleEventId",
       b.google_calendar_id as "googleCalendarId",
       coalesce(
@@ -587,6 +630,7 @@ async function loadBookingGoogleSyncRecord(
         nullif(trim(listing_owner.title), ''),
         nullif(trim(legacy_listing.title), '')
       ) as "itemTitle",
+      nullif(trim(parent_listing.title), '') as "parentListingTitle",
       coalesce(b.listing_id, legacy_item.listing_id) as "listingId",
       va.business_name as "vendorBusinessName"
     from bookings b
@@ -605,6 +649,19 @@ async function loadBookingGoogleSyncRecord(
     left join vendor_listings legacy_listing on legacy_listing.id = legacy_item.listing_id
     left join vendor_profiles legacy_listing_profile on legacy_listing_profile.id = legacy_listing.profile_id
     left join vendor_accounts va on va.id = coalesce(b.vendor_account_id, listing_owner.account_id, legacy_listing.account_id)
+    -- Fetch customer questions from the primary booking_item
+    left join lateral (
+      select
+        nullif(trim((bi.item_data->>'customerQuestions')::text), '') as item_questions
+      from booking_items bi
+      where bi.booking_id = b.id
+        and bi.item_type = 'base'
+      order by bi.created_at asc
+      limit 1
+    ) first_item on true
+    -- Resolve parent listing title for package_item listings
+    left join vendor_listings parent_listing
+      on parent_listing.id = coalesce(listing_owner.parent_listing_id, legacy_listing.parent_listing_id)
     where b.id = ${bookingId}
     limit 1
   `);
@@ -773,7 +830,7 @@ async function loadVendorGoogleConnection(
     try {
       googleAccessToken = decryptToken(googleAccessToken);
     } catch {
-      console.warn(
+      logger.warn(
         "[google] legacy plaintext token detected for vendor, re-encrypt on next OAuth"
       );
     }
@@ -784,7 +841,7 @@ async function loadVendorGoogleConnection(
     try {
       googleRefreshToken = decryptToken(googleRefreshToken);
     } catch {
-      console.warn(
+      logger.warn(
         "[google] legacy plaintext token detected for vendor, re-encrypt on next OAuth"
       );
     }
@@ -938,7 +995,8 @@ export async function syncEventHubBookingToGoogleCalendar(
   }
 
   try {
-    if ((asTrimmedString(record.status) || "").toLowerCase() === "cancelled") {
+    const normalizedStatus = (asTrimmedString(record.status) || "").toLowerCase();
+    if (normalizedStatus === "cancelled" || normalizedStatus === "expired" || normalizedStatus === "failed") {
       const existingEventId = asTrimmedString(record.googleEventId);
       if (existingEventId) {
         await deleteGoogleCalendarEventForBooking(record, targetCalendarId, existingEventId);
@@ -1031,6 +1089,7 @@ export async function listSelectedGoogleCalendarEventsForVendorAccount(
     timeMin?: Date | null;
     timeMax?: Date | null;
     maxResults?: number;
+    syncToken?: string | null; // Incremental fetch — only events changed since last sync
   }
 ) {
   const connection = await loadVendorGoogleConnection(vendorAccountId);
@@ -1042,30 +1101,48 @@ export async function listSelectedGoogleCalendarEventsForVendorAccount(
     });
   }
 
-  const query = new URLSearchParams({
-    singleEvents: "true",
-    showDeleted: "false",
-    maxResults: String(
-      typeof options?.maxResults === "number" && Number.isFinite(options.maxResults) && options.maxResults > 0
-        ? Math.min(Math.round(options.maxResults), 2500)
-        : 250
-    ),
-  });
+  const syncToken = asTrimmedString(options?.syncToken);
 
-  if (isValidDate(options?.timeMin ?? null)) {
-    query.set("timeMin", (options?.timeMin as Date).toISOString());
-  }
-  if (isValidDate(options?.timeMax ?? null)) {
-    query.set("timeMax", (options?.timeMax as Date).toISOString());
-  }
-  if (query.has("timeMin")) {
-    query.set("orderBy", "startTime");
+  let query: URLSearchParams;
+  if (syncToken) {
+    // Sync token fetch: only changed events since last sync. Cannot use timeMin/timeMax/orderBy.
+    query = new URLSearchParams({
+      syncToken,
+      showDeleted: "true", // Must include deleted events when using sync token
+    });
+  } else {
+    query = new URLSearchParams({
+      singleEvents: "true",
+      showDeleted: "false",
+      maxResults: String(
+        typeof options?.maxResults === "number" && Number.isFinite(options.maxResults) && options.maxResults > 0
+          ? Math.min(Math.round(options.maxResults), 2500)
+          : 250
+      ),
+    });
+    if (isValidDate(options?.timeMin ?? null)) {
+      query.set("timeMin", (options?.timeMin as Date).toISOString());
+    }
+    if (isValidDate(options?.timeMax ?? null)) {
+      query.set("timeMax", (options?.timeMax as Date).toISOString());
+    }
+    if (query.has("timeMin")) {
+      query.set("orderBy", "startTime");
+    }
   }
 
   const response = await performGoogleApiRequestForVendorAccount(
     vendorAccountId,
     `https://www.googleapis.com/calendar/v3/calendars/${encodeURIComponent(calendarId)}/events?${query.toString()}`
   );
+
+  // 410 Gone = sync token expired; caller should retry without token
+  if (response.status === 410) {
+    throw new GoogleCalendarConnectionError("Sync token expired — full resync required", {
+      statusCode: 410,
+      code: "google_sync_token_expired",
+    });
+  }
 
   if (!response.ok) {
     const errorText = await response.text().catch(() => "");
@@ -1078,11 +1155,16 @@ export async function listSelectedGoogleCalendarEventsForVendorAccount(
     );
   }
 
-  const payload = (await response.json().catch(() => null)) as GoogleCalendarEventListResponse | null;
+  const payload = (await response.json().catch(() => null)) as GoogleCalendarEventListResponse & {
+    nextSyncToken?: string;
+  } | null;
   const items = Array.isArray(payload?.items) ? payload.items : [];
-  return items
-    .map((event) => normalizeGoogleCalendarEvent(event))
-    .filter((event): event is NormalizedGoogleCalendarEvent => Boolean(event));
+  return {
+    events: items
+      .map((event) => normalizeGoogleCalendarEvent(event))
+      .filter((event): event is NormalizedGoogleCalendarEvent => Boolean(event)),
+    nextSyncToken: payload?.nextSyncToken ?? null,
+  };
 }
 
 export async function listGoogleCalendarsForVendorAccount(vendorAccountId: string) {
@@ -1151,4 +1233,325 @@ export async function createGoogleCalendarForVendorAccount(vendorAccountId: stri
     .where(eq(vendorAccounts.id, vendorAccountId));
 
   return normalized;
+}
+
+// ─── Watch Channel Management ──────────────────────────────────────────────────
+
+const GOOGLE_CALENDAR_WATCH_URL = "https://www.googleapis.com/calendar/v3/calendars";
+const GOOGLE_CHANNEL_STOP_URL = "https://www.googleapis.com/calendar/v3/channels/stop";
+
+function generateChannelToken(): string {
+  const bytes = new Uint8Array(32);
+  crypto.getRandomValues(bytes);
+  return Array.from(bytes)
+    .map((b) => b.toString(16).padStart(2, "0"))
+    .join("");
+}
+
+/**
+ * Registers a Google Calendar push notification watch channel for the given
+ * vendor's selected calendar. Google will POST to our webhook endpoint whenever
+ * any event in the calendar changes.
+ *
+ * Upserts the channel record so re-selecting the same calendar is idempotent.
+ */
+export async function createGoogleCalendarWatchChannel(
+  vendorAccountId: string,
+  calendarId: string
+): Promise<void> {
+  const webhookBaseUrl = process.env.GOOGLE_WEBHOOK_BASE_URL || process.env.BASE_URL || "";
+  if (!webhookBaseUrl) {
+    logger.warn("[google] GOOGLE_WEBHOOK_BASE_URL not set — skipping watch channel creation");
+    return;
+  }
+
+  const channelId = crypto.randomUUID();
+  const channelToken = generateChannelToken();
+  const callbackUrl = `${webhookBaseUrl}/api/google/webhooks/calendar`;
+
+  const response = await performGoogleApiRequestForVendorAccount(
+    vendorAccountId,
+    `${GOOGLE_CALENDAR_WATCH_URL}/${encodeURIComponent(calendarId)}/events/watch`,
+    {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({
+        id: channelId,
+        token: channelToken,
+        type: "web_hook",
+        address: callbackUrl,
+      }),
+    }
+  );
+
+  if (!response.ok) {
+    const errorText = await response.text().catch(() => "");
+    logger.error(`[google] Failed to create watch channel for vendor ${vendorAccountId}: ${errorText}`);
+    return; // Non-fatal — calendar still works without webhooks
+  }
+
+  const payload = (await response.json()) as {
+    id?: string;
+    resourceId?: string;
+    expiration?: string;
+  };
+
+  const expiresAt = payload.expiration
+    ? new Date(parseInt(payload.expiration, 10))
+    : new Date(Date.now() + 28 * 24 * 60 * 60 * 1000); // 28 days fallback
+
+  await db
+    .insert(googleCalendarWatchChannels)
+    .values({
+      vendorAccountId,
+      calendarId,
+      channelId,
+      channelToken,
+      resourceId: payload.resourceId ?? null,
+      expiresAt,
+    })
+    .onConflictDoUpdate({
+      target: [googleCalendarWatchChannels.vendorAccountId, googleCalendarWatchChannels.calendarId],
+      set: {
+        channelId,
+        channelToken,
+        resourceId: payload.resourceId ?? null,
+        expiresAt,
+        syncToken: null, // Reset sync token on channel recreation
+        updatedAt: new Date(),
+      },
+    });
+}
+
+/**
+ * Stops a Google Calendar watch channel and removes it from the database.
+ * Called when a vendor switches calendars, disconnects Google, or deletes their account.
+ */
+export async function stopGoogleCalendarWatchChannel(
+  vendorAccountId: string,
+  calendarId: string
+): Promise<void> {
+  const [channel] = await db
+    .select()
+    .from(googleCalendarWatchChannels)
+    .where(
+      and(
+        eq(googleCalendarWatchChannels.vendorAccountId, vendorAccountId),
+        eq(googleCalendarWatchChannels.calendarId, calendarId)
+      )
+    )
+    .limit(1);
+
+  if (!channel) return;
+
+  // Best-effort stop — don't throw if Google rejects (channel may already be expired)
+  try {
+    const response = await performGoogleApiRequestForVendorAccount(vendorAccountId, GOOGLE_CHANNEL_STOP_URL, {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({
+        id: channel.channelId,
+        resourceId: channel.resourceId,
+      }),
+    });
+    if (!response.ok) {
+      const text = await response.text().catch(() => "");
+      logger.warn(`[google] Watch channel stop returned ${response.status} for vendor ${vendorAccountId}: ${text}`);
+    }
+  } catch (err) {
+    logger.warn({ err, vendorAccountId }, "[google] Watch channel stop request failed");
+  }
+
+  await db
+    .delete(googleCalendarWatchChannels)
+    .where(eq(googleCalendarWatchChannels.id, channel.id));
+}
+
+/**
+ * Stops all active watch channels for a vendor account.
+ * Used on account deletion and full Google disconnect.
+ */
+export async function stopAllGoogleCalendarWatchChannelsForVendor(
+  vendorAccountId: string
+): Promise<void> {
+  const channels = await db
+    .select()
+    .from(googleCalendarWatchChannels)
+    .where(eq(googleCalendarWatchChannels.vendorAccountId, vendorAccountId));
+
+  await Promise.allSettled(
+    channels.map((channel) =>
+      stopGoogleCalendarWatchChannel(vendorAccountId, channel.calendarId)
+    )
+  );
+}
+
+/**
+ * Renews all watch channels expiring within the next 3 days.
+ * Called by the renewal cron job (runs daily).
+ * Returns a summary of renewed / failed channels.
+ */
+export async function renewExpiringGoogleCalendarWatchChannels(): Promise<{
+  renewed: number;
+  failed: number;
+}> {
+  const cutoff = new Date(Date.now() + 3 * 24 * 60 * 60 * 1000);
+
+  const expiringChannels = await db
+    .select()
+    .from(googleCalendarWatchChannels)
+    .where(lt(googleCalendarWatchChannels.expiresAt, cutoff));
+
+  let renewed = 0;
+  let failed = 0;
+
+  for (const channel of expiringChannels) {
+    try {
+      await stopGoogleCalendarWatchChannel(channel.vendorAccountId, channel.calendarId);
+      await createGoogleCalendarWatchChannel(channel.vendorAccountId, channel.calendarId);
+      renewed++;
+    } catch (err) {
+      logger.error({ err, vendorAccountId: channel.vendorAccountId }, "[google] Failed to renew watch channel");
+      failed++;
+    }
+  }
+
+  return { renewed, failed };
+}
+
+/**
+ * Updates the sync token stored on a watch channel after a successful incremental fetch.
+ */
+export async function updateWatchChannelSyncToken(
+  channelId: string,
+  syncToken: string
+): Promise<void> {
+  await db
+    .update(googleCalendarWatchChannels)
+    .set({ syncToken, lastSyncAt: new Date(), updatedAt: new Date() })
+    .where(eq(googleCalendarWatchChannels.channelId, channelId));
+}
+
+// ─── Vacation Block ↔ Google Calendar ─────────────────────────────────────────
+
+/**
+ * Creates an all-day Google Calendar event representing a vendor vacation block.
+ * Embeds the vacation block ID in extended properties so the webhook handler
+ * can match the event back to this block when it changes or is deleted.
+ */
+export async function createGoogleVacationBlockEvent(
+  vendorAccountId: string,
+  calendarId: string,
+  block: { id: string; startDate: string; endDate: string }
+): Promise<string | null> {
+  // Google all-day events use exclusive end date — add one day
+  const endDateExclusive = addDaysToIsoDate(block.endDate, 1);
+
+  const response = await performGoogleApiRequestForVendorAccount(
+    vendorAccountId,
+    `${GOOGLE_CALENDAR_WATCH_URL}/${encodeURIComponent(calendarId)}/events`,
+    {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({
+        summary: "EventHub Vacation Block",
+        description: "Vendor is unavailable during this period. Managed via EventHub.",
+        start: { date: block.startDate },
+        end: { date: endDateExclusive },
+        transparency: "opaque",
+        extendedProperties: {
+          private: {
+            eventHubVacationBlockId: block.id,
+            eventHubVendorAccountId: vendorAccountId,
+          },
+        },
+      }),
+    }
+  );
+
+  if (!response.ok) {
+    const errorText = await response.text().catch(() => "");
+    logger.error(`[google] Failed to create vacation block event: ${errorText}`);
+    return null;
+  }
+
+  const payload = (await response.json()) as { id?: string };
+  return payload.id ?? null;
+}
+
+/**
+ * Deletes a Google Calendar event by ID. Used when a vacation block is deleted
+ * from the EventHub dashboard. Best-effort — does not throw on failure.
+ */
+/**
+ * Fetches a single Google Calendar event by ID.
+ * Returns the normalized event, or null if not found.
+ */
+export async function getGoogleCalendarEvent(
+  vendorAccountId: string,
+  calendarId: string,
+  googleEventId: string
+): Promise<NormalizedGoogleCalendarEvent | null> {
+  const response = await performGoogleApiRequestForVendorAccount(
+    vendorAccountId,
+    `${GOOGLE_CALENDAR_WATCH_URL}/${encodeURIComponent(calendarId)}/events/${encodeURIComponent(googleEventId)}`
+  );
+  if (response.status === 404 || response.status === 410) return null;
+  if (!response.ok) {
+    const text = await response.text().catch(() => "");
+    throw new GoogleCalendarConnectionError(
+      `Unable to fetch Google calendar event${text ? `: ${text}` : ""}`,
+      { statusCode: 502, code: "google_calendar_event_fetch_failed" }
+    );
+  }
+  const payload = await response.json().catch(() => null);
+  return payload ? (normalizeGoogleCalendarEvent(payload) ?? null) : null;
+}
+
+export async function deleteGoogleCalendarEvent(
+  vendorAccountId: string,
+  calendarId: string,
+  googleEventId: string
+): Promise<void> {
+  try {
+    const response = await performGoogleApiRequestForVendorAccount(
+      vendorAccountId,
+      `${GOOGLE_CALENDAR_WATCH_URL}/${encodeURIComponent(calendarId)}/events/${encodeURIComponent(googleEventId)}`,
+      { method: "DELETE" }
+    );
+    if (!response.ok && response.status !== 404 && response.status !== 410) {
+      const text = await response.text().catch(() => "");
+      logger.warn(`[google] deleteGoogleCalendarEvent returned ${response.status}: ${text}`);
+    }
+  } catch (err) {
+    logger.warn({ err, googleEventId }, "[google] deleteGoogleCalendarEvent failed");
+  }
+}
+
+// ─── Vendor Notification Helper ────────────────────────────────────────────────
+
+/**
+ * Inserts a vendor notification into the notifications table.
+ * Imported and used by googleWebhookHandler.ts to avoid circular deps.
+ */
+export async function createVendorNotification(params: {
+  vendorAccountId: string;
+  type:
+    | "google_calendar_booking_updated"
+    | "google_calendar_booking_deleted"
+    | "google_calendar_sync_error";
+  title: string;
+  message: string;
+  link?: string;
+}): Promise<void> {
+  const { notifications } = await import("@shared/schema");
+  await db.insert(notifications).values({
+    recipientId: params.vendorAccountId,
+    recipientType: "vendor",
+    type: params.type,
+    title: params.title,
+    message: params.message,
+    link: params.link ?? null,
+    read: false,
+  });
 }

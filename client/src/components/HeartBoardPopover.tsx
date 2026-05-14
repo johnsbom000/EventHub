@@ -1,5 +1,6 @@
 import { useEffect, useRef, useState } from "react";
 import { Check, Plus } from "lucide-react";
+import { useTranslation } from "react-i18next";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { apiRequest } from "@/lib/queryClient";
 
@@ -22,6 +23,7 @@ export default function HeartBoardPopover({
  listingId: string;
  onClose: () => void;
 }) {
+ const { t } = useTranslation();
  const popoverRef = useRef<HTMLDivElement>(null);
  const inputRef = useRef<HTMLInputElement>(null);
  const qc = useQueryClient();
@@ -92,13 +94,13 @@ export default function HeartBoardPopover({
  className="absolute right-0 top-full z-50 mt-2 w-52 overflow-hidden rounded-2xl border border-[rgba(74,106,125,0.18)] bg-white shadow-xl "
  >
  <p className="border-b border-[rgba(74,106,125,0.1)] px-3.5 py-2 text-[0.7rem] font-semibold uppercase tracking-wider text-[#4a6a7d]">
- Save to event
+ {t("heartBoard.saveToEvent")}
  </p>
 
  {isLoading ? (
  <p className="px-3.5 py-3 text-sm text-[#4a6a7d]/60">Loading…</p>
  ) : boards.length === 0 && !showCreate ? (
- <p className="px-3.5 py-3 text-sm text-[#4a6a7d]/60">No events yet</p>
+ <p className="px-3.5 py-3 text-sm text-[#4a6a7d]/60">{t("heartBoard.noEventsYet")}</p>
  ) : (
  <ul className="max-h-44 overflow-y-auto py-1">
  {boards.map((board) => (
@@ -141,7 +143,7 @@ export default function HeartBoardPopover({
  createAndSaveMutation.mutate(newName.trim());
  if (e.key === "Escape") setShowCreate(false);
  }}
- placeholder="Event name"
+ placeholder={t("heartBoard.eventNamePlaceholder")}
  maxLength={120}
  className="w-full rounded-lg border border-[rgba(74,106,125,0.24)] bg-transparent px-2.5 py-1.5 text-sm outline-none focus:border-[#e07a6a] "
  />
@@ -153,7 +155,7 @@ export default function HeartBoardPopover({
  disabled={!newName.trim() || createAndSaveMutation.isPending}
  className="mt-2 w-full rounded-lg bg-[#e07a6a] py-1.5 text-sm font-medium text-white disabled:opacity-50"
  >
- Create &amp; save
+ {t("heartBoard.createAndSave")}
  </button>
  </div>
  ) : (
@@ -163,7 +165,7 @@ export default function HeartBoardPopover({
  className="flex w-full items-center gap-2.5 border-t border-[rgba(74,106,125,0.1)] px-3.5 py-2.5 text-sm font-medium text-[#e07a6a] transition hover:bg-[rgba(224,122,106,0.06)]"
  >
  <Plus className="h-3.5 w-3.5" />
- New event
+ {t("heartBoard.newEvent")}
  </button>
  )}
  </div>

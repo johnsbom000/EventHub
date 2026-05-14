@@ -2,6 +2,12 @@ import { sql } from "drizzle-orm";
 import { db } from "../server/db";
 
 /**
+ * NOTE: This file shares the 0042 prefix with 0042_vendor_owner_personal_details.ts.
+ * Both run correctly because the migration runner tracks by full filename.
+ * Alphabetical sort means this file (drop_legacy_payment_columns) runs BEFORE
+ * 0042_vendor_owner_personal_details.ts — no dependency between them.
+ * Future migrations must use strictly sequential numbers (0048, 0049, ...).
+ *
  * Drop the three legacy payment columns that are true duplicates of canonical ones.
  *
  *   LEGACY (dropping)     CANONICAL (keeping)        REASON
