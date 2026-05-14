@@ -4552,3 +4552,31 @@ Template for new entries:
 - Why: This satisfies immediate MVP visual consistency with minimal surface-area change and no route-level feature behavior impact.
 - Impact: Existing top-header logos now share one size and landing-style left placement across pages that render those headers; footer/modal/flow-specific wordmarks remain unchanged.
 - Revisit trigger: If a formal global header design token system is introduced, replace page-level class values with shared brand sizing/placement tokens.
+
+## [2026-05-13] Align Bookings calendar header controls with list-view placement and center month picker
+- Context: Product requested `Calendar view / List view` controls on the Bookings calendar card to sit in the same top-right position used in list view, and asked for the calendar month picker/navigation to be centered within the calendar section.
+- Decision: In `VendorBookings`, keep only view-toggle buttons in `CardHeader` and move month navigation (`previous`, `month label`, `next`) into a dedicated calendar-only row at the top of card content using centered layout.
+- Why: Separating view mode controls from date navigation preserves consistent control placement across views and improves scanability of month navigation in calendar mode.
+- Impact: Calendar mode now matches list mode toggle placement while month/date controls are centered above the weekday grid; no booking/filter behavior changed.
+- Revisit trigger: If Bookings header gains additional controls (search/date range/actions), reevaluate card header structure to maintain consistent control hierarchy across responsive breakpoints.
+
+## [2026-05-13] Keep dashboard sidebar icons fixed and render unread badges as overlay layers
+- Context: Product reported unread message counters in customer/vendor sidebars visually shifting icon position and getting cut off at the sidebar edge.
+- Decision: In `customer-sidebar` and `vendor-sidebar`, force menu-button/link overflow to visible, render each icon in an absolute centered layer, and render unread counters as absolutely positioned high-z overlays on the icon tile.
+- Why: Absolute icon centering decouples icon placement from badge presence, and visible overflow with higher z-index prevents clipping while preserving compact sidebar tile sizing.
+- Impact: Sidebar icons stay fixed whether unread count exists or not, and unread badges render fully above nearby sidebar elements in both customer and vendor dashboards.
+- Revisit trigger: If sidebar tile sizes or collapsed-sidebar behavior change, re-validate badge offset and z-index values across breakpoints to prevent overlap regressions.
+
+## [2026-05-13] Auto-hide policy warning banner after 15 seconds and provide sidebar avatar recall badge
+- Context: Product requested active policy-warning banners to dismiss automatically after 15 seconds and asked for a warning indicator on the bottom-left sidebar avatar that restores the same warning message on click.
+- Decision: Add timed visibility state in `VendorShell` and `CustomerDashboard` for non-suspension policy warnings (show for 15 seconds, then hide), and add optional warning-badge props to vendor/customer sidebars that render an alert badge on footer avatars and reopen the warning banner when clicked.
+- Why: This keeps warning messaging prominent but less persistent in dashboard chrome, while preserving quick user access to the same warning context after auto-dismiss.
+- Impact: On vendor/customer dashboard shells, warning banners now auto-hide after 15 seconds and can be re-opened repeatedly from the footer avatar warning badge; suspension banners remain always visible.
+- Revisit trigger: If policy/compliance requires persistent warnings that cannot auto-dismiss, remove timed hiding and keep the avatar badge as supplemental affordance only.
+
+## [2026-05-13] Show policy warning banner only when warning count increases (not on every login/refresh)
+- Context: Product clarified the warning banner should appear only right after a new warning is issued; after that it should stay hidden across logins/refreshes unless manually reopened from the sidebar avatar badge.
+- Decision: Persist the last auto-shown warning count in local storage (`eventhub:policy-warning-last-shown-count`) and only auto-show warning banners when the current warning count exceeds that stored value; clicking the avatar warning badge still reopens the same banner.
+- Why: Count-based persistence prevents repetitive warning resurfacing on routine navigation while preserving immediate visibility for newly issued warnings.
+- Impact: Existing warnings no longer auto-show repeatedly; only new warning increments trigger one automatic 15-second display, and manual recall remains available via avatar badge.
+- Revisit trigger: If warnings become multi-tenant/account-scoped per session or require cross-device consistency, move this acknowledgment state from local storage to server-side per-account metadata.

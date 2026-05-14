@@ -378,6 +378,9 @@ export const bookings = pgTable("bookings", {
   itemNeededByTime: text("item_needed_by_time"),
   itemDoneByTime: text("item_done_by_time"),
   eventLocation: text("event_location"),
+  eventLocationLat: doublePrecision("event_location_lat"),
+  eventLocationLng: doublePrecision("event_location_lng"),
+  eventTimezone: text("event_timezone"),
   guestCount: integer("guest_count"),
   specialRequests: text("special_requests"),
   bookingStartAt: timestamp("booking_start_at"),
@@ -444,6 +447,8 @@ export const bookingDisputes = pgTable(
       .references(() => vendorAccounts.id, { onDelete: "set null" }),
     reason: text("reason").notNull(),
     details: text("details"),
+    // 'damage_claim' | 'travel_fee_cancellation' | 'not_as_advertised'
+    disputeType: text("dispute_type").notNull().default("damage_claim"),
     status: bookingDisputeStatusEnum("status").notNull().default("filed"),
     vendorResponse: text("vendor_response"),
     adminDecision: text("admin_decision"),
@@ -655,7 +660,9 @@ export const reviewReplies = pgTable("review_replies", {
   // ✅ migrated from legacy vendors -> vendor_accounts
   vendorAccountId: varchar("vendor_account_id").references(() => vendorAccounts.id),
 
-  reviewIndex: integer("review_index").notNull(), // index in vendor.reviews array (legacy concept; ok for now)
+  // Links to the specific listing_reviews row this reply belongs to.
+  // Added in migration 0040. NULL for any legacy rows that predate that migration.
+  listingReviewId: varchar("listing_review_id").references(() => listingReviews.id, { onDelete: "cascade" }),
   reply: text("reply").notNull(),
   createdAt: timestamp("created_at").defaultNow(),
 });

@@ -8,18 +8,16 @@ const __dirname = path.dirname(__filename);
 // Force-load the repo-root .env (one level above /server)
 dotenv.config({ path: path.resolve(__dirname, "../.env") });
 
-if (process.env.NODE_ENV !== "production") {
-  console.log(">>> DATABASE_URL loaded?", Boolean(process.env.DATABASE_URL));
-}
-
+import { logger } from "./lib/logger";
 import express, { type Request, Response, NextFunction } from "express";
 import helmet from "helmet";
 import { registerRoutes } from "./routes";
-import { setupVite, serveStatic, log } from "./vite";
+import { setupVite, serveStatic } from "./vite";
 
 if (process.env.NODE_ENV !== "production") {
-  console.log(">>> RUNNING server/index.ts from:", import.meta.url);
-  console.log(">>> PORT in code is:", process.env.PORT);
+  logger.debug("DATABASE_URL loaded: %s", Boolean(process.env.DATABASE_URL));
+  logger.debug("server entry: %s", import.meta.url);
+  logger.debug("PORT env: %s", process.env.PORT);
 }
 
 const app = express();
@@ -29,10 +27,78 @@ const app = express();
 // reverse proxy rather than trusting the raw header from the client.
 app.set("trust proxy", 1);
 
+// Auth0 tenant is baked into the frontend bundle at build time.
+// We read it server-side here solely to build an accurate CSP that allows the
+// browser to reach the correct Auth0 endpoint for token operations.
+const AUTH0_DOMAIN = (process.env.AUTH0_DOMAIN || "").trim();
+
 app.use(
   helmet({
-    // Allow inline scripts/styles for the Vite dev server; tighten in production via env
-    contentSecurityPolicy: process.env.NODE_ENV === "production" ? undefined : false,
+    contentSecurityPolicy: process.env.NODE_ENV === "production"
+      ? {
+          directives: {
+            defaultSrc: ["'self'"],
+            scriptSrc: [
+              "'self'",
+              // Stripe.js — required for payment UI
+              "https://js.stripe.com",
+              // Auth0 Universal Login / silent auth iframes
+              AUTH0_DOMAIN ? `https://${AUTH0_DOMAIN}` : "",
+              // Mapbox GL JS worker loaded via blob: URL
+              "blob:",
+            ].filter(Boolean),
+            styleSrc: [
+              "'self'",
+              "'unsafe-inline'", // Mapbox GL and Stream Chat inject styles at runtime
+              "https://fonts.googleapis.com",
+            ],
+            fontSrc: [
+              "'self'",
+              "https://fonts.gstatic.com",
+            ],
+            imgSrc: [
+              "'self'",
+              "data:",
+              "blob:",
+              // Mapbox tiles and static map images
+              "https://*.mapbox.com",
+              // Cloudflare R2 CDN for listing/vendor photos
+              process.env.OBJECT_STORAGE_PUBLIC_BASE_URL || "",
+              // Stripe-hosted payment brand images
+              "https://*.stripe.com",
+            ].filter(Boolean),
+            connectSrc: [
+              "'self'",
+              // Stripe payment and Connect API
+              "https://api.stripe.com",
+              "https://*.stripe.com",
+              // Auth0 token endpoint and JWKS
+              AUTH0_DOMAIN ? `https://${AUTH0_DOMAIN}` : "",
+              // Mapbox geocoding, tiles, and events
+              "https://api.mapbox.com",
+              "https://events.mapbox.com",
+              "https://*.tiles.mapbox.com",
+              // Stream Chat API and WebSocket
+              "https://*.stream-io-api.com",
+              "wss://*.stream-io-api.com",
+            ].filter(Boolean),
+            frameSrc: [
+              // Stripe hosted payment UIs (3D Secure, Connect onboarding)
+              "https://js.stripe.com",
+              "https://*.stripe.com",
+              // Auth0 silent auth iframe
+              AUTH0_DOMAIN ? `https://${AUTH0_DOMAIN}` : "",
+            ].filter(Boolean),
+            workerSrc: [
+              "'self'",
+              // Mapbox GL JS spawns a Web Worker from a blob: URL
+              "blob:",
+            ],
+            objectSrc: ["'none'"],
+            baseUri: ["'self'"],
+          },
+        }
+      : false, // Dev: CSP off so Vite HMR works without restriction
     crossOriginEmbedderPolicy: false, // Stripe.js requires this to be off
   })
 );
@@ -116,20 +182,22 @@ app.use(express.json({
 }));
 app.use(express.urlencoded({ extended: false, limit: "6mb" }));
 
+// Structured HTTP request logger — emits one line per API response.
 app.use((req, res, next) => {
   const start = Date.now();
   const reqPath = req.path;
 
   res.on("finish", () => {
-    const duration = Date.now() - start;
     if (reqPath.startsWith("/api")) {
-      let logLine = `${req.method} ${reqPath} ${res.statusCode} in ${duration}ms`;
-
-      if (logLine.length > 80) {
-        logLine = logLine.slice(0, 79) + "…";
-      }
-
-      log(logLine);
+      const durationMs = Date.now() - start;
+      logger.info(
+        { method: req.method, path: reqPath, status: res.statusCode, durationMs },
+        "%s %s %d in %dms",
+        req.method,
+        reqPath,
+        res.statusCode,
+        durationMs
+      );
     }
   });
 
@@ -150,7 +218,7 @@ app.get("/api/health", (_req, res) => {
     const isDev = app.get("env") === "development";
     const message = isDev ? err?.message || "Internal Server Error" : "Internal Server Error";
 
-    console.error("UNHANDLED ERROR:", err?.stack || err);
+    logger.error({ err }, "unhandled server error");
     if (!res.headersSent) {
       res.status(status).json({ error: message });
     }
@@ -174,6 +242,9 @@ app.get("/api/health", (_req, res) => {
   // It is the only port that is not firewalled.
   const port = parseInt(process.env.PORT || '5001', 10);
   server.listen(port, "0.0.0.0", () => {
-    log(`serving on port ${port}`);
+    logger.info("serving on port %d", port);
+    if (!process.env.RESEND_API_KEY || !process.env.RESEND_FROM_EMAIL) {
+      logger.warn("[startup] RESEND_API_KEY or RESEND_FROM_EMAIL is not set — transactional emails will be silently skipped");
+    }
   });
 })();

@@ -1,5 +1,6 @@
 import { useQuery } from "@tanstack/react-query";
 import { useAuth0 } from "@auth0/auth0-react";
+import { useTranslation } from "react-i18next";
 
 import VendorShell from "@/components/VendorShell";
 import { Star } from "lucide-react";
@@ -11,6 +12,7 @@ type VendorReviewItem = {
 };
 
 export default function VendorReviews() {
+  const { t } = useTranslation();
   const { isAuthenticated } = useAuth0();
 
   const { data: reviews = [] } = useQuery<VendorReviewItem[]>({
@@ -23,20 +25,20 @@ export default function VendorReviews() {
       <div className="max-w-7xl mx-auto space-y-6">
         <div>
           <h1 className="text-3xl font-bold mb-2" data-testid="text-page-title">
-            Reviews
+            {t("vendorReviews.pageTitle")}
           </h1>
         </div>
 
         <div className="grid grid-cols-1 gap-4 md:grid-cols-[minmax(0,1fr)_auto_minmax(0,1fr)_auto_minmax(0,1fr)] md:gap-0">
           <section className="px-4 py-2">
             <div className="flex items-center justify-between gap-3">
-              <h2 className="font-heading text-[20px] leading-none tracking-tight">Average Rating</h2>
+              <h2 className="font-heading text-[20px] leading-none tracking-tight">{t("vendorReviews.averageRating")}</h2>
               <Star className="h-4 w-4 text-muted-foreground" />
             </div>
             <div className="mt-4 text-2xl font-bold" data-testid="stat-avg-rating">
               0.0
             </div>
-            <p className="text-sm text-muted-foreground">Out of 5.0</p>
+            <p className="text-sm text-muted-foreground">{t("vendorReviews.outOf")}</p>
           </section>
 
           <div className="hidden px-2 md:flex md:items-center md:justify-center" aria-hidden>
@@ -45,13 +47,13 @@ export default function VendorReviews() {
 
           <section className="px-4 py-2">
             <div className="flex items-center justify-between gap-3">
-              <h2 className="font-heading text-[20px] leading-none tracking-tight">Total Reviews</h2>
+              <h2 className="font-heading text-[20px] leading-none tracking-tight">{t("vendorReviews.totalReviews")}</h2>
               <Star className="h-4 w-4 text-muted-foreground" />
             </div>
             <div className="mt-4 text-2xl font-bold" data-testid="stat-total-reviews">
               0
             </div>
-            <p className="text-sm text-muted-foreground">All time</p>
+            <p className="text-sm text-muted-foreground">{t("vendorReviews.allTime")}</p>
           </section>
 
           <div className="hidden px-2 md:flex md:items-center md:justify-center" aria-hidden>
@@ -60,27 +62,27 @@ export default function VendorReviews() {
 
           <section className="px-4 py-2">
             <div className="flex items-center justify-between gap-3">
-              <h2 className="font-heading text-[20px] leading-none tracking-tight">Response Rate</h2>
+              <h2 className="font-heading text-[20px] leading-none tracking-tight">{t("vendorReviews.responseRate")}</h2>
               <Star className="h-4 w-4 text-muted-foreground" />
             </div>
             <div className="mt-4 text-2xl font-bold" data-testid="stat-response-rate">
               0%
             </div>
-            <p className="text-sm text-muted-foreground">Replied to reviews</p>
+            <p className="text-sm text-muted-foreground">{t("vendorReviews.repliedToReviews")}</p>
           </section>
         </div>
 
         <div className="h-px w-full bg-[var(--dashboard-divider-blue)]" aria-hidden />
 
         <section className="px-4 py-2">
-          <h2 className="text-2xl font-semibold text-foreground">Customer Reviews</h2>
+          <h2 className="text-2xl font-semibold text-foreground">{t("vendorReviews.customerReviews")}</h2>
 
           {reviews.length === 0 ? (
             <div className="py-12 text-center">
               <Star className="mx-auto mb-4 h-12 w-12 text-muted-foreground" />
-              <h3 className="mb-2 text-lg font-semibold">No reviews yet</h3>
+              <h3 className="mb-2 text-lg font-semibold">{t("vendorReviews.noReviews")}</h3>
               <p className="text-muted-foreground">
-                Customer reviews will appear here after completed events.
+                {t("vendorReviews.noReviewsDesc")}
               </p>
             </div>
           ) : (

@@ -22,16 +22,22 @@ import VendorCreateListing from "@/pages/VendorCreateListing";
 import VendorListingEdit from "@/pages/VendorListingEdit";
 import VendorMessages from "@/pages/VendorMessages";
 import VendorPayments from "@/pages/VendorPayments";
+import VendorDiscounts from "@/pages/VendorDiscounts";
 import VendorReviews from "@/pages/VendorReviews";
 import VendorNotifications from "@/pages/VendorNotifications";
+import VendorConnectRefresh from "@/pages/VendorConnectRefresh";
+import VendorConnectReturn from "@/pages/VendorConnectReturn";
 import MyHub from "@/pages/myhub";
 import VendorHub from "@/pages/vendorhub";
+import VendorDisputes from "@/pages/VendorDisputes";
 
 import AdminDashboard from "@/pages/AdminDashboard";
 import NotFound from "@/pages/not-found";
 import ListingDetail from "@/pages/ListingDetail";
+import CustomerBookingDetail from "@/pages/customer/CustomerBookingDetail";
 import Checkout from "@/pages/Checkout";
 import Terms from "@/pages/Terms";
+import Privacy from "@/pages/Privacy";
 
 function Router() {
   return (
@@ -45,6 +51,7 @@ function Router() {
         <Route path="/dashboard/:section" component={CustomerDashboard} />
         <Route path="/browse" component={BrowseVendors} />
         <Route path="/listing/:id" component={ListingDetail} />
+        <Route path="/booking/:bookingId" component={CustomerBookingDetail} />
         <Route path="/checkout/:listingId" component={Checkout} />
         <Route path="/shop/:vendorId" component={VendorHub} />
         <Route path="/vendor/hub/:vendorId" component={VendorHub} />
@@ -58,14 +65,19 @@ function Router() {
         <Route path="/vendor/listings/:id" component={VendorListingEdit} />
         <Route path="/vendor/messages" component={VendorMessages} />
         <Route path="/vendor/payments" component={VendorPayments} />
+        <Route path="/vendor/discounts" component={VendorDiscounts} />
         <Route path="/vendor/reviews" component={VendorReviews} />
         <Route path="/vendor/notifications" component={VendorNotifications} />
+        <Route path="/vendor/connect/refresh" component={VendorConnectRefresh} />
+        <Route path="/vendor/connect/return" component={VendorConnectReturn} />
+        <Route path="/vendor/disputes" component={VendorDisputes} />
         <Route path="/vendor/shop" component={MyHub} />
         <Route path="/vendor/my-hub" component={MyHub} />
         <Route path="/my-hub" component={MyHub} />
 
         {/* Legal */}
         <Route path="/terms" component={Terms} />
+        <Route path="/privacy" component={Privacy} />
 
         {/* Admin */}
         <Route path="/admin" component={AdminDashboard} />
@@ -117,7 +129,8 @@ function AppContent() {
       pathname === "/" ||
       pathname.startsWith("/browse") ||
       pathname === "/dashboard" ||
-      pathname.startsWith("/dashboard/");
+      pathname.startsWith("/dashboard/") ||
+      pathname.startsWith("/booking/");
 
     document.documentElement.classList.toggle("vendor-dashboard-parity", !isExcludedRoute);
   }, [location]);

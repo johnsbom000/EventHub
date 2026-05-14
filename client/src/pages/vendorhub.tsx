@@ -1,3 +1,4 @@
+import { useTranslation } from "react-i18next";
 import { useEffect, useMemo, useState } from "react";
 import { useLocation, useRoute } from "wouter";
 import { useQuery } from "@tanstack/react-query";
@@ -240,6 +241,7 @@ function formatReviewDate(value: string | null | undefined) {
 }
 
 export default function VendorHub() {
+ const { t } = useTranslation();
  const [, setLocation] = useLocation();
  const [, shopParams] = useRoute("/shop/:vendorId");
  const [, legacyParams] = useRoute("/vendor/hub/:vendorId");
@@ -285,6 +287,20 @@ export default function VendorHub() {
  if (!Array.isArray(data?.listings)) return [];
  return data.listings;
  }, [data?.listings]);
+
+ const regularListings = useMemo(
+ () => listings.filter((l: any) => l.listingType !== "addon"),
+ [listings],
+ );
+
+ const addonListings = useMemo(
+ () => listings.filter((l: any) => l.listingType === "addon"),
+ [listings],
+ );
+
+ function formatMoney(cents: number) {
+ return (cents / 100).toLocaleString("en-US", { style: "currency", currency: "USD" });
+ }
 
  const vendor = data?.vendor;
  const canExitCustomerMode = Boolean(vendorMe?.id && vendor?.id && vendorMe.id === vendor.id);
@@ -370,7 +386,7 @@ export default function VendorHub() {
  }, [resolvedCoverImageUrl]);
 
  if (!vendorId) {
- return <div className="p-6">Missing vendor id.</div>;
+ return <div className="p-6">{t("vendorHub.missingVendorId")}</div>;
  }
 
  return (
@@ -385,10 +401,10 @@ export default function VendorHub() {
  ) : isError || !vendor ? (
  <Card className="mx-auto mt-10 max-w-2xl">
  <CardHeader>
- <CardTitle>Vendor hub not found</CardTitle>
+ <CardTitle>{t("vendorHub.notFound")}</CardTitle>
  </CardHeader>
  <CardContent className="text-sm text-muted-foreground">
- This vendor hub is unavailable right now.
+ {t("vendorHub.unavailable")}
  </CardContent>
  </Card>
  ) : (
@@ -411,7 +427,7 @@ export default function VendorHub() {
  onClick={() => setLocation("/vendor/shop")}
  >
  <ArrowLeft className="mr-1 h-3.5 w-3.5 shrink-0" />
- <span className="truncate">Exit Customer Mode</span>
+ <span className="truncate">{t("vendorHub.exitCustomerMode")}</span>
  </Button>
  ) : null}
 
@@ -443,7 +459,7 @@ export default function VendorHub() {
  onClick={() => setLocation("/vendor/shop")}
  >
  <ArrowLeft className="mr-1 h-3.5 w-3.5 shrink-0" />
- <span className="truncate">Exit Customer Mode</span>
+ <span className="truncate">{t("vendorHub.exitCustomerMode")}</span>
  </Button>
  </div>
  ) : null}
@@ -488,17 +504,17 @@ export default function VendorHub() {
  <div className="space-y-8 lg:order-2">
  <section id="vendor-hub-listings" className="space-y-4">
  <div className="flex items-center justify-between">
- <h2 className="text-3xl font-semibold text-[#2a3a42] ">Available Rentals</h2>
+ <h2 className="text-3xl font-semibold text-[#2a3a42] ">{t("vendorHub.availableRentals")}</h2>
  </div>
- {listings.length === 0 ? (
+ {regularListings.length === 0 ? (
  <Card>
  <CardContent className="py-8 text-sm text-muted-foreground">
- No active listings yet.
+ {t("vendorHub.noActiveListings")}
  </CardContent>
  </Card>
  ) : (
  <MasonryListingGrid
- listings={listings}
+ listings={regularListings}
  maxColumns={5}
  desktopColumns={5}
  preserveInputOrder
@@ -517,25 +533,51 @@ export default function VendorHub() {
  )}
  </section>
 
+ {/* A-la-carte / Build Your Own section */}
+ {addonListings.length > 0 && (
+ <section id="vendor-hub-alacarte" className="space-y-4">
+ <div className="space-y-1">
+ <h2 className="text-3xl font-semibold text-[#2a3a42]">A-la-carte</h2>
+ <p className="text-base text-muted-foreground">Mix and match individual add-ons to build your own package.</p>
+ </div>
+ <MasonryListingGrid
+ listings={addonListings}
+ maxColumns={5}
+ desktopColumns={5}
+ preserveInputOrder
+ minCardWidthPx={240}
+ cardMaxWidthPx={290}
+ renderCard={(listing) => (
+ <ListingCard
+ listing={listing}
+ titleSizeClassName="text-[1.518rem] md:text-[2rem]"
+ priceSizeClassName="text-[1.5rem] leading-none md:text-[2.25rem] md:leading-none"
+ titleFont="heading"
+ />
+ )}
+ />
+ </section>
+ )}
+
  </div>
 
  <div className="space-y-0 lg:order-1">
  <section className="pb-6">
- <h3 className="text-3xl font-semibold text-[#2a3a42] ">Quick Info</h3>
+ <h3 className="text-3xl font-semibold text-[#2a3a42] ">{t("vendorHub.quickInfo")}</h3>
  <div className="mt-4 space-y-4">
  <div>
- <p className="text-lg text-[#2a3a42] ">Service Area</p>
+ <p className="text-lg text-[#2a3a42] ">{t("vendorHub.serviceArea")}</p>
  <p className="text-[1.25rem] font-semibold text-[#2a3a42] ">
  {formatServiceAreaLabel(vendor.serviceArea, vendor.city, vendor.serviceRadius)}
  </p>
  </div>
  <div>
- <p className="text-lg text-[#2a3a42] ">In Business Since</p>
+ <p className="text-lg text-[#2a3a42] ">{t("vendorHub.inBusinessSince")}</p>
  <p className="text-[1.25rem] font-semibold text-[#2a3a42] ">{formatInBusinessLabel(vendor.inBusinessSinceYear)}</p>
  </div>
  {specialties.length > 0 ? (
  <div>
- <p className="text-lg text-[#2a3a42] ">Specialties</p>
+ <p className="text-lg text-[#2a3a42] ">{t("vendorHub.specialties")}</p>
  <div className="mt-2 flex flex-wrap gap-2">
  {specialties.map((item) => (
  <span
@@ -550,20 +592,20 @@ export default function VendorHub() {
  ) : null}
  {hasAvgResponseTime ? (
  <div>
- <p className="text-lg text-[#2a3a42] ">Avg. Response Time</p>
+ <p className="text-lg text-[#2a3a42] ">{t("vendorHub.avgResponseTime")}</p>
  <p className="text-[1.25rem] font-semibold text-[#2a3a42] ">{formatResponseTimeLabel(vendor.avgResponseMinutes)}</p>
  </div>
  ) : null}
  <div>
- <p className="text-lg text-[#2a3a42] ">Active Listings</p>
+ <p className="text-lg text-[#2a3a42] ">{t("vendorHub.activeListings")}</p>
  <p className="text-[1.25rem] font-semibold text-[#2a3a42] ">
- {activeListingsCount} item{activeListingsCount === 1 ? "" : "s"} available
+ {activeListingsCount} {activeListingsCount === 1 ? t("vendorHub.itemsAvailable") : t("vendorHub.itemsAvailable_plural")}
  </p>
  </div>
  {eventsServedTotal > 0 ? (
  <div>
- <p className="text-lg text-[#2a3a42] ">Events Served</p>
- <p className="text-[1.25rem] font-semibold text-[#2a3a42] ">{eventsServedTotal}+ events</p>
+ <p className="text-lg text-[#2a3a42] ">{t("vendorHub.eventsServed")}</p>
+ <p className="text-[1.25rem] font-semibold text-[#2a3a42] ">{eventsServedTotal}+ {t("vendorHub.events")}</p>
  </div>
  ) : null}
  </div>
@@ -572,7 +614,7 @@ export default function VendorHub() {
  {asTrimmedString(vendor.aboutBusiness) ? (
  <section className="border-t border-[rgba(74,106,125,0.24)] py-6">
  <div className="space-y-2">
- <h3 className="text-3xl font-semibold text-[#2a3a42] ">About the Business</h3>
+ <h3 className="text-3xl font-semibold text-[#2a3a42] ">{t("vendorHub.aboutBusiness")}</h3>
  <p className="text-[1.25rem] text-[#2a3a42] ">{vendor.aboutBusiness}</p>
  </div>
  </section>
@@ -581,7 +623,7 @@ export default function VendorHub() {
  {asTrimmedString(vendor.aboutOwner) || hasOwnerOptionalDetails ? (
  <section className="border-t border-[rgba(74,106,125,0.24)] py-6">
  <div className="space-y-2">
- <h3 className="text-3xl font-semibold text-[#2a3a42] ">About the Owner</h3>
+ <h3 className="text-3xl font-semibold text-[#2a3a42] ">{t("vendorHub.aboutOwner")}</h3>
  {asTrimmedString(vendor.aboutOwner) ? (
  <p className="text-[1.25rem] text-[#2a3a42] ">{vendor.aboutOwner}</p>
  ) : null}
@@ -590,7 +632,7 @@ export default function VendorHub() {
  <div className="mt-4 space-y-3">
  {hobbies.length > 0 ? (
  <div className="space-y-1">
- <h4 className="text-2xl font-semibold text-[#2a3a42] ">Hobbies</h4>
+ <h4 className="text-2xl font-semibold text-[#2a3a42] ">{t("vendorHub.hobbies")}</h4>
  <div className="flex flex-wrap gap-2">
  {hobbies.map((hobby) => (
  <span
@@ -605,19 +647,19 @@ export default function VendorHub() {
  ) : null}
  {likesDislikes ? (
  <div className="space-y-1">
- <h4 className="text-2xl font-semibold text-[#2a3a42] ">Likes &amp; Dislikes</h4>
+ <h4 className="text-2xl font-semibold text-[#2a3a42] ">{t("vendorHub.likesAndDislikes")}</h4>
  <p className="text-[1.25rem] text-[#2a3a42] ">{likesDislikes}</p>
  </div>
  ) : null}
  {homeState ? (
  <div className="space-y-1">
- <h4 className="text-2xl font-semibold text-[#2a3a42] ">Home State</h4>
+ <h4 className="text-2xl font-semibold text-[#2a3a42] ">{t("vendorHub.homeState")}</h4>
  <p className="text-[1.25rem] text-[#2a3a42] ">{homeState}</p>
  </div>
  ) : null}
  {funFacts ? (
  <div className="space-y-1">
- <h4 className="text-2xl font-semibold text-[#2a3a42] ">Fun Facts</h4>
+ <h4 className="text-2xl font-semibold text-[#2a3a42] ">{t("vendorHub.funFacts")}</h4>
  <p className="text-[1.25rem] text-[#2a3a42] ">{funFacts}</p>
  </div>
  ) : null}
@@ -629,14 +671,14 @@ export default function VendorHub() {
 
  <section className="space-y-4 border-t border-[rgba(74,106,125,0.24)] pt-6">
  <div className="flex items-center justify-between">
- <h2 className="text-3xl font-semibold text-[#2a3a42] ">What Clients Say</h2>
+ <h2 className="text-3xl font-semibold text-[#2a3a42] ">{t("vendorHub.whatClientsSay")}</h2>
  <button
  type="button"
  className="text-lg text-[#2a3a42] hover:underline "
  onClick={() => setIsReviewsDialogOpen(true)}
  data-testid="button-view-all-reviews"
  >
- All {reviewCount} reviews <ArrowRight className="ml-1 inline h-4 w-4" />
+ {t("vendorHub.allReviews", { count: reviewCount })} <ArrowRight className="ml-1 inline h-4 w-4" />
  </button>
  </div>
 
@@ -646,7 +688,7 @@ export default function VendorHub() {
  {averageRating > 0 ? averageRating.toFixed(1) : "0.0"}
  </p>
  <div className="md:justify-start">{renderStars(averageRating, "h-5 w-5")}</div>
- <p className="text-lg text-[#2a3a42] ">{reviewCount} reviews</p>
+ <p className="text-lg text-[#2a3a42] ">{reviewCount} {t("vendorHub.reviews")}</p>
  </div>
  <div className="space-y-2">
  {[5, 4, 3, 2, 1].map((star) => {
@@ -672,7 +714,7 @@ export default function VendorHub() {
  <Dialog open={isReviewsDialogOpen} onOpenChange={setIsReviewsDialogOpen}>
  <DialogContent className="max-h-[80vh] max-w-3xl overflow-y-auto">
  <DialogHeader>
- <DialogTitle>All Reviews</DialogTitle>
+ <DialogTitle>{t("vendorHub.allReviewsTitle")}</DialogTitle>
  </DialogHeader>
  <div className="space-y-4">
  {reviews.length > 0 ? (
@@ -682,10 +724,10 @@ export default function VendorHub() {
  <div className="flex items-start justify-between gap-3">
  <div>
  <p className="text-lg font-semibold text-[#2a3a42] ">
- {asTrimmedString(review.authorName) || "Customer"}
+ {asTrimmedString(review.authorName) || t("vendorHub.customer")}
  </p>
  <p className="text-sm text-muted-foreground">
- {asTrimmedString(review.eventLabel) || "Event"}
+ {asTrimmedString(review.eventLabel) || t("vendorHub.event")}
  {formatReviewDate(review.createdAt) ? ` · ${formatReviewDate(review.createdAt)}` : ""}
  </p>
  </div>
@@ -702,7 +744,7 @@ export default function VendorHub() {
  ) : (
  <Card>
  <CardContent className="py-8 text-sm text-muted-foreground">
- No reviews yet.
+ {t("vendorHub.noReviewsYet")}
  </CardContent>
  </Card>
  )}

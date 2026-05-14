@@ -21,10 +21,11 @@ import {
   type HeroCategorySelection,
   type AvailableSubcategories,
 } from "@/components/HeroCategoryPopup";
-
-const HERO_ROTATING_WORDS = ["Vendors,", "Rentals,", "Venues,", "Pros,"];
+import { useTranslation } from "react-i18next";
 
 export default function Hero() {
+  const { t } = useTranslation();
+  const heroRotatingWords = t("hero.rotatingWords", { returnObjects: true }) as string[];
   const [, setLocation] = useLocation();
   const { selectedLocation, setLocation: setGlobalLocation } =
     useLocationContext();
@@ -91,17 +92,17 @@ export default function Hero() {
         <div className="mx-auto max-w-5xl text-center">
           <h1
             className="text-[clamp(2.754rem,5.8905vw,4.913rem)] font-heading font-light leading-[1.05] text-[#2a3a42] lg:text-[clamp(3.6461rem,7.7907vw,6.5004rem)]"
-            aria-label="Event Pros, All in One Place."
+            aria-label={t("hero.allInOnePlace")}
             data-testid="text-hero-title"
           >
             <span className="hero-rotating-lockup" aria-hidden="true">
               <span className="hero-rotating-label">Event</span>
               <span className="hero-rotating-word italic text-[#e07a6a]">
-                <span className="hero-rotating-word-sizer">Vendors,</span>
+                <span className="hero-rotating-word-sizer">{heroRotatingWords[0]}</span>
                 <span className="hero-rotating-word-overlay">
-                  {HERO_ROTATING_WORDS.map((word, index) => (
+                  {heroRotatingWords.map((word, index) => (
                     <span
-                      key={word}
+                      key={index}
                       className="hero-rotating-word-item"
                       style={{ animationDelay: `-${index * 3}s` }}
                     >
@@ -112,7 +113,7 @@ export default function Hero() {
               </span>
             </span>
             <br />
-            All in One Place.
+            {t("hero.allInOnePlace")}
           </h1>
 
 
@@ -127,7 +128,7 @@ export default function Hero() {
                   setSearchLocation(loc);
                   if (loc) setGlobalLocation(loc);
                 }}
-                placeholder="Any city"
+                placeholder={t("hero.search.locationPlaceholder")}
                 className="hero-location-field"
                 showCurrentLocationButton={false}
               />
@@ -145,7 +146,7 @@ export default function Hero() {
                     className="h-8 w-full border-0 bg-transparent pl-0 pr-3 !text-[16.75px] font-sans text-[#2a3a42] shadow-none ring-0 ring-offset-0 focus:ring-0 focus:ring-offset-0 [&>span]:line-clamp-none [&>span]:whitespace-nowrap lg:h-[2.645rem] lg:pl-0 lg:pr-[0.9919rem] lg:!text-[26.04px]"
                     data-testid="select-event-type"
                   >
-                    <SelectValue placeholder="Wedding, Party..." />
+                    <SelectValue placeholder={t("hero.search.eventTypePlaceholder")} />
                   </SelectTrigger>
                   <SelectContent
                     disablePortal
@@ -157,7 +158,7 @@ export default function Hero() {
                     className="z-[80] max-h-[320px] w-[var(--radix-select-trigger-width)] min-w-[var(--radix-select-trigger-width)]"
                   >
                     <SelectItem value="__any_event_type__">
-                      Any event type
+                      {t("hero.search.anyEventType")}
                     </SelectItem>
                     {EVENT_TYPE_OPTIONS.map((type) => (
                       <SelectItem key={type.value} value={type.value}>
@@ -173,7 +174,7 @@ export default function Hero() {
               <div className="relative w-full">
                 {!eventDate ? (
                   <span className="pointer-events-none absolute left-0 top-1/2 -translate-y-1/2 font-sans text-[16px] text-[#9aacb4] md:hidden">
-                    Select date
+                    {t("hero.search.datePlaceholder")}
                   </span>
                 ) : null}
                 <ChevronDown
@@ -202,7 +203,7 @@ export default function Hero() {
                 value={categorySelection}
                 onChange={setCategorySelection}
                 available={availableSubcategories}
-                placeholder="Category"
+                placeholder={t("hero.search.categoryPlaceholder")}
                 triggerClassName="h-8 w-full text-left truncate !text-[16.75px] font-sans shadow-none lg:h-[2.645rem] lg:!text-[26.04px]"
               />
             </div>
@@ -213,7 +214,7 @@ export default function Hero() {
                 onClick={handleSearch}
                 data-testid="button-search"
               >
-                Search
+                {t("hero.search.button")}
               </Button>
             </div>
           </div>

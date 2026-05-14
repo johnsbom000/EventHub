@@ -3,8 +3,10 @@ import { useAuth0 } from "@auth0/auth0-react";
 import { useQuery } from "@tanstack/react-query";
 import BrandWordmark from "@/components/BrandWordmark";
 import { deriveVendorDetection, type VendorMeState } from "@/lib/vendorState";
+import { useTranslation } from "react-i18next";
 
 export default function Footer() {
+ const { t } = useTranslation();
  const { isAuthenticated } = useAuth0();
  const {
  data: vendorAccount,
@@ -38,34 +40,39 @@ export default function Footer() {
  />
  </div>
  <p className="mb-4 max-w-md font-sans text-[1.05rem] text-[rgba(245,240,232,0.85)]">
- Your trusted platform for finding and booking the perfect event vendors.
+ {t("footer.tagline")}
  </p>
  </div>
  
  <div>
- <h3 className="mb-4 font-sans text-[0.84rem] font-medium uppercase tracking-[0.1em] text-[#9dd4cc]">For Customers</h3>
+ <h3 className="mb-4 font-sans text-[0.84rem] font-medium uppercase tracking-[0.1em] text-[#9dd4cc]">{t("footer.forCustomers")}</h3>
  <ul className="space-y-2">
  <li>
  <Link href="/browse" className="font-sans text-[0.98rem] text-[rgba(245,240,232,0.85)] hover:text-[#f5f0e8]" data-testid="link-footer-browse">
- Browse Vendors
+ {t("footer.browseVendors")}
  </Link>
  </li>
  </ul>
  </div>
  
  <div>
- <h3 className="mb-4 font-sans text-[0.84rem] font-medium uppercase tracking-[0.1em] text-[#9dd4cc]">Legal</h3>
+ <h3 className="mb-4 font-sans text-[0.84rem] font-medium uppercase tracking-[0.1em] text-[#9dd4cc]">{t("footer.legal")}</h3>
  <ul className="space-y-2">
   <li>
    <Link href="/terms" className="font-sans text-[0.98rem] text-[rgba(245,240,232,0.85)] hover:text-[#f5f0e8]">
-    Terms of Service
+    {t("footer.termsOfService")}
+   </Link>
+  </li>
+  <li>
+   <Link href="/privacy" className="font-sans text-[0.98rem] text-[rgba(245,240,232,0.85)] hover:text-[#f5f0e8]">
+    {t("footer.privacyPolicy")}
    </Link>
   </li>
  </ul>
  </div>
 
  <div>
- <h3 className="mb-4 font-sans text-[0.84rem] font-medium uppercase tracking-[0.1em] text-[#9dd4cc]">For Vendors</h3>
+ <h3 className="mb-4 font-sans text-[0.84rem] font-medium uppercase tracking-[0.1em] text-[#9dd4cc]">{t("footer.forVendors")}</h3>
  <ul className="space-y-2">
  {shouldShowBecomeVendor && (
  <li>
@@ -74,21 +81,23 @@ export default function Footer() {
  className="font-sans text-[0.98rem] text-[rgba(245,240,232,0.85)] hover:text-[#f5f0e8]"
  data-testid="link-footer-vendor-signup"
  >
- Become a Vendor
+ {t("footer.becomeVendor")}
  </Link>
  </li>
  )}
+ {vendorDetection.status === "vendor" && (
  <li>
  <Link href="/vendor/dashboard" className="font-sans text-[0.98rem] text-[rgba(245,240,232,0.85)] hover:text-[#f5f0e8]" data-testid="link-footer-vendor-dashboard">
- Vendor Dashboard
+ {t("footer.vendorDashboard")}
  </Link>
  </li>
+ )}
  </ul>
  </div>
  </div>
  
  <div className="mt-8 border-t border-[rgba(245,240,232,0.16)] pt-8 text-center">
- <p className="font-sans text-[0.87rem] text-[rgba(245,240,232,0.3)]">&copy; 2025 Event Hub. All rights reserved.</p>
+ <p className="font-sans text-[0.87rem] text-[rgba(245,240,232,0.3)]">{t("footer.copyright", { year: new Date().getFullYear() })}</p>
  </div>
  </div>
  </footer>

@@ -6,10 +6,21 @@ import {
  DollarSign,
  ImageIcon,
  MapPin,
+ Paperclip,
  Sparkles,
  Truck,
- Upload,
 } from "lucide-react";
+import { ListingTypeSelector } from "./ListingTypeSelector";
+import { BasicsStep } from "./steps/BasicsStep";
+import { PerfectForStep } from "./steps/PerfectForStep";
+import { BookingPricingStep } from "./steps/BookingPricingStep";
+import { ServiceAreaStep } from "./steps/ServiceAreaStep";
+import { LogisticsStep } from "./steps/LogisticsStep";
+import { MediaStep } from "./steps/MediaStep";
+import { AttachAddonsStep } from "./steps/AttachAddonsStep";
+import { PackagesStep } from "./steps/PackagesStep";
+import type { ListingType } from "./wizardTypes";
+import { getStepsForListingType } from "./wizardTypes";
 
 import mapboxgl from "mapbox-gl";
 import "mapbox-gl/dist/mapbox-gl.css";
@@ -17,25 +28,16 @@ import "mapbox-gl/dist/mapbox-gl.css";
 import { useAuth0 } from "@auth0/auth0-react";
 import AuthModal from "@/components/AuthModal";
 import Navigation from "@/components/Navigation";
-import { LocationPicker } from "@/components/LocationPicker";
-import { InlinePhotoEditor, type ListingPhotoCrop } from "@/components/listings/InlinePhotoEditor";
+import { type ListingPhotoCrop } from "@/components/listings/InlinePhotoEditor";
 import { Button } from "@/components/ui/button";
-import { Card } from "@/components/ui/card";
-import { Input } from "@/components/ui/input";
-import { Label } from "@/components/ui/label";
-import { Slider } from "@/components/ui/slider";
-import { Textarea } from "@/components/ui/textarea";
 import { useToast } from "@/hooks/use-toast";
 import { getFreshAccessToken } from "@/lib/authToken";
-import { DEFAULT_COVER_RATIO, normalizePhotoToUrl, type CoverRatio } from "@/lib/listingPhotos";
+import { DEFAULT_COVER_RATIO, type CoverRatio } from "@/lib/listingPhotos";
 import { getPublishFailureToastContent } from "@/lib/publishFailureToast";
 import { apiRequest, getApiErrorStatus, queryClient } from "@/lib/queryClient";
-import { resolveAssetUrl } from "@/lib/runtimeUrls";
 import { cn } from "@/lib/utils";
 import type { LocationResult } from "@/types/location";
 import { POPULAR_FOR_OPTIONS } from "@/constants/eventTypes";
-import { SubcategoryPicker } from "@/components/listings/SubcategoryPicker";
-import type { SubcategoryPickerValue } from "@/components/listings/SubcategoryPicker";
 
 const MAPBOX_TOKEN =
  (import.meta.env.VITE_MAPBOX_TOKEN as string | undefined) ??
@@ -73,10 +75,11 @@ const CATEGORY_OPTIONS = [
 
 type ListingCategory = (typeof CATEGORY_OPTIONS)[number]["value"];
 type ListingHelperCategory = "rental" | "venue" | "service" | "caterer";
-type StepId = "basics" | "perfectFor" | "bookingPricing" | "serviceArea" | "logistics" | "media";
+type StepId = "basics" | "perfectFor" | "packages" | "bookingPricing" | "serviceArea" | "logistics" | "media" | "attachAddons";
 type PricingUnit = "per_day" | "per_hour";
 type BookingType = "instant" | "request";
 type TravelFeeType = "flat" | "per_mile" | "per_hour";
+type CancellationPolicy = "cancel_anytime" | "cancel_within_hours" | "no_cancellations";
 type DimensionUnit = "inches" | "feet" | "meters" | "centimeters";
 
 type ListingTag = { label: string; slug: string };
@@ -121,6 +124,12 @@ type ListingDraft = {
  takedownIncluded: boolean;
  takedownFeeEnabled: boolean;
  takedownFeeAmount: string;
+
+ cancellationPolicy: CancellationPolicy;
+ cancellationPolicyHours: string;
+
+ securityDepositEnabled: boolean;
+ securityDepositAmount: string;
 
  photoPreviews: string[];
  photoNames: string[];
@@ -171,6 +180,12 @@ const DEFAULT_DRAFT: ListingDraft = {
  takedownFeeEnabled: false,
  takedownFeeAmount: "",
 
+ cancellationPolicy: "cancel_anytime",
+ cancellationPolicyHours: "48",
+
+ securityDepositEnabled: false,
+ securityDepositAmount: "",
+
  photoPreviews: [],
  photoNames: [],
  coverPhotoRatio: DEFAULT_COVER_RATIO,
@@ -178,15 +193,6 @@ const DEFAULT_DRAFT: ListingDraft = {
 
  videoNames: [],
 };
-
-const STEPS: Array<{ id: StepId; title: string }> = [
- { id: "basics", title: "Listing Basics" },
- { id: "perfectFor", title: "Perfect For" },
- { id: "bookingPricing", title: "Booking & Pricing" },
- { id: "serviceArea", title: "Service Area" },
- { id: "logistics", title: "Logistics" },
- { id: "media", title: "Photos" },
-];
 
 const STEP_META: Record<
  StepId,
@@ -203,6 +209,10 @@ const STEP_META: Record<
  icon: Sparkles,
  description: "Optional event fit.",
  },
+ packages: {
+ icon: DollarSign,
+ description: "Define your package tiers.",
+ },
  bookingPricing: {
  icon: DollarSign,
  description: "Booking behavior and rates.",
@@ -218,6 +228,10 @@ const STEP_META: Record<
  media: {
  icon: ImageIcon,
  description: "Publish-ready photos.",
+ },
+ attachAddons: {
+ icon: Paperclip,
+ description: "Optional upgrades for customers.",
  },
 };
 
@@ -526,9 +540,16 @@ export type CreateListingWizardProps = {
  onClose: () => void;
  editMode?: boolean;
  initialData?: any;
+ /** Pre-sets the listing type and skips the type selection screen. */
+ initialListingType?: ListingType;
+ /** When set, this wizard is running as a nested add-on creator. After
+  *  save/publish the new add-on is auto-linked to this listing ID. */
+ parentListingId?: string;
+ /** Fired after save or publish completes (before the wizard closes). */
+ onComplete?: (newListingId: string) => void;
 };
 
-export function CreateListingWizard({ onClose }: CreateListingWizardProps) {
+export function CreateListingWizard({ onClose, initialListingType, parentListingId, onComplete }: CreateListingWizardProps) {
  const { toast } = useToast();
  const { isAuthenticated } = useAuth0();
 
@@ -542,6 +563,10 @@ export function CreateListingWizard({ onClose }: CreateListingWizardProps) {
  const [draft, setDraft] = useState<ListingDraft>(DEFAULT_DRAFT);
  const [listingId, setListingId] = useState<string | null>(null);
  const [authModalOpen, setAuthModalOpen] = useState(false);
+ const [listingType, setListingType] = useState<ListingType | null>(initialListingType ?? null);
+ const [creatingAddon, setCreatingAddon] = useState(false);
+ const steps = useMemo(() => getStepsForListingType(listingType), [listingType]);
+ const [packageCount, setPackageCount] = useState(0);
 
  const [tagInput, setTagInput] = useState("");
  const [includedInput, setIncludedInput] = useState("");
@@ -633,17 +658,20 @@ export function CreateListingWizard({ onClose }: CreateListingWizardProps) {
  };
 
  useEffect(() => {
- const currentIndex = STEPS.findIndex((step) => step.id === currentStep);
+ const currentIndex = steps.findIndex((step) => step.id === currentStep);
  if (currentIndex < 0) return;
  setMaxStepReached((previous) => Math.max(previous, currentIndex));
- }, [currentStep]);
+ }, [currentStep, steps]);
 
  const createDraftMutation = useMutation({
- mutationFn: async (_variables?: { source?: "autosave" | "manual" }) => {
+ mutationFn: async (_variables?: { source?: "autosave" | "manual"; listingType?: string }) => {
  if (!isAuthenticated) {
  throw new Error(AUTH_LOGIN_REQUIRED_ERROR);
  }
- const res = await apiRequest("POST", "/api/vendor/listings", { listingData: {} });
+ const res = await apiRequest("POST", "/api/vendor/listings", {
+   listingData: {},
+   listingType: _variables?.listingType ?? listingType ?? "single",
+ });
  const json = await res.json();
  if (!res.ok) throw new Error(json?.error || "Failed to create draft");
  return json;
@@ -730,9 +758,9 @@ export function CreateListingWizard({ onClose }: CreateListingWizardProps) {
  },
  });
 
- const stepIndex = useMemo(() => STEPS.findIndex((step) => step.id === currentStep), [currentStep]);
+ const stepIndex = useMemo(() => steps.findIndex((step) => step.id === currentStep), [steps, currentStep]);
 
- const showTravelSection = draft.category === "Service" || draft.category === "Catering";
+ const showTravelSection = draft.category === "Service";
  const showDeliverySection = draft.category === "Rental" || draft.category === "Catering";
  const showSetupSection = draft.category === "Rental" || draft.category === "Venue" || draft.category === "Catering";
  const showTakedownSection = draft.category === "Rental" || draft.category === "Venue" || draft.category === "Catering";
@@ -758,14 +786,20 @@ export function CreateListingWizard({ onClose }: CreateListingWizardProps) {
  const hasMinPhotos = persistedPhotoNames.length >= MIN_PHOTOS_FOR_PUBLISH;
  const hasValidQuantity = draft.category !== "Rental" || parsePositiveInt(draft.quantity) > 0;
 
- const publishReady = hasCategory && hasTitle && hasDescription && hasPrice && hasLocation && hasMinPhotos;
+ const publishReady = listingType === "package_container"
+   ? hasCategory && hasTitle && hasLocation && hasMinPhotos && packageCount >= 1
+   : hasCategory && hasTitle && hasDescription && hasPrice && hasLocation && hasMinPhotos;
 
  const canContinue = useMemo(() => {
- if (currentStep === "basics") return hasCategory && hasTitle && hasDescription;
+ if (currentStep === "basics") {
+   const descriptionRequired = listingType !== "package_container";
+   return hasCategory && hasTitle && (!descriptionRequired || hasDescription);
+ }
  if (currentStep === "bookingPricing") return hasPrice && hasValidQuantity;
  if (currentStep === "serviceArea") return hasLocation;
+ if (currentStep === "packages") return packageCount >= 1;
  return true;
- }, [currentStep, hasCategory, hasTitle, hasDescription, hasPrice, hasValidQuantity, hasLocation]);
+ }, [currentStep, listingType, hasCategory, hasTitle, hasDescription, hasPrice, hasValidQuantity, hasLocation, packageCount]);
 
  const buildListingPayload = useMemo(() => {
  const quantity = parsePositiveInt(draft.quantity);
@@ -876,6 +910,18 @@ export function CreateListingWizard({ onClose }: CreateListingWizardProps) {
  ? toMoneyCents(draft.takedownFeeAmount)
  : null,
 
+ cancellationPolicy: draft.cancellationPolicy,
+ cancellationPolicyHours:
+ draft.cancellationPolicy === "cancel_within_hours"
+ ? Number(draft.cancellationPolicyHours) || 48
+ : null,
+
+ securityDepositEnabled: draft.securityDepositEnabled,
+ securityDepositCents:
+ draft.securityDepositEnabled && Number(draft.securityDepositAmount) > 0
+   ? Math.round(Number(draft.securityDepositAmount) * 100)
+   : null,
+
  photos: {
  count: persistedPhotoNames.length,
  names: persistedPhotoNames,
@@ -935,7 +981,7 @@ export function CreateListingWizard({ onClose }: CreateListingWizardProps) {
  features,
  }),
  );
- return `https://api.mapbox.com/styles/v1/mapbox/streets-v12/static/geojson(${staticOverlay})/auto/1200x700?padding=56,56,56,56&access_token=${MAPBOX_TOKEN}`;
+ return `https://api.mapbox.com/styles/v1/mapbox/outdoors-v12/static/geojson(${staticOverlay})/auto/1200x700?padding=56,56,56,56&access_token=${MAPBOX_TOKEN}`;
  }, [center, draft.serviceRadiusMiles]);
 
  const hasMeaningfulData =
@@ -1023,7 +1069,7 @@ export function CreateListingWizard({ onClose }: CreateListingWizardProps) {
  pendingPayloadKeyRef.current = payloadKey;
  if (!createRequestedRef.current) {
  createRequestedRef.current = true;
- createDraftMutation.mutate({ source: "autosave" });
+ createDraftMutation.mutate({ source: "autosave", listingType: listingType ?? "single" });
  }
  return;
  }
@@ -1063,7 +1109,7 @@ export function CreateListingWizard({ onClose }: CreateListingWizardProps) {
 
  const map = new mapboxgl.Map({
  container: mapContainerRef.current,
- style: "mapbox://styles/mapbox/streets-v12",
+ style: "mapbox://styles/mapbox/outdoors-v12",
  center: initialCenter,
  zoom: 10,
  });
@@ -1546,21 +1592,55 @@ export function CreateListingWizard({ onClose }: CreateListingWizardProps) {
  setAttemptedStepAdvance((prev) => ({ ...prev, [currentStep]: true }));
  return;
  }
- const nextStep = STEPS[stepIndex + 1];
+ const nextStep = steps[stepIndex + 1];
  if (!nextStep) return;
  setCurrentStep(nextStep.id);
  setMaxStepReached((value) => Math.max(value, stepIndex + 1));
  };
 
  const goBack = () => {
- const previousStep = STEPS[stepIndex - 1];
+ const previousStep = steps[stepIndex - 1];
  if (!previousStep) return;
  setCurrentStep(previousStep.id);
+ };
+
+ const [showCancelConfirm, setShowCancelConfirm] = useState(false);
+
+ const handleCancelConfirmed = async () => {
+ setShowCancelConfirm(false);
+ if (listingId) {
+ try {
+ await apiRequest("DELETE", `/api/vendor/listings/${listingId}`);
+ } catch {
+ // ignore — navigate away regardless
+ }
+ }
+ onClose();
  };
 
  const handleCloseWizard = () => {
  void queryClient.invalidateQueries({ queryKey: ["/api/vendor/listings"] });
  onClose();
+ };
+
+ // Guard against accidental browser navigation away from the wizard
+ useEffect(() => {
+ if (!hasMeaningfulData && !listingId) return;
+ const handler = (e: BeforeUnloadEvent) => {
+   e.preventDefault();
+ };
+ window.addEventListener("beforeunload", handler);
+ return () => window.removeEventListener("beforeunload", handler);
+ }, [hasMeaningfulData, listingId]);
+
+ const handleCreateNewAddon = async () => {
+ // Save the current listing silently before opening the nested wizard
+ try {
+   await ensureListingSaved({ forceCreate: true });
+ } catch {
+   // non-blocking — open the add-on wizard regardless
+ }
+ setCreatingAddon(true);
  };
 
  const ensureListingSaved = async (options?: { forceCreate?: boolean }): Promise<string | null> => {
@@ -1578,7 +1658,7 @@ export function CreateListingWizard({ onClose }: CreateListingWizardProps) {
  let nextListingId = listingId;
 
  if (!nextListingId) {
- const created = await createDraftMutation.mutateAsync({ source: "manual" });
+ const created = await createDraftMutation.mutateAsync({ source: "manual", listingType: listingType ?? "single" });
  nextListingId = created?.id || created?.data?.id;
  if (!nextListingId) throw new Error("Failed to create listing draft");
  setListingId(nextListingId);
@@ -1598,11 +1678,19 @@ export function CreateListingWizard({ onClose }: CreateListingWizardProps) {
  if (!savedId) {
  throw new Error("Unable to create draft.");
  }
+ if (parentListingId) {
+   try {
+     await apiRequest("POST", `/api/vendor/listings/${parentListingId}/addon-links`, { addonListingId: savedId });
+   } catch {
+     // non-blocking
+   }
+ }
  await queryClient.invalidateQueries({ queryKey: ["/api/vendor/listings"] });
  toast({
  title: "Draft saved",
  description: "Your listing draft is saved. You can come back anytime.",
  });
+ onComplete?.(savedId);
  handleCloseWizard();
  } catch (error: any) {
  if (handleAuthRequired(error, "Please sign in to continue saving your listing draft.")) {
@@ -1620,7 +1708,32 @@ export function CreateListingWizard({ onClose }: CreateListingWizardProps) {
  };
 
  const handlePublish = async () => {
- if (!publishReady || publishInFlightRef.current || isSavingDraft || isPublishing) return;
+ if (publishInFlightRef.current || isSavingDraft || isPublishing) return;
+ if (!publishReady) {
+   const missing =
+     listingType === "package_container"
+       ? [
+           !hasCategory && "Select a category.",
+           !hasTitle && "Add a listing title.",
+           packageCount < 1 && "Add at least one package in the Define Packages step.",
+           !hasLocation && "Set a service area.",
+           !hasMinPhotos && `Upload at least ${MIN_PHOTOS_FOR_PUBLISH} photos.`,
+         ]
+       : [
+           !hasCategory && "Select a category.",
+           !hasTitle && "Add a title.",
+           !hasDescription && "Add a description.",
+           !hasPrice && "Set a price.",
+           !hasLocation && "Set a service area.",
+           !hasMinPhotos && `Upload at least ${MIN_PHOTOS_FOR_PUBLISH} photos.`,
+         ];
+   toast({
+     title: "Can't publish yet",
+     description: missing.filter(Boolean).join(" "),
+     variant: "destructive",
+   });
+   return;
+ }
  publishInFlightRef.current = true;
  setIsPublishing(true);
 
@@ -1667,10 +1780,18 @@ export function CreateListingWizard({ onClose }: CreateListingWizardProps) {
  }
 
  await queryClient.invalidateQueries({ queryKey: ["/api/vendor/listings"] });
+ if (parentListingId) {
+   try {
+     await apiRequest("POST", `/api/vendor/listings/${parentListingId}/addon-links`, { addonListingId: id });
+   } catch {
+     // non-blocking
+   }
+ }
  toast({
  title: "Listing published",
  description: "Your listing is now live.",
  });
+ onComplete?.(id);
  handleCloseWizard();
  } catch (error) {
  if (handleAuthRequired(error, "Please sign in to continue publishing your listing.")) {
@@ -1688,13 +1809,30 @@ export function CreateListingWizard({ onClose }: CreateListingWizardProps) {
  }
  };
 
- const isLastStep = stepIndex === STEPS.length - 1;
+ const isLastStep = stepIndex === steps.length - 1;
  const isBusy = isSavingDraft || isPublishing;
  const showBasicsValidation = Boolean(attemptedStepAdvance.basics);
  const showBookingPricingValidation = Boolean(attemptedStepAdvance.bookingPricing);
  const showServiceAreaValidation = Boolean(attemptedStepAdvance.serviceArea);
 
+ if (!listingType) {
  return (
+ <div className="swap-dashboard-whites flex h-screen w-full flex-col bg-[#ffffff]">
+ <Navigation vendorDashboardAligned />
+ <AuthModal
+ open={authModalOpen}
+ onOpenChange={(open) => {
+ setAuthModalOpen(open);
+ if (!open) authPromptShownRef.current = false;
+ }}
+ />
+ <ListingTypeSelector onSelect={(type) => setListingType(type)} />
+ </div>
+ );
+ }
+
+ return (
+ <>
  <div className="swap-dashboard-whites flex h-screen w-full flex-col bg-[#ffffff]">
  <Navigation vendorDashboardAligned />
  <AuthModal
@@ -1711,7 +1849,7 @@ export function CreateListingWizard({ onClose }: CreateListingWizardProps) {
  <div className="w-24 shrink-0 border-r border-[rgba(74,106,125,0.22)] bg-[#ffffff] ">
  <div className="flex h-full flex-col items-center pt-6">
  <div className="flex flex-col items-center gap-3">
- {STEPS.map((step, index) => {
+ {steps.map((step, index) => {
  const isActive = step.id === currentStep;
  const isComplete = index < maxStepReached;
  const isReachable = index <= maxStepReached;
@@ -1769,952 +1907,54 @@ export function CreateListingWizard({ onClose }: CreateListingWizardProps) {
  )}
  >
 
- {currentStep === "basics" && (
- <div className="mx-auto w-full max-w-[53rem] space-y-8">
- <header className="space-y-3">
- <h1 className="text-5xl font-semibold tracking-tight">Listing Basics</h1>
- <p className="text-base text-muted-foreground">
- Create one listing for one distinct rentable item, set, or style.
- </p>
- </header>
 
- <Card className="space-y-6 p-6">
- <div className="space-y-2">
- <Label className="text-base font-semibold">Category</Label>
- <div className="grid grid-cols-2 gap-3 sm:grid-cols-4">
- {CATEGORY_OPTIONS.map((option) => {
- const active = draft.category === option.value;
- return (
- <button
- key={option.value}
- type="button"
- onClick={() =>
- setDraft((prev) => ({
- ...prev,
- category: option.value,
- subcategory: "",
- subcategoryDetail: "",
- bookingType: option.value === "Rental" ? "instant" : prev.bookingType,
- dimensionWidth: option.value === "Rental" ? prev.dimensionWidth : "",
- dimensionLength: option.value === "Rental" ? prev.dimensionLength : "",
- dimensionHeight: option.value === "Rental" ? prev.dimensionHeight : "",
- }))
- }
- className={[
- "rounded-xl border px-3 py-3 text-sm font-medium transition",
- active
- ? "border-primary bg-primary text-primary-foreground"
- : "border-border bg-background hover:bg-muted",
- ].join(" ")}
- >
- {option.label}
- </button>
- );
- })}
- </div>
- {showBasicsValidation && !hasCategory ? <p className="text-sm text-destructive">Category is required.</p> : null}
- </div>
+         {currentStep === "basics" && (
+           <BasicsStep
+             draft={draft}
+             setDraft={setDraft}
+             showValidation={showBasicsValidation}
+             isPackageListing={listingType === "package_container"}
+           />
+         )}
 
- {/* Subcategory — shown only when a category is selected */}
- {draft.category ? (
- <SubcategoryPicker
-  category={draft.category}
-  value={{ subcategory: draft.subcategory, subcategoryDetail: draft.subcategoryDetail }}
-  onChange={(next) => setDraft((prev) => ({ ...prev, subcategory: next.subcategory, subcategoryDetail: next.subcategoryDetail }))}
- />
- ) : null}
+         {currentStep === "perfectFor" && (
+           <PerfectForStep draft={draft} setDraft={setDraft} />
+         )}
 
- <div className="space-y-2">
- <Label htmlFor="listing-title" className="text-base font-semibold">
- Title
- </Label>
- <Input
- id="listing-title"
- value={draft.listingTitle}
- placeholder="e.g. Gold Vase Set of 5"
- onChange={(event) =>
- setDraft((prev) => ({
- ...prev,
- listingTitle: normalizeTitleInput(event.target.value, 80),
- }))
- }
- />
- {showBasicsValidation && !hasTitle ? <p className="text-sm text-destructive">Title is required.</p> : null}
- </div>
+         {currentStep === "bookingPricing" && (
+           <BookingPricingStep draft={draft} setDraft={setDraft} showValidation={showBookingPricingValidation} />
+         )}
 
- <div className="space-y-2">
- <Label htmlFor="listing-description" className="text-base font-semibold">
- Description
- </Label>
- <Textarea
- id="listing-description"
- rows={5}
- maxLength={DESCRIPTION_MAX_CHARS}
- value={draft.listingDescription}
- spellCheck={true}
- autoCorrect="on"
- placeholder={helperText.description}
- onChange={(event) =>
- setDraft((prev) => ({
- ...prev,
- listingDescription: event.target.value.slice(0, DESCRIPTION_MAX_CHARS),
- }))
- }
- />
- <div className="text-sm text-muted-foreground">{draft.listingDescription.length}/{DESCRIPTION_MAX_CHARS}</div>
- {showBasicsValidation && !hasDescription ? <p className="text-sm text-destructive">Description is required.</p> : null}
- </div>
+         {currentStep === "serviceArea" && (
+           <ServiceAreaStep draft={draft} setDraft={setDraft} showValidation={showServiceAreaValidation} />
+         )}
 
- {showDimensionsSection ? (
- <div className="space-y-4">
- <div className="space-y-1">
- <Label className="text-base font-semibold">Dimensions (optional)</Label>
- <p className="text-sm text-muted-foreground">
- Add item measurements to help customers understand scale.
- </p>
- </div>
+         {currentStep === "logistics" && (
+           <LogisticsStep draft={draft} setDraft={setDraft} />
+         )}
 
- <div className="flex flex-wrap gap-2">
- {DIMENSION_UNIT_OPTIONS.map((option) => (
- <Button
- key={option.value}
- type="button"
- size="sm"
- variant={draft.dimensionUnit === option.value ? "default" : "outline"}
- onClick={() => setDraft((prev) => ({ ...prev, dimensionUnit: option.value }))}
- >
- {option.label}
- </Button>
- ))}
- </div>
+         {currentStep === "packages" && (
+           <PackagesStep
+             listingId={listingId}
+             category={draft.category}
+             onPackageCountChange={setPackageCount}
+             showValidation={Boolean(attemptedStepAdvance.packages)}
+           />
+         )}
 
- <div className="grid gap-3 sm:grid-cols-3">
- <div className="space-y-2">
- <Label htmlFor="dimension-width">Width</Label>
- <Input
- id="dimension-width"
- inputMode="decimal"
- placeholder="e.g. 24"
- value={draft.dimensionWidth}
- onChange={(event) =>
- setDraft((prev) => ({
- ...prev,
- dimensionWidth: normalizeDimensionInput(event.target.value),
- }))
- }
- />
- </div>
+         {currentStep === "media" && (
+           <MediaStep draft={draft} setDraft={setDraft} listingId={listingId} onPickPhotos={onPickPhotos} />
+         )}
 
- <div className="space-y-2">
- <Label htmlFor="dimension-length">Length</Label>
- <Input
- id="dimension-length"
- inputMode="decimal"
- placeholder="e.g. 36"
- value={draft.dimensionLength}
- onChange={(event) =>
- setDraft((prev) => ({
- ...prev,
- dimensionLength: normalizeDimensionInput(event.target.value),
- }))
- }
- />
- </div>
-
- <div className="space-y-2">
- <Label htmlFor="dimension-height">Height</Label>
- <Input
- id="dimension-height"
- inputMode="decimal"
- placeholder="e.g. 18"
- value={draft.dimensionHeight}
- onChange={(event) =>
- setDraft((prev) => ({
- ...prev,
- dimensionHeight: normalizeDimensionInput(event.target.value),
- }))
- }
- />
- </div>
- </div>
- </div>
- ) : null}
-
- <div className="space-y-3">
- <Label className="text-base font-semibold">What's Included</Label>
- <p className="text-sm text-muted-foreground">
- {helperText.included}
- </p>
-
- {draft.whatsIncluded.length > 0 ? (
- <ul className="flex flex-wrap gap-2">
- {draft.whatsIncluded.map((item) => (
- <li
- key={item}
- className="inline-flex items-center gap-2 rounded-lg border border-border px-3 py-2 text-sm"
- >
- <span className="flex items-start gap-2">
- <span aria-hidden>•</span>
- <span>{item}</span>
- </span>
- <button
- type="button"
- className="text-muted-foreground hover:text-foreground"
- onClick={() => removeIncludedItem(item)}
- aria-label={`Remove ${item}`}
- >
- x
- </button>
- </li>
- ))}
- </ul>
- ) : null}
-
- <div className="flex gap-2">
- <Input
- value={includedInput}
- spellCheck={true}
- autoCorrect="on"
- placeholder="What do you include?"
- onChange={(event) => setIncludedInput(event.target.value)}
- onKeyDown={(event) => {
- if (event.key !== "Enter") return;
- event.preventDefault();
- addIncludedItem(includedInput);
- }}
- />
- <Button
- type="button"
- variant="outline"
- disabled={includedInput.trim().length === 0}
- onClick={() => addIncludedItem(includedInput)}
- >
- Add
- </Button>
- </div>
- </div>
-
- <div className="space-y-3">
- <Label className="text-base font-semibold">What's Not Included</Label>
- <p className="text-sm text-muted-foreground">
- Help customers understand what falls outside this listing — e.g. "Gratuity", "Travel outside 30 miles", "Additional staff".
- </p>
-
- {draft.whatsNotIncluded.length > 0 ? (
- <ul className="flex flex-wrap gap-2">
- {draft.whatsNotIncluded.map((item) => (
- <li
- key={item}
- className="inline-flex items-center gap-2 rounded-lg border border-border px-3 py-2 text-sm"
- >
- <span className="flex items-start gap-2">
- <span aria-hidden>•</span>
- <span>{item}</span>
- </span>
- <button
- type="button"
- className="text-muted-foreground hover:text-foreground"
- onClick={() => removeNotIncludedItem(item)}
- aria-label={`Remove ${item}`}
- >
- x
- </button>
- </li>
- ))}
- </ul>
- ) : null}
-
- <div className="flex gap-2">
- <Input
- value={notIncludedInput}
- spellCheck={true}
- autoCorrect="on"
- placeholder="What's not included?"
- onChange={(event) => setNotIncludedInput(event.target.value)}
- onKeyDown={(event) => {
- if (event.key !== "Enter") return;
- event.preventDefault();
- addNotIncludedItem(notIncludedInput);
- }}
- />
- <Button
- type="button"
- variant="outline"
- disabled={notIncludedInput.trim().length === 0}
- onClick={() => addNotIncludedItem(notIncludedInput)}
- >
- Add
- </Button>
- </div>
- </div>
-
- <div className="space-y-3">
- <Label className="text-base font-semibold">Search Tags</Label>
- <p className="text-sm text-muted-foreground">
- {helperText.tags}
- </p>
-
- {listingTags.length > 0 ? (
- <div className="flex flex-wrap gap-2">
- {listingTags.map((tag) => (
- <span
- key={tag.slug}
- className="inline-flex items-center gap-2 rounded-full border border-[#E07A6A] bg-[#E07A6A] px-3 py-1 text-sm text-white"
- >
- {tag.label}
- <button
- type="button"
- className="text-white/80 hover:text-white"
- onClick={() => removeTag(tag.slug)}
- aria-label={`Remove ${tag.label}`}
- >
- x
- </button>
- </span>
- ))}
- </div>
- ) : null}
-
- <div className="flex gap-2">
- <Input
- value={tagInput}
- placeholder="Add a search tag"
- onChange={(event) => setTagInput(event.target.value)}
- onKeyDown={(event) => {
- if (event.key !== "Enter") return;
- event.preventDefault();
- addTag(tagInput);
- }}
- />
- <Button type="button" variant="outline" onClick={() => addTag(tagInput)}>
- Add
- </Button>
- </div>
- </div>
- </Card>
- </div>
- )}
-
- {currentStep === "perfectFor" && (
- <div className="mx-auto w-full max-w-[53rem] space-y-8">
- <header className="space-y-3">
- <h1 className="text-5xl font-semibold tracking-tight">Perfect For</h1>
- <p className="text-base text-muted-foreground">Choose the events this listing is best for.</p>
- </header>
-
- <Card className="space-y-5 border-0 p-6 shadow-none">
- <div className="flex flex-wrap justify-center gap-3">
- {POPULAR_FOR_OPTIONS.map((option) => {
- const selected = draft.popularFor.includes(option);
- const emoji = PERFECT_FOR_EMOJI[option] ?? "✨";
- return (
- <button
- key={option}
- type="button"
- onClick={() => togglePerfectFor(option)}
- className={[
- "inline-flex items-center gap-[0.78rem] rounded-full border px-[1.95rem] py-[1.18rem] text-[1.56rem] font-medium leading-none transition",
- selected
- ? "border-[#E07A6A] bg-[#E07A6A] text-white hover:bg-[#E07A6A]"
- : "border-[#4a6a7d] bg-background text-[#2a3a42] hover:bg-muted",
- ].join(" ")}
- >
- <span>{option}</span>
- <span aria-hidden="true">{emoji}</span>
- </button>
- );
- })}
- </div>
-
- <div className="flex justify-end pt-1">
- <Button type="button" variant="outline" onClick={toggleSelectAllPerfectFor}>
- {allPerfectForSelected ? "Clear all" : "Select all"}
- </Button>
- </div>
- </Card>
- </div>
- )}
-
- {currentStep === "bookingPricing" && (
- <div className="mx-auto w-full max-w-[53rem] space-y-8">
- <header className="space-y-3">
- <h1 className="text-5xl font-semibold tracking-tight">Booking & Pricing</h1>
- <p className="text-base text-muted-foreground">
- Set booking behavior, pricing model, and quantity for identical rental units.
- </p>
- </header>
-
- <Card className="space-y-6 p-6">
- {bookingTypeRequired ? (
- <div className="space-y-3">
- <Label className="text-base font-semibold">Booking Type</Label>
- <div className="flex flex-wrap gap-3">
- <Button
- type="button"
- variant={draft.bookingType === "instant" ? "default" : "outline"}
- onClick={() => setDraft((prev) => ({ ...prev, bookingType: "instant" }))}
- >
- Instant Book
- </Button>
- <Button
- type="button"
- variant={draft.bookingType === "request" ? "default" : "outline"}
- onClick={() => setDraft((prev) => ({ ...prev, bookingType: "request" }))}
- >
- Request to Book
- </Button>
- </div>
- <p className="text-sm text-muted-foreground">
- Request to Book means customers submit requested dates and you manually accept or decline.
- </p>
- </div>
- ) : null}
-
- <div className="space-y-3">
- <Label className="text-base font-semibold">Pricing Model</Label>
- <div className="flex flex-wrap gap-3">
- <Button
- type="button"
- variant={draft.pricingUnit === "per_day" ? "default" : "outline"}
- onClick={() => setDraft((prev) => ({ ...prev, pricingUnit: "per_day" }))}
- >
- Per day
- </Button>
- <Button
- type="button"
- variant={draft.pricingUnit === "per_hour" ? "default" : "outline"}
- onClick={() => setDraft((prev) => ({ ...prev, pricingUnit: "per_hour" }))}
- >
- Per hour
- </Button>
- </div>
- </div>
-
- <div className="space-y-2">
- <Label className="text-base font-semibold">
- {draft.pricingUnit === "per_day" ? "Rate per day" : "Rate per hour"}
- </Label>
- <div className="relative max-w-sm">
- <span className="pointer-events-none absolute left-3 top-1/2 -translate-y-1/2 text-muted-foreground">$</span>
- <Input
- className="pl-7"
- value={draft.rate}
- inputMode="decimal"
- placeholder={draft.pricingUnit === "per_day" ? "e.g. 250" : "e.g. 75"}
- onChange={(event) =>
- setDraft((prev) => ({
- ...prev,
- rate: event.target.value.replace(/[^\d.]/g, ""),
- }))
- }
- />
- </div>
- {showBookingPricingValidation && !hasPrice ? <p className="text-sm text-destructive">A rate is required.</p> : null}
- </div>
-
- {draft.category === "Rental" ? (
- <div className="space-y-2 rounded-xl border border-border bg-muted/30 p-4">
- <Label className="text-base font-semibold">
- How many identical units of this listing do you have available?
- </Label>
- <p className="text-sm text-muted-foreground">
- Example: if this listing is for a set of 5 vases and you own 3 identical sets, enter 3.
- </p>
- <Input
- value={draft.quantity}
- inputMode="numeric"
- className="max-w-[140px]"
- onChange={(event) =>
- setDraft((prev) => ({
- ...prev,
- quantity: event.target.value.replace(/[^\d]/g, ""),
- }))
- }
- />
- <p className="text-sm text-muted-foreground">
- *Quantity means identical rentable units only.*
- </p>
- <p className="text-sm text-muted-foreground">
- Use "What's Included" from Step 1 for piece counts or components.
- </p>
- </div>
- ) : null}
- </Card>
- </div>
- )}
-
- {currentStep === "serviceArea" && (
- <div className="mx-auto w-full max-w-[53rem] space-y-8">
- <header className="space-y-3">
- <h1 className="text-5xl font-semibold tracking-tight">Service Area</h1>
- <p className="text-base text-muted-foreground">
- Set your coverage area for this listing. This controls where you operate, not global shipping.
- </p>
- </header>
-
- <Card className="space-y-6 p-6">
- <div className="space-y-2">
- <Label className="text-base font-semibold">Listing center address</Label>
- <LocationPicker
- value={draft.serviceLocation}
- placeholder="Search listing service center"
- onChange={(location) => {
- setMapError(null);
- const normalizedLocation = location
- ? {
- ...location,
- country:
- typeof (location as any)?.country === "string" &&
- String((location as any).country).trim().length > 0
- ? (location as any).country
- : "United States",
- }
- : null;
- setDraft((prev) => ({
- ...prev,
- serviceLocation: normalizedLocation,
- serviceCenter: normalizedLocation
- ? { lat: normalizedLocation.lat, lng: normalizedLocation.lng }
- : prev.serviceCenter,
- }));
- }}
- />
- {showServiceAreaValidation && !hasLocation ? (
- <p className="text-sm text-destructive">
- Service center and radius are required to continue.
- </p>
- ) : null}
- </div>
-
- <div className="space-y-3">
- <div className="flex items-center justify-between">
- <Label className="text-base font-semibold">Coverage radius</Label>
- <span className="text-sm text-muted-foreground">{draft.serviceRadiusMiles} miles</span>
- </div>
-
- <Slider
- value={[draft.serviceRadiusMiles]}
- min={5}
- max={300}
- step={5}
- disabled={!center}
- onValueChange={(values) => {
- const next = values?.[0] ?? 30;
- setDraft((prev) => ({ ...prev, serviceRadiusMiles: next }));
- }}
- />
-
- <p className="text-sm text-muted-foreground">
- Use your listing center address as the middle point. You can override your onboarding default per listing.
- </p>
- </div>
-
- <div className="relative h-72 overflow-hidden rounded-xl border border-border">
- {staticMapPreviewUrl && !isMapReady ? (
- <img
- src={staticMapPreviewUrl}
- alt=""
- aria-hidden
- className="absolute inset-0 h-full w-full object-cover"
- loading="lazy"
- />
- ) : null}
- <div ref={mapContainerRef} className="h-full w-full" />
-
- {!center && (
- <div className="pointer-events-none absolute inset-0 flex items-center justify-center bg-background/50 text-sm text-muted-foreground">
- Set a listing center to preview coverage.
- </div>
- )}
-
- {mapError ? (
- <div className="absolute inset-0 flex items-center justify-center bg-background/70 px-4 text-center text-sm text-destructive">
- {mapError}
- </div>
- ) : null}
-
- {!isMapReady && !mapError ? (
- <div className="absolute inset-0 flex items-center justify-center bg-background/50 text-sm text-muted-foreground">
- Loading map...
- </div>
- ) : null}
- </div>
- </Card>
- </div>
- )}
-
- {currentStep === "logistics" && (
- <div className="mx-auto w-full max-w-[53rem] space-y-8">
- <header className="space-y-3">
- <h1 className="text-5xl font-semibold tracking-tight">Logistics</h1>
- <p className="text-base text-muted-foreground">
- Configure travel, delivery, setup, and takedown behavior. Applicable fees are included in checkout totals.
- </p>
- </header>
-
- <div className="space-y-6">
- {showTravelSection ? (
- <Card className="space-y-5 p-6">
- <div className="text-xl font-semibold">Travel</div>
-
- <div className="flex flex-wrap items-center justify-between gap-3">
- <Label className="text-base">Do you travel?</Label>
- <ToggleGroup
- value={draft.travelOffered}
- onChange={(next) =>
- setDraft((prev) => ({
- ...prev,
- travelOffered: next,
- travelFeeEnabled: next ? prev.travelFeeEnabled : false,
- travelFeeAmount: next ? prev.travelFeeAmount : "",
- }))
- }
- trueLabel="Yes"
- falseLabel="No"
- />
- </div>
-
- {draft.travelOffered ? (
- <>
- <div className="flex flex-wrap items-center justify-between gap-3">
- <Label className="text-base">Is there a travel fee?</Label>
- <ToggleGroup
- value={draft.travelFeeEnabled}
- onChange={(next) =>
- setDraft((prev) => ({
- ...prev,
- travelFeeEnabled: next,
- travelFeeAmount: next ? prev.travelFeeAmount : "",
- }))
- }
- trueLabel="Yes"
- falseLabel="No"
- />
- </div>
-
- {draft.travelFeeEnabled ? (
- <div className="grid gap-3 sm:grid-cols-2">
- <div className="space-y-2">
- <Label>How do you charge?</Label>
- <div className="flex flex-wrap gap-2">
- {[
- { value: "per_mile", label: "Per mile" },
- { value: "per_hour", label: "Per hour" },
- { value: "flat", label: "Flat rate" },
- ].map((option) => (
- <Button
- key={option.value}
- type="button"
- size="sm"
- variant={draft.travelFeeType === option.value ? "default" : "outline"}
- onClick={() =>
- setDraft((prev) => ({
- ...prev,
- travelFeeType: option.value as TravelFeeType,
- }))
- }
- >
- {option.label}
- </Button>
- ))}
- </div>
- </div>
-
- <div className="space-y-2">
- <Label>Travel fee</Label>
- <div className="relative">
- <span className="pointer-events-none absolute left-3 top-1/2 -translate-y-1/2 text-muted-foreground">$</span>
- <Input
- className="pl-7"
- value={draft.travelFeeAmount}
- inputMode="decimal"
- onChange={(event) =>
- setDraft((prev) => ({
- ...prev,
- travelFeeAmount: event.target.value.replace(/[^\d.]/g, ""),
- }))
- }
- placeholder={
- draft.travelFeeType === "per_mile"
- ? "e.g. 2.50"
- : draft.travelFeeType === "per_hour"
- ? "e.g. 35"
- : "e.g. 75"
- }
- />
- </div>
- </div>
- </div>
- ) : null}
- </>
- ) : null}
- </Card>
- ) : null}
-
- {showDeliverySection ? (
- <Card className="space-y-5 p-6">
- <div className="text-xl font-semibold">Delivery</div>
-
- <div className="flex flex-wrap items-center justify-between gap-3">
- <Label className="text-base">Do you deliver?</Label>
- <ToggleGroup
- value={draft.deliveryIncluded}
- onChange={(next) =>
- setDraft((prev) => ({
- ...prev,
- deliveryIncluded: next,
- deliveryFeeEnabled: next ? prev.deliveryFeeEnabled : false,
- deliveryFeeAmount: next ? prev.deliveryFeeAmount : "",
- }))
- }
- trueLabel="Yes"
- falseLabel="No"
- />
- </div>
-
- <p className="text-sm text-muted-foreground">
- If no, this listing is pickup only.
- </p>
-
- {draft.deliveryIncluded ? (
- <>
- <div className="flex flex-wrap items-center justify-between gap-3">
- <Label className="text-base">Is there a delivery fee?</Label>
- <ToggleGroup
- value={draft.deliveryFeeEnabled}
- onChange={(next) =>
- setDraft((prev) => ({
- ...prev,
- deliveryFeeEnabled: next,
- deliveryFeeAmount: next ? prev.deliveryFeeAmount : "",
- }))
- }
- trueLabel="Yes"
- falseLabel="No"
- />
- </div>
-
- {draft.deliveryFeeEnabled ? (
- <div className="max-w-sm space-y-2">
- <Label>Delivery fee</Label>
- <div className="relative">
- <span className="pointer-events-none absolute left-3 top-1/2 -translate-y-1/2 text-muted-foreground">$</span>
- <Input
- className="pl-7"
- value={draft.deliveryFeeAmount}
- inputMode="decimal"
- placeholder="e.g. 50"
- onChange={(event) =>
- setDraft((prev) => ({
- ...prev,
- deliveryFeeAmount: event.target.value.replace(/[^\d.]/g, ""),
- }))
- }
- />
- </div>
- </div>
- ) : null}
- </>
- ) : null}
- </Card>
- ) : null}
-
- {showSetupSection ? (
- <Card className="space-y-5 p-6">
- <div className="text-xl font-semibold">Setup</div>
-
- <div className="flex flex-wrap items-center justify-between gap-3">
- <Label className="text-base">Do you set up?</Label>
- <ToggleGroup
- value={draft.setupIncluded}
- onChange={(next) =>
- setDraft((prev) => ({
- ...prev,
- setupIncluded: next,
- setupFeeEnabled: next ? prev.setupFeeEnabled : false,
- setupFeeAmount: next ? prev.setupFeeAmount : "",
- }))
- }
- trueLabel="Yes"
- falseLabel="No"
- />
- </div>
-
- {draft.setupIncluded ? (
- <>
- <div className="flex flex-wrap items-center justify-between gap-3">
- <Label className="text-base">Is there a setup fee?</Label>
- <ToggleGroup
- value={draft.setupFeeEnabled}
- onChange={(next) =>
- setDraft((prev) => ({
- ...prev,
- setupFeeEnabled: next,
- setupFeeAmount: next ? prev.setupFeeAmount : "",
- }))
- }
- trueLabel="Yes"
- falseLabel="No"
- />
- </div>
-
- {draft.setupFeeEnabled ? (
- <div className="max-w-sm space-y-2">
- <Label>Setup fee</Label>
- <div className="relative">
- <span className="pointer-events-none absolute left-3 top-1/2 -translate-y-1/2 text-muted-foreground">$</span>
- <Input
- className="pl-7"
- value={draft.setupFeeAmount}
- inputMode="decimal"
- placeholder="e.g. 75"
- onChange={(event) =>
- setDraft((prev) => ({
- ...prev,
- setupFeeAmount: event.target.value.replace(/[^\d.]/g, ""),
- }))
- }
- />
- </div>
- </div>
- ) : null}
- </>
- ) : null}
- </Card>
- ) : null}
-
- {showTakedownSection ? (
- <Card className="space-y-5 p-6">
- <div className="text-xl font-semibold">Takedown</div>
-
- <div className="flex flex-wrap items-center justify-between gap-3">
- <Label className="text-base">Do you offer takedown?</Label>
- <ToggleGroup
- value={draft.takedownIncluded}
- onChange={(next) =>
- setDraft((prev) => ({
- ...prev,
- takedownIncluded: next,
- takedownFeeEnabled: next ? prev.takedownFeeEnabled : false,
- takedownFeeAmount: next ? prev.takedownFeeAmount : "",
- }))
- }
- trueLabel="Yes"
- falseLabel="No"
- />
- </div>
-
- {draft.takedownIncluded ? (
- <>
- <div className="flex flex-wrap items-center justify-between gap-3">
- <Label className="text-base">Is there a takedown fee?</Label>
- <ToggleGroup
- value={draft.takedownFeeEnabled}
- onChange={(next) =>
- setDraft((prev) => ({
- ...prev,
- takedownFeeEnabled: next,
- takedownFeeAmount: next ? prev.takedownFeeAmount : "",
- }))
- }
- trueLabel="Yes"
- falseLabel="No"
- />
- </div>
-
- {draft.takedownFeeEnabled ? (
- <div className="max-w-sm space-y-2">
- <Label>Takedown fee</Label>
- <div className="relative">
- <span className="pointer-events-none absolute left-3 top-1/2 -translate-y-1/2 text-muted-foreground">$</span>
- <Input
- className="pl-7"
- value={draft.takedownFeeAmount}
- inputMode="decimal"
- placeholder="e.g. 75"
- onChange={(event) =>
- setDraft((prev) => ({
- ...prev,
- takedownFeeAmount: event.target.value.replace(/[^\d.]/g, ""),
- }))
- }
- />
- </div>
- </div>
- ) : null}
- </>
- ) : null}
- </Card>
- ) : null}
-
- {!showTravelSection && !showDeliverySection && !showSetupSection && !showTakedownSection ? (
- <Card className="p-6 text-sm text-muted-foreground">
- Select a category in Listing Basics to configure applicable logistics options.
- </Card>
- ) : null}
- </div>
- </div>
- )}
-
- {currentStep === "media" && (
- <div className="mx-auto w-full max-w-[53rem] space-y-8">
- <header className="space-y-3">
- <h1 className="text-5xl font-semibold tracking-tight">Photos</h1>
- <p className="text-base text-muted-foreground">
- Add at least 3 photos to publish. Drafts can be saved with fewer photos.
- </p>
- </header>
-
- <Card className="space-y-5 p-6">
- <input
- ref={fileInputRef}
- type="file"
- accept="image/jpeg,image/png,image/webp"
- multiple
- className="hidden"
- onChange={(event) => void onPickPhotos(event.target.files)}
- />
-
- <div className="flex flex-wrap gap-3">
- <Button type="button" className="gap-2" onClick={() => fileInputRef.current?.click()}>
- <Upload className="h-4 w-4" />
- Add photos
- </Button>
- <span className="text-sm text-muted-foreground">
- {draft.photoNames.length} photo{draft.photoNames.length === 1 ? "" : "s"} uploaded
- </span>
- </div>
-
- <InlinePhotoEditor
- photos={draft.photoNames.map((name, index) => ({
- id: name,
- name,
- src:
- draft.photoPreviews[index] ||
- normalizePhotoToUrl(name) ||
- resolveAssetUrl(`/uploads/listings/${name}`),
- }))}
- coverRatio={draft.coverPhotoRatio}
- cropsByPhotoId={draft.photoCropsByName}
- onAddPhotos={() => fileInputRef.current?.click()}
- onRemovePhoto={removePhotoByName}
- onReorderPhotos={reorderPhotos}
- onCoverRatioChange={(ratio) => setDraft((prev) => ({ ...prev, coverPhotoRatio: ratio }))}
- onCropChange={setPhotoCropByName}
- />
-
- {!hasMinPhotos ? (
- <p className="text-sm text-muted-foreground">
- Publish readiness requires at least {MIN_PHOTOS_FOR_PUBLISH} photos.
- </p>
- ) : null}
-
- </Card>
- </div>
- )}
- </div>
- </div>
- </div>
+         {currentStep === "attachAddons" && (
+           <AttachAddonsStep
+             listingId={listingId}
+             onCreateNewAddon={handleCreateNewAddon}
+           />
+         )}
+         </div>
+         </div>
+         </div>
 
  <div className="fixed bottom-0 left-24 right-0 z-30 bg-[#ffffff]/96 backdrop-blur-sm">
  <div className="mx-auto flex w-full max-w-[1400px] flex-wrap items-center justify-between gap-3 px-6 pt-4 pb-8 sm:px-12 lg:px-16">
@@ -2727,6 +1967,15 @@ export function CreateListingWizard({ onClose }: CreateListingWizardProps) {
  className="min-h-[2.7rem] px-6 font-sans text-[1.2rem] font-medium"
  >
  Back
+ </Button>
+ <Button
+ type="button"
+ variant="ghost"
+ onClick={() => setShowCancelConfirm(true)}
+ disabled={isBusy}
+ className="min-h-[2.7rem] px-6 font-sans text-[1.2rem] font-medium text-muted-foreground hover:text-destructive"
+ >
+ Cancel
  </Button>
  </div>
 
@@ -2745,21 +1994,7 @@ export function CreateListingWizard({ onClose }: CreateListingWizardProps) {
  <Button
  type="button"
  onClick={handlePublish}
- disabled={isBusy || !publishReady}
- title={
- !publishReady
- ? [
- !hasCategory && "Select a category.",
- !hasTitle && "Add a title.",
- !hasDescription && "Add a description.",
- !hasPrice && "Set a price.",
- !hasLocation && "Set a service area.",
- !hasMinPhotos && `Upload at least ${MIN_PHOTOS_FOR_PUBLISH} photos.`,
- ]
- .filter(Boolean)
- .join(" ")
- : undefined
- }
+ disabled={isBusy}
  className="min-h-[2.7rem] px-6 font-sans text-[1.2rem] font-medium"
  >
  {isPublishing ? "Publishing..." : "Publish"}
@@ -2778,5 +2013,52 @@ export function CreateListingWizard({ onClose }: CreateListingWizardProps) {
  </div>
  </div>
  </div>
+
+ {/* Nested add-on wizard — renders as a full-screen overlay when vendor clicks "Create new add-on" */}
+ {creatingAddon && listingId && (
+ <div className="fixed inset-0 z-[200] bg-[#ffffff]">
+   <CreateListingWizard
+     initialListingType="addon"
+     parentListingId={listingId}
+     onClose={() => setCreatingAddon(false)}
+     onComplete={() => {
+       setCreatingAddon(false);
+       void queryClient.invalidateQueries({ queryKey: ["/api/vendor/listings", listingId, "addon-links"] });
+     }}
+   />
+ </div>
+ )}
+
+ {showCancelConfirm && (
+ <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/40 backdrop-blur-sm">
+ <div className="mx-4 w-full max-w-md rounded-2xl border border-[rgba(74,106,125,0.22)] bg-[#ffffff] p-8 shadow-xl">
+ <h2 className="mb-2 font-sans text-[1.4rem] font-semibold text-foreground">
+ Exit and delete draft?
+ </h2>
+ <p className="mb-6 font-sans text-[1.1rem] text-muted-foreground">
+ Are you sure you want to exit? Your draft listing will be deleted and any progress will be lost.
+ </p>
+ <div className="flex justify-end gap-3">
+ <Button
+ type="button"
+ variant="outline"
+ onClick={() => setShowCancelConfirm(false)}
+ className="min-h-[2.5rem] px-5 font-sans text-[1.1rem] font-medium"
+ >
+ No, keep editing
+ </Button>
+ <Button
+ type="button"
+ variant="destructive"
+ onClick={handleCancelConfirmed}
+ className="min-h-[2.5rem] px-5 font-sans text-[1.1rem] font-medium"
+ >
+ Yes, exit and delete
+ </Button>
+ </div>
+ </div>
+ </div>
+ )}
+ </>
  );
 }

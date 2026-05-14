@@ -1,4 +1,4 @@
-import React, { useEffect } from "react";
+import React, { useEffect, useState } from "react";
 import { SidebarProvider } from "@/components/ui/sidebar";
 import { Button } from "@/components/ui/button";
 import {
@@ -6,7 +6,6 @@ import {
   Calendar,
   Check,
   DollarSign,
-  Globe,
   HelpCircle,
   Home,
   LayoutGrid,
@@ -29,9 +28,11 @@ import {
   DropdownMenuSeparator,
   DropdownMenuTrigger,
 } from "@/components/ui/dropdown-menu";
+import { LanguageSection } from "@/components/LanguageSection";
 import { Avatar, AvatarFallback } from "@/components/ui/avatar";
 import { useAuth0 } from "@auth0/auth0-react";
 import { useQuery, useQueryClient } from "@tanstack/react-query";
+import { useTranslation } from "react-i18next";
 
 type VendorShellProps = {
   children: React.ReactNode;
@@ -53,6 +54,8 @@ type VendorProfilesResponse = {
   activeProfileId?: string | null;
   profiles?: VendorProfileSummary[];
 };
+
+const POLICY_WARNING_LAST_SHOWN_COUNT_KEY = "eventhub:policy-warning-last-shown-count";
 
 function MobileNavLink({ href, icon: Icon, label }: { href: string; icon: React.ElementType; label: string }) {
   const [location] = useLocation();
@@ -84,13 +87,14 @@ function getInitialsFromName(nameOrEmail: string) {
 }
 
 export default function VendorShell({ children, onOpenAccountSettings }: VendorShellProps) {
+  const { t } = useTranslation();
   const [location, setLocation] = useLocation();
   const { isAuthenticated, isLoading: isAuthLoading, getAccessTokenSilently, logout } = useAuth0();
   const queryClient = useQueryClient();
 
   const { data: vendorAccount } = useQuery<VendorHeaderAccount>({
     queryKey: ["/api/vendor/me", "shell-header"],
-    enabled: isAuthenticated,
+    enabled: isAuthenticated && !isAuthLoading,
     retry: false,
     queryFn: async () => {
       const token = await getAccessTokenSilently({
@@ -106,7 +110,7 @@ export default function VendorShell({ children, onOpenAccountSettings }: VendorS
 
   const { data: vendorProfilesData } = useQuery<VendorProfilesResponse>({
     queryKey: ["/api/vendor/profiles", "shell-header"],
-    enabled: isAuthenticated,
+    enabled: isAuthenticated && !isAuthLoading,
     retry: false,
     queryFn: async () => {
       const token = await getAccessTokenSilently({
@@ -162,7 +166,7 @@ export default function VendorShell({ children, onOpenAccountSettings }: VendorS
     suspension: { id: string; reason: string; endsAt: string; startsAt: string } | null;
   }>({
     queryKey: ["/api/vendor/circumvention/status"],
-    enabled: isAuthenticated,
+    enabled: isAuthenticated && !isAuthLoading,
     retry: false,
     staleTime: 60_000,
     queryFn: async () => {
@@ -171,6 +175,10 @@ export default function VendorShell({ children, onOpenAccountSettings }: VendorS
       return res.json();
     },
   });
+  const hasActivePolicyWarning = Boolean(
+    circumventionStatus && !circumventionStatus.suspension && circumventionStatus.warningCount > 0
+  );
+  const [showWarningBanner, setShowWarningBanner] = useState(false);
 
   const displayName = activeProfileName || vendorAccount?.email || "Vendor";
   const initials = getInitialsFromName(displayName);
@@ -189,6 +197,45 @@ export default function VendorShell({ children, onOpenAccountSettings }: VendorS
       setLocation(`/vendor/login?returnTo=${encodeURIComponent(returnTo)}`);
     }
   }, [isAuthLoading, isAuthenticated, location, setLocation]);
+
+  useEffect(() => {
+    if (!circumventionStatus || circumventionStatus.suspension) {
+      setShowWarningBanner(false);
+      return;
+    }
+
+    const warningCount = Number(circumventionStatus.warningCount || 0);
+    if (warningCount <= 0) {
+      setShowWarningBanner(false);
+      return;
+    }
+
+    const rawLastShownCount = window.localStorage.getItem(POLICY_WARNING_LAST_SHOWN_COUNT_KEY);
+    const lastShownCount = Number(rawLastShownCount);
+
+    // First hydration with existing warnings should not auto-show.
+    if (!Number.isFinite(lastShownCount)) {
+      window.localStorage.setItem(POLICY_WARNING_LAST_SHOWN_COUNT_KEY, String(warningCount));
+      setShowWarningBanner(false);
+      return;
+    }
+
+    if (warningCount > lastShownCount) {
+      window.localStorage.setItem(POLICY_WARNING_LAST_SHOWN_COUNT_KEY, String(warningCount));
+      setShowWarningBanner(true);
+      return;
+    }
+
+    setShowWarningBanner(false);
+  }, [circumventionStatus]);
+
+  useEffect(() => {
+    if (!hasActivePolicyWarning || !showWarningBanner) return;
+    const timeoutId = window.setTimeout(() => {
+      setShowWarningBanner(false);
+    }, 15000);
+    return () => window.clearTimeout(timeoutId);
+  }, [hasActivePolicyWarning, showWarningBanner]);
 
   if (isAuthLoading) {
     return (
@@ -226,7 +273,7 @@ export default function VendorShell({ children, onOpenAccountSettings }: VendorS
               data-testid="button-back-marketplace"
             >
               <ArrowLeft />
-              Back to Marketplace
+              {t("vendorShell.backToMarketplace")}
             </Button>
 
             <DropdownMenu>
@@ -250,9 +297,9 @@ export default function VendorShell({ children, onOpenAccountSettings }: VendorS
                 className="w-64"
                 data-testid="dropdown-vendor-shell-menu"
               >
-                <DropdownMenuLabel>Vendor Account</DropdownMenuLabel>
+                <DropdownMenuLabel>{t("vendorShell.vendorAccount")}</DropdownMenuLabel>
                 <DropdownMenuLabel className="pt-0 text-sm font-normal text-muted-foreground">
-                  Active: {activeProfileName}
+                  {t("vendorShell.active", { name: activeProfileName })}
                 </DropdownMenuLabel>
                 {vendorProfiles.length > 0 ? (
                   <>
@@ -276,7 +323,7 @@ export default function VendorShell({ children, onOpenAccountSettings }: VendorS
                   onClick={() => setLocation("/vendor/onboarding?createProfile=1")}
                   data-testid="menu-item-vendor-create-profile"
                 >
-                  <span>Create another profile</span>
+                  <span>{t("vendorShell.createAnotherProfile")}</span>
                 </DropdownMenuItem>
                 <DropdownMenuSeparator />
 
@@ -285,21 +332,21 @@ export default function VendorShell({ children, onOpenAccountSettings }: VendorS
                   data-testid="menu-item-vendor-shell-profile"
                 >
                   <User className="mr-2 h-4 w-4" />
-                  <span>Profile</span>
+                  <span>{t("vendorShell.profile")}</span>
                 </DropdownMenuItem>
                 <DropdownMenuItem
                   onClick={() => setLocation("/dashboard/events")}
                   data-testid="menu-item-vendor-shell-my-events"
                 >
                   <Calendar className="mr-2 h-4 w-4" />
-                  <span>My Events</span>
+                  <span>{t("vendorShell.myEvents")}</span>
                 </DropdownMenuItem>
                 <DropdownMenuItem
                   onClick={() => setLocation("/vendor/dashboard")}
                   data-testid="menu-item-vendor-shell-dashboard"
                 >
                   <Home className="mr-2 h-4 w-4" />
-                  <span>Vendor Dashboard</span>
+                  <span>{t("vendorShell.vendorDashboard")}</span>
                 </DropdownMenuItem>
                 <DropdownMenuSeparator />
 
@@ -314,18 +361,15 @@ export default function VendorShell({ children, onOpenAccountSettings }: VendorS
                   data-testid="menu-item-vendor-shell-account-settings"
                 >
                   <Settings className="mr-2 h-4 w-4" />
-                  <span>Account settings</span>
+                  <span>{t("vendorShell.accountSettings")}</span>
                 </DropdownMenuItem>
-                <DropdownMenuItem data-testid="menu-item-vendor-shell-languages">
-                  <Globe className="mr-2 h-4 w-4" />
-                  <span>Languages & currency</span>
-                </DropdownMenuItem>
+                <LanguageSection />
 
                 <DropdownMenuSeparator />
 
                 <DropdownMenuItem data-testid="menu-item-vendor-shell-help">
                   <HelpCircle className="mr-2 h-4 w-4" />
-                  <span>Help Center</span>
+                  <span>{t("vendorShell.helpCenter")}</span>
                 </DropdownMenuItem>
                 <DropdownMenuItem
                   onClick={() => {
@@ -334,7 +378,7 @@ export default function VendorShell({ children, onOpenAccountSettings }: VendorS
                   data-testid="menu-item-vendor-shell-sign-out"
                 >
                   <LogOut className="mr-2 h-4 w-4" />
-                  <span>Sign out</span>
+                  <span>{t("vendorShell.signOut")}</span>
                 </DropdownMenuItem>
               </DropdownMenuContent>
             </DropdownMenu>
@@ -347,22 +391,32 @@ export default function VendorShell({ children, onOpenAccountSettings }: VendorS
             endsAt={circumventionStatus.suspension.endsAt}
             reason={circumventionStatus.suspension.reason}
           />
-        ) : circumventionStatus && circumventionStatus.warningCount > 0 ? (
-          <WarningCountBanner warningCount={circumventionStatus.warningCount} />
+        ) : hasActivePolicyWarning && showWarningBanner ? (
+          <WarningCountBanner warningCount={circumventionStatus?.warningCount ?? 0} />
         ) : null}
 
         <div className="flex min-h-0 flex-1">
-          <VendorSidebar className="hidden lg:flex shrink-0" />
+          <VendorSidebar
+            className="hidden lg:flex shrink-0"
+            showWarningBadge={hasActivePolicyWarning && !showWarningBanner}
+            onWarningBadgeClick={
+              hasActivePolicyWarning
+                ? () => {
+                    setShowWarningBanner(true);
+                  }
+                : undefined
+            }
+          />
           <main className="flex-1 overflow-auto p-4 pb-20 lg:p-6 lg:pb-6">{children}</main>
         </div>
 
         {/* Mobile bottom navigation */}
         <nav className="lg:hidden fixed bottom-0 left-0 right-0 z-50 flex items-center justify-around border-t border-[rgba(74,106,125,0.22)] bg-[#ffffff] px-2 py-2">
-          <MobileNavLink href="/vendor/dashboard" icon={Home} label="Dashboard" />
-          <MobileNavLink href="/vendor/bookings" icon={Calendar} label="Bookings" />
-          <MobileNavLink href="/vendor/listings" icon={LayoutGrid} label="Listings" />
-          <MobileNavLink href="/vendor/messages" icon={MessageSquare} label="Messages" />
-          <MobileNavLink href="/vendor/payments" icon={DollarSign} label="Payments" />
+          <MobileNavLink href="/vendor/dashboard" icon={Home} label={t("vendorShell.mobile.dashboard")} />
+          <MobileNavLink href="/vendor/bookings" icon={Calendar} label={t("vendorShell.mobile.bookings")} />
+          <MobileNavLink href="/vendor/listings" icon={LayoutGrid} label={t("vendorShell.mobile.listings")} />
+          <MobileNavLink href="/vendor/messages" icon={MessageSquare} label={t("vendorShell.mobile.messages")} />
+          <MobileNavLink href="/vendor/payments" icon={DollarSign} label={t("vendorShell.mobile.payments")} />
         </nav>
       </div>
     </SidebarProvider>

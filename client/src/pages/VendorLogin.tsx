@@ -6,6 +6,7 @@ import { Button } from "@/components/ui/button";
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card";
 import { useToast } from "@/hooks/use-toast";
 import { loginWithPopupFirst } from "@/lib/auth0Login";
+import { useTranslation } from "react-i18next";
 
 const POPUP_GUARD_KEY = "vendor-auth0-popup-attempt";
 const POPUP_GUARD_WINDOW_MS = 5000;
@@ -70,6 +71,7 @@ function clearPopupAttempt() {
 export default function VendorLogin() {
   const [, setLocation] = useLocation();
   const { toast } = useToast();
+  const { t } = useTranslation();
   const {
     isAuthenticated,
     isLoading: isAuthLoading,
@@ -126,7 +128,7 @@ export default function VendorLogin() {
         setIsStartingLogin(false);
         toast({
           variant: "destructive",
-          title: "Unable to start sign in",
+          title: t("vendorLogin.toastErrorTitle"),
           description: error?.message || "Please try again.",
         });
       }
@@ -172,7 +174,7 @@ export default function VendorLogin() {
       setIsStartingLogin(false);
       toast({
         variant: "destructive",
-        title: "Unable to start sign in",
+        title: t("vendorLogin.toastErrorTitle"),
         description: error?.message || "Please try again.",
       });
     }
@@ -183,14 +185,14 @@ export default function VendorLogin() {
       <div className="min-h-screen flex items-center justify-center bg-background p-4">
         <Card className="w-full max-w-md">
           <CardHeader>
-            <CardTitle className="text-2xl">Redirecting to Auth0</CardTitle>
+            <CardTitle className="text-2xl">{t("vendorLogin.loadingTitle")}</CardTitle>
             <CardDescription>
-              Reopening secure vendor sign in and returning you to your portal.
+              {t("vendorLogin.loadingDescription")}
             </CardDescription>
           </CardHeader>
           <CardContent className="flex items-center gap-3 text-sm text-muted-foreground">
             <Loader2 className="h-5 w-5 animate-spin text-primary" />
-            <span>Starting sign in...</span>
+            <span>{t("vendorLogin.loadingSpinner")}</span>
           </CardContent>
         </Card>
       </div>
@@ -201,14 +203,14 @@ export default function VendorLogin() {
     <div className="min-h-screen flex items-center justify-center bg-background p-4">
       <Card className="w-full max-w-md">
         <CardHeader>
-          <CardTitle className="text-2xl">Continue vendor sign in</CardTitle>
+          <CardTitle className="text-2xl">{t("vendorLogin.retryTitle")}</CardTitle>
           <CardDescription>
-            Your session ended before we could finish opening Auth0.
+            {t("vendorLogin.retryDescription")}
           </CardDescription>
         </CardHeader>
         <CardContent>
           <Button className="w-full" onClick={retryLogin} data-testid="button-retry-vendor-login">
-            Try sign in again
+            {t("vendorLogin.retryButton")}
           </Button>
         </CardContent>
       </Card>

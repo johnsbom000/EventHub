@@ -14,6 +14,7 @@ import {
  DropdownMenuSeparator,
  DropdownMenuTrigger,
 } from "@/components/ui/dropdown-menu";
+import { LanguageSection } from "@/components/LanguageSection";
 import { Avatar, AvatarFallback, AvatarImage } from "@/components/ui/avatar";
 import {
  User,
@@ -29,9 +30,13 @@ import {
  Store,
  Lightbulb,
  Bug,
+ Check,
 } from "lucide-react";
 import { deriveVendorDetection, type VendorMeState } from "@/lib/vendorState";
 import FeedbackModal from "@/components/FeedbackModal";
+import { useTranslation } from "react-i18next";
+import { useLanguage } from "@/context/LanguageContext";
+import { SUPPORTED_LANGUAGES, type LanguageCode } from "@/lib/i18n";
 
 type UserRole = "customer" | "vendor" | null;
 
@@ -58,468 +63,371 @@ export default function Navigation({
  surfaceClassName,
  vendorDashboardAligned = false,
 }: NavigationProps) {
+ const { t } = useTranslation();
+ const { language, setLanguage } = useLanguage();
  const [location, setLocation] = useLocation();
  const hideAvatarNotifications = location === "/";
  const isVendorOnboardingRoute = location.startsWith("/vendor/onboarding");
  const [userRole, setUserRole] = useState<UserRole>(null);
  const [lastKnownVendorAccount, setLastKnownVendorAccount] = useState<boolean>(() => {
- if (typeof window === "undefined") return false;
- return window.localStorage.getItem("eventhub:last-known-vendor-account") === "1";
+  if (typeof window === "undefined") return false;
+  return window.localStorage.getItem("eventhub:last-known-vendor-account") === "1";
  });
  const [authModalOpen, setAuthModalOpen] = useState(false);
  const [feedbackModalOpen, setFeedbackModalOpen] = useState(false);
  const [feedbackType, setFeedbackType] = useState<"feature_request" | "bug_report">("feature_request");
  const { isAuthenticated, user, logout: auth0Logout } = useAuth0();
- useEffect(() => {
- if (user) console.log("AUTH0 USER OBJECT:", user);
- }, [user]);
+
 
  const {
- data: vendorAccount,
- isLoading: vendorMeLoading,
- isFetching: vendorMeFetching,
- error: vendorMeError,
+  data: vendorAccount,
+  isLoading: vendorMeLoading,
+  isFetching: vendorMeFetching,
+  error: vendorMeError,
  } = useQuery<VendorMeState>({
- queryKey: ["/api/vendor/me"], // ✅ MUST be only this
- enabled: isAuthenticated,
- retry: false,
- refetchOnMount: "always",
- staleTime: 0,
+  queryKey: ["/api/vendor/me"],
+  enabled: isAuthenticated,
+  retry: false,
+  refetchOnMount: "always",
+  staleTime: 0,
  });
  const vendorDetection = deriveVendorDetection({
- data: vendorAccount,
- isLoading: vendorMeLoading,
- isFetching: vendorMeFetching,
- error: vendorMeError,
+  data: vendorAccount,
+  isLoading: vendorMeLoading,
+  isFetching: vendorMeFetching,
+  error: vendorMeError,
  });
 
- // Fetch customer account only when explicit vendor-state is non-vendor.
  const { data: customer } = useQuery<Customer>({
- queryKey: ["/api/customer/me"],
- enabled: isAuthenticated && vendorDetection.status === "non_vendor",
- retry: false,
+  queryKey: ["/api/customer/me"],
+  enabled: isAuthenticated && vendorDetection.status === "non_vendor",
+  retry: false,
  });
 
- // Resolve nav role using explicit vendor state. Do not treat auth/transient
- // vendor-me failures as proof the user is a non-vendor.
  useEffect(() => {
- if (!isAuthenticated) {
- setUserRole(null);
- setLastKnownVendorAccount(false);
- if (typeof window !== "undefined") {
- window.localStorage.removeItem("eventhub:last-known-vendor-account");
- }
- return;
- }
+  if (!isAuthenticated) {
+   setUserRole(null);
+   setLastKnownVendorAccount(false);
+   if (typeof window !== "undefined") {
+    window.localStorage.removeItem("eventhub:last-known-vendor-account");
+   }
+   return;
+  }
 
- if (vendorDetection.status === "vendor") {
- setUserRole("vendor");
- if (!lastKnownVendorAccount) {
- setLastKnownVendorAccount(true);
- if (typeof window !== "undefined") {
- window.localStorage.setItem("eventhub:last-known-vendor-account", "1");
- }
- }
- return;
- }
+  if (vendorDetection.status === "vendor") {
+   setUserRole("vendor");
+   if (!lastKnownVendorAccount) {
+    setLastKnownVendorAccount(true);
+    if (typeof window !== "undefined") {
+     window.localStorage.setItem("eventhub:last-known-vendor-account", "1");
+    }
+   }
+   return;
+  }
 
- if (vendorDetection.status === "non_vendor") {
- setUserRole("customer");
- if (lastKnownVendorAccount) {
- setLastKnownVendorAccount(false);
- if (typeof window !== "undefined") {
- window.localStorage.removeItem("eventhub:last-known-vendor-account");
- }
- }
- return;
- }
+  if (vendorDetection.status === "non_vendor") {
+   setUserRole("customer");
+   if (lastKnownVendorAccount) {
+    setLastKnownVendorAccount(false);
+    if (typeof window !== "undefined") {
+     window.localStorage.removeItem("eventhub:last-known-vendor-account");
+    }
+   }
+   return;
+  }
 
- if (vendorDetection.status === "auth_error" || vendorDetection.status === "transient_error") {
- if (lastKnownVendorAccount) {
- setUserRole("vendor");
- }
- return;
- }
+  if (vendorDetection.status === "auth_error" || vendorDetection.status === "transient_error") {
+   if (lastKnownVendorAccount) {
+    setUserRole("vendor");
+   }
+   return;
+  }
  }, [isAuthenticated, vendorDetection.status, lastKnownVendorAccount]);
+
  const handleLogout = () => {
- setUserRole(null);
-
- // Auth0 logout
- auth0Logout({
- logoutParams: { returnTo: window.location.origin },
- });
+  setUserRole(null);
+  auth0Logout({
+   logoutParams: { returnTo: window.location.origin },
+  });
  };
 
- // Get initials for avatar
  const getInitials = (name: string) => {
- if (!name) return "U";
- return name
- .split(" ")
- .map((n) => n[0])
- .join("")
- .toUpperCase()
- .slice(0, 2);
+  if (!name) return "U";
+  return name.split(" ").map((n) => n[0]).join("").toUpperCase().slice(0, 2);
  };
 
- // Get display name based on role (fallback to Auth0)
  const getDisplayName = () => {
- if (userRole === "vendor" && vendorAccount?.businessName) {
- return vendorAccount.businessName;
- } else if (userRole === "customer" && customer) {
- return customer.displayName?.trim() || customer.name;
- }
- // Auth0 fallback
- const auth0Name =
- (user as any)?.name ||
- (user as any)?.nickname ||
- (user as any)?.email ||
- "";
- return auth0Name;
+  if (userRole === "vendor" && vendorAccount?.businessName) {
+   return vendorAccount.businessName;
+  } else if (userRole === "customer" && customer) {
+   return customer.displayName?.trim() || customer.name;
+  }
+  const auth0Name = (user as any)?.name || (user as any)?.nickname || (user as any)?.email || "";
+  return auth0Name;
  };
 
  const isLoggedIn = isAuthenticated || !!userRole;
  const navActionButtonClass = "rounded-md px-3 font-sans text-base font-bold text-[#4a6a7d] ";
  const backToMarketplaceNavButtonClass =
- "no-global-scale min-h-0 h-5 rounded-[4px] px-2 py-0 font-sans text-[12.5px] leading-none font-medium text-[#4a6a7d] gap-1 [&_svg]:!size-2";
+  "no-global-scale min-h-0 h-5 rounded-[4px] px-2 py-0 font-sans text-[12.5px] leading-none font-medium text-[#4a6a7d] gap-1 [&_svg]:!size-2";
  const navContainerClass = vendorDashboardAligned ? "w-full" : "w-full px-6 lg:px-10";
  const navRowClass = vendorDashboardAligned ? "flex items-center p-4" : "flex min-h-16 items-center py-2";
  const homeLinkClass = vendorDashboardAligned
- ? "flex items-center rounded-md px-1 py-1"
- : "flex items-center gap-2 px-3 py-2 rounded-md -ml-3";
+  ? "flex items-center rounded-md px-1 py-1"
+  : "flex items-center gap-2 px-3 py-2 rounded-md -ml-3";
  const brandWordmarkClass = "text-[1.875rem]";
  const navPositionClass = vendorDashboardAligned ? "" : "sticky top-0";
 
  return (
- <nav
- className={cn(
- navPositionClass,
- "z-50 bg-[#ffffff] ",
- showBottomBorder ? "border-b border-[rgba(74,106,125,0.15)]" : "",
- surfaceClassName
- )}
- >
- <div className={navContainerClass}>
- <div className={navRowClass}>
- <Link
- href="/"
- className={homeLinkClass}
- data-testid="link-home"
- >
- <BrandWordmark
- className={brandWordmarkClass}
- eventClassName="text-[#e07a6a] font-normal"
- hubClassName="text-[#4a6a7d] font-normal"
- />
- </Link>
+  <nav
+   className={cn(
+    navPositionClass,
+    "z-50 bg-[#ffffff] ",
+    showBottomBorder ? "border-b border-[rgba(74,106,125,0.15)]" : "",
+    surfaceClassName
+   )}
+  >
+   <div className={navContainerClass}>
+    <div className={navRowClass}>
+     <Link href="/" className={homeLinkClass} data-testid="link-home">
+      <BrandWordmark
+       className={brandWordmarkClass}
+       eventClassName="text-[#e07a6a] font-normal"
+       hubClassName="text-[#4a6a7d] font-normal"
+      />
+     </Link>
 
- {middleContent ? <div className="mx-6 min-w-0 flex-1">{middleContent}</div> : null}
+     {middleContent ? <div className="mx-6 min-w-0 flex-1">{middleContent}</div> : null}
 
- <div className="ml-auto flex items-center gap-4">
- {/* Auth Modal */}
- <AuthModal open={authModalOpen} onOpenChange={setAuthModalOpen} />
+     <div className="ml-auto flex items-center gap-4">
+      <AuthModal open={authModalOpen} onOpenChange={setAuthModalOpen} />
+      <FeedbackModal
+       open={feedbackModalOpen}
+       type={feedbackType}
+       onOpenChange={setFeedbackModalOpen}
+      />
 
- {/* Feedback Modal */}
- <FeedbackModal
-   open={feedbackModalOpen}
-   type={feedbackType}
-   onOpenChange={setFeedbackModalOpen}
- />
+      {/* Language switcher — always visible */}
+      {!isLoggedIn && (
+       <DropdownMenu>
+        <DropdownMenuTrigger asChild>
+         <button
+          className="flex items-center gap-1.5 text-sm font-medium text-gray-600 hover:text-gray-900 transition-colors focus:outline-none"
+          aria-label={t("nav.language.label")}
+         >
+          <Globe className="w-4 h-4" />
+          <span className="hidden sm:inline text-xs">{SUPPORTED_LANGUAGES.find(l => l.code === language)?.label}</span>
+         </button>
+        </DropdownMenuTrigger>
+        <DropdownMenuContent align="end" className="w-40">
+         {SUPPORTED_LANGUAGES.map((lang) => (
+          <DropdownMenuItem
+           key={lang.code}
+           onSelect={() => setLanguage(lang.code as LanguageCode)}
+           className="flex items-center justify-between"
+          >
+           <span>{lang.label}</span>
+           {language === lang.code && <Check className="h-4 w-4 text-primary" />}
+          </DropdownMenuItem>
+         ))}
+        </DropdownMenuContent>
+       </DropdownMenu>
+      )}
 
- {/* Logged Out State */}
- {!isLoggedIn && (
- <Button
- variant="default"
- size="default"
- className="editorial-login-btn min-h-0 h-[27px] min-w-[116px] rounded-[7px] px-3.5 py-0 text-[1.15rem] leading-none"
- onClick={() => setAuthModalOpen(true)}
- data-testid="button-login-signup"
- >
- Login / Sign up
- </Button>
- )}
+      {/* Logged Out State */}
+      {!isLoggedIn && (
+       <Button
+        variant="default"
+        size="default"
+        className="editorial-login-btn min-h-0 h-[27px] min-w-[116px] rounded-[7px] px-3.5 py-0 text-[1.15rem] leading-none"
+        onClick={() => setAuthModalOpen(true)}
+        data-testid="button-login-signup"
+       >
+        {t("nav.loginSignup")}
+       </Button>
+      )}
 
- {/* Vendor Logged In State */}
- {isLoggedIn && userRole === "vendor" && (
- <>
- <Link href="/vendor/dashboard" className="hidden sm:inline-flex">
- <Button
- variant="ghost"
- size="default"
- className={navActionButtonClass}
- data-testid="link-vendor-dashboard"
- >
- Vendor Dashboard
- </Button>
- </Link>
+      {/* Vendor Logged In State */}
+      {isLoggedIn && userRole === "vendor" && (
+       <>
+        <Link href="/vendor/dashboard" className="hidden sm:inline-flex">
+         <Button variant="ghost" size="default" className={navActionButtonClass} data-testid="link-vendor-dashboard">
+          {t("nav.vendor.dashboard")}
+         </Button>
+        </Link>
 
- {location.startsWith("/dashboard") ? (
- <Link href="/" className="hidden sm:inline-flex">
- <Button
- variant="ghost"
- size="default"
- className={backToMarketplaceNavButtonClass}
- data-testid="link-vendor-back-to-marketplace"
- >
- <Store />
- Back to Marketplace
- </Button>
- </Link>
- ) : (
- <Link href="/dashboard/events" className="hidden sm:inline-flex">
- <Button
- variant="ghost"
- size="default"
- className={navActionButtonClass}
- data-testid="link-vendor-my-events"
- >
- My Events
- </Button>
- </Link>
- )}
+        {location.startsWith("/dashboard") ? (
+         <Link href="/" className="hidden sm:inline-flex">
+          <Button variant="ghost" size="default" className={backToMarketplaceNavButtonClass} data-testid="link-vendor-back-to-marketplace">
+           <Store />
+           {t("nav.vendor.backToMarketplace")}
+          </Button>
+         </Link>
+        ) : (
+         <Link href="/dashboard/events" className="hidden sm:inline-flex">
+          <Button variant="ghost" size="default" className={navActionButtonClass} data-testid="link-vendor-my-events">
+           {t("nav.vendor.myEvents")}
+          </Button>
+         </Link>
+        )}
 
- <DropdownMenu>
- <DropdownMenuTrigger asChild>
- <Button
- variant="ghost"
- size="icon"
- className="rounded-full"
- data-testid="button-vendor-profile"
- >
- <Avatar className="h-8 w-8">
- <AvatarFallback className="bg-primary text-primary-foreground">
- {getInitials(getDisplayName())}
- </AvatarFallback>
- </Avatar>
- </Button>
- </DropdownMenuTrigger>
- <DropdownMenuContent
- align="end"
- className="w-60 shadow-lg"
- data-testid="dropdown-vendor-menu"
- >
- <DropdownMenuLabel>Vendor Account</DropdownMenuLabel>
- <DropdownMenuSeparator />
- <DropdownMenuItem
- onClick={() => setLocation("/vendor/dashboard")}
- data-testid="menu-item-profile"
- >
- <User className="mr-2 h-4 w-4" />
- <span>Profile</span>
- </DropdownMenuItem>
- <DropdownMenuItem
- onClick={() => setLocation("/dashboard/events")}
- data-testid="menu-item-vendor-my-events"
- >
- <Calendar className="mr-2 h-4 w-4" />
- <span>My Events</span>
- </DropdownMenuItem>
- <DropdownMenuItem
- onClick={() => setLocation("/vendor/dashboard")}
- data-testid="menu-item-vendor-dashboard"
- >
- <Home className="mr-2 h-4 w-4" />
- <span>Vendor Dashboard</span>
- </DropdownMenuItem>
- {!hideAvatarNotifications ? (
- <DropdownMenuItem
- onClick={() => setLocation("/vendor/notifications")}
- data-testid="menu-item-notifications"
- >
- <Bell className="mr-2 h-4 w-4" />
- <span>Notifications</span>
- </DropdownMenuItem>
- ) : null}
- <DropdownMenuSeparator />
- <DropdownMenuItem
- onClick={() => setLocation("/vendor/dashboard")}
- data-testid="menu-item-account-settings"
- >
- <Settings className="mr-2 h-4 w-4" />
- <span>Account settings</span>
- </DropdownMenuItem>
- <DropdownMenuItem data-testid="menu-item-languages">
- <Globe className="mr-2 h-4 w-4" />
- <span>Languages & currency</span>
- </DropdownMenuItem>
- <DropdownMenuSeparator />
- <DropdownMenuItem
-   onClick={() => { setFeedbackType("feature_request"); setFeedbackModalOpen(true); }}
-   data-testid="menu-item-request-feature"
- >
- <Lightbulb className="mr-2 h-4 w-4" />
- <span>Request a Feature</span>
- </DropdownMenuItem>
- <DropdownMenuItem
-   onClick={() => { setFeedbackType("bug_report"); setFeedbackModalOpen(true); }}
-   data-testid="menu-item-report-bug"
- >
- <Bug className="mr-2 h-4 w-4" />
- <span>Report a Bug</span>
- </DropdownMenuItem>
- <DropdownMenuSeparator />
- <DropdownMenuItem data-testid="menu-item-help">
- <HelpCircle className="mr-2 h-4 w-4" />
- <span>Help Center</span>
- </DropdownMenuItem>
- <DropdownMenuItem
- onClick={handleLogout}
- data-testid="menu-item-sign-out"
- >
- <LogOut className="mr-2 h-4 w-4" />
- <span>Sign out</span>
- </DropdownMenuItem>
- </DropdownMenuContent>
- </DropdownMenu>
- </>
- )}
+        <DropdownMenu>
+         <DropdownMenuTrigger asChild>
+          <Button variant="ghost" size="icon" className="rounded-full" data-testid="button-vendor-profile">
+           <Avatar className="h-8 w-8">
+            <AvatarFallback className="bg-primary text-primary-foreground">
+             {getInitials(getDisplayName())}
+            </AvatarFallback>
+           </Avatar>
+          </Button>
+         </DropdownMenuTrigger>
+         <DropdownMenuContent align="end" className="w-60 shadow-lg" data-testid="dropdown-vendor-menu">
+          <DropdownMenuLabel>{t("nav.vendor.accountLabel")}</DropdownMenuLabel>
+          <DropdownMenuSeparator />
+          <DropdownMenuItem onClick={() => setLocation("/vendor/dashboard")} data-testid="menu-item-profile">
+           <User className="mr-2 h-4 w-4" />
+           <span>{t("nav.vendor.profile")}</span>
+          </DropdownMenuItem>
+          <DropdownMenuItem onClick={() => setLocation("/dashboard/events")} data-testid="menu-item-vendor-my-events">
+           <Calendar className="mr-2 h-4 w-4" />
+           <span>{t("nav.vendor.myEvents")}</span>
+          </DropdownMenuItem>
+          <DropdownMenuItem onClick={() => setLocation("/vendor/dashboard")} data-testid="menu-item-vendor-dashboard">
+           <Home className="mr-2 h-4 w-4" />
+           <span>{t("nav.vendor.dashboard")}</span>
+          </DropdownMenuItem>
+          {!hideAvatarNotifications && (
+           <DropdownMenuItem onClick={() => setLocation("/vendor/notifications")} data-testid="menu-item-notifications">
+            <Bell className="mr-2 h-4 w-4" />
+            <span>{t("nav.vendor.notifications")}</span>
+           </DropdownMenuItem>
+          )}
+          <DropdownMenuSeparator />
+          <DropdownMenuItem onClick={() => setLocation("/vendor/dashboard")} data-testid="menu-item-account-settings">
+           <Settings className="mr-2 h-4 w-4" />
+           <span>{t("nav.vendor.accountSettings")}</span>
+          </DropdownMenuItem>
+          <LanguageSection />
+          <DropdownMenuSeparator />
+          <DropdownMenuItem onClick={() => { setFeedbackType("feature_request"); setFeedbackModalOpen(true); }} data-testid="menu-item-request-feature">
+           <Lightbulb className="mr-2 h-4 w-4" />
+           <span>{t("nav.vendor.requestFeature")}</span>
+          </DropdownMenuItem>
+          <DropdownMenuItem onClick={() => { setFeedbackType("bug_report"); setFeedbackModalOpen(true); }} data-testid="menu-item-report-bug">
+           <Bug className="mr-2 h-4 w-4" />
+           <span>{t("nav.vendor.reportBug")}</span>
+          </DropdownMenuItem>
+          <DropdownMenuSeparator />
+          <DropdownMenuItem data-testid="menu-item-help">
+           <HelpCircle className="mr-2 h-4 w-4" />
+           <span>{t("nav.vendor.helpCenter")}</span>
+          </DropdownMenuItem>
+          <DropdownMenuItem onClick={handleLogout} data-testid="menu-item-sign-out">
+           <LogOut className="mr-2 h-4 w-4" />
+           <span>{t("nav.vendor.signOut")}</span>
+          </DropdownMenuItem>
+         </DropdownMenuContent>
+        </DropdownMenu>
+       </>
+      )}
 
- {/* Customer Logged In State */}
- {isLoggedIn && userRole !== "vendor" && (
- <>
- {userRole === "customer" && !isVendorOnboardingRoute ? (
- <Button
- variant="ghost"
- size="default"
- className={`hidden sm:inline-flex ${navActionButtonClass}`}
- onClick={() => setLocation("/vendor/onboarding")}
- data-testid="button-become-vendor-nav"
- >
- Become a Vendor
- </Button>
- ) : null}
+      {/* Customer Logged In State */}
+      {isLoggedIn && userRole !== "vendor" && (
+       <>
+        {userRole === "customer" && !isVendorOnboardingRoute && (
+         <Button
+          variant="ghost"
+          size="default"
+          className={`hidden sm:inline-flex ${navActionButtonClass}`}
+          onClick={() => setLocation("/vendor/onboarding")}
+          data-testid="button-become-vendor-nav"
+         >
+          {t("nav.customer.becomeVendor")}
+         </Button>
+        )}
 
- {location.startsWith("/dashboard") ? (
- <Link href="/" className="hidden sm:inline-flex">
- <Button
- variant="ghost"
- size="default"
- className={backToMarketplaceNavButtonClass}
- data-testid="link-back-to-marketplace"
- >
- <Store />
- Back to Marketplace
- </Button>
- </Link>
- ) : (
- <Link href="/dashboard" className="hidden sm:inline-flex">
- <Button
- variant="ghost"
- size="default"
- className={navActionButtonClass}
- data-testid="link-my-events"
- >
- My Events
- </Button>
- </Link>
- )}
+        {location.startsWith("/dashboard") ? (
+         <Link href="/" className="hidden sm:inline-flex">
+          <Button variant="ghost" size="default" className={backToMarketplaceNavButtonClass} data-testid="link-back-to-marketplace">
+           <Store />
+           {t("nav.customer.backToMarketplace")}
+          </Button>
+         </Link>
+        ) : (
+         <Link href="/dashboard" className="hidden sm:inline-flex">
+          <Button variant="ghost" size="default" className={navActionButtonClass} data-testid="link-my-events">
+           {t("nav.customer.myEvents")}
+          </Button>
+         </Link>
+        )}
 
- <DropdownMenu>
- <DropdownMenuTrigger asChild>
- <Button
- variant="ghost"
- size="icon"
- className="rounded-full"
- data-testid="button-customer-profile"
- >
- <Avatar className="h-8 w-8">
- {customer?.profilePhotoDataUrl && (
- <AvatarImage
- src={customer.profilePhotoDataUrl}
- alt="Customer profile photo"
- className="object-cover"
- />
- )}
- <AvatarFallback className="bg-primary text-primary-foreground">
- {getInitials(getDisplayName())}
- </AvatarFallback>
- </Avatar>
- </Button>
- </DropdownMenuTrigger>
- <DropdownMenuContent
- align="end"
- className="w-60 shadow-lg"
- data-testid="dropdown-customer-menu"
- >
- <DropdownMenuLabel>My Account</DropdownMenuLabel>
- <DropdownMenuSeparator />
- <DropdownMenuItem
- onClick={() => setLocation("/dashboard")}
- data-testid="menu-item-profile"
- >
- <User className="mr-2 h-4 w-4" />
- <span>Profile</span>
- </DropdownMenuItem>
- <DropdownMenuItem
- onClick={() => setLocation("/dashboard")}
- data-testid="menu-item-messages"
- >
- <MessageSquare className="mr-2 h-4 w-4" />
- <span>Messages</span>
- </DropdownMenuItem>
- {!hideAvatarNotifications ? (
- <DropdownMenuItem
- onClick={() => setLocation("/dashboard")}
- data-testid="menu-item-notifications"
- >
- <Bell className="mr-2 h-4 w-4" />
- <span>Notifications</span>
- </DropdownMenuItem>
- ) : null}
- <DropdownMenuSeparator />
- <DropdownMenuItem
- onClick={() => setLocation("/vendor/onboarding")}
- data-testid="menu-item-become-vendor"
- >
- <Briefcase className="mr-2 h-4 w-4" />
- <span>Become a Vendor</span>
- </DropdownMenuItem>
- <DropdownMenuSeparator />
- <DropdownMenuItem
- onClick={() => setLocation("/dashboard")}
- data-testid="menu-item-account-settings"
- >
- <Settings className="mr-2 h-4 w-4" />
- <span>Account settings</span>
- </DropdownMenuItem>
- <DropdownMenuItem data-testid="menu-item-languages">
- <Globe className="mr-2 h-4 w-4" />
- <span>Languages & currency</span>
- </DropdownMenuItem>
- <DropdownMenuSeparator />
- <DropdownMenuItem
-   onClick={() => { setFeedbackType("feature_request"); setFeedbackModalOpen(true); }}
-   data-testid="menu-item-request-feature"
- >
- <Lightbulb className="mr-2 h-4 w-4" />
- <span>Request a Feature</span>
- </DropdownMenuItem>
- <DropdownMenuItem
-   onClick={() => { setFeedbackType("bug_report"); setFeedbackModalOpen(true); }}
-   data-testid="menu-item-report-bug"
- >
- <Bug className="mr-2 h-4 w-4" />
- <span>Report a Bug</span>
- </DropdownMenuItem>
- <DropdownMenuSeparator />
- <DropdownMenuItem data-testid="menu-item-help">
- <HelpCircle className="mr-2 h-4 w-4" />
- <span>Help Center</span>
- </DropdownMenuItem>
- <DropdownMenuItem
- onClick={handleLogout}
- data-testid="menu-item-sign-out"
- >
- <LogOut className="mr-2 h-4 w-4" />
- <span>Sign out</span>
- </DropdownMenuItem>
- </DropdownMenuContent>
- </DropdownMenu>
- </>
- )}
- </div>
- </div>
- </div>
- {headerContent}
- </nav>
+        <DropdownMenu>
+         <DropdownMenuTrigger asChild>
+          <Button variant="ghost" size="icon" className="rounded-full" data-testid="button-customer-profile">
+           <Avatar className="h-8 w-8">
+            {customer?.profilePhotoDataUrl && (
+             <AvatarImage src={customer.profilePhotoDataUrl} alt={t("nav.avatar.profilePhotoAlt") as string} className="object-cover" />
+            )}
+            <AvatarFallback className="bg-primary text-primary-foreground">
+             {getInitials(getDisplayName())}
+            </AvatarFallback>
+           </Avatar>
+          </Button>
+         </DropdownMenuTrigger>
+         <DropdownMenuContent align="end" className="w-60 shadow-lg" data-testid="dropdown-customer-menu">
+          <DropdownMenuLabel>{t("nav.customer.accountLabel")}</DropdownMenuLabel>
+          <DropdownMenuSeparator />
+          <DropdownMenuItem onClick={() => setLocation("/dashboard")} data-testid="menu-item-profile">
+           <User className="mr-2 h-4 w-4" />
+           <span>{t("nav.customer.profile")}</span>
+          </DropdownMenuItem>
+          <DropdownMenuItem onClick={() => setLocation("/dashboard")} data-testid="menu-item-messages">
+           <MessageSquare className="mr-2 h-4 w-4" />
+           <span>{t("nav.customer.messages")}</span>
+          </DropdownMenuItem>
+          {!hideAvatarNotifications && (
+           <DropdownMenuItem onClick={() => setLocation("/dashboard")} data-testid="menu-item-notifications">
+            <Bell className="mr-2 h-4 w-4" />
+            <span>{t("nav.customer.notifications")}</span>
+           </DropdownMenuItem>
+          )}
+          <DropdownMenuSeparator />
+          <DropdownMenuItem onClick={() => setLocation("/vendor/onboarding")} data-testid="menu-item-become-vendor">
+           <Briefcase className="mr-2 h-4 w-4" />
+           <span>{t("nav.customer.becomeVendor")}</span>
+          </DropdownMenuItem>
+          <DropdownMenuSeparator />
+          <DropdownMenuItem onClick={() => setLocation("/dashboard")} data-testid="menu-item-account-settings">
+           <Settings className="mr-2 h-4 w-4" />
+           <span>{t("nav.customer.accountSettings")}</span>
+          </DropdownMenuItem>
+          <LanguageSection />
+          <DropdownMenuSeparator />
+          <DropdownMenuItem onClick={() => { setFeedbackType("feature_request"); setFeedbackModalOpen(true); }} data-testid="menu-item-request-feature">
+           <Lightbulb className="mr-2 h-4 w-4" />
+           <span>{t("nav.customer.requestFeature")}</span>
+          </DropdownMenuItem>
+          <DropdownMenuItem onClick={() => { setFeedbackType("bug_report"); setFeedbackModalOpen(true); }} data-testid="menu-item-report-bug">
+           <Bug className="mr-2 h-4 w-4" />
+           <span>{t("nav.customer.reportBug")}</span>
+          </DropdownMenuItem>
+          <DropdownMenuSeparator />
+          <DropdownMenuItem data-testid="menu-item-help">
+           <HelpCircle className="mr-2 h-4 w-4" />
+           <span>{t("nav.customer.helpCenter")}</span>
+          </DropdownMenuItem>
+          <DropdownMenuItem onClick={handleLogout} data-testid="menu-item-sign-out">
+           <LogOut className="mr-2 h-4 w-4" />
+           <span>{t("nav.customer.signOut")}</span>
+          </DropdownMenuItem>
+         </DropdownMenuContent>
+        </DropdownMenu>
+       </>
+      )}
+     </div>
+    </div>
+   </div>
+   {headerContent}
+  </nav>
  );
 }

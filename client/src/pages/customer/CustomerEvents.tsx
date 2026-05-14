@@ -1,10 +1,13 @@
-import { useMemo, useState } from "react";
+import { useTranslation } from "react-i18next";
+import { useEffect, useMemo, useRef, useState } from "react";
+import { useLocation } from "wouter";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import {
  Calendar,
  CheckCircle2,
  Heart,
  MapPin,
+ MessageSquare,
  Star,
 } from "lucide-react";
 import { format } from "date-fns";
@@ -24,6 +27,7 @@ import ListingCard from "@/components/ListingCard";
 
 interface CustomerEventsProps {
  customer: { id: string; name: string; email: string };
+ newBookingId?: string;
 }
 
 type BookingStatus =
@@ -48,6 +52,7 @@ interface CustomerBooking {
  eventLocation?: string | null;
  listingId?: string | null;
  itemTitle?: string | null;
+ parentListingTitle?: string | null;
  displayTitle?: string | null;
  vendorDisplayName?: string | null;
  vendorBusinessName?: string | null;
@@ -78,7 +83,11 @@ function formatUsd(cents: number) {
 }
 
 function vendorLabel(b: CustomerBooking) {
- const listing = b.itemTitle?.trim();
+ const packageTitle = b.itemTitle?.trim();
+ const parentTitle = b.parentListingTitle?.trim();
+ const listing = parentTitle && packageTitle
+   ? `${parentTitle} — ${packageTitle}`
+   : packageTitle ?? null;
  const vendor = (b.vendorDisplayName ?? b.vendorBusinessName)?.trim();
  if (listing && vendor) return `${listing} · ${vendor}`;
  return listing ?? vendor ?? b.displayTitle ?? "Vendor";
@@ -106,6 +115,7 @@ function SavedListingCard({
  listing: SavedListing;
  boardId: string;
 }) {
+ const { t } = useTranslation();
  const qc = useQueryClient();
  const [confirmOpen, setConfirmOpen] = useState(false);
  const listingId = listing.id ?? listing.listingId;
@@ -153,10 +163,10 @@ function SavedListingCard({
  <Dialog open={confirmOpen} onOpenChange={setConfirmOpen}>
  <DialogContent className="rounded-2xl border border-border bg-card px-6 py-6 sm:max-w-sm">
  <DialogTitle className="text-[1.25rem] font-semibold text-[#2a3a42]">
- Remove from event?
+ {t("customerEvents.removeFromEvent")}
  </DialogTitle>
  <DialogDescription className="text-sm text-[#4a6a7d]">
- This listing will be removed from your saved event. You can always heart it again to re-save it.
+ {t("customerEvents.removeFromEventDesc")}
  </DialogDescription>
  <div className="mt-4 flex justify-end gap-3">
  <button
@@ -164,7 +174,7 @@ function SavedListingCard({
  onClick={() => setConfirmOpen(false)}
  className="rounded-full border border-[rgba(74,106,125,0.24)] px-4 py-2 text-sm font-medium text-[#4a6a7d] transition hover:bg-[rgba(74,106,125,0.07)]"
  >
- Cancel
+ {t("customerEvents.cancel")}
  </button>
  <button
  type="button"
@@ -181,37 +191,76 @@ function SavedListingCard({
  );
 }
 
+// Returns true if the 48-hour post-event messaging window is still open.
+function isChatWindowOpen(eventDate: string | null | undefined): boolean {
+ if (!eventDate) return true;
+ const endOfDay = new Date(`${eventDate}T23:59:59.999Z`);
+ if (Number.isNaN(endOfDay.getTime())) return true;
+ return Date.now() <= endOfDay.getTime() + 48 * 60 * 60 * 1000;
+}
+
 // ── BookingRow ─────────────────────────────────────────────────────────────
 
-function BookingRow({ booking }: { booking: CustomerBooking }) {
+function BookingRow({ booking, isHighlighted }: { booking: CustomerBooking; isHighlighted?: boolean }) {
+ const [, setLocation] = useLocation();
+ const canMessage =
+   isChatWindowOpen(booking.eventDate) &&
+   booking.paymentStatus === "succeeded" &&
+   booking.status !== "cancelled" &&
+   booking.status !== "failed" &&
+   booking.status !== "expired";
+
  return (
- <div className="flex items-start gap-3 py-3">
- <div className="flex-1 min-w-0">
- <p className="text-[0.9rem] font-semibold text-[#2a3a42] truncate">
- {vendorLabel(booking)}
- </p>
- <div className="mt-0.5 flex flex-wrap items-center gap-x-3 gap-y-0.5 text-sm text-[#4a6a7d]">
- <span className="flex items-center gap-1">
- <Calendar className="h-3 w-3" />
- {format(new Date(booking.eventDate), "MMM d, yyyy")}
- </span>
- {booking.eventLocation ? (
- <span className="flex items-center gap-1">
- <MapPin className="h-3 w-3" />
- {booking.eventLocation}
- </span>
- ) : null}
- <span className="font-medium text-[#2a3a42] ">
- {formatUsd(booking.totalAmount)}
- </span>
- </div>
- </div>
- <Badge
- variant="outline"
- className={`shrink-0 capitalize text-sm ${STATUS_PILL[booking.status] ?? ""}`}
+ <div
+   data-booking-id={booking.id}
+   className={`py-3 rounded-lg transition-all duration-700 ${
+     isHighlighted ? "ring-2 ring-[#e07a6a] ring-offset-2 px-2 bg-[rgba(224,122,106,0.05)]" : "px-2"
+   }`}
  >
- {booking.status}
- </Badge>
+   <button
+     type="button"
+     onClick={() => setLocation(`/booking/${booking.id}`)}
+     className="w-full flex items-start gap-3 text-left hover:bg-[rgba(74,106,125,0.05)] rounded-md"
+   >
+     <div className="flex-1 min-w-0">
+       <p className="text-[0.9rem] font-semibold text-[#2a3a42] truncate">
+         {vendorLabel(booking)}
+       </p>
+       <div className="mt-0.5 flex flex-wrap items-center gap-x-3 gap-y-0.5 text-sm text-[#4a6a7d]">
+         <span className="flex items-center gap-1">
+           <Calendar className="h-3 w-3" />
+           {format(new Date(`${booking.eventDate}T00:00:00`), "MMM d, yyyy")}
+         </span>
+         {booking.eventLocation ? (
+           <span className="flex items-center gap-1">
+             <MapPin className="h-3 w-3" />
+             {booking.eventLocation}
+           </span>
+         ) : null}
+         <span className="font-medium text-[#2a3a42]">
+           {formatUsd(booking.totalAmount)}
+         </span>
+       </div>
+     </div>
+     <Badge
+       variant="outline"
+       className={`shrink-0 capitalize text-sm ${STATUS_PILL[booking.status] ?? ""}`}
+     >
+       {booking.status}
+     </Badge>
+   </button>
+   {canMessage && (
+     <div className="mt-2">
+       <button
+         type="button"
+         onClick={() => setLocation(`/dashboard/messages?bookingId=${booking.id}`)}
+         className="inline-flex items-center gap-1.5 rounded-full border border-[rgba(74,106,125,0.3)] px-3 py-1 text-xs font-medium text-[#4a6a7d] transition hover:bg-[rgba(74,106,125,0.08)]"
+       >
+         <MessageSquare className="h-3 w-3" />
+         Message Vendor
+       </button>
+     </div>
+   )}
  </div>
  );
 }
@@ -219,6 +268,7 @@ function BookingRow({ booking }: { booking: CustomerBooking }) {
 // ── ReviewForm ─────────────────────────────────────────────────────────────
 
 function ReviewPrompt({ booking }: { booking: CustomerBooking }) {
+ const { t } = useTranslation();
  const qc = useQueryClient();
  const [open, setOpen] = useState(false);
  const [rating, setRating] = useState(0);
@@ -250,7 +300,7 @@ function ReviewPrompt({ booking }: { booking: CustomerBooking }) {
  return (
  <div className="flex items-center gap-1.5 text-sm text-[#4a6a7d]">
  <CheckCircle2 className="h-3.5 w-3.5 text-emerald-500" />
- Review submitted
+ {t("customerEvents.reviewSubmitted")}
  </div>
  );
  }
@@ -265,7 +315,7 @@ function ReviewPrompt({ booking }: { booking: CustomerBooking }) {
  className="h-7 border-[#e07a6a] text-[#e07a6a] hover:bg-[rgba(224,122,106,0.08)] text-sm"
  >
  <Star className="mr-1 h-3 w-3" />
- Leave a review
+ {t("customerEvents.leaveReview")}
  </Button>
  );
  }
@@ -273,7 +323,7 @@ function ReviewPrompt({ booking }: { booking: CustomerBooking }) {
  return (
  <div className="mt-2 space-y-2 rounded-xl border border-[rgba(74,106,125,0.18)] bg-[rgba(74,106,125,0.04)] p-3">
  <p className="text-sm font-semibold text-[#2a3a42] ">
- Rate {booking.itemTitle || "this vendor"}
+ {t("customerEvents.rateLabel")} {booking.itemTitle || t("customerEvents.thisVendor")}
  </p>
 
  {/* Star picker */}
@@ -301,7 +351,7 @@ function ReviewPrompt({ booking }: { booking: CustomerBooking }) {
  <Textarea
  value={body}
  onChange={(e) => setBody(e.target.value)}
- placeholder="Share your experience…"
+ placeholder={t("customerEvents.reviewPlaceholder")}
  className="min-h-[80px] text-sm"
  />
  {error ? <p className="text-sm text-destructive">{error}</p> : null}
@@ -313,7 +363,7 @@ function ReviewPrompt({ booking }: { booking: CustomerBooking }) {
  onClick={() => submitMutation.mutate()}
  className="bg-[#e07a6a] text-white hover:bg-[#c9685a]"
  >
- Submit
+ {t("customerEvents.submit")}
  </Button>
  <Button
  size="sm"
@@ -322,12 +372,12 @@ function ReviewPrompt({ booking }: { booking: CustomerBooking }) {
  disabled={submitMutation.isPending}
  onClick={() => setOpen(false)}
  >
- Cancel
+ {t("customerEvents.cancel")}
  </Button>
  </div>
  </>
  ) : (
- <p className="text-sm text-[#4a6a7d]/60">Select a rating to continue.</p>
+ <p className="text-sm text-[#4a6a7d]/60">{t("customerEvents.selectRating")}</p>
  )}
  </div>
  );
@@ -339,10 +389,13 @@ function ReviewPrompt({ booking }: { booking: CustomerBooking }) {
 function PlannedEventSection({
  board,
  bookings,
+ newBookingId,
 }: {
  board: Board;
  bookings: CustomerBooking[];
+ newBookingId?: string;
 }) {
+ const { t } = useTranslation();
  const qc = useQueryClient();
  const [deletingBoard, setDeletingBoard] = useState(false);
 
@@ -357,11 +410,13 @@ function PlannedEventSection({
  const savedListings = data?.listings ?? [];
 
  // Active (non-completed) bookings whose event title matches this board name
- const matchedBookings = bookings.filter(
- (b) =>
- b.status !== "completed" &&
- eventTitleOf(b)?.toLowerCase() === board.name.toLowerCase(),
- );
+ const matchedBookings = bookings
+   .filter(
+     (b) =>
+       b.status !== "completed" &&
+       eventTitleOf(b)?.toLowerCase() === board.name.toLowerCase(),
+   )
+   .sort((a, b) => new Date(a.eventDate).getTime() - new Date(b.eventDate).getTime());
 
  const deleteBoardMutation = useMutation({
  mutationFn: async () => {
@@ -384,21 +439,21 @@ function PlannedEventSection({
  </h2>
  {deletingBoard ? (
  <div className="flex items-center gap-2 text-sm">
- <span className="text-[#4a6a7d]">Delete event?</span>
+ <span className="text-[#4a6a7d]">{t("customerEvents.deleteEvent")}</span>
  <button
  type="button"
  onClick={() => deleteBoardMutation.mutate()}
  disabled={deleteBoardMutation.isPending}
  className="font-medium text-red-500 hover:underline disabled:opacity-50"
  >
- Yes, delete
+ {t("customerEvents.yes")}
  </button>
  <button
  type="button"
  onClick={() => setDeletingBoard(false)}
  className="text-[#4a6a7d] hover:underline"
  >
- Cancel
+ {t("customerEvents.cancel")}
  </button>
  </div>
  ) : (
@@ -407,7 +462,7 @@ function PlannedEventSection({
  onClick={() => setDeletingBoard(true)}
  className="text-sm text-[#4a6a7d]/50 transition hover:text-red-400"
  >
- Delete event
+ {t("customerEvents.deleteEventButton")}
  </button>
  )}
  </div>
@@ -416,11 +471,11 @@ function PlannedEventSection({
  {matchedBookings.length > 0 ? (
  <div>
  <p className="mb-1 text-[0.7rem] font-semibold uppercase tracking-wider text-[#4a6a7d]">
- Booked vendors
+ {t("customerEvents.bookedVendors")}
  </p>
  <div className="divide-y divide-[rgba(74,106,125,0.1)]">
  {matchedBookings.map((b) => (
- <BookingRow key={b.id} booking={b} />
+ <BookingRow key={b.id} booking={b} isHighlighted={b.id === newBookingId} />
  ))}
  </div>
  </div>
@@ -429,7 +484,7 @@ function PlannedEventSection({
  {/* Saved vendors */}
  <div>
  <p className="mb-2 text-[0.7rem] font-semibold uppercase tracking-wider text-[#4a6a7d]">
- Saved vendors
+ {t("customerEvents.savedVendors")}
  {savedListings.length > 0 ? (
  <span className="ml-1.5 font-normal normal-case text-[#4a6a7d]/60">
  · {savedListings.length}
@@ -458,14 +513,14 @@ function PlannedEventSection({
  </div>
  ) : isEmpty ? (
  <p className="text-sm text-[#4a6a7d]/60">
- No vendors saved yet.{" "}
+ {t("customerEvents.noSavedVendors")}{" "}
  <a href="/browse" className="text-[#e07a6a] underline-offset-2 hover:underline">
- Browse vendors
+ {t("customerEvents.browseVendors")}
  </a>{" "}
  and heart listings to save them here.
  </p>
  ) : (
- <p className="text-sm text-[#4a6a7d]/60">No saved vendors yet.</p>
+ <p className="text-sm text-[#4a6a7d]/60">{t("customerEvents.noSavedListings")}</p>
  )}
  </div>
  </div>
@@ -481,6 +536,8 @@ function CompletedEventGroup({
  title: string;
  bookings: CustomerBooking[];
 }) {
+ const { t } = useTranslation();
+ const [, setLocation] = useLocation();
  return (
  <div className="space-y-4">
  <h2 className="font-heading text-2xl font-semibold text-[#2a3a42] ">
@@ -489,13 +546,17 @@ function CompletedEventGroup({
  <div className="divide-y divide-[rgba(74,106,125,0.1)]">
  {bookings.map((b) => (
  <div key={b.id} className="py-4">
- <div className="flex items-start justify-between gap-3">
+ <button
+   type="button"
+   onClick={() => setLocation(`/booking/${b.id}`)}
+   className="w-full text-left flex items-start justify-between gap-3 rounded-lg px-2 py-1 -mx-2 hover:bg-[rgba(74,106,125,0.05)] transition"
+ >
  <div>
  <p className="text-[0.9rem] font-semibold text-[#2a3a42] ">
  {vendorLabel(b)}
  </p>
  <p className="mt-0.5 text-sm text-[#4a6a7d]">
- {format(new Date(b.eventDate), "MMM d, yyyy")}
+ {format(new Date(`${b.eventDate}T00:00:00`), "MMM d, yyyy")}
  {b.eventLocation ? ` · ${b.eventLocation}` : ""}
  {" · "}
  <span className="font-medium">{formatUsd(b.totalAmount)}</span>
@@ -505,11 +566,21 @@ function CompletedEventGroup({
  variant="outline"
  className="shrink-0 text-sm border-[rgba(74,106,125,0.2)] bg-[rgba(74,106,125,0.06)] text-[#4a6a7d]"
  >
- Completed
+ {t("customerEvents.completedBadge")}
  </Badge>
- </div>
- <div className="mt-2">
- <ReviewPrompt booking={b} />
+ </button>
+ <div className="mt-2 flex flex-wrap items-center gap-3">
+   <ReviewPrompt booking={b} />
+   {isChatWindowOpen(b.eventDate) && b.paymentStatus === "succeeded" && (
+     <button
+       type="button"
+       onClick={() => setLocation(`/dashboard/messages?bookingId=${b.id}`)}
+       className="inline-flex items-center gap-1.5 rounded-full border border-[rgba(74,106,125,0.3)] px-3 py-1 text-xs font-medium text-[#4a6a7d] transition hover:bg-[rgba(74,106,125,0.08)]"
+     >
+       <MessageSquare className="h-3 w-3" />
+       Message Vendor
+     </button>
+   )}
  </div>
  </div>
  ))}
@@ -522,8 +593,11 @@ function CompletedEventGroup({
 
 type Tab = "planned" | "completed";
 
-export default function CustomerEvents({ customer }: CustomerEventsProps) {
+export default function CustomerEvents({ customer, newBookingId }: CustomerEventsProps) {
+ const { t } = useTranslation();
  const [tab, setTab] = useState<Tab>("planned");
+ const [highlightedId, setHighlightedId] = useState<string | undefined>(newBookingId);
+ const scrolledRef = useRef(false);
 
  const { data: bookings = [], isLoading: loadingBookings } = useQuery<CustomerBooking[]>({
  queryKey: ["/api/customer/bookings"],
@@ -536,6 +610,17 @@ export default function CustomerEvents({ customer }: CustomerEventsProps) {
  retry: false,
  });
 
+ // Scroll to and briefly highlight the new booking after data loads.
+ useEffect(() => {
+   if (!highlightedId || loadingBookings || loadingBoards || scrolledRef.current) return;
+   const el = document.querySelector(`[data-booking-id="${highlightedId}"]`);
+   if (!el) return;
+   scrolledRef.current = true;
+   el.scrollIntoView({ behavior: "smooth", block: "center" });
+   const timer = setTimeout(() => setHighlightedId(undefined), 2500);
+   return () => clearTimeout(timer);
+ }, [highlightedId, loadingBookings, loadingBoards]);
+
  const completedBookings = useMemo(
  () => bookings.filter((b) => b.status === "completed"),
  [bookings],
@@ -544,11 +629,13 @@ export default function CustomerEvents({ customer }: CustomerEventsProps) {
  // Active bookings not matched to any board (show in an "Other" section)
  const unmatchedBookings = useMemo(() => {
  const boardNames = new Set(boards.map((b) => b.name.toLowerCase()));
- return bookings.filter(
- (b) =>
- b.status !== "completed" &&
- !boardNames.has(eventTitleOf(b)?.toLowerCase() ?? "__none__"),
- );
+ return bookings
+   .filter(
+     (b) =>
+       b.status !== "completed" &&
+       !boardNames.has(eventTitleOf(b)?.toLowerCase() ?? "__none__"),
+   )
+   .sort((a, b) => new Date(a.eventDate).getTime() - new Date(b.eventDate).getTime());
  }, [bookings, boards]);
 
  // Group completed bookings by event title
@@ -560,8 +647,42 @@ export default function CustomerEvents({ customer }: CustomerEventsProps) {
  if (existing) existing.push(b);
  else groups.set(key, [b]);
  }
- return Array.from(groups.entries()).map(([title, bkgs]) => ({ title, bookings: bkgs }));
+ return Array.from(groups.entries())
+   .map(([title, bkgs]) => ({
+     title,
+     bookings: [...bkgs].sort(
+       (a, b) => new Date(a.eventDate).getTime() - new Date(b.eventDate).getTime(),
+     ),
+   }))
+   .sort((a, b) => {
+     const aDate = new Date(a.bookings[0]?.eventDate ?? 0).getTime();
+     const bDate = new Date(b.bookings[0]?.eventDate ?? 0).getTime();
+     return aDate - bDate;
+   });
  }, [completedBookings]);
+
+ // Sort boards by their earliest active booking event date (soonest first)
+ const sortedBoards = useMemo(() => {
+   return [...boards].sort((a, b) => {
+     const aBookings = bookings.filter(
+       (bk) =>
+         bk.status !== "completed" &&
+         eventTitleOf(bk)?.toLowerCase() === a.name.toLowerCase(),
+     );
+     const bBookings = bookings.filter(
+       (bk) =>
+         bk.status !== "completed" &&
+         eventTitleOf(bk)?.toLowerCase() === b.name.toLowerCase(),
+     );
+     const aDate = aBookings.length
+       ? Math.min(...aBookings.map((bk) => new Date(bk.eventDate).getTime()))
+       : Infinity;
+     const bDate = bBookings.length
+       ? Math.min(...bBookings.map((bk) => new Date(bk.eventDate).getTime()))
+       : Infinity;
+     return aDate - bDate;
+   });
+ }, [boards, bookings]);
 
  const isLoading = loadingBookings || loadingBoards;
 
@@ -571,7 +692,7 @@ export default function CustomerEvents({ customer }: CustomerEventsProps) {
  <div className="flex flex-wrap items-end justify-between gap-3">
  <div>
  <h1 className="text-3xl font-bold" data-testid="text-events-title">
- My Events
+ {t("customerEvents.pageTitle")}
  </h1>
  </div>
 
@@ -586,7 +707,7 @@ export default function CustomerEvents({ customer }: CustomerEventsProps) {
  }`}
  >
  <Heart className="mr-1.5 inline h-3.5 w-3.5 -mt-0.5" />
- Planned Events
+ {t("customerEvents.plannedEvents")}
  </button>
  <button
  type="button"
@@ -598,7 +719,7 @@ export default function CustomerEvents({ customer }: CustomerEventsProps) {
  }`}
  >
  <CheckCircle2 className="mr-1.5 inline h-3.5 w-3.5 -mt-0.5" />
- Completed Events
+ {t("customerEvents.completedEvents")}
  </button>
  </div>
  </div>
@@ -628,7 +749,7 @@ export default function CustomerEvents({ customer }: CustomerEventsProps) {
  <div className="flex flex-col items-center gap-3 py-16 text-center">
  <Heart className="h-10 w-10 text-[#4a6a7d]/25" />
  <p className="font-medium text-[#2a3a42] ">
- No planned events yet
+ {t("customerEvents.noPlannedEvents")}
  </p>
  <p className="max-w-xs text-sm text-[#4a6a7d]">
  Browse vendors, heart listings, and create a named event to start
@@ -638,15 +759,15 @@ export default function CustomerEvents({ customer }: CustomerEventsProps) {
  href="/browse"
  className="mt-1 rounded-full bg-[#e07a6a] px-5 py-2 text-sm font-medium text-white hover:bg-[#c9685a]"
  >
- Browse vendors
+ {t("customerEvents.browseVendors")}
  </a>
  </div>
  ) : (
  <>
- {boards.map((board, i) => (
+ {sortedBoards.map((board, i) => (
  <div key={board.id}>
- <PlannedEventSection board={board} bookings={bookings} />
- {i < boards.length - 1 || unmatchedBookings.length > 0 ? (
+ <PlannedEventSection board={board} bookings={bookings} newBookingId={highlightedId} />
+ {i < sortedBoards.length - 1 || unmatchedBookings.length > 0 ? (
  <div className="mt-10 h-px w-full bg-[var(--dashboard-divider-blue)]" aria-hidden />
  ) : null}
  </div>
@@ -656,14 +777,14 @@ export default function CustomerEvents({ customer }: CustomerEventsProps) {
  {unmatchedBookings.length > 0 ? (
  <div className="space-y-3">
  <h2 className="font-heading text-xl font-semibold text-[#2a3a42] ">
- Other Bookings
+ {t("customerEvents.otherBookings")}
  </h2>
  <p className="text-sm text-[#4a6a7d]/70">
- These bookings aren't linked to a planning event yet.
+ {t("customerEvents.otherBookingsDesc")}
  </p>
  <div className="divide-y divide-[rgba(74,106,125,0.1)]">
  {unmatchedBookings.map((b) => (
- <BookingRow key={b.id} booking={b} />
+ <BookingRow key={b.id} booking={b} isHighlighted={b.id === highlightedId} />
  ))}
  </div>
  </div>
@@ -678,7 +799,7 @@ export default function CustomerEvents({ customer }: CustomerEventsProps) {
  <div className="flex flex-col items-center gap-3 py-16 text-center">
  <CheckCircle2 className="h-10 w-10 text-[#4a6a7d]/25" />
  <p className="font-medium text-[#2a3a42] ">
- No completed events yet
+ {t("customerEvents.noCompletedEvents")}
  </p>
  <p className="text-sm text-[#4a6a7d]">
  Completed bookings will appear here.

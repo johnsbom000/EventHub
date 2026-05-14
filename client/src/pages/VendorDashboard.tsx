@@ -1,3 +1,4 @@
+import { useTranslation } from "react-i18next";
 import React, { useEffect, useMemo, useState } from "react";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { useAuth0 } from "@auth0/auth0-react";
@@ -317,7 +318,8 @@ function formatGoogleSyncIssueCode(issueCode: string) {
 }
 
 export default function VendorDashboard() {
- const { isAuthenticated, isLoading: isAuthLoading, getAccessTokenSilently, logout } = useAuth0();
+ const { t } = useTranslation();
+ const { isAuthenticated, isLoading: isAuthLoading, getAccessTokenSilently, logout, user } = useAuth0();
  const [location, setLocation] = useLocation();
  const qc = useQueryClient();
  const { toast } = useToast();
@@ -340,7 +342,7 @@ export default function VendorDashboard() {
 
  const { data: stats, isLoading: isStatsLoading } = useQuery<VendorStats>({
  queryKey: ["/api/vendor/stats"],
- enabled: isAuthenticated,
+ enabled: isAuthenticated && !isAuthLoading,
  });
  const googleConnectionStatus = (vendorAccount?.googleConnectionStatus || "disconnected").toLowerCase();
  const isGoogleConnected = googleConnectionStatus === "connected";
@@ -355,13 +357,16 @@ export default function VendorDashboard() {
  enabled: isAuthenticated && isGoogleConnected,
  retry: false,
  });
+ // Listings are general data — not gated on Google Calendar.
+ // The Google Calendar event-mapping UI that consumes this is still gated on
+ // isGoogleConnected && hasSelectedGoogleCalendar, so nothing leaks through.
  const {
  data: vendorListings = [],
  isLoading: isVendorListingsLoading,
  error: vendorListingsError,
  } = useQuery<VendorListingSummary[]>({
- queryKey: ["/api/vendor/listings", "dashboard-google-event-mapping"],
- enabled: isAuthenticated && isGoogleConnected && hasSelectedGoogleCalendar,
+ queryKey: ["/api/vendor/listings"],
+ enabled: isAuthenticated,
  retry: false,
  queryFn: async () => {
  const response = await apiRequest("GET", "/api/vendor/listings");
@@ -466,6 +471,7 @@ export default function VendorDashboard() {
  const [vacationEnd, setVacationEnd] = useState("");
  const [vacationFormError, setVacationFormError] = useState<string | null>(null);
  const [isShopShutdownDialogOpen, setIsShopShutdownDialogOpen] = useState(false);
+ const [isCreateCalendarConfirmOpen, setIsCreateCalendarConfirmOpen] = useState(false);
  // Vacation blocks query
  const {
  data: vacationBlocks = [],
@@ -814,12 +820,6 @@ export default function VendorDashboard() {
  qc.invalidateQueries({ queryKey: ["/api/google/calendars"] }),
  qc.invalidateQueries({ queryKey: ["/api/google/bookings/reconciliation"] }),
  ]);
- setPendingGoogleCalendarSelection({
- calendarId: calendar.id,
- calendarSummary: calendar.summary,
- alreadySelected: true,
- isSwitch: Boolean(vendorAccount?.googleCalendarId && vendorAccount.googleCalendarId !== calendar.id),
- });
  },
  onError: (error: any) => {
  toast({
@@ -875,6 +875,28 @@ export default function VendorDashboard() {
  toast({
  title: "Unable to map Google event",
  description: message,
+ variant: "destructive",
+ });
+ },
+ });
+
+ const markGoogleEventAsVacationMutation = useMutation({
+ mutationFn: async (googleEventId: string) => {
+ const response = await apiRequest("POST", "/api/google/events/mark-vacation", { googleEventId });
+ return response.json();
+ },
+ onSuccess: async () => {
+ await qc.invalidateQueries({ queryKey: ["/api/google/events/unmatched"] });
+ await qc.invalidateQueries({ queryKey: ["/api/vendor/vacation-blocks"] });
+ toast({
+ title: "Vacation block created",
+ description: "This Google Calendar event is now marked as a vacation block.",
+ });
+ },
+ onError: (error: any) => {
+ toast({
+ title: "Unable to mark as vacation block",
+ description: error?.message || "Something went wrong.",
  variant: "destructive",
  });
  },
@@ -1127,6 +1149,15 @@ export default function VendorDashboard() {
  createGoogleCalendarMutation.isPending ||
  syncExistingGoogleBookingsMutation.isPending;
 
+ const handleCreateGoogleCalendar = () => {
+ const currentCalendarId = vendorAccount?.googleCalendarId || selectedGoogleCalendarId;
+ if (currentCalendarId) {
+ setIsCreateCalendarConfirmOpen(true);
+ } else {
+ createGoogleCalendarMutation.mutate();
+ }
+ };
+
  const openGoogleCalendarSelectionPrompt = () => {
  if (!selectedGoogleCalendarId) return;
  const calendar =
@@ -1203,7 +1234,7 @@ export default function VendorDashboard() {
  return (
  <VendorShell onOpenAccountSettings={() => setIsAccountSettingsDialogOpen(true)}>
  <div className="mx-auto max-w-2xl rounded-lg border p-5 text-sm text-muted-foreground">
- We could not verify your vendor session right now. Refresh and try again.
+ {t("vendorDashboard.authError")}
  </div>
  </VendorShell>
  );
@@ -1212,8 +1243,11 @@ export default function VendorDashboard() {
  if (vendorDetection.status === "non_vendor") {
  return (
  <VendorShell onOpenAccountSettings={() => setIsAccountSettingsDialogOpen(true)}>
- <div className="mx-auto max-w-2xl rounded-lg border p-5 text-sm text-muted-foreground">
- This account does not have a vendor account yet. Complete vendor onboarding to continue.
+ <div className="mx-auto max-w-2xl space-y-3 rounded-lg border p-5 text-sm text-muted-foreground">
+ <p>{t("vendorDashboard.nonVendor")}</p>
+ <p className="text-xs text-red-500 font-mono">
+   DEBUG: auth sub = {(user as any)?.sub ?? "(none)"} | email = {(user as any)?.email ?? "(none)"}
+ </p>
  </div>
  </VendorShell>
  );
@@ -1229,17 +1263,17 @@ export default function VendorDashboard() {
  <div className="max-w-7xl mx-auto space-y-6">
  <div>
  <h1 className="text-3xl font-bold mb-2" data-testid="text-page-title">
- Dashboard
+ {t("vendorDashboard.pageTitle")}
  </h1>
  </div>
 
  {showNoActiveProfilePrompt ? (
  <div className="rounded-lg border p-4">
  <p className="text-sm text-muted-foreground">
- Your vendor account is active, but no vendor profile is currently selected.
+ {t("vendorDashboard.noActiveProfileDesc")}
  {vendorDetection.hasAnyVendorProfiles
- ? " Select a profile below or create a new one."
- : " Create your first vendor profile to continue setup."}
+ ? t("vendorDashboard.noActiveProfileSelectOrCreate")
+ : t("vendorDashboard.noActiveProfileCreateFirst")}
  </p>
  <div className="mt-3">
  <Button
@@ -1248,7 +1282,7 @@ export default function VendorDashboard() {
  onClick={() => setLocation("/vendor/onboarding?createProfile=1")}
  data-testid="button-dashboard-no-active-profile-create"
  >
- Create profile
+ {t("vendorDashboard.createProfile")}
  </Button>
  </div>
  </div>
@@ -1258,14 +1292,14 @@ export default function VendorDashboard() {
  <div className="grid grid-cols-1 gap-4 md:grid-cols-[minmax(0,1fr)_auto_minmax(0,1fr)_auto_minmax(0,1fr)] md:gap-0">
  <div className="px-5 py-4">
  <div className="mb-3 flex items-center justify-between">
- <h2 className="font-heading text-[20px] leading-none tracking-tight">Total Bookings</h2>
+ <h2 className="font-heading text-[20px] leading-none tracking-tight">{t("vendorDashboard.totalBookings")}</h2>
  <Calendar className="h-4 w-4 text-muted-foreground" />
  </div>
  <div className="text-2xl font-bold" data-testid="stat-bookings">
  {stats?.totalBookings ?? 0}
  </div>
  <p className="text-sm text-muted-foreground flex items-center gap-1">
- <TrendingUp className="h-3 w-3" />+{stats?.bookingsThisMonth ?? 0} this month
+ <TrendingUp className="h-3 w-3" />+{stats?.bookingsThisMonth ?? 0} {t("vendorDashboard.thisMonth")}
  </p>
  </div>
 
@@ -1275,7 +1309,7 @@ export default function VendorDashboard() {
 
  <div className="px-5 py-4">
  <div className="mb-3 flex items-center justify-between">
- <h2 className="font-heading text-[20px] leading-none tracking-tight">Revenue</h2>
+ <h2 className="font-heading text-[20px] leading-none tracking-tight">{t("vendorDashboard.revenue")}</h2>
  <DollarSign className="h-4 w-4 text-muted-foreground" />
  </div>
  <div className="text-2xl font-bold" data-testid="stat-revenue">
@@ -1283,8 +1317,7 @@ export default function VendorDashboard() {
  </div>
  <p className="text-sm text-muted-foreground flex items-center gap-1">
  <TrendingUp className="h-3 w-3" />
- {Number(stats?.revenueGrowth ?? 0) >= 0 ? "+" : ""}
- {stats?.revenueGrowth ?? 0}% from last month
+ {Number(stats?.revenueGrowth ?? 0) >= 0 ? "+" : ""}{stats?.revenueGrowth ?? 0}{t("vendorDashboard.fromLastMonth")}
  </p>
  </div>
 
@@ -1294,7 +1327,7 @@ export default function VendorDashboard() {
 
  <div className="px-5 py-4">
  <div className="mb-3 flex items-center justify-between">
- <h2 className="font-heading text-[20px] leading-none tracking-tight">Profile Views</h2>
+ <h2 className="font-heading text-[20px] leading-none tracking-tight">{t("vendorDashboard.profileViews")}</h2>
  <Users className="h-4 w-4 text-muted-foreground" />
  </div>
  <div className="text-2xl font-bold" data-testid="stat-views">
@@ -1302,8 +1335,7 @@ export default function VendorDashboard() {
  </div>
  <p className="text-sm text-muted-foreground flex items-center gap-1">
  <TrendingUp className="h-3 w-3" />
- {Number(stats?.profileViewsGrowth ?? 0) >= 0 ? "+" : ""}
- {stats?.profileViewsGrowth ?? 0}% this week
+ {Number(stats?.profileViewsGrowth ?? 0) >= 0 ? "+" : ""}{stats?.profileViewsGrowth ?? 0}{t("vendorDashboard.thisWeek")}
  </p>
  </div>
  </div>
@@ -1311,30 +1343,30 @@ export default function VendorDashboard() {
  <div className="space-y-8">
  {showStripeSetupCard ? (
  <div className="rounded-xl border border-[hsl(var(--secondary-accent)/0.45)] bg-[hsl(var(--secondary-accent)/0.12)] p-6">
- <h2 className="font-heading text-[20px] leading-none tracking-tight">Complete Your Setup</h2>
+ <h2 className="font-heading text-[20px] leading-none tracking-tight">{t("vendorDashboard.completeSetup")}</h2>
  <div className="mt-6">
  <Button
  onClick={handleCompletePaymentSetup}
  disabled={isStripeSetupLoading}
  data-testid="button-complete-setup"
  >
- {isStripeSetupLoading ? "Opening Stripe..." : "Complete Payment Setup"}
+ {isStripeSetupLoading ? t("vendorDashboard.openingStripe") : t("vendorDashboard.completePaymentSetup")}
  </Button>
  </div>
  </div>
  ) : null}
 
  <div className="rounded-xl border border-[hsl(var(--secondary-accent)/0.45)] bg-[hsl(var(--secondary-accent)/0.12)] p-6">
- <h2 className="font-heading text-[20px] leading-none tracking-tight">Connect Google Calendar</h2>
+ <h2 className="font-heading text-[20px] leading-none tracking-tight">{t("vendorDashboard.googleCalendar")}</h2>
  <div className="mt-4 text-sm">
- <span className="font-medium text-foreground">Status: </span>
+ <span className="font-medium text-foreground">{t("vendorDashboard.statusLabel")} </span>
  <span className={isGoogleConnected ? "text-foreground" : "text-muted-foreground"}>
- {isGoogleConnected ? "Connected" : "Not connected"}
+ {isGoogleConnected ? t("vendorDashboard.googleConnected") : t("vendorDashboard.googleNotConnected")}
  </span>
  </div>
  {vendorAccount?.googleCalendarId ? (
  <div className="mt-2 text-sm text-muted-foreground">
- Current calendar: {selectedGoogleCalendar?.summary || vendorAccount.googleCalendarId}
+ {t("vendorDashboard.currentCalendar")} {selectedGoogleCalendar?.summary || vendorAccount.googleCalendarId}
  </div>
  ) : null}
 
@@ -1345,17 +1377,17 @@ export default function VendorDashboard() {
  disabled={isGoogleCalendarConnectLoading}
  data-testid="button-connect-google-calendar"
  >
- {isGoogleCalendarConnectLoading ? "Opening Google..." : "Connect Google Calendar"}
+ {isGoogleCalendarConnectLoading ? t("vendorDashboard.openingGoogle") : t("vendorDashboard.googleConnectButton")}
  </Button>
  </div>
  ) : (
  <div className="mt-6 space-y-4">
  <div className="grid gap-3 lg:grid-cols-[minmax(0,1fr)_auto] lg:items-end">
  <div className="space-y-2">
- <Label htmlFor="google-calendar-select">Selected calendar</Label>
+ <Label htmlFor="google-calendar-select">{t("vendorDashboard.selectedCalendar")}</Label>
  <Select value={selectedGoogleCalendarId || undefined} onValueChange={setSelectedGoogleCalendarId}>
  <SelectTrigger id="google-calendar-select" data-testid="select-google-calendar">
- <SelectValue placeholder="Choose a Google calendar" />
+ <SelectValue placeholder={t("vendorDashboard.chooseGoogleCalendar")} />
  </SelectTrigger>
  <SelectContent>
  {googleCalendars.map((calendar) => (
@@ -1372,20 +1404,20 @@ export default function VendorDashboard() {
  disabled={!canSaveSelectedGoogleCalendar}
  data-testid="button-save-google-calendar"
  >
- {selectGoogleCalendarMutation.isPending ? "Saving..." : "Save Calendar"}
+ {selectGoogleCalendarMutation.isPending ? t("vendorDashboard.savingCalendar") : t("vendorDashboard.saveCalendar")}
  </Button>
  </div>
 
  <div className="flex flex-wrap gap-3">
  <Button
  variant="outline"
- onClick={() => createGoogleCalendarMutation.mutate()}
+ onClick={handleCreateGoogleCalendar}
  disabled={createGoogleCalendarMutation.isPending}
  data-testid="button-create-google-calendar"
  >
  {createGoogleCalendarMutation.isPending
- ? "Creating..."
- : "Create EventHub Bookings Calendar"}
+ ? t("vendorDashboard.creating")
+ : t("vendorDashboard.createEventHubCalendar")}
  </Button>
  <Button
  variant="outline"
@@ -1393,16 +1425,16 @@ export default function VendorDashboard() {
  disabled={isGoogleCalendarConnectLoading}
  data-testid="button-reconnect-google-calendar"
  >
- {isGoogleCalendarConnectLoading ? "Opening Google..." : "Reconnect Google"}
+ {isGoogleCalendarConnectLoading ? t("vendorDashboard.openingGoogle") : t("vendorDashboard.reconnectGoogle")}
  </Button>
  </div>
 
  {isGoogleCalendarsLoading || isGoogleCalendarsFetching ? (
- <div className="text-sm text-muted-foreground">Loading available calendars...</div>
+ <div className="text-sm text-muted-foreground">{t("vendorDashboard.loadingCalendars")}</div>
  ) : null}
  {!isGoogleCalendarsLoading && googleCalendars.length === 0 ? (
  <div className="text-sm text-muted-foreground">
- No Google calendars were found. You can create an EventHub Bookings calendar above.
+ {t("vendorDashboard.noGoogleCalendarsFound")}
  </div>
  ) : null}
  {googleCalendarErrorMessage ? (
@@ -1412,10 +1444,10 @@ export default function VendorDashboard() {
  {hasSelectedGoogleCalendar ? (
  <div className={cn("border-t pt-6", dashboardDividerBorderClass)}>
  <h3 className="font-heading text-[18px] leading-none tracking-tight">
- Unmatched Google Events
+ {t("vendorDashboard.unmatchedGoogleEvents")}
  </h3>
  <p className="mt-3 text-sm text-muted-foreground">
- Review calendar events EventHub could not confidently match and link them to a listing.
+ {t("vendorDashboard.reviewGoogleEventsDesc")}
  </p>
 
  {googleEventMappingErrorMessage ? (
@@ -1429,7 +1461,7 @@ export default function VendorDashboard() {
  ) : null}
 
  {isVendorListingsLoading || isUnmatchedGoogleEventsLoading || isUnmatchedGoogleEventsFetching ? (
- <div className="mt-4 text-sm text-muted-foreground">Loading unmatched Google events...</div>
+ <div className="mt-4 text-sm text-muted-foreground">{t("vendorDashboard.loadingGoogleEvents")}</div>
  ) : null}
 
  {!isVendorListingsLoading &&
@@ -1439,11 +1471,11 @@ export default function VendorDashboard() {
  !unmatchedGoogleEventsErrorMessage ? (
  vendorListingOptions.length === 0 ? (
  <div className="mt-4 rounded-lg border border-[rgba(74,106,125,0.22)] p-4 text-sm text-muted-foreground">
- Add at least one listing before mapping unmatched Google events.
+ {t("vendorDashboard.noListingsForMapping")}
  </div>
  ) : unmatchedGoogleEvents.length === 0 ? (
  <div className="mt-4 rounded-lg border border-[rgba(74,106,125,0.22)] p-4 text-sm text-muted-foreground">
- No unmatched Google events
+ {t("vendorDashboard.noUnmatchedGoogleEvents")}
  </div>
  ) : (
  <div className="mt-4 space-y-3">
@@ -1452,6 +1484,9 @@ export default function VendorDashboard() {
  const isSavingThisEvent =
  mapGoogleEventMutation.isPending &&
  mapGoogleEventMutation.variables?.googleEventId === event.id;
+ const isMarkingVacation =
+ markGoogleEventAsVacationMutation.isPending &&
+ markGoogleEventAsVacationMutation.variables === event.id;
 
  return (
  <div
@@ -1460,24 +1495,24 @@ export default function VendorDashboard() {
  >
  <div className="space-y-2">
  <div className="font-medium text-foreground">
- {event.summary || "Untitled Google event"}
+ {event.summary || t("vendorDashboard.untitledGoogleEvent")}
  </div>
  <div className="text-sm text-muted-foreground">
- Start: {formatGoogleEventBoundary(event.start)}
+ {t("vendorDashboard.startLabel")} {formatGoogleEventBoundary(event.start)}
  </div>
  <div className="text-sm text-muted-foreground">
- End: {formatGoogleEventBoundary(event.end, { isEnd: true })}
+ {t("vendorDashboard.endLabel")} {formatGoogleEventBoundary(event.end, { isEnd: true })}
  </div>
  {event.status ? (
  <div className="text-sm text-muted-foreground">
- Status: {event.status}
+ {t("vendorDashboard.statusEventLabel")} {event.status}
  </div>
  ) : null}
  </div>
 
  <div className="mt-4 grid gap-3 lg:grid-cols-[minmax(0,1fr)_auto] lg:items-end">
  <div className="space-y-2">
- <Label htmlFor={`google-event-listing-${event.id}`}>Map to listing</Label>
+ <Label htmlFor={`google-event-listing-${event.id}`}>{t("vendorDashboard.mapToListing")}</Label>
  <Select
  value={selectedListingId || undefined}
  onValueChange={(listingId) => {
@@ -1492,7 +1527,7 @@ export default function VendorDashboard() {
  id={`google-event-listing-${event.id}`}
  data-testid={`select-google-event-listing-${event.id}`}
  >
- <SelectValue placeholder="Choose a listing" />
+ <SelectValue placeholder={t("vendorDashboard.chooseListing")} />
  </SelectTrigger>
  <SelectContent>
  {vendorListingOptions.map((listing) => (
@@ -1512,10 +1547,25 @@ export default function VendorDashboard() {
  listingId: selectedListingId,
  });
  }}
- disabled={!selectedListingId || isSavingThisEvent}
+ disabled={!selectedListingId || isSavingThisEvent || isMarkingVacation}
  data-testid={`button-map-google-event-${event.id}`}
  >
- {isSavingThisEvent ? "Saving..." : "Save Mapping"}
+ {isSavingThisEvent ? t("vendorDashboard.savingMapping") : t("vendorDashboard.saveMapping")}
+ </Button>
+ </div>
+
+ <div className="mt-3 border-t border-[rgba(74,106,125,0.12)] pt-3">
+ <p className="text-xs text-muted-foreground mb-2">
+ {t("vendorDashboard.orTimeOff")}
+ </p>
+ <Button
+ variant="outline"
+ size="sm"
+ onClick={() => markGoogleEventAsVacationMutation.mutate(event.id)}
+ disabled={isMarkingVacation || isSavingThisEvent}
+ data-testid={`button-mark-vacation-${event.id}`}
+ >
+ {isMarkingVacation ? t("vendorDashboard.savingVacation") : t("vendorDashboard.markAsVacation")}
  </Button>
  </div>
  </div>
@@ -1530,10 +1580,10 @@ export default function VendorDashboard() {
  {hasSelectedGoogleCalendar ? (
  <div className={cn("border-t pt-6", dashboardDividerBorderClass)}>
  <h3 className="font-heading text-[18px] leading-none tracking-tight">
- Google Booking Sync Issues
+ {t("vendorDashboard.googleSyncIssues")}
  </h3>
  <p className="mt-3 text-sm text-muted-foreground">
- Repair bookings whose Google sync metadata is missing, stale, or tied to the wrong calendar.
+ {t("vendorDashboard.repairSyncDesc")}
  </p>
 
  {googleBookingRepairMessage ? (
@@ -1551,7 +1601,7 @@ export default function VendorDashboard() {
 
  {isGoogleBookingReconciliationLoading || isGoogleBookingReconciliationFetching ? (
  <div className="mt-4 text-sm text-muted-foreground">
- Loading Google booking sync issues...
+ {t("vendorDashboard.loadingGoogleSyncIssues")}
  </div>
  ) : null}
 
@@ -1574,7 +1624,7 @@ export default function VendorDashboard() {
  <div className="space-y-2">
  <div className="font-medium text-foreground">{issue.listingTitle}</div>
  <div className="text-sm text-muted-foreground">
- Booking window: {formatDateTimeValue(issue.bookingStartAt)} to{" "}
+ {t("vendorDashboard.bookingWindow")} {formatDateTimeValue(issue.bookingStartAt)} to{" "}
  {formatDateTimeValue(issue.bookingEndAt)}
  </div>
  <div className="flex flex-wrap gap-2">
@@ -1594,7 +1644,7 @@ export default function VendorDashboard() {
 
  <div className="mt-4 flex items-center justify-between gap-3">
  <div className="text-sm text-muted-foreground">
- Booking ID: {bookingId || "Unknown"}
+ {t("vendorDashboard.bookingId")} {bookingId || t("vendorDashboard.unknownBookingId")}
  </div>
  <Button
  onClick={() => {
@@ -1605,7 +1655,7 @@ export default function VendorDashboard() {
  disabled={!bookingId || isRepairingThisBooking}
  data-testid={`button-repair-google-booking-${bookingId}`}
  >
- {isRepairingThisBooking ? "Repairing..." : "Repair Sync"}
+ {isRepairingThisBooking ? t("vendorDashboard.repairing") : t("vendorDashboard.repairSync")}
  </Button>
  </div>
  </div>
@@ -1614,7 +1664,7 @@ export default function VendorDashboard() {
  </div>
  ) : (
  <div className="mt-4 rounded-lg border border-[rgba(74,106,125,0.22)] p-4 text-sm text-muted-foreground">
- No Google sync issues
+ {t("vendorDashboard.noGoogleSyncIssues")}
  </div>
  )
  ) : null}
@@ -1628,7 +1678,7 @@ export default function VendorDashboard() {
  <div className={cn("my-4 border-t", dashboardDividerBorderClass)} />
 
  <section className="px-5 py-4">
- <h2 className="font-heading text-[20px] leading-none tracking-tight">Quick Actions</h2>
+ <h2 className="font-heading text-[20px] leading-none tracking-tight">{t("vendorDashboard.quickActions")}</h2>
  <div className="mt-5 flex flex-wrap gap-2">
  <Button
  variant="outline"
@@ -1636,7 +1686,7 @@ export default function VendorDashboard() {
  data-testid="button-manage-listings"
  onClick={() => setLocation("/vendor/listings")}
  >
- Manage Listings
+ {t("vendorDashboard.manageListings")}
  </Button>
  <Button
  variant="outline"
@@ -1644,7 +1694,7 @@ export default function VendorDashboard() {
  data-testid="button-view-calendar"
  onClick={() => setLocation("/vendor/bookings")}
  >
- View Calendar
+ {t("vendorDashboard.viewCalendar")}
  </Button>
  <Button
  variant="outline"
@@ -1652,7 +1702,7 @@ export default function VendorDashboard() {
  data-testid="button-view-payments"
  onClick={() => setLocation("/vendor/payments")}
  >
- View Payments
+ {t("vendorDashboard.viewPayments")}
  </Button>
  </div>
  </section>
@@ -1661,7 +1711,7 @@ export default function VendorDashboard() {
  </div>
 
  <section className="px-5 py-4">
- <h2 className="font-heading text-[20px] leading-none tracking-tight">Profile Details</h2>
+ <h2 className="font-heading text-[20px] leading-none tracking-tight">{t("vendorDashboard.profileDetails")}</h2>
 
  <div className="mt-5 space-y-6">
  {isProfileError ? (
@@ -1672,30 +1722,30 @@ export default function VendorDashboard() {
  ) : null}
 
  <div className="space-y-3">
- <h3 className="text-sm font-semibold tracking-wide text-muted-foreground uppercase">Account Info</h3>
+ <h3 className="text-sm font-semibold tracking-wide text-muted-foreground uppercase">{t("vendorDashboard.accountInfo")}</h3>
  <div className="grid gap-4 md:grid-cols-2">
  <div className="space-y-2">
- <Label>Account Name</Label>
+ <Label>{t("vendorDashboard.accountName")}</Label>
  <Input value={vendorAccount?.accountBusinessName || vendorAccount?.businessName || ""} readOnly />
  </div>
  <div className="space-y-2">
- <Label>Account Email</Label>
+ <Label>{t("vendorDashboard.accountEmail")}</Label>
  <Input value={vendorAccount?.email || ""} readOnly />
  </div>
  </div>
  </div>
 
  <div className="space-y-3">
- <h3 className="text-sm font-semibold tracking-wide text-muted-foreground uppercase">Profile Info</h3>
+ <h3 className="text-sm font-semibold tracking-wide text-muted-foreground uppercase">{t("vendorDashboard.profileInfo")}</h3>
  </div>
 
  <div className="space-y-2">
- <Label>Public Business Name</Label>
+ <Label>{t("vendorDashboard.publicBusinessName")}</Label>
  <Input
  value={businessNameDraft}
  onChange={(e) => setBusinessNameDraft(e.target.value)}
  onBlur={(e) => setBusinessNameDraft(normalizeProfileNameInput(e.target.value))}
- placeholder="Public business name"
+ placeholder={t("vendorDashboard.publicBusinessNamePlaceholder")}
  maxLength={120}
  />
  </div>
@@ -1703,7 +1753,7 @@ export default function VendorDashboard() {
  {vendorProfiles.length > 0 ? (
  <div className="grid gap-3 md:grid-cols-[minmax(0,1fr)_auto] md:items-end">
  <div className="space-y-2">
- <Label>Selected Profile</Label>
+ <Label>{t("vendorDashboard.selectedProfile")}</Label>
  <Select
  value={activeProfileId || undefined}
  onValueChange={(nextProfileId) => {
@@ -1713,13 +1763,13 @@ export default function VendorDashboard() {
  disabled={switchProfile.isPending}
  >
  <SelectTrigger data-testid="select-dashboard-active-profile">
- <SelectValue placeholder="Select profile" />
+ <SelectValue placeholder={t("vendorDashboard.selectProfilePlaceholder")} />
  </SelectTrigger>
  <SelectContent>
  {vendorProfiles.map((profile) => (
  <SelectItem key={profile.id} value={profile.id}>
  {profile.profileName}
- {profile.isOperational === false ? " (Inactive)" : ""}
+ {profile.isOperational === false ? t("vendorDashboard.profileInactive") : ""}
  </SelectItem>
  ))}
  </SelectContent>
@@ -1732,34 +1782,34 @@ export default function VendorDashboard() {
  className="md:self-end"
  data-testid="button-dashboard-create-profile"
  >
- Create another profile
+ {t("vendorDashboard.createAnotherProfile")}
  </Button>
  </div>
  ) : null}
 
  <div className="grid gap-4 md:grid-cols-2">
  <div className="space-y-2">
- <Label>Business Phone</Label>
+ <Label>{t("vendorDashboard.businessPhone")}</Label>
  <Input
  value={businessPhoneDraft}
  onChange={(e) => setBusinessPhoneDraft(e.target.value)}
- placeholder="Business phone"
+ placeholder={t("vendorDashboard.businessPhonePlaceholder")}
  />
  </div>
 
  <div className="space-y-2">
- <Label>Business Email</Label>
+ <Label>{t("vendorDashboard.businessEmail")}</Label>
  <Input
  value={businessEmailDraft}
  onChange={(e) => setBusinessEmailDraft(e.target.value)}
- placeholder="Business email"
+ placeholder={t("vendorDashboard.businessEmailPlaceholder")}
  type="email"
  />
  </div>
  </div>
 
  <div className="space-y-2">
- <Label>Business Address (verified)</Label>
+ <Label>{t("vendorDashboard.businessAddress")}</Label>
 
  <LocationPicker
  value={marketLocationDraft}
@@ -1791,22 +1841,22 @@ export default function VendorDashboard() {
  setStateDraft((loc as any).state || parsed.state || "");
  setZipCodeDraft((loc as any).zipCode || parsed.zipCode || "");
  }}
- placeholder="Search and select your business address"
+ placeholder={t("vendorDashboard.businessAddressPlaceholder")}
  />
 
  {!homeBaseLocationDraft ? (
  <p className="text-sm text-destructive">
- Select an address from the dropdown to verify it.
+ {t("vendorDashboard.addressVerifyRequired")}
  </p>
  ) : (
  <p className="text-sm text-muted-foreground">
- Tip: pick from the dropdown so we can verify the address.
+ {t("vendorDashboard.addressVerifyHint")}
  </p>
  )}
  </div>
 
  <div className="space-y-2">
- <Label>Street Address</Label>
+ <Label>{t("vendorDashboard.streetAddress")}</Label>
  <Input
  value={streetAddressDraft}
  onChange={(e) => {
@@ -1814,13 +1864,13 @@ export default function VendorDashboard() {
  setHomeBaseLocationDraft(null);
  setMarketLocationDraft(null);
  }}
- placeholder="Street address"
+ placeholder={t("vendorDashboard.streetAddressPlaceholder")}
  />
  </div>
 
  <div className="grid gap-4 md:grid-cols-3">
  <div className="space-y-2">
- <Label>City</Label>
+ <Label>{t("vendorDashboard.city")}</Label>
  <Input
  value={cityDraft}
  onChange={(e) => {
@@ -1828,12 +1878,12 @@ export default function VendorDashboard() {
  setHomeBaseLocationDraft(null);
  setMarketLocationDraft(null);
  }}
- placeholder="City"
+ placeholder={t("vendorDashboard.cityPlaceholder")}
  />
  </div>
 
  <div className="space-y-2">
- <Label>State</Label>
+ <Label>{t("vendorDashboard.state")}</Label>
  <Input
  value={stateDraft}
  onChange={(e) => {
@@ -1841,12 +1891,12 @@ export default function VendorDashboard() {
  setHomeBaseLocationDraft(null);
  setMarketLocationDraft(null);
  }}
- placeholder="State"
+ placeholder={t("vendorDashboard.statePlaceholder")}
  />
  </div>
 
  <div className="space-y-2">
- <Label>Zip</Label>
+ <Label>{t("vendorDashboard.zip")}</Label>
  <Input
  value={zipCodeDraft}
  onChange={(e) => {
@@ -1854,14 +1904,14 @@ export default function VendorDashboard() {
  setHomeBaseLocationDraft(null);
  setMarketLocationDraft(null);
  }}
- placeholder="Zip"
+ placeholder={t("vendorDashboard.zipPlaceholder")}
  />
  </div>
  </div>
 
  <div className="grid gap-4 md:grid-cols-2 items-end">
  <div className="space-y-2">
- <Label>Service Radius (miles)</Label>
+ <Label>{t("vendorDashboard.serviceRadius")}</Label>
  <Input
  type="number"
  min={0}
@@ -1879,7 +1929,7 @@ export default function VendorDashboard() {
  disabled={saveProfile.isPending || isProfileError}
  data-testid="button-save-profile-details"
  >
- {saveProfile.isPending ? "Saving..." : "Save Changes"}
+ {saveProfile.isPending ? t("vendorDashboard.saving") : t("vendorDashboard.saveChanges")}
  </Button>
  </div>
 
@@ -1888,7 +1938,7 @@ export default function VendorDashboard() {
 
  {/* ── Availability ─────────────────────────────────────────────────── */}
  <section className="px-5 pt-4 pb-28 md:pb-32">
- <h2 className="font-heading text-[20px] leading-none tracking-tight">Availability</h2>
+ <h2 className="font-heading text-[20px] leading-none tracking-tight">{t("vendorDashboard.availability")}</h2>
 
  {/* Shop Shutdown panel */}
  <div className={cn(
@@ -1900,15 +1950,15 @@ export default function VendorDashboard() {
  <div className="flex items-start justify-between gap-4">
  <div>
  <h3 className="font-medium">
- Shop Status:{" "}
+ {t("vendorDashboard.shopStatus")}{" "}
  <span className={shopActive ? "text-green-600 " : "text-destructive"}>
- {shopActive ? "Open" : "Closed"}
+ {shopActive ? t("vendorDashboard.shopOpen") : t("vendorDashboard.shopClosed")}
  </span>
  </h3>
  <p className="mt-1 text-sm text-muted-foreground">
  {shopActive
- ? "Your shop is accepting bookings."
- : "Your shop is closed. Customers cannot book any of your listings."}
+ ? t("vendorDashboard.shopAcceptingBookings")
+ : t("vendorDashboard.shopClosedMessage")}
  </p>
  </div>
  <Button
@@ -1923,26 +1973,26 @@ export default function VendorDashboard() {
  disabled={toggleShopStatusMutation.isPending}
  >
  {toggleShopStatusMutation.isPending
- ? "Updating..."
+ ? t("vendorDashboard.updating")
  : shopActive
- ? "Close Shop"
- : "Reopen Shop"}
+ ? t("vendorDashboard.closeShop")
+ : t("vendorDashboard.reopenShop")}
  </Button>
  </div>
  {!shopActive && (
  <div className="mt-3 rounded-md bg-destructive/10 border border-destructive/20 px-3 py-2 text-sm text-destructive">
- Warning: Your shop is closed. All listings show as unavailable to customers.
+ {t("vendorDashboard.shopClosedWarning")}
  </div>
  )}
  </div>
 
  {/* Vacation Mode panel */}
  <div className="mt-6 rounded-lg border border-[rgba(74,106,125,0.22)] p-4">
- <h3 className="font-medium">Vacation Blocks</h3>
+ <h3 className="font-medium">{t("vendorDashboard.vacationBlocks")}</h3>
 
  <div className="mt-4 grid grid-cols-1 gap-3 sm:grid-cols-[1fr_1fr_auto] sm:items-end">
  <div className="space-y-1">
- <label className="text-sm font-medium">Start Date</label>
+ <label className="text-sm font-medium">{t("vendorDashboard.startDate")}</label>
  <input
  type="date"
  value={vacationStart}
@@ -1952,7 +2002,7 @@ export default function VendorDashboard() {
  />
  </div>
  <div className="space-y-1">
- <label className="text-sm font-medium">End Date</label>
+ <label className="text-sm font-medium">{t("vendorDashboard.endDate")}</label>
  <input
  type="date"
  value={vacationEnd}
@@ -1964,18 +2014,18 @@ export default function VendorDashboard() {
  <Button
  onClick={() => {
  if (!vacationStart || !vacationEnd) {
- setVacationFormError("Both start and end dates are required.");
+ setVacationFormError(t("vendorDashboard.vacationErrorBothDates"));
  return;
  }
  if (vacationEnd < vacationStart) {
- setVacationFormError("End date must be on or after start date.");
+ setVacationFormError(t("vendorDashboard.vacationErrorEndDate"));
  return;
  }
  addVacationBlockMutation.mutate({ startDate: vacationStart, endDate: vacationEnd });
  }}
  disabled={addVacationBlockMutation.isPending}
  >
- {addVacationBlockMutation.isPending ? "Adding..." : "Add Block"}
+ {addVacationBlockMutation.isPending ? t("vendorDashboard.adding") : t("vendorDashboard.addBlock")}
  </Button>
  </div>
 
@@ -1985,10 +2035,10 @@ export default function VendorDashboard() {
 
  <div className="mt-4">
  {isVacationBlocksLoading ? (
- <div className="text-sm text-muted-foreground">Loading...</div>
+ <div className="text-sm text-muted-foreground">{t("vendorDashboard.loading")}</div>
  ) : vacationBlocks.length === 0 ? (
  <div className="rounded-lg border border-[rgba(74,106,125,0.22)] p-4 text-sm text-muted-foreground">
- No vacation blocks set.
+ {t("vendorDashboard.noVacationBlocks")}
  </div>
  ) : (
  <div className="space-y-2">
@@ -2007,7 +2057,7 @@ export default function VendorDashboard() {
  onClick={() => deleteVacationBlockMutation.mutate(block.id)}
  disabled={deleteVacationBlockMutation.isPending && deleteVacationBlockMutation.variables === block.id}
  >
- Remove
+ {t("vendorDashboard.remove")}
  </Button>
  </div>
  ))}
@@ -2017,21 +2067,57 @@ export default function VendorDashboard() {
  </div>
  </section>
 
+ {/* Create EventHub Bookings Calendar confirmation dialog */}
+ <Dialog open={isCreateCalendarConfirmOpen} onOpenChange={setIsCreateCalendarConfirmOpen}>
+ <DialogContent className="sm:max-w-md">
+ <DialogHeader>
+ <DialogTitle>{t("vendorDashboard.calendarDialogTitle")}</DialogTitle>
+ <DialogDescription>
+ {t("vendorDashboard.calendarDialogDescription")}
+ </DialogDescription>
+ </DialogHeader>
+ <div className="flex flex-col gap-3">
+ <Button
+ className="w-full justify-start"
+ onClick={() => {
+ setIsCreateCalendarConfirmOpen(false);
+ createGoogleCalendarMutation.mutate();
+ }}
+ disabled={createGoogleCalendarMutation.isPending}
+ >
+ {createGoogleCalendarMutation.isPending ? t("vendorDashboard.creating") : t("vendorDashboard.eventhubBookingsCalendar")}
+ </Button>
+ <Button
+ variant="outline"
+ className="w-full justify-start"
+ onClick={() => setIsCreateCalendarConfirmOpen(false)}
+ disabled={createGoogleCalendarMutation.isPending}
+ >
+ {googleCalendars.find(
+ (c) => c.id === (selectedGoogleCalendarId || vendorAccount?.googleCalendarId)
+ )?.summary ||
+ selectedGoogleCalendarId ||
+ vendorAccount?.googleCalendarId ||
+ t("vendorDashboard.keepCurrentCalendar")}
+ </Button>
+ </div>
+ </DialogContent>
+ </Dialog>
+
  {/* Shop Shutdown confirmation dialog */}
  <Dialog open={isShopShutdownDialogOpen} onOpenChange={setIsShopShutdownDialogOpen}>
  <DialogContent className="sm:max-w-md">
  <DialogHeader>
- <DialogTitle>Close your shop?</DialogTitle>
+ <DialogTitle>{t("vendorDashboard.closeShopDialogTitle")}</DialogTitle>
  <DialogDescription>
- While closed, customers will see a "Currently unavailable" notice on all your listings and
- cannot place bookings.
+ {t("vendorDashboard.closeShopDialogDescription")}
  </DialogDescription>
  </DialogHeader>
  <div className="rounded-md border border-destructive/35 bg-destructive/10 p-3 text-sm text-muted-foreground">
  <ul className="list-disc space-y-1 pl-5">
- <li>All existing bookings are unaffected.</li>
- <li>You can reopen your shop at any time from this dashboard.</li>
- <li>Your listings remain active — they will reappear when you reopen.</li>
+ <li>{t("vendorDashboard.closeShopBullet1")}</li>
+ <li>{t("vendorDashboard.closeShopBullet2")}</li>
+ <li>{t("vendorDashboard.closeShopBullet3")}</li>
  </ul>
  </div>
  <DialogFooter className="gap-2 sm:justify-end">
@@ -2040,14 +2126,14 @@ export default function VendorDashboard() {
  onClick={() => setIsShopShutdownDialogOpen(false)}
  disabled={toggleShopStatusMutation.isPending}
  >
- Cancel
+ {t("vendorDashboard.cancel")}
  </Button>
  <Button
  variant="destructive"
  onClick={() => toggleShopStatusMutation.mutate(false)}
  disabled={toggleShopStatusMutation.isPending}
  >
- {toggleShopStatusMutation.isPending ? "Closing..." : "Close Shop"}
+ {toggleShopStatusMutation.isPending ? t("vendorDashboard.closing") : t("vendorDashboard.closeShop")}
  </Button>
  </DialogFooter>
  </DialogContent>
@@ -2059,23 +2145,23 @@ export default function VendorDashboard() {
  >
  <DialogContent className="sm:max-w-2xl">
  <DialogHeader>
- <DialogTitle>Account Settings</DialogTitle>
+ <DialogTitle>{t("vendorDashboard.accountSettings")}</DialogTitle>
  <DialogDescription>
- Manage profile lifecycle and final account deletion.
+ {t("vendorDashboard.accountSettingsDescription")}
  </DialogDescription>
  </DialogHeader>
 
  <div className="space-y-3">
- <h3 className="text-sm font-semibold tracking-wide text-muted-foreground uppercase">Danger Zone</h3>
+ <h3 className="text-sm font-semibold tracking-wide text-muted-foreground uppercase">{t("vendorDashboard.dangerZone")}</h3>
 
  <div className="rounded-lg border border-destructive/35 bg-destructive/10 p-4">
  <div className="text-sm font-medium text-destructive">
- {isSelectedProfileOperational ? "Deactivate profile" : "Reactivate profile"}
+ {isSelectedProfileOperational ? t("vendorDashboard.deactivateProfile") : t("vendorDashboard.reactivateProfile")}
  </div>
  <p className="mt-2 text-sm text-muted-foreground">
  {isSelectedProfileOperational
- ? `${activeProfileLabel} will be hidden from public view and its active/draft listings will move to inactive. Your profile data and history are preserved and can be reactivated later.`
- : `${activeProfileLabel} will be restored as an active profile. Existing listings remain inactive until you manually republish them.`}
+ ? t("vendorDashboard.deactivateProfileDesc", { name: activeProfileLabel })
+ : t("vendorDashboard.reactivateProfileDesc", { name: activeProfileLabel })}
  </p>
  <div className="mt-4">
  <Button
@@ -2088,16 +2174,15 @@ export default function VendorDashboard() {
  disabled={!activeProfileId}
  data-testid="button-open-profile-lifecycle"
  >
- {isSelectedProfileOperational ? "Deactivate Profile" : "Reactivate Profile"}
+ {isSelectedProfileOperational ? t("vendorDashboard.deactivateProfileButton") : t("vendorDashboard.reactivateProfileButton")}
  </Button>
  </div>
  </div>
 
  <div className="rounded-lg border border-destructive/35 bg-destructive/10 p-4">
- <div className="text-sm font-medium text-destructive">Delete account (final)</div>
+ <div className="text-sm font-medium text-destructive">{t("vendorDashboard.deleteAccountFinal")}</div>
  <p className="mt-2 text-sm text-muted-foreground">
- This permanently removes future vendor access for this account. Historical booking/payment data is
- preserved for integrity, but account auth/integration linkage is cleared.
+ {t("vendorDashboard.deleteAccountDesc")}
  </p>
  <div className="mt-4">
  <Button
@@ -2109,7 +2194,7 @@ export default function VendorDashboard() {
  }}
  data-testid="button-open-delete-vendor-account"
  >
- Delete Account
+ {t("vendorDashboard.deleteAccount")}
  </Button>
  </div>
  </div>
@@ -2117,7 +2202,7 @@ export default function VendorDashboard() {
 
  <DialogFooter className="gap-2 sm:justify-end">
  <Button variant="outline" onClick={() => setIsAccountSettingsDialogOpen(false)}>
- Close
+ {t("vendorDashboard.close")}
  </Button>
  </DialogFooter>
  </DialogContent>
@@ -2134,12 +2219,12 @@ export default function VendorDashboard() {
  <DialogContent className="sm:max-w-lg">
  <DialogHeader>
  <DialogTitle>
- {isSelectedProfileOperational ? "Deactivate selected profile?" : "Reactivate selected profile?"}
+ {isSelectedProfileOperational ? t("vendorDashboard.deactivateDialogTitle") : t("vendorDashboard.reactivateDialogTitle")}
  </DialogTitle>
  <DialogDescription>
  {isSelectedProfileOperational
- ? "This is reversible. You can reactivate the profile later."
- : "This restores profile operation. Listings stay inactive until manually republished."}
+ ? t("vendorDashboard.deactivateDialogDesc")
+ : t("vendorDashboard.reactivateDialogDesc")}
  </DialogDescription>
  </DialogHeader>
 
@@ -2147,15 +2232,15 @@ export default function VendorDashboard() {
  <ul className="list-disc space-y-1 pl-5">
  {isSelectedProfileOperational ? (
  <>
- <li>Only this profile is deactivated. Your account stays accessible.</li>
- <li>Active and draft listings on this profile move to inactive.</li>
- <li>Historical bookings, payouts, reviews, and profile settings are preserved.</li>
+ <li>{t("vendorDashboard.deactivateBullet1")}</li>
+ <li>{t("vendorDashboard.deactivateBullet2")}</li>
+ <li>{t("vendorDashboard.deactivateBullet3")}</li>
  </>
  ) : (
  <>
- <li>This profile will become active again.</li>
- <li>Saved profile/listing configuration remains intact.</li>
- <li>Listings remain inactive until you manually republish.</li>
+ <li>{t("vendorDashboard.reactivateBullet1")}</li>
+ <li>{t("vendorDashboard.reactivateBullet2")}</li>
+ <li>{t("vendorDashboard.reactivateBullet3")}</li>
  </>
  )}
  </ul>
@@ -2168,7 +2253,7 @@ export default function VendorDashboard() {
  disabled={profileLifecycleMutation.isPending}
  data-testid="button-cancel-profile-lifecycle"
  >
- Cancel
+ {t("vendorDashboard.cancel")}
  </Button>
  <Button
  variant={isSelectedProfileOperational ? "destructive" : "default"}
@@ -2178,11 +2263,11 @@ export default function VendorDashboard() {
  >
  {profileLifecycleMutation.isPending
  ? isSelectedProfileOperational
- ? "Deactivating..."
- : "Reactivating..."
+ ? t("vendorDashboard.deactivating")
+ : t("vendorDashboard.reactivating")
  : isSelectedProfileOperational
- ? "Deactivate Profile"
- : "Reactivate Profile"}
+ ? t("vendorDashboard.deactivateProfileButton")
+ : t("vendorDashboard.reactivateProfileButton")}
  </Button>
  </DialogFooter>
  </DialogContent>
@@ -2198,18 +2283,18 @@ export default function VendorDashboard() {
  >
  <DialogContent className="sm:max-w-lg">
  <DialogHeader>
- <DialogTitle>Delete vendor account permanently?</DialogTitle>
+ <DialogTitle>{t("vendorDashboard.deleteAccountDialogTitle")}</DialogTitle>
  <DialogDescription>
- This action is final and cannot be self-reversed in the product.
+ {t("vendorDashboard.deleteAccountDialogDesc")}
  </DialogDescription>
  </DialogHeader>
 
  <div className="rounded-md border border-destructive/35 bg-destructive/10 p-3 text-sm text-muted-foreground">
  <ul className="list-disc space-y-1 pl-5">
- <li>Future vendor access for this account is removed.</li>
- <li>All profiles/listings under this account are set inactive.</li>
- <li>Auth linkage and integration/session tokens are cleared.</li>
- <li>Historical booking/payment/audit records remain preserved for integrity.</li>
+ <li>{t("vendorDashboard.deleteAccountBullet1")}</li>
+ <li>{t("vendorDashboard.deleteAccountBullet2")}</li>
+ <li>{t("vendorDashboard.deleteAccountBullet3")}</li>
+ <li>{t("vendorDashboard.deleteAccountBullet4")}</li>
  </ul>
  </div>
 
@@ -2220,7 +2305,7 @@ export default function VendorDashboard() {
  disabled={deleteVendorAccountMutation.isPending}
  data-testid="button-cancel-delete-vendor-account"
  >
- Cancel
+ {t("vendorDashboard.cancel")}
  </Button>
  <Button
  variant="destructive"
@@ -2228,7 +2313,7 @@ export default function VendorDashboard() {
  disabled={deleteVendorAccountMutation.isPending}
  data-testid="button-confirm-delete-vendor-account"
  >
- {deleteVendorAccountMutation.isPending ? "Deleting..." : "Delete Account"}
+ {deleteVendorAccountMutation.isPending ? t("vendorDashboard.deleting") : t("vendorDashboard.deleteAccount")}
  </Button>
  </DialogFooter>
  </DialogContent>
@@ -2244,31 +2329,34 @@ export default function VendorDashboard() {
  >
  <DialogContent className="sm:max-w-md">
  <DialogHeader>
- <DialogTitle>Sync existing EventHub bookings?</DialogTitle>
+ <DialogTitle>
+ {pendingGoogleCalendarSelection?.isSwitch
+ ? t("vendorDashboard.calendarSwitchDialogTitle", { calendarName: pendingGoogleCalendarSelection.calendarSummary })
+ : t("vendorDashboard.calendarUseDialogTitle", { calendarName: pendingGoogleCalendarSelection?.calendarSummary ?? t("vendorDashboard.keepCurrentCalendar") })}
+ </DialogTitle>
  <DialogDescription>
- {pendingGoogleCalendarSelection
- ? pendingGoogleCalendarSelection.isSwitch
- ? `Do you want to sync EventHub to your ${pendingGoogleCalendarSelection.calendarSummary} calendar?`
- : `Do you want to sync EventHub to ${pendingGoogleCalendarSelection.calendarSummary} calendar?`
- : ""}
+ {t("vendorDashboard.calendarSyncDescription")}
  </DialogDescription>
  </DialogHeader>
 
  <DialogFooter className="gap-2 sm:justify-end">
  <Button
  variant="outline"
- onClick={() => void handleConfirmGoogleCalendarSelection(false)}
+ onClick={() => setPendingGoogleCalendarSelection(null)}
  disabled={isGoogleCalendarSelectionSubmitting}
- data-testid="button-google-calendar-dont-sync"
  >
- {selectGoogleCalendarMutation.isPending ? "Saving..." : "Don't Sync"}
+ {t("vendorDashboard.cancel")}
  </Button>
  <Button
  onClick={() => void handleConfirmGoogleCalendarSelection(true)}
  disabled={isGoogleCalendarSelectionSubmitting}
  data-testid="button-google-calendar-sync"
  >
- {isGoogleCalendarSelectionSubmitting ? "Syncing..." : "Sync"}
+ {isGoogleCalendarSelectionSubmitting
+ ? t("vendorDashboard.switching")
+ : pendingGoogleCalendarSelection?.isSwitch
+ ? t("vendorDashboard.yesSwitchCalendar")
+ : t("vendorDashboard.yesUseCalendar")}
  </Button>
  </DialogFooter>
  </DialogContent>

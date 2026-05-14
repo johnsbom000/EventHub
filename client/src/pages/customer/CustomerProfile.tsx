@@ -1,3 +1,4 @@
+import { useTranslation } from "react-i18next";
 import { useEffect, useRef, useState } from "react";
 import { useMutation, useQueryClient } from "@tanstack/react-query";
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card";
@@ -216,6 +217,7 @@ async function buildCroppedProfilePhotoDataUrl(
 }
 
 export default function CustomerProfile({ customer }: CustomerProfileProps) {
+  const { t } = useTranslation();
   const resolvedDisplayName = customer.displayName?.trim() || customer.name;
   const resolvedProfilePhotoDataUrl =
     typeof customer.profilePhotoDataUrl === "string" && customer.profilePhotoDataUrl.trim().length > 0
@@ -621,7 +623,7 @@ export default function CustomerProfile({ customer }: CustomerProfileProps) {
     <div className="space-y-6">
       <div>
         <h1 className="text-3xl font-bold" data-testid="text-profile-title">
-          My profile
+          {t("customerProfile.pageTitle")}
         </h1>
       </div>
 
@@ -640,7 +642,7 @@ export default function CustomerProfile({ customer }: CustomerProfileProps) {
               <h2 className="text-2xl font-bold" data-testid="text-customer-name">
                 {resolvedDisplayName}
               </h2>
-              <p className="text-muted-foreground">Guest</p>
+              <p className="text-muted-foreground">{t("customerProfile.guest")}</p>
             </div>
           </div>
         </CardContent>
@@ -651,9 +653,9 @@ export default function CustomerProfile({ customer }: CustomerProfileProps) {
       <Card className="rounded-xl border-0 bg-transparent shadow-none">
         <CardHeader className="flex flex-row items-start justify-between gap-3">
           <div className="space-y-1">
-            <CardTitle>Profile details</CardTitle>
+            <CardTitle>{t("customerProfile.profileDetails")}</CardTitle>
             <CardDescription>
-              This information will be visible to vendors you contact
+              {t("customerProfile.profileDetailsDesc")}
             </CardDescription>
           </div>
           {!isEditing && (
@@ -663,13 +665,13 @@ export default function CustomerProfile({ customer }: CustomerProfileProps) {
               data-testid="button-edit-profile"
             >
               <Edit className="h-4 w-4 mr-2" />
-              Edit
+              {t("customerProfile.edit")}
             </Button>
           )}
         </CardHeader>
         <CardContent className="space-y-4">
           <div>
-            <Label htmlFor="displayName">Display name</Label>
+            <Label htmlFor="displayName">{t("customerProfile.displayName")}</Label>
             <Input
               id="displayName"
               value={displayName}
@@ -681,7 +683,7 @@ export default function CustomerProfile({ customer }: CustomerProfileProps) {
           </div>
 
           <div>
-            <Label htmlFor="profilePhoto">Profile picture (optional)</Label>
+            <Label htmlFor="profilePhoto">{t("customerProfile.profilePicture")}</Label>
             <div
               className="mt-1.5 rounded-lg border border-dashed border-border p-4"
               onDragOver={(event) => {
@@ -738,7 +740,7 @@ export default function CustomerProfile({ customer }: CustomerProfileProps) {
                       }}
                       data-testid="button-upload-profile-photo"
                     >
-                      {profilePhotoSource ? "Edit photo" : "Upload photo"}
+                      {profilePhotoSource ? t("customerProfile.editPhoto") : t("customerProfile.uploadPhoto")}
                     </Button>
                     {profilePhotoSource && (
                       <Button
@@ -749,7 +751,7 @@ export default function CustomerProfile({ customer }: CustomerProfileProps) {
                         onClick={() => profilePhotoInputRef.current?.click()}
                         data-testid="button-change-profile-photo"
                       >
-                        Change Photo
+                        {t("customerProfile.changePhoto")}
                       </Button>
                     )}
                   </div>
@@ -763,7 +765,7 @@ export default function CustomerProfile({ customer }: CustomerProfileProps) {
                       }}
                       data-testid="button-revert-profile-photo"
                     >
-                      Use initials
+                      {t("customerProfile.useInitials")}
                     </Button>
                   )}
                 </div>
@@ -772,7 +774,7 @@ export default function CustomerProfile({ customer }: CustomerProfileProps) {
           </div>
 
           <div>
-            <Label htmlFor="email">Email</Label>
+            <Label htmlFor="email">{t("customerProfile.email")}</Label>
             <Input
               id="email"
               value={customer.email}
@@ -781,12 +783,12 @@ export default function CustomerProfile({ customer }: CustomerProfileProps) {
               data-testid="input-email"
             />
             <p className="text-sm text-muted-foreground mt-1">
-              Email cannot be changed
+              {t("customerProfile.emailNote")}
             </p>
           </div>
 
           <div>
-            <Label htmlFor="bio">About me</Label>
+            <Label htmlFor="bio">{t("customerProfile.aboutMe")}</Label>
             <Textarea
               id="bio"
               value={bio}
@@ -799,13 +801,13 @@ export default function CustomerProfile({ customer }: CustomerProfileProps) {
           </div>
 
           <div>
-            <Label htmlFor="location">Location</Label>
+            <Label htmlFor="location">{t("customerProfile.location")}</Label>
             <Input
               id="location"
               value={location}
               onChange={(event) => setLocation(event.target.value)}
               disabled={!isEditing}
-              placeholder="City, State"
+              placeholder={t("customerProfile.locationPlaceholder")}
               className="mt-1.5"
               data-testid="input-location"
             />
@@ -819,7 +821,7 @@ export default function CustomerProfile({ customer }: CustomerProfileProps) {
                 data-testid="button-save-profile"
               >
                 <Check className="h-4 w-4 mr-2" />
-                {isSaving ? "Saving..." : "Save changes"}
+                {isSaving ? t("customerProfile.saving") : t("customerProfile.saveChanges")}
               </Button>
               <Button
                 variant="outline"
@@ -830,7 +832,7 @@ export default function CustomerProfile({ customer }: CustomerProfileProps) {
                 }}
                 data-testid="button-cancel-edit"
               >
-                Cancel
+                {t("customerProfile.cancel")}
               </Button>
             </div>
           )}
@@ -840,7 +842,7 @@ export default function CustomerProfile({ customer }: CustomerProfileProps) {
       <Dialog open={isPhotoEditorOpen} onOpenChange={setIsPhotoEditorOpen}>
         <DialogContent className="sm:max-w-md" data-testid="dialog-photo-editor">
           <DialogHeader>
-            <DialogTitle>Edit photo</DialogTitle>
+            <DialogTitle>{t("customerProfile.editPhotoTitle")}</DialogTitle>
             <DialogDescription>
               Drag to move your photo and use the slider to scale it inside the circle.
             </DialogDescription>
@@ -863,7 +865,7 @@ export default function CustomerProfile({ customer }: CustomerProfileProps) {
             </div>
 
             <div className="space-y-2">
-              <Label htmlFor="photo-scale">Scale</Label>
+              <Label htmlFor="photo-scale">{t("customerProfile.scale")}</Label>
               <input
                 id="photo-scale"
                 type="range"
@@ -883,10 +885,10 @@ export default function CustomerProfile({ customer }: CustomerProfileProps) {
 
           <DialogFooter>
             <Button type="button" variant="outline" onClick={() => setIsPhotoEditorOpen(false)}>
-              Cancel
+              {t("customerProfile.cancel")}
             </Button>
             <Button type="button" onClick={applyPhotoEditorChanges}>
-              Save
+              {t("customerProfile.saveChanges")}
             </Button>
           </DialogFooter>
         </DialogContent>

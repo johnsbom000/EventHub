@@ -29,6 +29,7 @@ const __dirname = path.dirname(__filename);
 // Load .env from the repo root when running locally.
 dotenv.config({ path: path.resolve(__dirname, "../.env") });
 
+import { logger } from "./lib/logger.js";
 import { pool } from "./db.js";
 
 const HISTORY_TABLE = "_migration_history";
@@ -71,7 +72,7 @@ function getMigrationFiles(): string[] {
 }
 
 async function run(): Promise<void> {
-  console.log("[migrate] Starting migration runner…");
+  logger.info("[migrate] Starting migration runner…");
 
   await ensureHistoryTable();
   const applied = await getAppliedMigrations();
@@ -80,19 +81,19 @@ async function run(): Promise<void> {
   const pending = files.filter((file) => !applied.has(path.basename(file)));
 
   if (pending.length === 0) {
-    console.log("[migrate] All migrations are up to date.");
+    logger.info("[migrate] All migrations are up to date.");
     await pool.end();
     return;
   }
 
-  console.log(`[migrate] ${pending.length} pending migration(s):`);
+  logger.info(`[migrate] ${pending.length} pending migration(s):`);
   for (const file of pending) {
-    console.log(`  • ${path.basename(file)}`);
+    logger.info(`  • ${path.basename(file)}`);
   }
 
   for (const file of pending) {
     const name = path.basename(file);
-    console.log(`[migrate] Running: ${name}`);
+    logger.info(`[migrate] Running: ${name}`);
     try {
       // Dynamic import works for both .ts (tsx) and compiled .js (node).
       const mod = await import(pathToFileURL(file).href);
@@ -101,20 +102,20 @@ async function run(): Promise<void> {
       }
       await mod.up();
       await recordMigration(name);
-      console.log(`[migrate] ✓ ${name}`);
+      logger.info(`[migrate] ✓ ${name}`);
     } catch (error: any) {
-      console.error(`[migrate] ✗ ${name} FAILED:`, error?.message ?? error);
-      console.error(error?.stack);
+      logger.error(`[migrate] ✗ ${name} FAILED:`, error?.message ?? error);
+      logger.error(error?.stack);
       await pool.end();
       process.exit(1);
     }
   }
 
-  console.log("[migrate] All migrations applied successfully.");
+  logger.info("[migrate] All migrations applied successfully.");
   await pool.end();
 }
 
 run().catch((error) => {
-  console.error("[migrate] Fatal error:", error);
+  logger.error("[migrate] Fatal error:", error);
   process.exit(1);
 });

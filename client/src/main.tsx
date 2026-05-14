@@ -5,10 +5,12 @@ import "./index.css";
 import "mapbox-gl/dist/mapbox-gl.css";
 import "stream-chat-react/dist/css/v2/index.css";
 import { LocationProvider } from "./context/LocationContext";
+import { LanguageProvider } from "./context/LanguageContext";
 import { Auth0Context, Auth0Provider, initialContext, type Auth0ContextInterface } from "@auth0/auth0-react";
 import { useAuth0 } from "@auth0/auth0-react";
 import { setTokenGetter } from "@/lib/authToken";
 import { installRuntimeFetchBaseUrl } from "@/lib/runtimeUrls";
+import "./lib/i18n"; // initialise i18next before any component renders
 
 if (typeof window !== "undefined") {
   installRuntimeFetchBaseUrl();
@@ -125,9 +127,11 @@ const root = createRoot(rootElement);
 const appContent = (
   <>
     <AuthTokenBridge />
-    <LocationProvider>
-      <App />
-    </LocationProvider>
+    <LanguageProvider>
+      <LocationProvider>
+        <App />
+      </LocationProvider>
+    </LanguageProvider>
   </>
 );
 
@@ -138,7 +142,7 @@ root.render(
         <Auth0Provider
           domain={AUTH0_DOMAIN}
           clientId={AUTH0_CLIENT_ID}
-          cacheLocation="localstorage"
+          cacheLocation="memory"
           useRefreshTokens={true}
           authorizationParams={{
             redirect_uri: window.location.origin,
