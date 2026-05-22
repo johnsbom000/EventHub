@@ -3,6 +3,17 @@
 export const VENDOR_FEE_RATE = parseFloat(process.env.VENDOR_FEE_RATE || "0.08");
 export const CUSTOMER_FEE_RATE = parseFloat(process.env.CUSTOMER_FEE_RATE || "0.05");
 
+if (!Number.isFinite(VENDOR_FEE_RATE) || VENDOR_FEE_RATE <= 0 || VENDOR_FEE_RATE >= 1) {
+  throw new Error(
+    `Invalid VENDOR_FEE_RATE env var: "${process.env.VENDOR_FEE_RATE}". Must be a number between 0 (exclusive) and 1 (exclusive), e.g. "0.08" for 8%.`
+  );
+}
+if (!Number.isFinite(CUSTOMER_FEE_RATE) || CUSTOMER_FEE_RATE < 0 || CUSTOMER_FEE_RATE >= 1) {
+  throw new Error(
+    `Invalid CUSTOMER_FEE_RATE env var: "${process.env.CUSTOMER_FEE_RATE}". Must be a number between 0 (inclusive) and 1 (exclusive), e.g. "0.05" for 5%.`
+  );
+}
+
 // ─── Stripe fee estimation ────────────────────────────────────────────────────
 export const STRIPE_FEE_ESTIMATE_PERCENT = 0.029;
 export const STRIPE_FEE_ESTIMATE_FIXED_CENTS = 30;
@@ -15,6 +26,8 @@ export const AUTO_PAYOUT_INTERVAL_MS = 10 * 60 * 1000; // 10 minutes
 // ─── Booking expiry ───────────────────────────────────────────────────────────
 export const BOOKING_PENDING_EXPIRY_MINUTES = 30;
 export const BOOKING_PENDING_EXPIRY_REASON = "payment_session_expired";
+export const BOOKING_VENDOR_RESPONSE_EXPIRY_DAYS = 7;
+export const BOOKING_VENDOR_NO_RESPONSE_REASON = "vendor_no_response";
 
 // ─── Listing validation ───────────────────────────────────────────────────────
 export const MIN_LISTING_PHOTO_COUNT = 3;

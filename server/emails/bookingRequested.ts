@@ -71,7 +71,7 @@ export function bookingRequestedTemplate(params: BookingRequestedParams): {
 
   const urgencyBanner = role === "vendor" && !isInstant
     ? `<div style="background:#fff8f0;border-left:3px solid ${CORAL};padding:12px 16px;border-radius:4px;margin-bottom:20px;">
-        <p style="margin:0;font-size:13px;color:#b45309;font-weight:600;">Action required — customers book faster when vendors respond quickly.</p>
+        <p style="margin:0;font-size:13px;color:#b45309;font-weight:600;">Action required — please accept or decline within 7 days. If no response is received, the booking will be automatically cancelled and the customer refunded.</p>
       </div>`
     : "";
 
@@ -99,7 +99,7 @@ export function bookingRequestedTemplate(params: BookingRequestedParams): {
         : `Your booking request with ${counterpartName} has been sent.`
       : isInstant
         ? `New instant booking from ${counterpartName}.`
-        : `New booking request from ${counterpartName}. Please respond promptly.`,
+        : `New booking request from ${counterpartName}. Please accept or decline within 7 days or the booking will be automatically cancelled.`,
     ``,
     `Service: ${listingTitle}`,
     `Event Date: ${eventDate}`,

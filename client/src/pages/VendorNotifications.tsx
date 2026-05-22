@@ -2,7 +2,7 @@ import { useMemo, useState } from "react";
 import { useAuth0 } from "@auth0/auth0-react";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { useTranslation } from "react-i18next";
-import { Bell, CalendarClock } from "lucide-react";
+import { Bell, CalendarClock, CheckSquare } from "lucide-react";
 import { Link } from "wouter";
 
 import VendorShell from "@/components/VendorShell";
@@ -17,6 +17,7 @@ import {
 import { Tabs, TabsList, TabsTrigger } from "@/components/ui/tabs";
 import { apiRequest } from "@/lib/queryClient";
 import { useToast } from "@/hooks/use-toast";
+import { useFeeRates } from "@/hooks/useFeeRates";
 
 const FILTER_TAB_ACTIVE_CLASSNAME =
   "data-[state=active]:bg-primary data-[state=active]:text-primary-foreground data-[state=active]:shadow-sm data-[state=active]:hover:bg-primary";
@@ -103,7 +104,7 @@ function formatUsd(cents: number) {
   }).format((cents || 0) / 100);
 }
 
-function deriveBookingAmounts(booking: VendorBooking) {
+function deriveBookingAmounts(booking: VendorBooking, vendorFeeRate: number) {
   const customerTotalCents = normalizeAmountToCents(booking.totalAmount ?? 0);
   const vendorFeeCents = normalizeAmountToCents(booking.platformFee ?? 0);
   const storedPayoutCents = normalizeAmountToCents(booking.vendorPayout ?? 0);
@@ -125,7 +126,7 @@ function deriveBookingAmounts(booking: VendorBooking) {
 
   const listingPriceCents = Math.max(0, Math.round(customerTotalCents / 1.05));
   const customerFeeCents = Math.max(0, customerTotalCents - listingPriceCents);
-  const derivedVendorFeeCents = Math.max(0, Math.round(listingPriceCents * 0.08));
+  const derivedVendorFeeCents = Math.max(0, Math.round(listingPriceCents * vendorFeeRate));
   const estimatedPayoutCents = Math.max(0, listingPriceCents - derivedVendorFeeCents);
 
   return {
@@ -236,10 +237,12 @@ export default function VendorNotifications() {
   const { isAuthenticated } = useAuth0();
   const queryClient = useQueryClient();
   const { toast } = useToast();
+  const { vendorFeeRate } = useFeeRates();
 
   const [activeBookingNotificationId, setActiveBookingNotificationId] = useState<string | null>(null);
   const [readTab, setReadTab] = useState<"unread" | "read">("unread");
   const [activeFilter, setActiveFilter] = useState<FilterKey>("all");
+  const [selectedIds, setSelectedIds] = useState<Set<string>>(new Set());
 
   const NOTIFICATIONS_KEY = ["/api/vendor/notifications"];
 
@@ -275,6 +278,64 @@ export default function VendorNotifications() {
         description: "Something went wrong. Please try again.",
         variant: "destructive",
       });
+    },
+    onSettled: () => {
+      queryClient.invalidateQueries({ queryKey: NOTIFICATIONS_KEY });
+    },
+  });
+
+  const bulkMarkRead = useMutation({
+    mutationFn: async (ids: string[]) => {
+      const res = await apiRequest("PATCH", "/api/vendor/notifications/bulk/read", { ids });
+      return res.json();
+    },
+    onMutate: async (ids: string[]) => {
+      await queryClient.cancelQueries({ queryKey: NOTIFICATIONS_KEY });
+      const previous = queryClient.getQueryData<VendorNotification[]>(NOTIFICATIONS_KEY);
+      const idSet = new Set(ids);
+      queryClient.setQueryData<VendorNotification[]>(NOTIFICATIONS_KEY, (old = []) =>
+        old.map((n) => (idSet.has(n.id) ? { ...n, read: true } : n)),
+      );
+      return { previous };
+    },
+    onError: (_err, _ids, context) => {
+      if (context?.previous !== undefined) {
+        queryClient.setQueryData(NOTIFICATIONS_KEY, context.previous);
+      }
+      toast({ title: "Couldn't mark as read", variant: "destructive" });
+    },
+    onSuccess: () => {
+      setSelectedIds(new Set());
+      toast({ title: "Marked as read" });
+    },
+    onSettled: () => {
+      queryClient.invalidateQueries({ queryKey: NOTIFICATIONS_KEY });
+    },
+  });
+
+  const bulkArchive = useMutation({
+    mutationFn: async (ids: string[]) => {
+      const res = await apiRequest("PATCH", "/api/vendor/notifications/bulk/archive", { ids });
+      return res.json();
+    },
+    onMutate: async (ids: string[]) => {
+      await queryClient.cancelQueries({ queryKey: NOTIFICATIONS_KEY });
+      const previous = queryClient.getQueryData<VendorNotification[]>(NOTIFICATIONS_KEY);
+      const idSet = new Set(ids);
+      queryClient.setQueryData<VendorNotification[]>(NOTIFICATIONS_KEY, (old = []) =>
+        old.filter((n) => !idSet.has(n.id)),
+      );
+      return { previous };
+    },
+    onError: (_err, _ids, context) => {
+      if (context?.previous !== undefined) {
+        queryClient.setQueryData(NOTIFICATIONS_KEY, context.previous);
+      }
+      toast({ title: "Couldn't archive notifications", variant: "destructive" });
+    },
+    onSuccess: (_, ids) => {
+      setSelectedIds(new Set());
+      toast({ title: `${ids.length} notification${ids.length === 1 ? "" : "s"} archived` });
     },
     onSettled: () => {
       queryClient.invalidateQueries({ queryKey: NOTIFICATIONS_KEY });
@@ -324,6 +385,30 @@ export default function VendorNotifications() {
 
   const unreadTotal = resolvedNotifications.filter((n) => n.read === false || n.read === null).length;
 
+  const allVisibleIds = visibleNotifications.map((n) => n.id);
+  const allSelected = allVisibleIds.length > 0 && allVisibleIds.every((id) => selectedIds.has(id));
+  const someSelected = allVisibleIds.some((id) => selectedIds.has(id));
+
+  const toggleSelectAll = () => {
+    if (allSelected) {
+      setSelectedIds(new Set());
+    } else {
+      setSelectedIds(new Set(allVisibleIds));
+    }
+  };
+
+  const toggleSelectOne = (id: string) => {
+    setSelectedIds((prev) => {
+      const next = new Set(prev);
+      if (next.has(id)) next.delete(id);
+      else next.add(id);
+      return next;
+    });
+  };
+
+  const selectedCount = allVisibleIds.filter((id) => selectedIds.has(id)).length;
+  const bulkIsPending = bulkMarkRead.isPending || bulkArchive.isPending;
+
   const activeBookingNotification = useMemo(
     () =>
       resolvedNotifications.find(
@@ -333,7 +418,7 @@ export default function VendorNotifications() {
   );
 
   const activeBooking = activeBookingNotification?.booking ?? null;
-  const activeBookingAmounts = activeBooking ? deriveBookingAmounts(activeBooking) : null;
+  const activeBookingAmounts = activeBooking ? deriveBookingAmounts(activeBooking, vendorFeeRate) : null;
   const activeIncludedItems = Array.isArray(activeBooking?.includedItems)
     ? activeBooking.includedItems.filter((item) => typeof item === "string" && item.trim().length > 0)
     : [];
@@ -372,7 +457,7 @@ export default function VendorNotifications() {
           <div className="flex items-center gap-1 border-b">
             <button
               type="button"
-              onClick={() => setReadTab("unread")}
+              onClick={() => { setReadTab("unread"); setSelectedIds(new Set()); }}
               className={`px-4 py-2 text-sm font-medium transition-colors relative ${
                 readTab === "unread"
                   ? "text-foreground"
@@ -391,7 +476,7 @@ export default function VendorNotifications() {
             </button>
             <button
               type="button"
-              onClick={() => setReadTab("read")}
+              onClick={() => { setReadTab("read"); setSelectedIds(new Set()); }}
               className={`px-4 py-2 text-sm font-medium transition-colors relative ${
                 readTab === "read"
                   ? "text-foreground"
@@ -406,7 +491,7 @@ export default function VendorNotifications() {
           </div>
 
           {/* Type filter tabs */}
-          <Tabs value={activeFilter} onValueChange={(v) => setActiveFilter(v as FilterKey)}>
+          <Tabs value={activeFilter} onValueChange={(v) => { setActiveFilter(v as FilterKey); setSelectedIds(new Set()); }}>
             <TabsList className="h-auto w-full flex-wrap justify-start gap-2 rounded-none bg-transparent p-0">
               {(Object.keys(FILTER_LABELS) as FilterKey[]).map((key) => (
                 <TabsTrigger
@@ -443,6 +528,46 @@ export default function VendorNotifications() {
                 </div>
               ) : (
                 <div className="space-y-2">
+                  {/* Select-all / bulk action bar */}
+                  <div className="flex items-center justify-between gap-3 py-1">
+                    <label className="flex items-center gap-2 cursor-pointer select-none text-sm text-muted-foreground">
+                      <input
+                        type="checkbox"
+                        checked={allSelected}
+                        ref={(el) => { if (el) el.indeterminate = someSelected && !allSelected; }}
+                        onChange={toggleSelectAll}
+                        className="h-4 w-4 rounded border-gray-300 accent-primary cursor-pointer"
+                      />
+                      {someSelected ? `${selectedCount} selected` : "Select all"}
+                    </label>
+
+                    {someSelected && (
+                      <div className="flex items-center gap-2">
+                        {readTab === "unread" && (
+                          <Button
+                            type="button"
+                            size="sm"
+                            variant="outline"
+                            disabled={bulkIsPending}
+                            onClick={() => bulkMarkRead.mutate(Array.from(selectedIds).filter((id) => allVisibleIds.includes(id)))}
+                          >
+                            <CheckSquare className="h-3.5 w-3.5 mr-1.5" />
+                            Mark as read
+                          </Button>
+                        )}
+                        <Button
+                          type="button"
+                          size="sm"
+                          variant="outline"
+                          disabled={bulkIsPending}
+                          onClick={() => bulkArchive.mutate(Array.from(selectedIds).filter((id) => allVisibleIds.includes(id)))}
+                        >
+                          Archive
+                        </Button>
+                      </div>
+                    )}
+                  </div>
+
                   {visibleNotifications.map((notification) => {
                     const created = notification.createdAt ? new Date(notification.createdAt) : null;
                     const timeLabel = created
@@ -454,93 +579,109 @@ export default function VendorNotifications() {
                         })
                       : "";
                     const isUnread = notification.read === false || notification.read === null;
+                    const isChecked = selectedIds.has(notification.id);
 
                     return (
                       <div
                         key={notification.id}
-                        className={`w-full rounded-lg border p-4 ${
-                          isUnread ? "bg-muted/30" : "bg-background"
+                        className={`w-full rounded-lg border p-4 transition-colors ${
+                          isChecked
+                            ? "bg-primary/5 border-primary/30"
+                            : isUnread
+                              ? "bg-muted/30"
+                              : "bg-background"
                         }`}
                       >
-                        <div className="flex items-start justify-between gap-4">
-                          <div className="min-w-0">
-                            <div className="flex items-center gap-2">
-                              <div
-                                className={`h-2 w-2 rounded-full shrink-0 ${
-                                  isUnread ? "bg-primary" : "bg-transparent"
-                                }`}
-                              />
-                              {notification.isGoogleCalendar ? (
-                                <CalendarClock className="h-4 w-4 shrink-0 text-muted-foreground" />
-                              ) : null}
-                              <div className="font-medium truncate">
-                                {notification.title || "Notification"}
+                        <div className="flex items-start gap-3">
+                          <input
+                            type="checkbox"
+                            checked={isChecked}
+                            onChange={() => toggleSelectOne(notification.id)}
+                            className="mt-1 h-4 w-4 shrink-0 rounded border-gray-300 accent-primary cursor-pointer"
+                          />
+
+                          <div className="flex-1 min-w-0">
+                            <div className="flex items-start justify-between gap-4">
+                              <div className="min-w-0">
+                                <div className="flex items-center gap-2">
+                                  <div
+                                    className={`h-2 w-2 rounded-full shrink-0 ${
+                                      isUnread ? "bg-primary" : "bg-transparent"
+                                    }`}
+                                  />
+                                  {notification.isGoogleCalendar ? (
+                                    <CalendarClock className="h-4 w-4 shrink-0 text-muted-foreground" />
+                                  ) : null}
+                                  <div className="font-medium truncate">
+                                    {notification.title || "Notification"}
+                                  </div>
+                                </div>
+                                {notification.message ? (
+                                  <div
+                                    className={`text-sm text-muted-foreground mt-1 ${
+                                      notification.isBookingRelated
+                                        ? ""
+                                        : "whitespace-pre-wrap"
+                                    }`}
+                                  >
+                                    {notification.message}
+                                  </div>
+                                ) : null}
+                              </div>
+
+                              <div className="shrink-0 text-sm text-muted-foreground">
+                                {timeLabel}
                               </div>
                             </div>
-                            {notification.message ? (
-                              <div
-                                className={`text-sm text-muted-foreground mt-1 ${
-                                  notification.isBookingRelated
-                                    ? ""
-                                    : "whitespace-pre-wrap"
-                                }`}
-                              >
-                                {notification.message}
-                              </div>
-                            ) : null}
-                          </div>
 
-                          <div className="shrink-0 text-sm text-muted-foreground">
-                            {timeLabel}
+                            {(isUnread || notification.isBookingRelated || notification.isGoogleCalendar) && (
+                              <div className="mt-3 flex flex-wrap items-center gap-2">
+                                {isUnread ? (
+                                  <Button
+                                    type="button"
+                                    size="sm"
+                                    variant="outline"
+                                    onClick={() => handleMarkRead(notification.id)}
+                                    disabled={markRead.isPending}
+                                  >
+                                    {t("vendorNotifications.markAsRead")}
+                                  </Button>
+                                ) : null}
+
+                                {notification.isBookingRelated ? (
+                                  notification.booking ? (
+                                    <Button
+                                      type="button"
+                                      size="sm"
+                                      variant="outline"
+                                      onClick={() => handleOpenBookingDetails(notification.id)}
+                                      data-testid={`button-open-booking-notification-${notification.id}`}
+                                    >
+                                      {t("vendorNotifications.viewBookingDetails")}
+                                    </Button>
+                                  ) : (
+                                    <span className="text-sm text-muted-foreground">
+                                      {bookingsLoading
+                                        ? t("vendorNotifications.loadingBookingDetails")
+                                        : t("vendorNotifications.bookingDetailsUnavailable")}
+                                    </span>
+                                  )
+                                ) : null}
+
+                                {notification.isGoogleCalendar && notification.link ? (
+                                  <Button
+                                    type="button"
+                                    size="sm"
+                                    variant="outline"
+                                    asChild
+                                  >
+                                    <Link href={notification.link}>{t("vendorNotifications.goToDashboard")}</Link>
+                                  </Button>
+                                ) : null}
+                              </div>
+                            )}
                           </div>
                         </div>
-
-                        {(isUnread || notification.isBookingRelated || notification.isGoogleCalendar) && (
-                          <div className="mt-3 flex flex-wrap items-center gap-2">
-                            {isUnread ? (
-                              <Button
-                                type="button"
-                                size="sm"
-                                variant="outline"
-                                onClick={() => handleMarkRead(notification.id)}
-                                disabled={markRead.isPending}
-                              >
-                                {t("vendorNotifications.markAsRead")}
-                              </Button>
-                            ) : null}
-
-                            {notification.isBookingRelated ? (
-                              notification.booking ? (
-                                <Button
-                                  type="button"
-                                  size="sm"
-                                  variant="outline"
-                                  onClick={() => handleOpenBookingDetails(notification.id)}
-                                  data-testid={`button-open-booking-notification-${notification.id}`}
-                                >
-                                  {t("vendorNotifications.viewBookingDetails")}
-                                </Button>
-                              ) : (
-                                <span className="text-sm text-muted-foreground">
-                                  {bookingsLoading
-                                    ? t("vendorNotifications.loadingBookingDetails")
-                                    : t("vendorNotifications.bookingDetailsUnavailable")}
-                                </span>
-                              )
-                            ) : null}
-
-                            {notification.isGoogleCalendar && notification.link ? (
-                              <Button
-                                type="button"
-                                size="sm"
-                                variant="outline"
-                                asChild
-                              >
-                                <Link href={notification.link}>{t("vendorNotifications.goToDashboard")}</Link>
-                              </Button>
-                            ) : null}
-                          </div>
-                        )}
                       </div>
                     );
                   })}

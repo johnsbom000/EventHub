@@ -58,11 +58,15 @@ export function getListingPhotoUrls(listingAny: any): string[] {
     : [];
   const photosFromListingDataNames = Array.isArray(listingData?.photos?.names)
     ? listingData.photos.names
-        .map((name: unknown) => (typeof name === "string" ? resolveAssetUrl(`/uploads/listings/${name}`) : null))
+        .map((name: unknown) => (typeof name === "string" ? normalizePhotoToUrl(name) ?? null : null))
         .filter((url: unknown): url is string => typeof url === "string")
     : [];
 
-  const merged = [...photosFromApi, ...photosFromListingDataUrls, ...photosFromListingDataNames];
+  // photosFromApi is already CDN-resolved by the server. The listingData sources are raw storage
+  // paths that 404 in production when files live only in cloud storage. Use the canonical API
+  // photos as the sole source; fall back to listingData only when the canonical array is empty.
+  const fromListingData = [...photosFromListingDataUrls, ...photosFromListingDataNames];
+  const merged = photosFromApi.length > 0 ? photosFromApi : fromListingData;
   return Array.from(new Set(merged));
 }
 

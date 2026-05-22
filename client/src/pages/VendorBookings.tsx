@@ -18,8 +18,10 @@ import {
 import { Textarea } from "@/components/ui/textarea";
 import { Calendar, ChevronLeft, ChevronRight, MapPin, MessageSquare } from "lucide-react";
 import VendorShell from "@/components/VendorShell";
+import EventLinkPicker from "@/components/EventLinkPicker";
 import { apiRequest } from "@/lib/queryClient";
 import { useToast } from "@/hooks/use-toast";
+import { useFeeRates } from "@/hooks/useFeeRates";
 
 type TravelFeeProposal = {
   id: string;
@@ -96,7 +98,7 @@ function isChatWindowOpen(eventDate: string | null | undefined): boolean {
   return Date.now() <= endOfDay.getTime() + 48 * 60 * 60 * 1000;
 }
 
-function deriveBookingAmounts(booking: VendorBooking) {
+function deriveBookingAmounts(booking: VendorBooking, vendorFeeRate: number) {
   const customerTotalCents = normalizeAmountToCents(booking.totalAmount ?? 0);
   const vendorFeeCents = normalizeAmountToCents(booking.platformFee ?? 0);
   const storedPayoutCents = normalizeAmountToCents(booking.vendorPayout ?? 0);
@@ -116,7 +118,7 @@ function deriveBookingAmounts(booking: VendorBooking) {
   // Fallback if legacy row is missing fee/payout columns.
   const listingPriceCents = Math.max(0, Math.round(customerTotalCents / 1.05));
   const customerFeeCents = Math.max(0, customerTotalCents - listingPriceCents);
-  const derivedVendorFeeCents = Math.max(0, Math.round(listingPriceCents * 0.08));
+  const derivedVendorFeeCents = Math.max(0, Math.round(listingPriceCents * vendorFeeRate));
   const estimatedPayoutCents = Math.max(0, listingPriceCents - derivedVendorFeeCents);
   return {
     customerTotalCents,
@@ -137,6 +139,7 @@ export default function VendorBookings() {
   const { isAuthenticated, getAccessTokenSilently } = useAuth0();
   const queryClient = useQueryClient();
   const { toast } = useToast();
+  const { vendorFeeRate } = useFeeRates();
 
   const { data: vendorAccount } = useQuery<VendorMe>({
     queryKey: ["/api/vendor/me"],
@@ -279,7 +282,7 @@ export default function VendorBookings() {
           id: b.id,
           date: d,
           amount: normalizeAmountToCents(b.totalAmount ?? 0),
-          ...deriveBookingAmounts(b),
+          ...deriveBookingAmounts(b, vendorFeeRate),
           googleSyncLabel: isGoogleSynced ? "synced" : "unsynced",
           status: normalizeStatus(b.status),
           raw: b,
@@ -772,9 +775,7 @@ export default function VendorBookings() {
                         );
                       })()}
                     </div>
-                    {item.raw.customerEventTitle ? (
-                      <div className="mt-1 text-sm text-foreground font-medium">{item.raw.customerEventTitle}</div>
-                    ) : null}
+                    <EventLinkPicker bookingId={item.id} currentEventTitle={item.raw.customerEventTitle} />
                     <div className="mt-1 text-sm">
                       <span className="text-muted-foreground">{t("vendorBookings.estimatedPayoutLabel")} </span>
                       <span className="font-medium">{formatUsd(item.estimatedPayoutCents || 0)}</span>

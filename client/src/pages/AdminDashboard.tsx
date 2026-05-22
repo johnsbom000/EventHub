@@ -425,9 +425,9 @@ function AdminDisputeCaseCard({ disputeCase }: { disputeCase: AdminDisputeCase }
   });
 
   // Summary line: unique dispute types from all non-admin filings
-  const filingTypes = [...new Set(
+  const filingTypes = Array.from(new Set(
     disputeCase.filings.filter((f) => f.filed_by !== "admin").map((f) => f.dispute_type)
-  )];
+  ));
 
   return (
     <Card className="mb-3">
@@ -970,7 +970,7 @@ const FLAG_TYPE_COLORS: Record<string, string> = {
 
 function ModerationSection({ isAdmin }: { isAdmin: boolean }) {
   const qc = useQueryClient();
-  const [tab, setTab] = useState<"flags" | "rereviews" | "warnings">("flags");
+  const [tab, setTab] = useState<"flags" | "rereviews" | "warnings" | "suspensions">("flags");
   const [statusFilter, setStatusFilter] = useState<"pending" | "dismissed" | "actioned">("pending");
 
   const { data: flags = [], isLoading: loadingFlags } = useQuery<any[]>({
@@ -998,6 +998,15 @@ function ModerationSection({ isAdmin }: { isAdmin: boolean }) {
       return res.json();
     },
     enabled: isAdmin && tab === "warnings",
+  });
+
+  const { data: suspensions = [], isLoading: loadingSuspensions } = useQuery<any[]>({
+    queryKey: ["/api/admin/circumvention/suspensions"],
+    queryFn: async () => {
+      const res = await apiRequest("GET", "/api/admin/circumvention/suspensions");
+      return res.json();
+    },
+    enabled: isAdmin && tab === "suspensions",
   });
 
   const dismissMutation = useMutation({
@@ -1040,7 +1049,7 @@ function ModerationSection({ isAdmin }: { isAdmin: boolean }) {
 
       {/* Tab navigation */}
       <div className="flex gap-1 border-b mb-4">
-        {(["flags", "rereviews", "warnings"] as const).map((t) => (
+        {(["flags", "rereviews", "warnings", "suspensions"] as const).map((t) => (
           <button
             key={t}
             type="button"
@@ -1051,7 +1060,7 @@ function ModerationSection({ isAdmin }: { isAdmin: boolean }) {
                 : "border-transparent text-muted-foreground hover:text-foreground"
             }`}
           >
-            {t === "flags" ? "Flags" : t === "rereviews" ? "Re-reviews" : "Warning History"}
+            {t === "flags" ? "Flags" : t === "rereviews" ? "Re-reviews" : t === "warnings" ? "Warning History" : "Suspensions"}
             {t === "flags" && pendingCount > 0 && (
               <span className="ml-2 inline-flex items-center justify-center rounded-full bg-red-500 px-1.5 py-0.5 text-[10px] font-bold text-white">
                 {pendingCount}
@@ -1060,6 +1069,11 @@ function ModerationSection({ isAdmin }: { isAdmin: boolean }) {
             {t === "rereviews" && rereviews.length > 0 && (
               <span className="ml-2 inline-flex items-center justify-center rounded-full bg-amber-500 px-1.5 py-0.5 text-[10px] font-bold text-white">
                 {rereviews.length}
+              </span>
+            )}
+            {t === "suspensions" && suspensions.length > 0 && (
+              <span className="ml-2 inline-flex items-center justify-center rounded-full bg-red-700 px-1.5 py-0.5 text-[10px] font-bold text-white">
+                {suspensions.length}
               </span>
             )}
           </button>
@@ -1291,6 +1305,53 @@ function ModerationSection({ isAdmin }: { isAdmin: boolean }) {
                         </td>
                         <td className="py-2 pr-4 text-xs text-muted-foreground">{w.issuedBy}</td>
                         <td className="py-2 text-xs text-muted-foreground">{fmtDateTime(w.createdAt)}</td>
+                      </tr>
+                    ))}
+                  </tbody>
+                </table>
+              </div>
+            )}
+          </CardContent>
+        </Card>
+      )}
+
+      {/* ── Suspensions tab ───────────────────────────────────────────────────── */}
+      {tab === "suspensions" && (
+        <Card>
+          <CardHeader>
+            <CardTitle className="flex items-center gap-2">
+              <Shield className="h-4 w-4 text-red-600" /> Active Suspensions
+            </CardTitle>
+            <CardDescription>Vendor accounts currently suspended for circumvention violations</CardDescription>
+          </CardHeader>
+          <CardContent>
+            {loadingSuspensions ? (
+              <p className="py-8 text-center text-muted-foreground text-sm">Loading…</p>
+            ) : suspensions.length === 0 ? (
+              <p className="py-8 text-center text-muted-foreground text-sm">No active suspensions.</p>
+            ) : (
+              <div className="overflow-x-auto">
+                <table className="w-full text-sm">
+                  <thead>
+                    <tr className="border-b text-left text-xs text-muted-foreground">
+                      <th className="pb-2 pr-4 font-medium">Vendor</th>
+                      <th className="pb-2 pr-4 font-medium">Reason</th>
+                      <th className="pb-2 pr-4 font-medium">Started</th>
+                      <th className="pb-2 font-medium">Expires</th>
+                    </tr>
+                  </thead>
+                  <tbody className="divide-y">
+                    {suspensions.map((s: any) => (
+                      <tr key={s.id} className="text-sm">
+                        <td className="py-2 pr-4">
+                          <p className="font-medium">{s.businessName}</p>
+                          <p className="text-xs text-muted-foreground">{s.vendorEmail}</p>
+                        </td>
+                        <td className="py-2 pr-4 max-w-xs">
+                          <p className="text-xs text-muted-foreground">{s.reason}</p>
+                        </td>
+                        <td className="py-2 pr-4 text-xs text-muted-foreground">{fmtDate(s.startsAt)}</td>
+                        <td className="py-2 text-xs text-muted-foreground">{fmtDate(s.endsAt)}</td>
                       </tr>
                     ))}
                   </tbody>

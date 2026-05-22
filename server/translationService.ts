@@ -173,6 +173,33 @@ export function translateListingAsync(
 }
 
 /**
+ * Return a cached translation for a listing, or translate synchronously on first miss.
+ * Returns null when language is "en", the key is unconfigured, or translation fails.
+ */
+export async function ensureListingTranslation(
+  listingId: string,
+  fields: ListingTranslatableFields,
+  language: string
+): Promise<{
+  title: string | null;
+  description: string | null;
+  whatsIncluded: string[];
+  whatsNotIncluded: string[];
+} | null> {
+  if (!language || language === "en") return null;
+  if (!(SUPPORTED_LANGUAGES as readonly string[]).includes(language)) return null;
+
+  const cached = await getListingTranslation(listingId, language);
+  if (cached) return cached;
+
+  const client = getTranslateClient();
+  if (!client) return null;
+
+  await translateListingIntoLanguage(client, listingId, fields, language as SupportedLanguage);
+  return getListingTranslation(listingId, language);
+}
+
+/**
  * Fetch stored translations for a listing in a given language.
  * Returns null if no completed translation exists.
  */

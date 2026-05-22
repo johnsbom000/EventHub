@@ -282,29 +282,6 @@ export const insertVendorAccountSchema = createInsertSchema(vendorAccounts).omit
 export type InsertVendorAccount = z.infer<typeof insertVendorAccountSchema>;
 export type VendorAccount = typeof vendorAccounts.$inferSelect;
 
-// ─── Vendor Cancellation Policies ─────────────────────────────────────────────
-// One row per vendor account (unique). Stores tiered refund rules as JSON.
-// preset_type is informational (drives UI). Tiers are sorted descending by
-// days_before_event. At booking time the effective policy is snapshotted onto
-// the booking record — refund calculations always use the snapshot, never the live policy.
-
-export const vendorCancellationPolicies = pgTable("vendor_cancellation_policies", {
-  id: varchar("id").primaryKey().default(sql`gen_random_uuid()`),
-  vendorId: varchar("vendor_id").notNull().unique().references(() => vendorAccounts.id, { onDelete: "cascade" }),
-  presetType: text("preset_type").notNull().default("moderate"),
-  tiers: jsonb("tiers").notNull().default(sql`'[]'::jsonb`),
-  allowReschedule: boolean("allow_reschedule").notNull().default(false),
-  rescheduleWindowMonths: integer("reschedule_window_months").notNull().default(12),
-  weatherClause: boolean("weather_clause").notNull().default(false),
-  forceMajeureClause: boolean("force_majeure_clause").notNull().default(false),
-  notes: text("notes"),
-  createdAt: timestamp("created_at").notNull().defaultNow(),
-  updatedAt: timestamp("updated_at").notNull().defaultNow(),
-});
-
-export type VendorCancellationPolicy = typeof vendorCancellationPolicies.$inferSelect;
-export type InsertVendorCancellationPolicy = typeof vendorCancellationPolicies.$inferInsert;
-
 // Vendor Profiles (1:n with vendor_accounts, stores onboarding/profile details)
 export const vendorProfiles = pgTable("vendor_profiles", {
   id: varchar("id").primaryKey().default(sql`gen_random_uuid()`),
@@ -393,7 +370,8 @@ export const vendorListings = pgTable("vendor_listings", {
   takedownFeeAmountCents: integer("takedown_fee_amount_cents"),
   photos: text("photos").array().notNull().default(sql`'{}'`),
   listingData: jsonb("listing_data"), // Complete listing wizard form data
-  cancellationPolicyOverride: jsonb("cancellation_policy_override"), // null = use vendor default
+  cancellationPolicy: text("cancellation_policy"),
+  cancellationPolicyDays: integer("cancellation_policy_days"),
   // ─── Dimensions (Rental listings and package_item rows) ───────────────────
   dimensionUnit: text("dimension_unit"),
   dimensionWidth: doublePrecision("dimension_width"),
@@ -757,6 +735,7 @@ export const notifications = pgTable("notifications", {
   message: text("message").notNull(),
   link: text("link"), // URL to relevant page
   read: boolean("read").default(false).notNull(),
+  archived: boolean("archived").default(false).notNull(),
   createdAt: timestamp("created_at").defaultNow(),
   expiresAt: timestamp("expires_at", { withTimezone: true }).default(sql`now() + interval '90 days'`),
 });

@@ -108,6 +108,10 @@ type ListingDraft = {
  serviceRadiusMiles: number;
  serviceLocation: LocationResult | null;
  serviceCenter: { lat: number; lng: number } | null;
+ serviceStreetAddress: string;
+ serviceCity: string;
+ serviceState: string;
+ serviceZip: string;
 
  travelOffered: boolean;
  travelFeeEnabled: boolean;
@@ -163,6 +167,10 @@ const DEFAULT_DRAFT: ListingDraft = {
  serviceRadiusMiles: 30,
  serviceLocation: null,
  serviceCenter: null,
+ serviceStreetAddress: "",
+ serviceCity: "",
+ serviceState: "",
+ serviceZip: "",
 
  travelOffered: false,
  travelFeeEnabled: false,
@@ -778,11 +786,18 @@ export function CreateListingWizard({ onClose, initialListingType, parentListing
  const hasTitle = draft.listingTitle.trim().length > 0;
  const hasDescription = draft.listingDescription.trim().length > 0;
  const hasPrice = Number(draft.rate) > 0;
+ const isServiceCenterExact =
+   Boolean(draft.serviceStreetAddress?.trim()) ||
+   (draft.serviceLocation != null &&
+     (!draft.serviceLocation.placeType ||
+       draft.serviceLocation.placeType === "address" ||
+       draft.serviceLocation.placeType === "poi" ||
+       draft.serviceLocation.placeType === "pin"));
  const hasLocation =
- Boolean(draft.serviceLocation?.label) &&
- Number.isFinite(Number(draft.serviceCenter?.lat)) &&
- Number.isFinite(Number(draft.serviceCenter?.lng)) &&
- Number(draft.serviceRadiusMiles) > 0;
+   isServiceCenterExact &&
+   Number.isFinite(Number(draft.serviceCenter?.lat)) &&
+   Number.isFinite(Number(draft.serviceCenter?.lng)) &&
+   Number(draft.serviceRadiusMiles) > 0;
  const hasMinPhotos = persistedPhotoNames.length >= MIN_PHOTOS_FOR_PUBLISH;
  const hasValidQuantity = draft.category !== "Rental" || parsePositiveInt(draft.quantity) > 0;
 
@@ -854,7 +869,9 @@ export function CreateListingWizard({ onClose, initialListingType, parentListing
 
  serviceAreaMode: "radius",
  serviceRadiusMiles: Number(draft.serviceRadiusMiles),
- listingServiceCenterLabel: draft.serviceLocation?.label ?? null,
+ listingServiceCenterLabel: draft.serviceStreetAddress?.trim()
+   ? [draft.serviceStreetAddress, draft.serviceCity, draft.serviceState, draft.serviceZip].filter(Boolean).join(", ")
+   : (draft.serviceLocation?.label ?? null),
  listingServiceCenterLat: centerLat,
  listingServiceCenterLng: centerLng,
  serviceCenter: centerLat != null && centerLng != null ? { lat: centerLat, lng: centerLng } : null,
@@ -1022,9 +1039,14 @@ export function CreateListingWizard({ onClose, initialListingType, parentListing
  lng: homeBaseLng,
  city: city || undefined,
  state: state || undefined,
- zipCode: zip || undefined,
+ postalCode: zip || undefined,
  country: "United States",
+ placeType: address ? "address" : undefined,
  },
+ serviceStreetAddress: address || "",
+ serviceCity: city || "",
+ serviceState: state || "",
+ serviceZip: zip || "",
  }));
  return;
  }
@@ -1047,7 +1069,12 @@ export function CreateListingWizard({ onClose, initialListingType, parentListing
  ...first,
  id: first.id || `loc_${first.lat}_${first.lng}`,
  label: first.label || label || "Service center",
+ placeType: address ? "address" : first.placeType,
  },
+ serviceStreetAddress: address || prev.serviceStreetAddress,
+ serviceCity: city || prev.serviceCity,
+ serviceState: state || prev.serviceState,
+ serviceZip: zip || prev.serviceZip,
  }));
  } catch {
  // no-op

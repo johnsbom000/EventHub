@@ -22,6 +22,8 @@ import {
 import { LocationPicker } from "@/components/LocationPicker";
 import type { LocationResult } from "@/types/location";
 import { resolveAssetUrl } from "@/lib/runtimeUrls";
+import { useFeeRates } from "@/hooks/useFeeRates";
+import { TimeInput } from "@/components/ui/TimeInput";
 
 type CheckoutRouteParams = { listingId: string };
 type SavedCustomerLocation = {
@@ -236,7 +238,6 @@ function buildHourlyWindowGuidance(input: {
 
 const rawStripePublishableKey = ((import.meta.env.VITE_STRIPE_PUBLISHABLE_KEY as string | undefined) || "").trim();
 const stripePublishableKey = rawStripePublishableKey.startsWith("pk_") ? rawStripePublishableKey : "";
-const CUSTOMER_FEE_RATE = 0.05;
 const stripeConfigError =
   rawStripePublishableKey.length > 0 && !rawStripePublishableKey.startsWith("pk_")
     ? "Stripe publishable key is invalid. `VITE_STRIPE_PUBLISHABLE_KEY` must start with `pk_`."
@@ -264,6 +265,7 @@ function CheckoutContent({
   stripeConfigError: string | null;
 }) {
   const { t } = useTranslation();
+  const { customerFeeRate } = useFeeRates();
   const [path, setLocation] = useLocation();
   const [, params] = useRoute<CheckoutRouteParams>("/checkout/:listingId");
   const listingId =
@@ -465,12 +467,17 @@ function CheckoutContent({
             .map((u: string) => resolveAssetUrl(u))
         : Array.isArray(ld?.photos?.names)
           ? ld.photos.names
-              .map((n: any) => (typeof n === "string" ? resolveAssetUrl(`/uploads/listings/${n}`) : null))
+              .map((n: any) => (typeof n === "string" ? normalizePhotoToUrl(n) ?? null : null))
               .filter(Boolean)
           : Array.isArray(ld?.photos)
             ? ld.photos.filter((u: any) => typeof u === "string").map((u: string) => resolveAssetUrl(u))
             : [];
-      const allPhotos = [...photosFromObjects, ...photosFromListingData].filter(Boolean);
+      // raw.photos is already CDN-resolved by the server; listingData sources are raw storage paths
+      // that 404 in production when files live only in cloud storage. Use raw.photos as the sole
+      // source; fall back to listingData only for legacy listings where the canonical array is empty.
+      const allPhotos = Array.from(new Set(
+        (photosFromObjects.length > 0 ? photosFromObjects : photosFromListingData).filter(Boolean)
+      ));
 
       const canonicalPriceCents = parseOptionalNumber(raw?.priceCents);
       const mirroredPriceCents = parseOptionalNumber(ld?.priceCents);
@@ -942,7 +949,7 @@ function CheckoutContent({
       ? Math.round((baseSubtotal + logisticsSubtotal) * activeDiscountPercent / 100)
       : 0;
   const discountedSubtotal = Math.max(0, baseSubtotal + logisticsSubtotal - discountAmountCents);
-  const customerFeeAmount = Math.round(discountedSubtotal * CUSTOMER_FEE_RATE);
+  const customerFeeAmount = Math.round(discountedSubtotal * customerFeeRate);
   const customerTotal = discountedSubtotal + customerFeeAmount;
 
   async function handleSubmitOrder() {
@@ -1470,12 +1477,10 @@ function CheckoutContent({
               <div className="grid grid-cols-1 gap-3 md:grid-cols-2">
                 <div className="space-y-2">
                   <Label htmlFor="event-start-time">{t("checkout.hourlySetupByLabel")}</Label>
-                  <Input
+                  <TimeInput
                     id="event-start-time"
-                    type="time"
                     value={eventStartTime}
-                    onChange={(e) => {
-                      const nextStartTime = e.target.value;
+                    onChange={(nextStartTime) => {
                       setEventStartTime(nextStartTime);
 
                       const nextSuggestedEndTime = getSuggestedEndTime(nextStartTime, hourlyMinimumHours);
@@ -1502,11 +1507,10 @@ function CheckoutContent({
 
                 <div className="space-y-2">
                   <Label htmlFor="event-end-time">{t("checkout.hourlyTakedownLabel")}</Label>
-                  <Input
+                  <TimeInput
                     id="event-end-time"
-                    type="time"
                     value={eventEndTime}
-                    onChange={(e) => setEventEndTime(e.target.value)}
+                    onChange={setEventEndTime}
                     className="h-10"
                   />
                 </div>
@@ -1536,22 +1540,20 @@ function CheckoutContent({
                 <div className="grid grid-cols-1 gap-3 md:grid-cols-2">
                   <div className="space-y-2">
                     <Label htmlFor="event-start-time">{t("checkout.eventStartLabel")}</Label>
-                    <Input
+                    <TimeInput
                       id="event-start-time"
-                      type="time"
                       value={eventStartTime}
-                      onChange={(e) => setEventStartTime(e.target.value)}
+                      onChange={setEventStartTime}
                       className="h-10"
                     />
                   </div>
 
                   <div className="space-y-2">
                     <Label htmlFor="event-end-time">{t("checkout.eventEndLabel")}</Label>
-                    <Input
+                    <TimeInput
                       id="event-end-time"
-                      type="time"
                       value={eventEndTime}
-                      onChange={(e) => setEventEndTime(e.target.value)}
+                      onChange={setEventEndTime}
                       className="h-10"
                     />
                   </div>

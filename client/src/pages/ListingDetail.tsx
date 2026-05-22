@@ -17,6 +17,7 @@ import {
 import { resolveAssetUrl } from "@/lib/runtimeUrls";
 import { useTranslation } from "react-i18next";
 import { useLanguage } from "@/context/LanguageContext";
+import { TimeInput } from "@/components/ui/TimeInput";
 
 type RouteParams = { id: string };
 const LISTING_DETAIL_GALLERY_HEIGHT_CLASS = "h-[60vh] min-h-[320px] max-h-[520px]";
@@ -246,13 +247,18 @@ export default function ListingDetailPage() {
  .map((u: string) => resolveAssetUrl(u))
  : Array.isArray(ld?.photos?.names)
  ? ld.photos.names
- .map((n: any) => (typeof n === "string" ? resolveAssetUrl(`/uploads/listings/${n}`) : null))
+ .map((n: any) => (typeof n === "string" ? normalizePhotoToUrl(n) ?? null : null))
  .filter(Boolean)
  : Array.isArray(ld?.photos)
  ? ld.photos.filter((u: any) => typeof u === "string").map((u: string) => resolveAssetUrl(u))
  : [];
-
- const allPhotos = [...photosFromObjects, ...photosFromListingData].filter(Boolean);
+ // raw.photos is already CDN-resolved by the server; ld.photos.names is the raw storage path from
+ // the JSONB column. In production the file lives only in cloud storage — the storage path 404s —
+ // so merging both produces phantom blank tiles. Use raw.photos (CDN-ready) as the sole source;
+ // fall back to listingData only for legacy listings where the canonical column is empty.
+ const allPhotos = Array.from(new Set(
+   (photosFromObjects.length > 0 ? photosFromObjects : photosFromListingData).filter(Boolean)
+ ));
  const coverPhotoIndex = getCoverPhotoIndex(raw, allPhotos);
  const orderedPhotos = moveCoverToFront(allPhotos, coverPhotoIndex);
  const coverPhotoRatio = getCoverPhotoRatio(raw);
@@ -1421,20 +1427,18 @@ function ReservationCard({
  <div className="grid grid-cols-2 gap-2">
  <div className="space-y-1">
  <div className="text-xs text-muted-foreground">Start</div>
- <input
- type="time"
+ <TimeInput
  value={startTime}
- onChange={(e) => setStartTime(e.target.value)}
- className="w-full rounded-md border border-border bg-background px-3 py-2 text-sm"
+ onChange={setStartTime}
+ className="w-full"
  />
  </div>
  <div className="space-y-1">
  <div className="text-xs text-muted-foreground">End</div>
- <input
- type="time"
+ <TimeInput
  value={endTime}
- onChange={(e) => setEndTime(e.target.value)}
- className="w-full rounded-md border border-border bg-background px-3 py-2 text-sm"
+ onChange={setEndTime}
+ className="w-full"
  />
  </div>
  </div>

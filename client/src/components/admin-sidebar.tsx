@@ -2,6 +2,7 @@ import {
   LayoutDashboard, TrendingUp, Calendar, AlertTriangle,
   ArrowRightLeft, Users, LayoutGrid, Eye, Shield, LogOut, MessageSquarePlus, Activity,
 } from "lucide-react";
+import { useEffect } from "react";
 import { Link, useLocation } from "wouter";
 import { useQuery } from "@tanstack/react-query";
 import {
@@ -11,6 +12,7 @@ import {
 import { Avatar, AvatarFallback } from "@/components/ui/avatar";
 import { useAuth0 } from "@auth0/auth0-react";
 import { cn } from "@/lib/utils";
+import { useResettableBadgeCount } from "@/hooks/useResettableBadgeCount";
 
 const menuItems = [
   { title: "Overview",    url: "/admin",            icon: LayoutDashboard },
@@ -46,6 +48,18 @@ export function AdminSidebar({ className }: { className?: string }) {
     refetchInterval: 5 * 60_000,
   });
   const healthAlerts: number = healthData?.summary?.totalAlerts ?? 0;
+  const { visibleCount: visibleDisputesCount, dismissCurrent: dismissDisputesBadge } = useResettableBadgeCount({
+    id: "admin:disputes",
+    count: openDisputes,
+  });
+  const { visibleCount: visibleHealthCount, dismissCurrent: dismissHealthBadge } = useResettableBadgeCount({
+    id: "admin:health",
+    count: healthAlerts,
+  });
+  useEffect(() => {
+    if (location.startsWith("/admin/disputes")) dismissDisputesBadge();
+    if (location.startsWith("/admin/health")) dismissHealthBadge();
+  }, [dismissDisputesBadge, dismissHealthBadge, location]);
 
   const isActive = (url: string) =>
     url === "/admin" ? location === "/admin" : location.startsWith(url);
@@ -65,8 +79,8 @@ export function AdminSidebar({ className }: { className?: string }) {
               {menuItems.map((item) => {
                 const active = isActive(item.url);
                 const badge =
-                  item.title === "Disputes" && openDisputes > 0 ? openDisputes :
-                  item.title === "Health"   && healthAlerts > 0 ? healthAlerts :
+                  item.title === "Disputes" && visibleDisputesCount > 0 ? visibleDisputesCount :
+                  item.title === "Health"   && visibleHealthCount > 0 ? visibleHealthCount :
                   null;
                 return (
                   <SidebarMenuItem key={item.title} className="group/menu-item relative overflow-visible">
@@ -81,7 +95,7 @@ export function AdminSidebar({ className }: { className?: string }) {
                         className: "border border-[rgba(30,45,58,0.18)] bg-white text-[#1e2d3a]",
                       }}
                       className={cn(
-                        "h-14 w-14 justify-center rounded-2xl p-0",
+                        "h-14 w-14 justify-center overflow-visible rounded-2xl p-0",
                         active
                           ? "bg-[#1e2d3a] text-white hover:bg-[#1e2d3a] hover:text-white"
                           : "text-[#2a3a42] hover:bg-[#e6e1d6] hover:text-[#2a3a42]"
@@ -89,12 +103,12 @@ export function AdminSidebar({ className }: { className?: string }) {
                     >
                       <Link
                         href={item.url}
-                        className="relative flex h-14 w-14 items-center justify-center"
+                        className="relative flex h-14 w-14 items-center justify-center overflow-visible"
                       >
                         <item.icon className="!h-6 !w-6" />
                         <span className="sr-only">{item.title}</span>
                         {badge ? (
-                          <span className="absolute -right-1 -top-1 min-w-[18px] rounded-full bg-[#e07a6a] px-1 text-center text-[11px] font-semibold leading-4 text-white">
+                          <span className="pointer-events-none absolute left-1/2 top-0 z-[70] min-w-[18px] -translate-x-1/2 -translate-y-1/3 rounded-full bg-[#e07a6a] px-1 text-center text-[11px] font-semibold leading-4 text-white">
                             {badge > 99 ? "99+" : badge}
                           </span>
                         ) : null}

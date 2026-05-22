@@ -477,10 +477,15 @@ export default function CustomerBookingDetail() {
     ? ld.photos.urls.filter((u: any) => typeof u === "string").map((u: string) => resolveAssetUrl(u))
     : Array.isArray(ld?.photos?.names)
     ? ld.photos.names
-        .map((n: any) => (typeof n === "string" ? resolveAssetUrl(`/uploads/listings/${n}`) : null))
+        .map((n: any) => (typeof n === "string" ? normalizePhotoToUrl(n) ?? null : null))
         .filter(Boolean)
     : [];
-  const allPhotos = [...photosFromObjects, ...photosFromListingData].filter(Boolean);
+  // raw.photos is already CDN-resolved by the server; listingData sources are raw storage paths
+  // that 404 in production when files live only in cloud storage. Use raw.photos as the sole
+  // source; fall back to listingData only for legacy listings where the canonical array is empty.
+  const allPhotos = Array.from(new Set(
+    (photosFromObjects.length > 0 ? photosFromObjects : photosFromListingData).filter(Boolean)
+  ));
   const coverPhotoIndex = getCoverPhotoIndex(raw, allPhotos);
   const orderedPhotos = moveCoverToFront(allPhotos, coverPhotoIndex);
   const coverPhotoRatio = getCoverPhotoRatio(raw);

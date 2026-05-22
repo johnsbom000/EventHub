@@ -1,4 +1,5 @@
 import { Calendar, Home, LayoutGrid, MessageSquare, DollarSign, Star, Bell, Store, Tag, Scale, AlertTriangle } from "lucide-react";
+import { useEffect } from "react";
 import { Link, useLocation } from "wouter";
 import { useQuery } from "@tanstack/react-query";
 import { useTranslation } from "react-i18next";
@@ -15,6 +16,7 @@ import {
 import { Avatar, AvatarFallback } from "@/components/ui/avatar";
 import { useAuth0 } from "@auth0/auth0-react";
 import { cn } from "@/lib/utils";
+import { useResettableBadgeCount } from "@/hooks/useResettableBadgeCount";
 
 interface VendorAccount {
  businessName: string;
@@ -74,6 +76,14 @@ export function VendorSidebar({ className, showWarningBadge = false, onWarningBa
  });
 
  const unreadCount = Math.max(0, Number(unreadData?.unreadCount || 0));
+ const { visibleCount: visibleUnreadCount, dismissCurrent: dismissUnreadCount } = useResettableBadgeCount({
+ id: "vendor:messages",
+ count: unreadCount,
+ });
+ useEffect(() => {
+ if (!location.startsWith("/vendor/messages")) return;
+ dismissUnreadCount();
+ }, [dismissUnreadCount, location]);
 
  return (
  <Sidebar
@@ -118,9 +128,9 @@ export function VendorSidebar({ className, showWarningBadge = false, onWarningBa
  <item.icon className="!h-8 !w-8" />
  </span>
  <span className="sr-only">{label}</span>
- {item.key === "messages" && unreadCount > 0 ? (
- <span className="pointer-events-none absolute right-0 top-0 z-[70] min-w-[18px] translate-x-1/3 -translate-y-1/3 rounded-full bg-[#e07a6a] px-1 text-center text-[11px] font-semibold leading-4 text-[#f5f0e8]">
- {unreadCount > 99 ? "99+" : unreadCount}
+ {item.key === "messages" && visibleUnreadCount > 0 ? (
+ <span className="pointer-events-none absolute left-1/2 top-0 z-[70] min-w-[18px] -translate-x-1/2 -translate-y-1/3 rounded-full bg-[#e07a6a] px-1 text-center text-[11px] font-semibold leading-4 text-[#f5f0e8]">
+ {visibleUnreadCount > 99 ? "99+" : visibleUnreadCount}
  </span>
  ) : null}
  </Link>

@@ -8,11 +8,21 @@ const __dirname = path.dirname(__filename);
 // Force-load the repo-root .env (one level above /server)
 dotenv.config({ path: path.resolve(__dirname, "../.env") });
 
+import * as Sentry from "@sentry/node";
 import { logger } from "./lib/logger";
 import express, { type Request, Response, NextFunction } from "express";
 import helmet from "helmet";
 import { registerRoutes } from "./routes";
 import { setupVite, serveStatic } from "./vite";
+import { db } from "./db";
+import { sql as drizzleSql } from "drizzle-orm";
+
+Sentry.init({
+  dsn: process.env.SENTRY_DSN,
+  environment: process.env.NODE_ENV || "development",
+  // Only active when SENTRY_DSN is set — safe to deploy without it in local dev.
+  enabled: Boolean(process.env.SENTRY_DSN),
+});
 
 if (process.env.NODE_ENV !== "production") {
   logger.debug("DATABASE_URL loaded: %s", Boolean(process.env.DATABASE_URL));
@@ -204,14 +214,28 @@ app.use((req, res, next) => {
   next();
 });
 
-// Lightweight health check — must be registered before registerRoutes so it
-// has no dependencies and always responds even if DB/services are unavailable.
-app.get("/api/health", (_req, res) => {
-  res.json({ status: "ok" });
+// Lightweight health check — registered before registerRoutes so it always
+// responds even during startup. Returns 503 if the DB is unreachable so
+// Railway stops routing traffic to a degraded instance.
+app.get("/api/health", async (_req, res) => {
+  try {
+    await db.execute(drizzleSql`SELECT 1`);
+    res.json({ status: "ok" });
+  } catch {
+    res.status(503).json({ status: "degraded", reason: "db_unreachable" });
+  }
+});
+
+// Temporary route to verify Sentry is connected — remove after confirming.
+app.get("/api/debug-sentry", (_req, _res) => {
+  throw new Error("My first Sentry error!");
 });
 
 (async () => {
   const server = await registerRoutes(app);
+
+  // Sentry error handler must come after routes and before the custom error handler.
+  Sentry.setupExpressErrorHandler(app);
 
   app.use((err: any, _req: Request, res: Response, _next: NextFunction) => {
     const status = err?.status || err?.statusCode || 500;
@@ -245,6 +269,12 @@ app.get("/api/health", (_req, res) => {
     logger.info("serving on port %d", port);
     if (!process.env.RESEND_API_KEY || !process.env.RESEND_FROM_EMAIL) {
       logger.warn("[startup] RESEND_API_KEY or RESEND_FROM_EMAIL is not set — transactional emails will be silently skipped");
+    }
+    if (!process.env.STRIPE_WEBHOOK_SECRET) {
+      logger.warn("[startup] STRIPE_WEBHOOK_SECRET is not set — Stripe webhook endpoint will return 503 on every delivery");
+    }
+    if (!process.env.ADMIN_EMAILS && !process.env.ADMIN_EMAIL) {
+      logger.warn("[startup] ADMIN_EMAILS is not set — all /api/admin/* routes will return 403 Forbidden");
     }
   });
 })();

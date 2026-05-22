@@ -33,6 +33,8 @@ export interface BookingCancelledParams {
   role: "customer" | "vendor";
   /** Who initiated the cancellation — used for context in vendor email. */
   cancelledBy?: "customer" | "vendor" | "system";
+  /** Optional extra sentence inserted after the intro, e.g. to explain why. */
+  reasonNote?: string;
   totalAmountCents?: number;
   refundAmountCents?: number;
   serverUrl: string;
@@ -50,6 +52,7 @@ export function bookingCancelledTemplate(params: BookingCancelledParams): {
     listingTitle,
     role,
     cancelledBy,
+    reasonNote,
     totalAmountCents,
     refundAmountCents,
     serverUrl,
@@ -85,6 +88,7 @@ export function bookingCancelledTemplate(params: BookingCancelledParams): {
     <h2 style="margin:0 0 16px;font-family:'Playfair Display',Georgia,serif;font-size:22px;color:${SLATE};">Booking Cancelled</h2>
     <p style="margin:0 0 12px;font-size:15px;line-height:1.6;">Hi ${recipientName},</p>
     <p style="margin:0 0 20px;font-size:15px;line-height:1.6;">${intro}</p>
+    ${reasonNote ? `<p style="margin:0 0 20px;font-size:15px;line-height:1.6;">${reasonNote}</p>` : ""}
     <table style="width:100%;border-collapse:collapse;margin-bottom:20px;">
       <tr><td style="padding:8px 0;border-bottom:1px solid #f0eeec;font-size:14px;color:#666;">Service</td><td style="padding:8px 0;border-bottom:1px solid #f0eeec;font-size:14px;font-weight:600;text-align:right;">${listingTitle}</td></tr>
       <tr><td style="padding:8px 0;border-bottom:1px solid #f0eeec;font-size:14px;color:#666;">Event Date</td><td style="padding:8px 0;border-bottom:1px solid #f0eeec;font-size:14px;font-weight:600;text-align:right;">${eventDate}</td></tr>

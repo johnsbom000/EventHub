@@ -1,6 +1,7 @@
 import { useTranslation } from "react-i18next";
 import { apiRequest } from "@/lib/queryClient";
 import React, { useState } from "react";
+import { useAuth0 } from "@auth0/auth0-react";
 import { Card } from "@/components/ui/card";
 import { Button } from "@/components/ui/button";
 import { Badge } from "@/components/ui/badge";
@@ -49,9 +50,11 @@ export default function VendorListings() {
   const [showCreateWizard, setShowCreateWizard] = useState(false);
   const [, setLocation] = useLocation();
   const { toast } = useToast();
+  const { isAuthenticated, isLoading: isAuthLoading } = useAuth0();
 
   const { data: listings = [], isLoading: loadingListings } = useQuery({
     queryKey: ["/api/vendor/listings"],
+    enabled: isAuthenticated && !isAuthLoading,
     queryFn: async () => {
       const res = await apiRequest("GET", "/api/vendor/listings");
       const json = await res.json();
