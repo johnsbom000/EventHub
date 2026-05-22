@@ -226,11 +226,6 @@ app.get("/api/health", async (_req, res) => {
   }
 });
 
-// Temporary route to verify Sentry is connected — remove after confirming.
-app.get("/api/debug-sentry", (_req, _res) => {
-  throw new Error("My first Sentry error!");
-});
-
 (async () => {
   const server = await registerRoutes(app);
 
