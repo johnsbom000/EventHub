@@ -17,6 +17,9 @@ import { pendingRequestReminderTemplate, type PendingRequestReminderParams } fro
 import { disputeFiledTemplate, type DisputeFiledParams } from "./emails/disputeFiled";
 import { disputeVendorRespondedTemplate, type DisputeVendorRespondedParams } from "./emails/disputeVendorResponded";
 import { disputeResolvedTemplate, type DisputeResolvedParams } from "./emails/disputeResolved";
+import { disputeResponseTemplate, type DisputeResponseParams } from "./emails/disputeResponse";
+import { travelFeeProposedTemplate, type TravelFeeProposedParams } from "./emails/travelFeeProposed";
+import { travelFeeRespondedTemplate, type TravelFeeRespondedParams } from "./emails/travelFeeResponded";
 
 export type EmailResult = {
   sent: boolean;
@@ -237,5 +240,29 @@ export async function sendDisputeResolvedEmail(
   params: DisputeResolvedParams
 ): Promise<EmailResult> {
   const { subject, html, text } = disputeResolvedTemplate(params);
+  return sendViaResend({ to, subject, html, text });
+}
+
+export async function sendDisputeResponseEmail(
+  to: string,
+  params: DisputeResponseParams
+): Promise<EmailResult> {
+  const { subject, html, text } = disputeResponseTemplate(params);
+  return sendViaResend({ to, subject, html, text });
+}
+
+export async function sendTravelFeeProposedEmail(
+  to: string,
+  params: TravelFeeProposedParams
+): Promise<EmailResult> {
+  const { subject, html, text } = travelFeeProposedTemplate(params);
+  return sendViaResend({ to, subject, html, text });
+}
+
+export async function sendTravelFeeRespondedEmail(
+  to: string,
+  params: TravelFeeRespondedParams
+): Promise<EmailResult> {
+  const { subject, html, text } = travelFeeRespondedTemplate(params);
   return sendViaResend({ to, subject, html, text });
 }
