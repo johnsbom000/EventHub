@@ -429,13 +429,13 @@ export default function VendorListingEdit() {
           .filter((value: string) => value.length > 0)
       : [];
     const canonicalPhotoNames = toUniqueTrimmedStringList(canonicalListing?.photos);
+    // canonicalListing.photos is CDN-resolved by the server; listingData sources store raw storage
+    // paths that 404 in production when files live only in cloud storage.
+    // Use canonical (CDN-ready) as the single source of truth; fall back to listingData only for
+    // legacy listings where the canonical column is empty.
+    const fromListingData = [...listingDataPhotoNames, ...listingDataPhotoUrls, ...listingDataPhotoFallback];
     const rawPhotoNames: string[] = Array.from(
-      new Set([
-        ...listingDataPhotoNames,
-        ...listingDataPhotoUrls,
-        ...listingDataPhotoFallback,
-        ...canonicalPhotoNames,
-      ]),
+      new Set(canonicalPhotoNames.length > 0 ? canonicalPhotoNames : fromListingData),
     );
     const storedCoverIndex = Number(ld?.photos?.coverPhotoIndex);
     const safeStoredCoverIndex =

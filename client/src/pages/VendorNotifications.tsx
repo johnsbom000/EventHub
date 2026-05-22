@@ -17,6 +17,7 @@ import {
 import { Tabs, TabsList, TabsTrigger } from "@/components/ui/tabs";
 import { apiRequest } from "@/lib/queryClient";
 import { useToast } from "@/hooks/use-toast";
+import { useFeeRates } from "@/hooks/useFeeRates";
 
 const FILTER_TAB_ACTIVE_CLASSNAME =
   "data-[state=active]:bg-primary data-[state=active]:text-primary-foreground data-[state=active]:shadow-sm data-[state=active]:hover:bg-primary";
@@ -103,7 +104,7 @@ function formatUsd(cents: number) {
   }).format((cents || 0) / 100);
 }
 
-function deriveBookingAmounts(booking: VendorBooking) {
+function deriveBookingAmounts(booking: VendorBooking, vendorFeeRate: number) {
   const customerTotalCents = normalizeAmountToCents(booking.totalAmount ?? 0);
   const vendorFeeCents = normalizeAmountToCents(booking.platformFee ?? 0);
   const storedPayoutCents = normalizeAmountToCents(booking.vendorPayout ?? 0);
@@ -125,7 +126,7 @@ function deriveBookingAmounts(booking: VendorBooking) {
 
   const listingPriceCents = Math.max(0, Math.round(customerTotalCents / 1.05));
   const customerFeeCents = Math.max(0, customerTotalCents - listingPriceCents);
-  const derivedVendorFeeCents = Math.max(0, Math.round(listingPriceCents * 0.08));
+  const derivedVendorFeeCents = Math.max(0, Math.round(listingPriceCents * vendorFeeRate));
   const estimatedPayoutCents = Math.max(0, listingPriceCents - derivedVendorFeeCents);
 
   return {
@@ -236,6 +237,7 @@ export default function VendorNotifications() {
   const { isAuthenticated } = useAuth0();
   const queryClient = useQueryClient();
   const { toast } = useToast();
+  const { vendorFeeRate } = useFeeRates();
 
   const [activeBookingNotificationId, setActiveBookingNotificationId] = useState<string | null>(null);
   const [readTab, setReadTab] = useState<"unread" | "read">("unread");
@@ -416,7 +418,7 @@ export default function VendorNotifications() {
   );
 
   const activeBooking = activeBookingNotification?.booking ?? null;
-  const activeBookingAmounts = activeBooking ? deriveBookingAmounts(activeBooking) : null;
+  const activeBookingAmounts = activeBooking ? deriveBookingAmounts(activeBooking, vendorFeeRate) : null;
   const activeIncludedItems = Array.isArray(activeBooking?.includedItems)
     ? activeBooking.includedItems.filter((item) => typeof item === "string" && item.trim().length > 0)
     : [];
