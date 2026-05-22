@@ -2,9 +2,11 @@ import { useEffect, useMemo, useRef, useState } from "react";
 import mapboxgl from "mapbox-gl";
 import "mapbox-gl/dist/mapbox-gl.css";
 import { Card } from "@/components/ui/card";
+import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
 import { Slider } from "@/components/ui/slider";
 import { LocationPicker } from "@/components/LocationPicker";
+import type { LocationResult } from "@/types/location";
 import type { ListingDraft } from "../wizardTypes";
 
 const MAPBOX_TOKEN =
@@ -12,13 +14,37 @@ const MAPBOX_TOKEN =
   (import.meta.env.VITE_MAPBOX_ACCESS_TOKEN as string | undefined) ??
   "";
 
-// GeoJSON circle helper (same as original wizard)
+function isServiceLocationExact(loc: LocationResult | null | undefined): boolean {
+  if (!loc) return false;
+  if (!Number.isFinite(loc.lat) || !Number.isFinite(loc.lng)) return false;
+  if (!loc.placeType) return true;
+  return loc.placeType === "address" || loc.placeType === "poi" || loc.placeType === "pin";
+}
+
+function parseAddressFromLabel(label: string): {
+  streetAddress: string;
+  city: string;
+  state: string;
+  zipCode: string;
+} {
+  const parts = label.split(",").map((p) => p.trim());
+  if (parts.length < 2) return { streetAddress: "", city: "", state: "", zipCode: "" };
+  const streetAddress = parts[0] ?? "";
+  const city = parts[1] ?? "";
+  const stateZip = parts[2] ?? "";
+  const stateZipMatch = stateZip.match(/^([A-Za-z ]+)\s+(\d{5}(?:-\d{4})?)?$/);
+  const state = stateZipMatch?.[1]?.trim() ?? stateZip;
+  const zipCode = stateZipMatch?.[2]?.trim() ?? "";
+  return { streetAddress, city, state, zipCode };
+}
+
+// GeoJSON circle helper
 function makeCircleGeoJSON(
   center: { lat: number; lng: number },
   radiusMiles: number,
   steps = 64
 ): GeoJSON.Feature<GeoJSON.Polygon> {
-  const R = 3958.8; // Earth radius in miles
+  const R = 3958.8;
   const lat = (center.lat * Math.PI) / 180;
   const lng = (center.lng * Math.PI) / 180;
   const d = radiusMiles / R;
@@ -58,7 +84,7 @@ export function ServiceAreaStep({ draft, setDraft, showValidation }: ServiceArea
   }, [draft.serviceCenter, draft.serviceLocation]);
 
   const hasLocation =
-    Boolean(draft.serviceLocation?.label) &&
+    (Boolean(draft.serviceStreetAddress?.trim()) || isServiceLocationExact(draft.serviceLocation)) &&
     Number.isFinite(Number(draft.serviceCenter?.lat)) &&
     Number.isFinite(Number(draft.serviceCenter?.lng)) &&
     Number(draft.serviceRadiusMiles) > 0;
@@ -102,7 +128,6 @@ export function ServiceAreaStep({ draft, setDraft, showValidation }: ServiceArea
       }
       return;
     }
-    // Center change is handled by the fitBounds effect below once the map is ready
   }, [center]);
 
   // Update circle layer and fit map to circle on radius or center change
@@ -119,7 +144,6 @@ export function ServiceAreaStep({ draft, setDraft, showValidation }: ServiceArea
         map.addLayer({ id: "coverage-line", type: "line", source: "coverage", paint: { "line-color": "#2B7A67", "line-width": 2 } });
       }
 
-      // Fit the map viewport to the circle so the full radius is always visible
       const coords = circleData.geometry.coordinates[0];
       const bounds = coords.reduce(
         (b, [lng, lat]) => b.extend([lng, lat] as [number, number]),
@@ -130,6 +154,13 @@ export function ServiceAreaStep({ draft, setDraft, showValidation }: ServiceArea
       // non-blocking
     }
   }, [center, draft.serviceRadiusMiles, isMapReady]);
+
+  const showAddressFields =
+    Boolean(draft.serviceLocation) ||
+    Boolean(draft.serviceStreetAddress) ||
+    Boolean(draft.serviceCity) ||
+    Boolean(draft.serviceState) ||
+    Boolean(draft.serviceZip);
 
   return (
     <div className="mx-auto w-full max-w-[53rem] space-y-8">
@@ -146,30 +177,98 @@ export function ServiceAreaStep({ draft, setDraft, showValidation }: ServiceArea
           <LocationPicker
             value={draft.serviceLocation}
             placeholder="Search listing service center"
+            requirePrecise
             onChange={(location) => {
               setMapError(null);
-              const normalizedLocation = location
-                ? {
-                    ...location,
-                    country:
-                      typeof (location as any)?.country === "string" &&
-                      String((location as any).country).trim().length > 0
-                        ? (location as any).country
-                        : "United States",
-                  }
-                : null;
+              if (!location) {
+                setDraft((prev) => ({
+                  ...prev,
+                  serviceLocation: null,
+                  serviceStreetAddress: "",
+                  serviceCity: "",
+                  serviceState: "",
+                  serviceZip: "",
+                }));
+                return;
+              }
+              const normalizedLocation: LocationResult = {
+                ...location,
+                country:
+                  typeof (location as any)?.country === "string" &&
+                  String((location as any).country).trim().length > 0
+                    ? (location as any).country
+                    : "United States",
+              };
+              const label = location.label || (location as any).place_name || "";
+              const parsed = parseAddressFromLabel(label);
+              const isExact = isServiceLocationExact(location);
               setDraft((prev) => ({
                 ...prev,
                 serviceLocation: normalizedLocation,
-                serviceCenter: normalizedLocation
-                  ? { lat: normalizedLocation.lat, lng: normalizedLocation.lng }
-                  : prev.serviceCenter,
+                serviceCenter: { lat: normalizedLocation.lat, lng: normalizedLocation.lng },
+                serviceStreetAddress: isExact ? (parsed.streetAddress || "") : "",
+                serviceCity: (location as any).city || parsed.city || "",
+                serviceState: (location as any).state || parsed.state || "",
+                serviceZip: (location as any).postalCode || parsed.zipCode || "",
               }));
             }}
           />
+
+          {showAddressFields ? (
+            <div className="space-y-3 pt-1">
+              <div className="space-y-1.5">
+                <Label className="text-sm font-medium">
+                  Street address <span className="text-destructive">*</span>
+                </Label>
+                <Input
+                  value={draft.serviceStreetAddress}
+                  onChange={(e) => setDraft((prev) => ({ ...prev, serviceStreetAddress: e.target.value }))}
+                  placeholder="e.g. 123 Main St"
+                  className={`h-10 ${showValidation && !draft.serviceStreetAddress.trim() ? "border-destructive focus-visible:ring-destructive" : ""}`}
+                />
+                {showValidation && !draft.serviceStreetAddress.trim() ? (
+                  <p className="text-sm text-destructive">Street address is required.</p>
+                ) : null}
+              </div>
+              <div className="grid grid-cols-2 gap-3">
+                <div className="space-y-1.5">
+                  <Label className="text-sm font-medium">City</Label>
+                  <Input
+                    value={draft.serviceCity}
+                    onChange={(e) => setDraft((prev) => ({ ...prev, serviceCity: e.target.value }))}
+                    placeholder="City"
+                    className="h-10"
+                  />
+                </div>
+                <div className="space-y-1.5">
+                  <Label className="text-sm font-medium">State</Label>
+                  <Input
+                    value={draft.serviceState}
+                    onChange={(e) => setDraft((prev) => ({ ...prev, serviceState: e.target.value }))}
+                    placeholder="State"
+                    className="h-10"
+                  />
+                </div>
+              </div>
+              <div className="space-y-1.5">
+                <Label className="text-sm font-medium">ZIP code</Label>
+                <Input
+                  value={draft.serviceZip}
+                  onChange={(e) => setDraft((prev) => ({ ...prev, serviceZip: e.target.value }))}
+                  placeholder="ZIP"
+                  className="h-10"
+                />
+              </div>
+            </div>
+          ) : (
+            <p className="text-xs text-muted-foreground">
+              Select a specific address above to auto-fill, or drop a pin on the map for outdoor locations.
+            </p>
+          )}
+
           {showValidation && !hasLocation ? (
             <p className="text-sm text-destructive">
-              Service center and radius are required to continue.
+              A specific street address (or pinned location) and radius are required to continue.
             </p>
           ) : null}
         </div>

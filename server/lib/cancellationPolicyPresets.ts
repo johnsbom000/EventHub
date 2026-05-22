@@ -88,6 +88,72 @@ export interface PolicyValidationError {
   message: string;
 }
 
+/**
+ * Convert the listing wizard's simple policy string + window into a full CancellationPolicy.
+ * The `days` param stores hours for `cancel_within_hours` and days for `cancel_within_days`.
+ */
+export function policyFromListingWizard(
+  policy: string | null | undefined,
+  days: number | null | undefined
+): CancellationPolicy {
+  const n = typeof days === "number" && days > 0 ? days : null;
+
+  switch (policy) {
+    case "cancel_anytime":
+      return {
+        preset_type: "flexible",
+        tiers: [{ days_before_event: 0, refund_percentage: 100 }],
+        allow_reschedule: false,
+        reschedule_window_months: 1,
+        weather_clause: false,
+        force_majeure_clause: false,
+      };
+
+    case "cancel_within_hours": {
+      const windowDays = Math.max(1, Math.ceil((n ?? 48) / 24));
+      return {
+        preset_type: "custom",
+        tiers: [
+          { days_before_event: windowDays, refund_percentage: 100 },
+          { days_before_event: 0, refund_percentage: 0 },
+        ],
+        allow_reschedule: false,
+        reschedule_window_months: 1,
+        weather_clause: false,
+        force_majeure_clause: false,
+      };
+    }
+
+    case "cancel_within_days": {
+      const windowDays = Math.max(1, n ?? 7);
+      return {
+        preset_type: "custom",
+        tiers: [
+          { days_before_event: windowDays, refund_percentage: 100 },
+          { days_before_event: 0, refund_percentage: 0 },
+        ],
+        allow_reschedule: false,
+        reschedule_window_months: 1,
+        weather_clause: false,
+        force_majeure_clause: false,
+      };
+    }
+
+    case "no_cancellations":
+      return {
+        preset_type: "custom",
+        tiers: [{ days_before_event: 0, refund_percentage: 0 }],
+        allow_reschedule: false,
+        reschedule_window_months: 1,
+        weather_clause: false,
+        force_majeure_clause: false,
+      };
+
+    default:
+      return PRESET_FLEXIBLE;
+  }
+}
+
 export function validatePolicy(policy: CancellationPolicy): PolicyValidationError[] {
   const errors: PolicyValidationError[] = [];
 

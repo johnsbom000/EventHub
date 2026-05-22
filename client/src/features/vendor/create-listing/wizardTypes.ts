@@ -52,6 +52,10 @@ export type ListingDraft = {
   serviceRadiusMiles: number;
   serviceLocation: LocationResult | null;
   serviceCenter: { lat: number; lng: number } | null;
+  serviceStreetAddress: string;
+  serviceCity: string;
+  serviceState: string;
+  serviceZip: string;
 
   travelOffered: boolean;
   travelFeeEnabled: boolean;
@@ -107,6 +111,10 @@ export const DEFAULT_DRAFT: ListingDraft = {
   serviceRadiusMiles: 30,
   serviceLocation: null,
   serviceCenter: null,
+  serviceStreetAddress: "",
+  serviceCity: "",
+  serviceState: "",
+  serviceZip: "",
 
   travelOffered: false,
   travelFeeEnabled: false,
