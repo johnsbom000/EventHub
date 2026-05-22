@@ -71,17 +71,18 @@ import {
   sendDisputeFiledEmail,
   sendDisputeVendorRespondedEmail,
   sendDisputeResolvedEmail,
+  sendDisputeResponseEmail,
+  sendTravelFeeProposedEmail,
+  sendTravelFeeRespondedEmail,
 } from "./email";
 import { calculateRefund } from "./lib/calculateRefund";
 import {
   CancellationPolicy,
   PRESET_FLEXIBLE,
-  PRESET_MODERATE,
-  validatePolicy,
+  policyFromListingWizard,
 } from "./lib/cancellationPolicyPresets";
-import { vendorCancellationPolicies } from "../shared/schema";
-import { checkContent, blockReasonSummary } from "./circumvention-detection";
-import { translateListingAsync, getListingTranslation, resolveRequestLanguage } from "./translationService";
+import { checkContent, blockReasonSummary } from "../shared/circumvention-detection";
+import { translateListingAsync, getListingTranslation, ensureListingTranslation, resolveRequestLanguage } from "./translationService";
 import {
   uploadBufferToObjectStorage,
   makeObjectKey,
@@ -201,6 +202,8 @@ import {
   AUTO_PAYOUT_INTERVAL_MS,
   BOOKING_PENDING_EXPIRY_MINUTES,
   BOOKING_PENDING_EXPIRY_REASON,
+  BOOKING_VENDOR_RESPONSE_EXPIRY_DAYS,
+  BOOKING_VENDOR_NO_RESPONSE_REASON,
   MIN_LISTING_PHOTO_COUNT,
   LISTING_DESCRIPTION_MAX_CHARS,
   LISTING_SUBCATEGORY_MAX_CHARS,
@@ -654,6 +657,14 @@ async function syncBookingToGoogleCalendarSafely(bookingId: string, route: strin
     logRouteError(route, new Error(result.error));
   }
   return result;
+}
+
+/** Returns the public-facing app URL used in email links.
+ *  APP_URL is the frontend origin (correct in all envs).
+ *  Falls back to SERVER_URL for backwards compatibility in production
+ *  where both are the same domain. */
+function appUrl(): string {
+  return (process.env.APP_URL || process.env.SERVER_URL || "http://localhost:5173").replace(/\/$/, "");
 }
 
 async function syncExistingBookingsToSelectedGoogleCalendar(
@@ -1330,7 +1341,7 @@ async function processSinglePayoutCandidate(params: {
     if (persisted.outcome === "paid") {
       void (async () => {
         try {
-          const serverUrl = (process.env.SERVER_URL || "http://localhost:5001").replace(/\/$/, "");
+          const serverUrl = appUrl();
           // Mark payout_email_sent to prevent duplicates, then send
           const updateResult = await db
             .update(payments)
@@ -1542,6 +1553,159 @@ async function expireStalePendingBookings() {
   return bookingIds.length;
 }
 
+async function cancelUnansweredBookingRequests(): Promise<number> {
+  const now = new Date();
+
+  // Find paid bookings that required vendor confirmation but were never acted on.
+  // Criteria: still 'pending' (not confirmed/declined), payment succeeded, and
+  // the booking was either request-to-book or outside the listing's service radius.
+  const candidateRows: any = await db.execute(drizzleSql`
+    select
+      b.id                                    as id,
+      b.total_amount                          as total_amount,
+      coalesce(b.listing_title_snapshot, '')  as listing_title,
+      b.event_date                            as event_date,
+      va.email                                as vendor_email,
+      coalesce(va.business_name, '')          as vendor_name,
+      u.email                                 as customer_email,
+      coalesce(u.name, '')                    as customer_name
+    from bookings b
+    join vendor_accounts va on va.id = b.vendor_account_id
+    join users u            on u.id  = b.customer_id
+    where b.status = 'pending'
+      and b.payment_status in ('paid', 'succeeded', 'partial', 'partially_refunded')
+      and (b.instant_book_snapshot = false or b.outside_service_radius = true)
+      and b.created_at < now() - (${BOOKING_VENDOR_RESPONSE_EXPIRY_DAYS} * interval '1 day')
+  `);
+
+  type CandidateRow = {
+    id: string;
+    total_amount: number;
+    listing_title: string;
+    event_date: string;
+    vendor_email: string;
+    vendor_name: string;
+    customer_email: string;
+    customer_name: string;
+  };
+
+  const candidates = extractRows<CandidateRow>(candidateRows).filter(
+    (r): r is CandidateRow => Boolean(r?.id && r?.customer_email)
+  );
+
+  if (candidates.length === 0) return 0;
+
+  const { refundBookingPayment } = await import("./stripe");
+  const serverUrl = appUrl();
+  let cancelled = 0;
+
+  for (const row of candidates) {
+    try {
+      // Fetch all refundable payments for this booking.
+      const bookingPayments = await db
+        .select({
+          id: payments.id,
+          paymentType: payments.paymentType,
+          stripePaymentIntentId: payments.stripePaymentIntentId,
+          status: payments.status,
+          amount: payments.amount,
+          refundAmount: payments.refundAmount,
+        })
+        .from(payments)
+        .where(
+          and(
+            eq(payments.bookingId, row.id),
+            or(eq(payments.status, "succeeded"), eq(payments.status, "partially_refunded"))
+          )
+        );
+
+      // Mark the booking cancelled.
+      await db
+        .update(bookings)
+        .set({
+          status: "cancelled" as const,
+          cancellationReason: BOOKING_VENDOR_NO_RESPONSE_REASON,
+          cancelledAt: now,
+          updatedAt: now,
+        })
+        .where(eq(bookings.id, row.id));
+
+      // Issue full refunds and mark each payment record.
+      let totalRefundedCents = 0;
+      for (const p of bookingPayments) {
+        const alreadyRefunded = typeof p.refundAmount === "number" ? p.refundAmount : 0;
+        const refundable = Math.max(0, p.amount - alreadyRefunded);
+        if (refundable > 0 && p.stripePaymentIntentId) {
+          try {
+            await refundBookingPayment({
+              paymentIntentId: p.stripePaymentIntentId,
+              amount: refundable,
+              reason: "duplicate",
+              idempotencyKey: `vendor-no-response:${row.id}:${p.id}`,
+            });
+          } catch (stripeErr: any) {
+            logger.warn(`[vendor-no-response] Stripe refund failed for payment ${p.id}:`, stripeErr?.message);
+          }
+        }
+        await db
+          .update(payments)
+          .set({
+            status: "refunded" as any,
+            refundAmount: p.amount,
+            refundReason: BOOKING_VENDOR_NO_RESPONSE_REASON,
+            refundedAt: now,
+            payoutStatus: "cancelled",
+            payoutEligibleAt: null,
+            payoutBlockedReason: BOOKING_VENDOR_NO_RESPONSE_REASON,
+            payoutAdjustedAmount: 0,
+          })
+          .where(eq(payments.id, p.id));
+        totalRefundedCents += refundable;
+      }
+
+      // Fire-and-forget: emails + calendar sync.
+      const vendorReasonNote = `This booking was automatically cancelled because it was not accepted within ${BOOKING_VENDOR_RESPONSE_EXPIRY_DAYS} days.`;
+      const customerReasonNote = `Your vendor did not respond within ${BOOKING_VENDOR_RESPONSE_EXPIRY_DAYS} days. Your booking has been automatically cancelled and a full refund has been issued.`;
+
+      Promise.allSettled([
+        row.customer_email
+          ? sendBookingCancelledEmail(row.customer_email, {
+              recipientName: row.customer_name || "Customer",
+              counterpartName: row.vendor_name || "Vendor",
+              eventDate: row.event_date,
+              listingTitle: row.listing_title || "Service",
+              role: "customer",
+              cancelledBy: "system",
+              reasonNote: customerReasonNote,
+              totalAmountCents: row.total_amount,
+              refundAmountCents: totalRefundedCents,
+              serverUrl,
+            })
+          : Promise.resolve(),
+        row.vendor_email
+          ? sendBookingCancelledEmail(row.vendor_email, {
+              recipientName: row.vendor_name || "Vendor",
+              counterpartName: row.customer_name || "Customer",
+              eventDate: row.event_date,
+              listingTitle: row.listing_title || "Service",
+              role: "vendor",
+              cancelledBy: "system",
+              reasonNote: vendorReasonNote,
+              serverUrl,
+            })
+          : Promise.resolve(),
+        syncBookingToGoogleCalendarSafely(row.id, "cancelUnansweredBookingRequests google-sync"),
+      ]).catch(() => {});
+
+      cancelled++;
+    } catch (err: any) {
+      logger.warn(`[vendor-no-response] failed to cancel booking ${row.id}:`, err?.message || err);
+    }
+  }
+
+  return cancelled;
+}
+
 async function ensurePaymentRecordForIntentInTx(
   tx: any,
   params: {
@@ -1588,6 +1752,9 @@ async function ensurePaymentRecordForIntentInTx(
     })
     .from(payments)
     .where(eq(payments.stripePaymentIntentId, paymentIntentId))
+    // When a deposit is collected in the same PaymentIntent, two rows exist.
+    // Always prefer the 'booking' row so webhook logic operates on the service payment.
+    .orderBy(drizzleSql`CASE WHEN payment_type = 'booking' THEN 0 ELSE 1 END`)
     .limit(1);
   if (existingRows[0]) {
     const existingPayment = existingRows[0];
@@ -1722,10 +1889,9 @@ async function ensurePaymentRecordForIntentInTx(
  * If a pending PaymentIntent already exists for this booking (idempotent resume),
  * the existing clientSecret is returned instead of creating a new one.
  *
- * When the booking has a security deposit, setup_future_usage='off_session' is set
- * so Stripe saves the payment method. The webhook handler then uses the saved
- * payment method to charge the security deposit server-side after this payment
- * succeeds.
+ * When the booking has a security deposit, it is included in the same PaymentIntent
+ * as the service charge. A separate 'security_deposit' row is inserted in the payments
+ * table so it can be partially refunded independently after the event.
  */
 async function initializeBookingPayment(input: {
   bookingId: string;
@@ -1797,19 +1963,21 @@ async function initializeBookingPayment(input: {
     }
   }
 
-  const needsSecurityDeposit = (booking.securityDepositCents ?? 0) > 0;
-  const stripeCustomerId = needsSecurityDeposit
-    ? await ensureStripeCustomer(customerId, input.customerEmail)
-    : undefined;
-
+  // Security deposit is included in the single upfront PaymentIntent.
+  // The deposit amount is tracked in a separate payments row so it can be
+  // partially refunded independently of the service payment.
+  const securityDepositCents = Math.max(0, parseIntegerValue(booking.securityDepositCents) ?? 0);
   const totalAmountCents = parseIntegerValue(booking.totalAmount) ?? 0;
-  const platformFeeAmount = parseIntegerValue(booking.platformFee) ?? Math.round(totalAmountCents * VENDOR_FEE_RATE);
-  const vendorGrossAmount = parseIntegerValue(booking.subtotalAmountCents) ?? Math.max(0, totalAmountCents - platformFeeAmount);
-  const vendorNetPayoutAmount = parseIntegerValue(booking.vendorPayout) ?? Math.max(0, totalAmountCents - platformFeeAmount);
+  // Service-only total = full booking charge minus the security deposit portion.
+  // Used for payout/fee calculations so the deposit never reaches the vendor.
+  const serviceOnlyTotal = Math.max(0, totalAmountCents - securityDepositCents);
+  const platformFeeAmount = parseIntegerValue(booking.platformFee) ?? Math.round(serviceOnlyTotal * VENDOR_FEE_RATE);
+  const vendorGrossAmount = parseIntegerValue(booking.subtotalAmountCents) ?? Math.max(0, serviceOnlyTotal - platformFeeAmount);
+  const vendorNetPayoutAmount = parseIntegerValue(booking.vendorPayout) ?? Math.max(0, serviceOnlyTotal - platformFeeAmount);
   const stripeProcessingFeeEstimate = estimateStripeProcessingFeeCents(totalAmountCents);
 
   const paymentIntent = await createBookingPaymentIntent({
-    amount: totalAmountCents,
+    amount: totalAmountCents, // full charge including security deposit
     platformFeeAmount,
     vendorNetPayoutAmount,
     vendorGrossAmount,
@@ -1823,18 +1991,22 @@ async function initializeBookingPayment(input: {
     description: `Booking ${booking.id}`,
     bookingId: booking.id,
     paymentType: "booking",
-    stripeCustomerId,
-    setupFutureUsage: needsSecurityDeposit ? "off_session" : undefined,
     idempotencyKey: `booking-payment:${booking.id}`,
   });
 
+  const payoutEligibleAt =
+    booking.bookingEndAt instanceof Date
+      ? new Date(booking.bookingEndAt.getTime() + DISPUTE_WINDOW_HOURS * 60 * 60 * 1000)
+      : null;
+
+  // Insert the service payment row (used for payout tracking and booking status).
   await db.insert(payments).values({
     bookingId: booking.id,
     customerId: booking.customerId,
     vendorAccountId: booking.vendorAccountId,
     stripePaymentIntentId: paymentIntent.id,
-    amount: totalAmountCents,
-    totalAmount: totalAmountCents,
+    amount: serviceOnlyTotal,
+    totalAmount: serviceOnlyTotal,
     platformFeeAmount,
     vendorGrossAmount,
     vendorNetPayoutAmount,
@@ -1843,11 +2015,28 @@ async function initializeBookingPayment(input: {
     paymentType: "booking",
     status: "pending",
     payoutStatus: "not_ready",
-    payoutEligibleAt:
-      booking.bookingEndAt instanceof Date
-        ? new Date(booking.bookingEndAt.getTime() + DISPUTE_WINDOW_HOURS * 60 * 60 * 1000)
-        : null,
+    payoutEligibleAt,
   }).onConflictDoNothing(); // Safe if called twice before confirmation
+
+  // Insert the security deposit row (same PaymentIntent, tracked separately for refunds).
+  if (securityDepositCents > 0) {
+    await db.insert(payments).values({
+      bookingId: booking.id,
+      customerId: booking.customerId,
+      vendorAccountId: booking.vendorAccountId,
+      stripePaymentIntentId: paymentIntent.id,
+      amount: securityDepositCents,
+      totalAmount: securityDepositCents,
+      platformFeeAmount: 0,
+      vendorGrossAmount: 0,
+      vendorNetPayoutAmount: 0,
+      stripeConnectedAccountId: vendorAccount.stripeConnectId,
+      paymentType: "security_deposit",
+      status: "pending",
+      payoutStatus: "blocked",
+      payoutBlockedReason: "security_deposit",
+    }).onConflictDoNothing();
+  }
 
   return { booking, clientSecret: paymentIntent.client_secret, paymentIntentId: paymentIntent.id };
 }
@@ -1907,6 +2096,17 @@ async function listCustomerBookingChatContexts(customerId: string): Promise<Book
       va.email as "vendorEmail",
       coalesce(b.event_date::text, e.date) as "eventDate",
       e.path as "eventTitle",
+      (
+        select coalesce(
+          nullif(trim(bi_t.item_data->>'listingTitle'), ''),
+          nullif(trim(vl_t.title), '')
+        )
+        from booking_items bi_t
+        left join vendor_listings vl_t on vl_t.id = bi_t.listing_id
+        where bi_t.booking_id = b.id
+        order by bi_t.id asc
+        limit 1
+      ) as "bookingTitle",
       b.status as "status",
       b.payment_status as "paymentStatus",
       b.created_at as "createdAt",
@@ -1948,6 +2148,17 @@ async function listVendorBookingChatContexts(vendorAccountId: string): Promise<B
       va.email as "vendorEmail",
       coalesce(b.event_date::text, e.date) as "eventDate",
       e.path as "eventTitle",
+      (
+        select coalesce(
+          nullif(trim(bi_t.item_data->>'listingTitle'), ''),
+          nullif(trim(vl_t.title), '')
+        )
+        from booking_items bi_t
+        left join vendor_listings vl_t on vl_t.id = bi_t.listing_id
+        where bi_t.booking_id = b.id
+        order by bi_t.id asc
+        limit 1
+      ) as "bookingTitle",
       b.status as "status",
       b.payment_status as "paymentStatus",
       b.created_at as "createdAt",
@@ -2101,27 +2312,23 @@ function computeCanonicalBookingTimeRange(input: {
   }
 
   if (hasEventTimeRange) {
-    const eventStartMinutes = parseTimeValueToMinutes(eventStartTime);
-    const eventEndMinutes = parseTimeValueToMinutes(eventEndTime);
-    if (eventStartMinutes == null || eventEndMinutes == null) {
-      throw new Error("Per-day event start/end times are invalid");
-    }
-    if (eventEndMinutes <= eventStartMinutes) {
-      throw new Error("Per-day event end time must be after the event start time");
-    }
-    if (endDate !== eventDate) {
-      throw new Error("Per-day bookings must start and end on the same day");
-    }
-  }
-
-  if (hasEventTimeRange) {
     const startMinutes = parseTimeValueToMinutes(eventStartTime);
     const endMinutes = parseTimeValueToMinutes(eventEndTime);
     if (startMinutes == null || endMinutes == null) {
       throw new Error("Per-day event start/end times are invalid");
     }
+    if (startMinutes === endMinutes) {
+      throw new Error("Event start and end times cannot be the same");
+    }
+    // End time before start time means the event crosses midnight (e.g. 8 PM – 12 AM).
+    // Compute the end timestamp against the following day in that case.
+    const pastMidnight = endMinutes < startMinutes;
+    const eventEndDateStr = pastMidnight ? addDaysToIsoDate(eventDate, 1) : eventDate;
+    if (!eventEndDateStr) {
+      throw new Error("Per-day event end time is invalid");
+    }
     const bookingStartAt = zonedDateTimeToUtc(eventDate, startMinutes, bookingTimeZone);
-    const bookingEndAt = zonedDateTimeToUtc(eventDate, endMinutes, bookingTimeZone);
+    const bookingEndAt = zonedDateTimeToUtc(eventEndDateStr, endMinutes, bookingTimeZone);
     if (!(bookingStartAt instanceof Date) || Number.isNaN(bookingStartAt.getTime())) {
       throw new Error("Per-day event start time is invalid");
     }
@@ -2678,7 +2885,10 @@ async function buildGoogleBookingReconciliationForVendorAccount(account: any) {
     Boolean(selectedGoogleCalendarId);
 
   const bookingRows = await listGoogleSyncReconciliationCandidatesForVendorAccount(account.id);
-  const activeBookingRows = bookingRows.filter((row: any) => asTrimmedString(row?.status).toLowerCase() !== "cancelled");
+  const activeBookingRows = bookingRows.filter((row: any) => {
+    const s = asTrimmedString(row?.status).toLowerCase();
+    return s !== "cancelled" && s !== "expired" && s !== "failed";
+  });
   let googleCalendarReadStatus: "checked" | "skipped" | "failed" = googleEnabled ? "checked" : "skipped";
   let googleCalendarReadError: string | null = null;
   let existingGoogleEventIds = new Set<string>();
@@ -2747,7 +2957,10 @@ async function buildGoogleBookingReconciliationForVendorAccount(account: any) {
 
   const issues: GoogleBookingReconciliationIssue[] = bookingRows.flatMap((row: any) => {
     const status = asTrimmedString(row?.status).toLowerCase();
-    if (status === "cancelled") return [];
+    // Cancelled, expired, and failed bookings should never have a Google Calendar event.
+    // The sync function already handles these correctly (no event created / existing deleted).
+    // Showing them as sync issues is misleading — there's nothing actionable for the vendor.
+    if (status === "cancelled" || status === "expired" || status === "failed") return [];
 
     const issueCodes: string[] = [];
     const googleSyncStatus = asTrimmedString(row?.googleSyncStatus).toLowerCase();
@@ -3301,6 +3514,13 @@ function formatCentsAsDollars(cents: number): string {
   return new Intl.NumberFormat("en-US", { style: "currency", currency: "USD" }).format(cents / 100);
 }
 
+// Drizzle's sql template doesn't serialize JS arrays to PostgreSQL text[]
+// format. Convert explicitly: ['a','b'] → '{"a","b"}'
+function toPgTextArray(arr: string[]): string {
+  if (arr.length === 0) return '{}';
+  return `{${arr.map(s => '"' + s.replace(/\\/g, '\\\\').replace(/"/g, '\\"') + '"').join(',')}}`;
+}
+
 export async function registerRoutes(app: Express): Promise<Server> {
   // --- Listing photo uploads (local disk) ---
   const listingUploadsDir = path.join(process.cwd(), "server/uploads/listings");
@@ -3330,6 +3550,10 @@ export async function registerRoutes(app: Express): Promise<Server> {
       const expiredCount = await expireStalePendingBookings();
       if (expiredCount > 0) {
         logger.info(`[booking expiry] expired stale pending bookings: ${expiredCount}`);
+      }
+      const noResponseCount = await cancelUnansweredBookingRequests();
+      if (noResponseCount > 0) {
+        logger.info(`[booking expiry] auto-cancelled ${noResponseCount} unanswered booking request(s) after ${BOOKING_VENDOR_RESPONSE_EXPIRY_DAYS} days`);
       }
       expiryBackoffMs = 5 * 60 * 1000; // reset on success
     } catch (error: any) {
@@ -3429,7 +3653,7 @@ export async function registerRoutes(app: Express): Promise<Server> {
 
   const runReviewPromptJob = async () => {
     try {
-      const serverUrl = (process.env.SERVER_URL || "http://localhost:5001").replace(/\/$/, "");
+      const serverUrl = appUrl();
       const cutoff = new Date(Date.now() - 48 * 60 * 60 * 1000);
       const cutoffDate = cutoff.toISOString().split("T")[0]; // YYYY-MM-DD
 
@@ -3504,16 +3728,17 @@ export async function registerRoutes(app: Express): Promise<Server> {
   reviewPromptStartTimer.unref();
 
   // ── Google Calendar watch channel renewal ────────────────────────────────
-  // Channels expire in ~30 days. Run daily (staggered 10 min after startup)
-  // to renew any channel expiring within the next 7 days.
-  const WATCH_CHANNEL_RENEWAL_INTERVAL_MS = 24 * 60 * 60 * 1000; // 24 hours
+  // Channels expire in ~30 days. Renewal (expiring within 3 days) is cheap — just
+  // a DB read most runs. Missing-channel healing also runs each tick via the same job.
+  const WATCH_CHANNEL_RENEWAL_INTERVAL_MS = 60 * 1000; // 1 minute
   const runWatchChannelRenewal = async () => {
     try {
       const result = await renewExpiringGoogleCalendarWatchChannels();
-      if (result.renewed > 0 || result.failed > 0) {
+      if (result.renewed > 0 || result.healed > 0 || result.failed > 0) {
         logger.info(
-          "[watch channel renewal] renewed=%d failed=%d",
+          "[watch channel renewal] renewed=%d healed=%d failed=%d",
           result.renewed,
+          result.healed,
           result.failed
         );
       }
@@ -3525,7 +3750,7 @@ export async function registerRoutes(app: Express): Promise<Server> {
     void runWatchChannelRenewal();
     const watchRenewalTimer = setInterval(() => void runWatchChannelRenewal(), WATCH_CHANNEL_RENEWAL_INTERVAL_MS);
     watchRenewalTimer.unref();
-  }, 10 * 60 * 1000);
+  }, 15 * 1000);
   watchRenewalStartTimer.unref();
 
   // ── Event day reminder job ────────────────────────────────────────────────
@@ -3535,7 +3760,7 @@ export async function registerRoutes(app: Express): Promise<Server> {
 
   const runEventDayReminderJob = async () => {
     try {
-      const serverUrl = (process.env.SERVER_URL || "http://localhost:5001").replace(/\/$/, "");
+      const serverUrl = appUrl();
       // Find bookings whose event starts in the next 20–28 hours and haven't been reminded yet.
       // We use a window (not exactly 24h) so the job doesn't miss events between runs.
       const windowStart = new Date(Date.now() + 20 * 60 * 60 * 1000);
@@ -3637,7 +3862,7 @@ export async function registerRoutes(app: Express): Promise<Server> {
 
   const runSuspensionLiftedJob = async () => {
     try {
-      const serverUrl = (process.env.SERVER_URL || "http://localhost:5001").replace(/\/$/, "");
+      const serverUrl = appUrl();
       const now = new Date();
 
       const rows: any = await db.execute(drizzleSql`
@@ -3700,7 +3925,7 @@ export async function registerRoutes(app: Express): Promise<Server> {
 
   const runPendingRequestReminderJob = async () => {
     try {
-      const serverUrl = (process.env.SERVER_URL || "http://localhost:5001").replace(/\/$/, "");
+      const serverUrl = appUrl();
       const now = new Date();
 
       // Load all pending bookings not yet confirmed/declined, created within the last 48h
@@ -3835,7 +4060,7 @@ export async function registerRoutes(app: Express): Promise<Server> {
   //   1. Booking has security_deposit_cents > 0
   //   2. security_deposit_refunded_at IS NULL (not yet refunded)
   //   3. booking_end_at + 72h has passed (falls back to event_date + 4 days)
-  //   4. No open dispute_cases row exists for the booking
+  //   4. No unresolved dispute_cases row exists for the booking (open OR pending_review)
   //   5. A succeeded security_deposit (or legacy deposit) payment row exists
   //
   // Runs every hour; uses a distributed lock to prevent double-refunds across
@@ -3874,7 +4099,7 @@ export async function registerRoutes(app: Express): Promise<Server> {
           )
           AND NOT EXISTS (
             SELECT 1 FROM dispute_cases dc
-            WHERE dc.booking_id = b.id AND dc.status = 'open'
+            WHERE dc.booking_id = b.id AND dc.status != 'resolved'
           )
         LIMIT 50
       `);
@@ -4048,6 +4273,7 @@ app.post(
   app.post(
     "/api/uploads/dispute-attachment",
     uploadRateLimiter,
+    requireAuth0,
     disputeAttachmentUpload.single("file"),
     async (req: any, res) => {
       const fileBuffer = req?.file?.buffer as Buffer | undefined;
@@ -4085,6 +4311,11 @@ app.post(
       }
     }
   );
+
+  // Public fee rate config — lets the frontend stay in sync with env-driven rates
+  app.get("/api/config/fees", (_req, res) => {
+    res.json({ vendorFeeRate: VENDOR_FEE_RATE, customerFeeRate: CUSTOMER_FEE_RATE });
+  });
 
   // Location search (used by LocationPicker autocomplete)
   app.get("/api/locations/search", async (req, res) => {
@@ -4463,10 +4694,10 @@ app.post(
     defaultLocation: z
       .object({
         label: z.string().min(1),
-        streetAddress: z.string().min(1),
-        city: z.string().min(1),
-        state: z.string().min(1),
-        zipCode: z.string().min(1),
+        streetAddress: z.string().optional(),
+        city: z.string().optional(),
+        state: z.string().optional(),
+        zipCode: z.string().optional(),
         lat: z.number().optional(),
         lng: z.number().optional(),
       })
@@ -4806,32 +5037,47 @@ app.post(
   app.get("/api/google/oauth/callback", async (req, res) => {
     const code = typeof req.query.code === "string" ? req.query.code.trim() : "";
     const state = typeof req.query.state === "string" ? req.query.state.trim() : "";
-    if (!code) {
-      return res.status(400).json({ error: "Missing OAuth code" });
+    const googleError = typeof req.query.error === "string" ? req.query.error.trim() : "";
+    const appUrl = (process.env.APP_URL || "http://localhost:5173").trim().replace(/\/+$/, "");
+    const isDev = process.env.NODE_ENV !== "production";
+
+    // Helper: redirect with an error code so the frontend toast can show what went wrong
+    const errorRedirect = (returnPath: string, reason: string) => {
+      const params = new URLSearchParams({ google_calendar: "error" });
+      if (isDev) params.set("reason", reason);
+      return res.redirect(`${appUrl}${returnPath}?${params.toString()}`);
+    };
+
+    // Google redirected with an error (e.g. user denied, redirect_uri_mismatch)
+    if (googleError || !code) {
+      logger.error({ googleError }, "Google OAuth callback — missing code or Google error");
+      return errorRedirect("/vendor/dashboard", googleError || "missing_code");
     }
 
     const clientId = (process.env.GOOGLE_CLIENT_ID || "").trim();
     const clientSecret = (process.env.GOOGLE_CLIENT_SECRET || "").trim();
     if (!clientId || !clientSecret) {
-      return res.status(500).json({ error: "Missing Google OAuth configuration" });
+      logger.error("Google OAuth callback — missing GOOGLE_CLIENT_ID or GOOGLE_CLIENT_SECRET");
+      return errorRedirect("/vendor/dashboard", "missing_oauth_config");
     }
 
     const redirectUri = (
       process.env.GOOGLE_REDIRECT_URI ||
       `${req.protocol}://${req.get("host")}/api/google/oauth/callback`
     ).trim();
-    const appUrl = (process.env.APP_URL || "http://localhost:5173").trim().replace(/\/+$/, "");
+
     let parsedState: { vendorAccountId: string; returnTo: string } | null = null;
     try {
       parsedState = parseGoogleOauthState(state);
     } catch (error: any) {
       logger.error("Google OAuth callback state parse failed:", error?.message || error);
-      return res.redirect(`${appUrl}/vendor/dashboard?google_calendar=error`);
+      return errorRedirect("/vendor/dashboard", "state_parse_error");
     }
     const returnPath = parsedState?.returnTo || "/vendor/dashboard";
 
     if (!parsedState?.vendorAccountId) {
-      return res.redirect(`${appUrl}/vendor/dashboard?google_calendar=error`);
+      logger.error("Google OAuth callback — state missing vendorAccountId (expired or invalid)");
+      return errorRedirect(returnPath, "invalid_state");
     }
 
     try {
@@ -4847,7 +5093,8 @@ app.post(
 
       const vendorAccount = vendorRows[0];
       if (!vendorAccount) {
-        return res.redirect(`${appUrl}${returnPath}?google_calendar=error`);
+        logger.error({ vendorAccountId: parsedState.vendorAccountId }, "Google OAuth callback — vendor account not found");
+        return errorRedirect(returnPath, "vendor_not_found");
       }
 
       const tokenResponse = await fetch("https://oauth2.googleapis.com/token", {
@@ -4864,12 +5111,18 @@ app.post(
 
       if (!tokenResponse.ok) {
         const tokenError = await tokenResponse.text();
-        logger.error({ status: tokenResponse.status, body: tokenError }, "Google OAuth token exchange failed");
+        logger.error({ status: tokenResponse.status, body: tokenError, redirectUri }, "Google OAuth token exchange failed");
         await db
           .update(vendorAccounts)
           .set({ googleConnectionStatus: "error" })
           .where(eq(vendorAccounts.id, vendorAccount.id));
-        return res.redirect(`${appUrl}${returnPath}?google_calendar=error`);
+        // Parse Google's error code if available (e.g. "redirect_uri_mismatch", "invalid_client")
+        let googleErrorCode = "token_exchange_failed";
+        try {
+          const parsed = JSON.parse(tokenError);
+          if (typeof parsed?.error === "string") googleErrorCode = parsed.error;
+        } catch { /* ignore */ }
+        return errorRedirect(returnPath, googleErrorCode);
       }
 
       const tokens = (await tokenResponse.json()) as {
@@ -4886,7 +5139,7 @@ app.post(
           .update(vendorAccounts)
           .set({ googleConnectionStatus: "error" })
           .where(eq(vendorAccounts.id, vendorAccount.id));
-        return res.redirect(`${appUrl}${returnPath}?google_calendar=error`);
+        return errorRedirect(returnPath, "missing_access_token");
       }
 
       const refreshToken =
@@ -4932,7 +5185,7 @@ app.post(
       return res.redirect(`${appUrl}${returnPath}?google_calendar=connected`);
     } catch (error: any) {
       logger.error("Google OAuth callback error:", error?.message || error);
-      return res.redirect(`${appUrl}${returnPath}?google_calendar=error`);
+      return errorRedirect(returnPath, "server_exception");
     }
   });
 
@@ -5157,6 +5410,68 @@ app.post(
       }
       logRouteError("/api/google/events/unmatched", error);
       return res.status(500).json({ error: "Unable to load unmatched Google events" });
+    }
+  });
+
+  app.get("/api/google/events/mapped", ...requireVendorAuth0, async (req, res) => {
+    try {
+      const account = await getVendorAccountFromRequest(req);
+      if (!account?.id) {
+        return res.status(404).json({ error: "Account not found" });
+      }
+
+      const googleCalendarId = asTrimmedString(account.googleCalendarId);
+      if (!googleCalendarId) {
+        return res.status(400).json({ error: "Google calendar is not selected", code: "google_calendar_not_selected" });
+      }
+
+      const mappings = await db
+        .select({
+          googleEventId: googleCalendarEventMappings.googleEventId,
+          listingId: googleCalendarEventMappings.listingId,
+          listingTitle: vendorListings.title,
+          createdAt: googleCalendarEventMappings.createdAt,
+        })
+        .from(googleCalendarEventMappings)
+        .innerJoin(vendorListings, eq(googleCalendarEventMappings.listingId, vendorListings.id))
+        .where(
+          and(
+            eq(googleCalendarEventMappings.vendorAccountId, account.id),
+            eq(googleCalendarEventMappings.googleCalendarId, googleCalendarId)
+          )
+        )
+        .orderBy(googleCalendarEventMappings.createdAt);
+
+      if (mappings.length === 0) {
+        return res.json({ mappings: [] });
+      }
+
+      // Fetch Google events to enrich with title/dates
+      const { events } = await listSelectedGoogleCalendarEventsForVendorAccount(account.id, {
+        maxResults: 2500,
+      });
+      const eventById = new Map(events.map((e) => [e.id, e]));
+
+      const result = mappings.map((mapping) => {
+        const googleEvent = eventById.get(mapping.googleEventId);
+        return {
+          googleEventId: mapping.googleEventId,
+          googleEventSummary: googleEvent?.summary ?? null,
+          googleEventStart: googleEvent?.start ?? null,
+          googleEventEnd: googleEvent?.end ?? null,
+          listingId: mapping.listingId,
+          listingTitle: mapping.listingTitle,
+          createdAt: mapping.createdAt,
+        };
+      });
+
+      return res.json({ mappings: result });
+    } catch (error: any) {
+      if (error instanceof GoogleCalendarConnectionError) {
+        return res.status(error.statusCode).json({ error: safeGoogleErrorMessage(error), code: error.code });
+      }
+      logRouteError("/api/google/events/mapped", error);
+      return res.status(500).json({ error: "Unable to load mapped Google events" });
     }
   });
 
@@ -5877,7 +6192,7 @@ app.post(
           const persistedProfilePhoto = await persistUploadedImage(profileBuffer, vendorShopUploadsDir);
           shopProfileImageUrl = `/uploads/vendor-shops/${persistedProfilePhoto.filename}`;
         } catch (uploadError: any) {
-          logger.error("[onboarding/complete] profile photo upload failed:", uploadError?.message || uploadError);
+          logger.error({ err: uploadError }, "[onboarding/complete] profile photo upload failed");
           return res.status(500).json({
             error: "Failed to save profile photo. Please remove the photo and try again, or contact support.",
             detail: uploadError?.message || "Upload failed",
@@ -6024,7 +6339,7 @@ app.post(
       if (account.email && isFirstTimeOnboarding) {
         void (async () => {
           try {
-            const serverUrl = (process.env.SERVER_URL || "http://localhost:5001").replace(/\/$/, "");
+            const serverUrl = appUrl();
             await sendVendorWelcomeEmail(account.email!, {
               recipientName: account.businessName || "Vendor",
               businessName: account.businessName || "Your Business",
@@ -6293,24 +6608,18 @@ app.post(
       for (const field of profileFieldsToCheck) {
         const detection = checkContent(field.value);
         if (detection.hardBlocked) {
-          // Issue warning for the attempt
+          const serverUrlForProfile = appUrl();
+          let violationMeta: { phase: string; softAttemptNumber?: number; warningNumber?: number; suspended?: boolean; endsAt?: Date | null } = { phase: "soft" };
           if (vendorAccountIdForCircumvention) {
-            const serverUrl = (process.env.SERVER_URL || "http://localhost:5001").replace(/\/$/, "");
-            const [flag] = await db.insert(circumventionFlags).values({
-              flagType: "hard_block_attempt",
-              contentType: field.contentType as any,
-              contentSnapshot: field.value.slice(0, 2000),
-              matches: detection.matches,
+            const result = await handleCircumventionViolation({
               vendorAccountId: vendorAccountIdForCircumvention,
-              status: "pending",
-            }).returning();
-            await issueCircumventionWarning(
-              vendorAccountIdForCircumvention,
-              flag.id,
-              `${field.label} contained ${blockReasonSummary(detection.blockReasons)}`,
-              "system",
-              serverUrl
-            );
+              contentType: field.contentType,
+              contentSnapshot: field.value,
+              matches: detection.matches,
+              reason: `${field.label} contained ${blockReasonSummary(detection.blockReasons)}`,
+              serverUrl: serverUrlForProfile,
+            });
+            violationMeta = result;
           }
           return res.status(422).json({
             error: "content_blocked",
@@ -6318,6 +6627,11 @@ app.post(
             reason: `Your ${field.label.toLowerCase()} cannot include ${blockReasonSummary(detection.blockReasons)}. Please remove this information and try again.`,
             blockReasons: detection.blockReasons,
             matches: detection.matches,
+            phase: violationMeta.phase,
+            softAttemptNumber: (violationMeta as any).softAttemptNumber ?? null,
+            warningNumber: (violationMeta as any).warningNumber ?? null,
+            suspended: (violationMeta as any).suspended ?? false,
+            suspensionEndsAt: (violationMeta as any).endsAt ?? null,
           });
         }
         if (detection.softFlagged && vendorAccountIdForCircumvention) {
@@ -6527,192 +6841,11 @@ app.post(
     }
   });
 
-  // ── Cancellation Policy Routes ────────────────────────────────────────────
-
-  /**
-   * GET /api/vendor/cancellation-policy
-   * Returns the vendor's default cancellation policy.
-   * If none has been set, returns a Moderate preset as the default.
-   */
-  app.get("/api/vendor/cancellation-policy", ...requireVendorAuth0, async (req, res) => {
-    try {
-      const vendorAuth = (req as any).vendorAuth;
-      const vendorAccountId = vendorAuth?.id as string | undefined;
-      if (!vendorAccountId) return res.status(403).json({ error: "Vendor account required" });
-
-      const [policy] = await db
-        .select()
-        .from(vendorCancellationPolicies)
-        .where(eq(vendorCancellationPolicies.vendorId, vendorAccountId))
-        .limit(1);
-
-      if (!policy) {
-        // Return the Moderate preset as the "not yet configured" default
-        return res.json({ ...PRESET_MODERATE, id: null, isDefault: true });
-      }
-
-      return res.json({ ...policy, isDefault: false });
-    } catch (error: any) {
-      return respondWithInternalServerError(req, res, error);
-    }
-  });
-
-  /**
-   * PUT /api/vendor/cancellation-policy
-   * Creates or replaces the vendor's default cancellation policy.
-   * Upserts on vendor_id.
-   */
-  app.put("/api/vendor/cancellation-policy", mutationRateLimiter, ...requireVendorAuth0, async (req, res) => {
-    try {
-      const vendorAuth = (req as any).vendorAuth;
-      const vendorAccountId = vendorAuth?.id as string | undefined;
-      if (!vendorAccountId) return res.status(403).json({ error: "Vendor account required" });
-
-      const schema = z.object({
-        preset_type: z.enum(["flexible", "moderate", "strict", "custom"]).optional().default("custom"),
-        tiers: z.array(z.object({
-          days_before_event: z.number().int().min(0),
-          refund_percentage: z.number().int().min(0).max(100),
-        })).min(1),
-        allow_reschedule: z.boolean(),
-        reschedule_window_months: z.number().int().min(1).default(12),
-        weather_clause: z.boolean(),
-        force_majeure_clause: z.boolean(),
-        notes: z.string().max(1000).nullable().optional(),
-      });
-
-      const data = schema.parse(req.body ?? {});
-
-      const policyObj = {
-        preset_type: data.preset_type,
-        tiers: data.tiers,
-        allow_reschedule: data.allow_reschedule,
-        reschedule_window_months: data.reschedule_window_months,
-        weather_clause: data.weather_clause,
-        force_majeure_clause: data.force_majeure_clause,
-        notes: data.notes ?? null,
-      } as CancellationPolicy;
-
-      const validationErrors = validatePolicy(policyObj);
-      if (validationErrors.length > 0) {
-        return res.status(400).json({ error: "Invalid policy", details: validationErrors });
-      }
-
-      const now = new Date();
-      const [upserted] = await db
-        .insert(vendorCancellationPolicies)
-        .values({
-          vendorId: vendorAccountId,
-          presetType: policyObj.preset_type,
-          tiers: policyObj.tiers as any,
-          allowReschedule: policyObj.allow_reschedule,
-          rescheduleWindowMonths: policyObj.reschedule_window_months,
-          weatherClause: policyObj.weather_clause,
-          forceMajeureClause: policyObj.force_majeure_clause,
-          notes: policyObj.notes,
-          updatedAt: now,
-        })
-        .onConflictDoUpdate({
-          target: vendorCancellationPolicies.vendorId,
-          set: {
-            presetType: policyObj.preset_type,
-            tiers: policyObj.tiers as any,
-            allowReschedule: policyObj.allow_reschedule,
-            rescheduleWindowMonths: policyObj.reschedule_window_months,
-            weatherClause: policyObj.weather_clause,
-            forceMajeureClause: policyObj.force_majeure_clause,
-            notes: policyObj.notes,
-            updatedAt: now,
-          },
-        })
-        .returning();
-
-      return res.json(upserted);
-    } catch (error: any) {
-      if (error?.name === "ZodError") return res.status(400).json({ error: "Validation failed", details: error.errors });
-      return respondWithInternalServerError(req, res, error);
-    }
-  });
-
-  /**
-   * PUT /api/listings/:id/cancellation-policy
-   * Sets or clears the per-listing policy override.
-   * Passing null for the body (or { policy: null }) clears the override.
-   */
-  app.put("/api/listings/:id/cancellation-policy", mutationRateLimiter, requireDualAuthAuth0, async (req, res) => {
-    try {
-      const vendorAuth = (req as any).vendorAuth;
-      const vendorAccountId = vendorAuth?.id as string | undefined;
-      if (!vendorAccountId) return res.status(403).json({ error: "Vendor account required" });
-
-      const listingId = asTrimmedString(req.params.id);
-      if (!listingId) return res.status(400).json({ error: "Listing id required" });
-
-      const [listing] = await db
-        .select({ id: vendorListings.id, accountId: vendorListings.accountId })
-        .from(vendorListings)
-        .where(and(eq(vendorListings.id, listingId), eq(vendorListings.accountId, vendorAccountId)))
-        .limit(1);
-      if (!listing) return res.status(404).json({ error: "Listing not found" });
-
-      // null body or { policy: null } → clear the override
-      const isClearing = req.body === null || req.body?.policy === null || Object.keys(req.body ?? {}).length === 0;
-
-      if (isClearing) {
-        await db
-          .update(vendorListings)
-          .set({ cancellationPolicyOverride: null, updatedAt: new Date() })
-          .where(eq(vendorListings.id, listingId));
-        return res.json({ success: true, override: null });
-      }
-
-      const schema = z.object({
-        preset_type: z.enum(["flexible", "moderate", "strict", "custom"]).optional().default("custom"),
-        tiers: z.array(z.object({
-          days_before_event: z.number().int().min(0),
-          refund_percentage: z.number().int().min(0).max(100),
-        })).min(1),
-        allow_reschedule: z.boolean(),
-        reschedule_window_months: z.number().int().min(1).default(12),
-        weather_clause: z.boolean(),
-        force_majeure_clause: z.boolean(),
-        notes: z.string().max(1000).nullable().optional(),
-      });
-
-      const data = schema.parse(req.body ?? {});
-      const policyObj = {
-        preset_type: data.preset_type,
-        tiers: data.tiers,
-        allow_reschedule: data.allow_reschedule,
-        reschedule_window_months: data.reschedule_window_months,
-        weather_clause: data.weather_clause,
-        force_majeure_clause: data.force_majeure_clause,
-        notes: data.notes ?? null,
-      } as CancellationPolicy;
-
-      const validationErrors = validatePolicy(policyObj);
-      if (validationErrors.length > 0) {
-        return res.status(400).json({ error: "Invalid policy", details: validationErrors });
-      }
-
-      await db
-        .update(vendorListings)
-        .set({ cancellationPolicyOverride: policyObj as any, updatedAt: new Date() })
-        .where(eq(vendorListings.id, listingId));
-
-      return res.json({ success: true, override: policyObj });
-    } catch (error: any) {
-      if (error?.name === "ZodError") return res.status(400).json({ error: "Validation failed", details: error.errors });
-      return respondWithInternalServerError(req, res, error);
-    }
-  });
-
   /**
    * GET /api/listings/:id/effective-policy
    * Returns the resolved cancellation policy for a listing.
-   * Uses the listing override if set, otherwise the vendor's default.
-   * If the vendor has no policy configured, returns the Moderate preset.
-   * Accessible without authentication (shown on listing detail + checkout).
+   * Reads the cancellation_policy and cancellation_policy_days columns set during
+   * listing creation. Accessible without authentication (shown on listing detail + checkout).
    */
   app.get("/api/listings/:id/effective-policy", async (req, res) => {
     try {
@@ -6721,41 +6854,15 @@ app.post(
 
       const [row] = await db
         .select({
-          listingId: vendorListings.id,
-          accountId: vendorListings.accountId,
-          category: vendorListings.category,
-          override: vendorListings.cancellationPolicyOverride,
+          cancellationPolicy: vendorListings.cancellationPolicy,
+          cancellationPolicyDays: vendorListings.cancellationPolicyDays,
         })
         .from(vendorListings)
         .where(eq(vendorListings.id, listingId))
         .limit(1);
       if (!row) return res.status(404).json({ error: "Listing not found" });
 
-      if (row.override) {
-        return res.json({ policy: row.override, source: "listing_override" });
-      }
-
-      const [vendorPolicy] = await db
-        .select()
-        .from(vendorCancellationPolicies)
-        .where(eq(vendorCancellationPolicies.vendorId, row.accountId))
-        .limit(1);
-
-      if (vendorPolicy) {
-        const policy: CancellationPolicy = {
-          preset_type: vendorPolicy.presetType as any,
-          tiers: vendorPolicy.tiers as any,
-          allow_reschedule: vendorPolicy.allowReschedule,
-          reschedule_window_months: vendorPolicy.rescheduleWindowMonths,
-          weather_clause: vendorPolicy.weatherClause,
-          force_majeure_clause: vendorPolicy.forceMajeureClause,
-          notes: vendorPolicy.notes,
-        };
-        return res.json({ policy, source: "vendor_default" });
-      }
-
-      // No policy configured yet — return Moderate preset
-      return res.json({ policy: PRESET_MODERATE, source: "platform_default" });
+      return res.json(policyFromListingWizard(row.cancellationPolicy, row.cancellationPolicyDays));
     } catch (error: any) {
       return respondWithInternalServerError(req, res, error);
     }
@@ -6926,12 +7033,13 @@ app.post(
         policy,
       });
 
-      // ── Find the payment to refund ─────────────────────────────────────────
-      // We refund the most recent succeeded payment. For MVP (full-amount upfront),
-      // this is always the single deposit/full payment.
-      const [payment] = await db
+      // ── Find all payments for this booking ────────────────────────────────
+      // Query all payment types separately so we refund the right amounts
+      // to the right Stripe payment intents.
+      const allBookingPayments = await db
         .select({
           id: payments.id,
+          paymentType: payments.paymentType,
           stripePaymentIntentId: payments.stripePaymentIntentId,
           status: payments.status,
           amount: payments.amount,
@@ -6947,14 +7055,25 @@ app.post(
             )
           )
         )
-        .orderBy(desc(payments.createdAt))
-        .limit(1);
+        .orderBy(desc(payments.createdAt));
+
+      // Main booking payment (type 'booking' or legacy 'deposit')
+      const payment = allBookingPayments.find(
+        (p) => p.paymentType === "booking" || p.paymentType === "deposit"
+      );
+      // Vendor-proposed travel fee (separate Stripe charge, same policy % applied)
+      const travelFeePayments = allBookingPayments.filter(
+        (p) => p.paymentType === "travel_fee"
+      );
+      // Security deposit (separate Stripe charge)
+      const depositPayment = allBookingPayments.find(
+        (p) => p.paymentType === "security_deposit"
+      );
 
       const now = new Date();
 
       if (!payment || !isPaymentSucceededStatus(payment.status)) {
-        // No payment to refund (e.g. booking was pending, payment never completed)
-        // Just cancel the booking without a Stripe refund.
+        // No main payment collected yet — just cancel the booking.
         await db
           .update(bookings)
           .set({
@@ -6965,7 +7084,7 @@ app.post(
           })
           .where(eq(bookings.id, bookingId));
 
-        void sendCancellationEmailsAsync({ booking, refundCents: 0, serverUrl: (process.env.SERVER_URL || "http://localhost:5001").replace(/\/$/, "") });
+        void sendCancellationEmailsAsync({ booking, refundCents: 0, serverUrl: appUrl() });
         void syncBookingToGoogleCalendarSafely(bookingId, "/api/bookings/:bookingId/cancel google-sync");
         await sendBookingSystemMessage({
           bookingId,
@@ -6986,37 +7105,89 @@ app.post(
         return res.json({ success: true, bookingId, refundCents: 0, message: "Booking cancelled. No payment was collected." });
       }
 
-      // ── Issue Stripe refund ────────────────────────────────────────────────
-      const { refundBookingPayment } = await import("./stripe");
-      let stripeRefund: any = null;
-      let stripeRefundError: string | null = null;
+      // ── Safety cap: ensure refund never exceeds what was originally charged ─
+      const safeRefundCents = (p: { amount: number; refundAmount: number | null }, requested: number) => {
+        const alreadyRefunded = typeof p.refundAmount === "number" ? p.refundAmount : 0;
+        return Math.min(requested, Math.max(0, p.amount - alreadyRefunded));
+      };
 
-      if (refundCalc.grossRefundCents > 0) {
-        try {
-          stripeRefund = await refundBookingPayment({
+      // ── Calculate refund amounts ──────────────────────────────────────────
+      const bookingRefundCents = safeRefundCents(payment, refundCalc.grossRefundCents);
+
+      // Travel fee refunds at the same percentage as the booking payment.
+      const travelFeeRefunds = travelFeePayments.map((tfp) => ({
+        payment: tfp,
+        refundCents: safeRefundCents(
+          tfp,
+          Math.floor(tfp.amount * refundCalc.grossRefundPercentage / 100)
+        ),
+      }));
+
+      // Security deposit: refund immediately only if policy gives ANY refund (i.e.
+      // cancellation is within the allowed window). If policy = 0%, the deposit
+      // stays put and is handled by the 72h post-event auto-refund job.
+      const refundDepositNow =
+        refundCalc.grossRefundPercentage > 0 &&
+        !!depositPayment &&
+        isPaymentSucceededStatus(depositPayment.status);
+      const depositRefundCents = refundDepositNow
+        ? safeRefundCents(depositPayment!, depositPayment!.amount)
+        : 0;
+
+      // ── Issue Stripe refunds ───────────────────────────────────────────────
+      const { refundBookingPayment } = await import("./stripe");
+      let bookingStripeRefund: any = null;
+
+      try {
+        if (bookingRefundCents > 0) {
+          bookingStripeRefund = await refundBookingPayment({
             paymentIntentId: payment.stripePaymentIntentId,
-            amount: refundCalc.grossRefundCents,
+            amount: bookingRefundCents,
             reason: "requested_by_customer",
-            idempotencyKey: `customer-cancel:${bookingId}:${payment.id}:${refundCalc.grossRefundCents}`,
+            idempotencyKey: `customer-cancel:${bookingId}:${payment.id}:${bookingRefundCents}`,
           });
-        } catch (stripeErr: any) {
-          stripeRefundError = stripeErr?.message || "Stripe refund failed";
-          logger.error({ bookingId, err: stripeRefundError }, "[customer cancel] Stripe refund failed");
-          return res.status(502).json({ error: "Refund processing failed. Please contact support.", detail: stripeRefundError });
         }
+
+        for (const { payment: tfp, refundCents } of travelFeeRefunds) {
+          if (refundCents > 0) {
+            await refundBookingPayment({
+              paymentIntentId: tfp.stripePaymentIntentId,
+              amount: refundCents,
+              reason: "requested_by_customer",
+              idempotencyKey: `customer-cancel-travelfee:${bookingId}:${tfp.id}:${refundCents}`,
+            });
+          }
+        }
+
+        if (refundDepositNow && depositRefundCents > 0) {
+          await refundBookingPayment({
+            paymentIntentId: depositPayment!.stripePaymentIntentId,
+            reason: "requested_by_customer",
+            idempotencyKey: `customer-cancel-deposit:${bookingId}:${depositPayment!.id}`,
+          });
+        }
+      } catch (stripeErr: any) {
+        const msg = stripeErr?.message || "Stripe refund failed";
+        logger.error({ bookingId, err: msg }, "[customer cancel] Stripe refund failed");
+        return res.status(502).json({ error: "Refund processing failed. Please contact support.", detail: msg });
       }
 
       // ── Persist in a transaction ───────────────────────────────────────────
+      const totalRefundedToCustomer = bookingRefundCents +
+        travelFeeRefunds.reduce((sum, r) => sum + r.refundCents, 0) +
+        depositRefundCents;
+
       await db.transaction(async (tx) => {
+        // Update main booking payment
         const existingRefund = typeof payment.refundAmount === "number" ? payment.refundAmount : 0;
-        const newRefundTotal = existingRefund + refundCalc.grossRefundCents;
-        const newPaymentStatus: string = newRefundTotal >= payment.amount ? "refunded" : "partially_refunded";
+        const newBookingRefundTotal = existingRefund + bookingRefundCents;
+        const newPaymentStatus: string = newBookingRefundTotal >= payment.amount ? "refunded" : "partially_refunded";
 
         await tx
           .update(payments)
           .set({
             status: newPaymentStatus as any,
-            refundAmount: newRefundTotal,
+            refundAmount: newBookingRefundTotal,
             refundReason: reason ? `customer_cancel: ${reason}` : "customer_cancel",
             refundedAt: now,
             payoutStatus: "cancelled",
@@ -7026,6 +7197,41 @@ app.post(
           })
           .where(eq(payments.id, payment.id));
 
+        // Update each travel fee payment
+        for (const { payment: tfp, refundCents } of travelFeeRefunds) {
+          if (refundCents > 0) {
+            const existingTfRefund = typeof tfp.refundAmount === "number" ? tfp.refundAmount : 0;
+            const newTfRefundTotal = existingTfRefund + refundCents;
+            await tx
+              .update(payments)
+              .set({
+                status: (newTfRefundTotal >= tfp.amount ? "refunded" : "partially_refunded") as any,
+                refundAmount: newTfRefundTotal,
+                refundReason: reason ? `customer_cancel: ${reason}` : "customer_cancel",
+                refundedAt: now,
+                payoutStatus: "cancelled",
+                payoutEligibleAt: null,
+                payoutBlockedReason: "customer_cancellation",
+                payoutAdjustedAmount: 0,
+              })
+              .where(eq(payments.id, tfp.id));
+          }
+        }
+
+        // Update security deposit payment if refunded now
+        if (refundDepositNow && depositRefundCents > 0) {
+          await tx
+            .update(payments)
+            .set({
+              status: "refunded" as any,
+              refundAmount: depositRefundCents,
+              refundReason: reason ? `customer_cancel: ${reason}` : "customer_cancel",
+              refundedAt: now,
+            })
+            .where(eq(payments.id, depositPayment!.id));
+        }
+
+        // Update booking record
         await tx
           .update(bookings)
           .set({
@@ -7034,13 +7240,14 @@ app.post(
             cancellationReason: reason ? `customer: ${reason}` : "customer_cancel",
             cancelledAt: now,
             updatedAt: now,
+            ...(refundDepositNow ? { securityDepositRefundedAt: now } : {}),
           })
           .where(eq(bookings.id, bookingId));
       });
 
       // ── Emails + Google Calendar sync (fire-and-forget) ───────────────────
-      const serverUrl = (process.env.SERVER_URL || "http://localhost:5001").replace(/\/$/, "");
-      void sendCancellationEmailsAsync({ booking, refundCents: refundCalc.grossRefundCents, serverUrl });
+      const serverUrl = appUrl();
+      void sendCancellationEmailsAsync({ booking, refundCents: totalRefundedToCustomer, serverUrl });
       void syncBookingToGoogleCalendarSafely(bookingId, "/api/bookings/:bookingId/cancel google-sync");
       await sendBookingSystemMessage({
         bookingId,
@@ -7062,12 +7269,14 @@ app.post(
       return res.json({
         success: true,
         bookingId,
-        refundCents: refundCalc.grossRefundCents,
+        refundCents: totalRefundedToCustomer,
+        bookingRefundCents,
+        depositRefundedNow: refundDepositNow,
         refundPercentage: refundCalc.grossRefundPercentage,
         daysUntilEvent: refundCalc.daysUntilEvent,
-        stripeRefundId: stripeRefund?.id ?? null,
-        message: refundCalc.grossRefundCents > 0
-          ? `Booking cancelled. A refund of $${(refundCalc.grossRefundCents / 100).toFixed(2)} has been issued.`
+        stripeRefundId: bookingStripeRefund?.id ?? null,
+        message: totalRefundedToCustomer > 0
+          ? `Booking cancelled. A refund of $${(totalRefundedToCustomer / 100).toFixed(2)} has been issued.`
           : "Booking cancelled. No refund applies per the cancellation policy.",
       });
     } catch (error: any) {
@@ -7330,33 +7539,31 @@ app.post(
       if (titleToCheck) listingFieldsToCheck.push({ value: titleToCheck, contentType: "listing_title", label: "Listing title" });
 
       const vendorAccountIdForListing = String(vendorAuth.id);
-      const serverUrlForListing = (process.env.SERVER_URL || "http://localhost:5001").replace(/\/$/, "");
+      const serverUrlForListing = appUrl();
 
       for (const field of listingFieldsToCheck) {
         const detection = checkContent(field.value);
         if (detection.hardBlocked) {
-          const [flag] = await db.insert(circumventionFlags).values({
-            flagType: "hard_block_attempt",
-            contentType: field.contentType as any,
-            contentSnapshot: field.value.slice(0, 2000),
-            matches: detection.matches,
+          const result = await handleCircumventionViolation({
             vendorAccountId: vendorAccountIdForListing,
+            contentType: field.contentType,
+            contentSnapshot: field.value,
+            matches: detection.matches,
+            reason: `${field.label} contained ${blockReasonSummary(detection.blockReasons)}`,
             listingId: id,
-            status: "pending",
-          }).returning();
-          await issueCircumventionWarning(
-            vendorAccountIdForListing,
-            flag.id,
-            `${field.label} contained ${blockReasonSummary(detection.blockReasons)}`,
-            "system",
-            serverUrlForListing
-          );
+            serverUrl: serverUrlForListing,
+          });
           return res.status(422).json({
             error: "content_blocked",
             field: field.label,
             reason: `Your ${field.label.toLowerCase()} cannot include ${blockReasonSummary(detection.blockReasons)}. Please remove this information and try again.`,
             blockReasons: detection.blockReasons,
             matches: detection.matches,
+            phase: result.phase,
+            softAttemptNumber: result.phase === "soft" ? result.softAttemptNumber : null,
+            warningNumber: result.phase === "hard" ? result.warningNumber : null,
+            suspended: result.phase === "hard" ? result.suspended : false,
+            suspensionEndsAt: result.phase === "hard" ? result.endsAt : null,
           });
         }
         if (detection.softFlagged) {
@@ -7428,6 +7635,21 @@ app.post(
       }
       if (existing[0]?.profileId && existing[0].profileId !== activeProfileId) {
         return res.status(404).json({ error: "Listing not found in active profile" });
+      }
+
+      // Block publish while vendor is suspended.
+      const activeSuspension = await getActiveSuspension(String(vendorAuth.id));
+      if (activeSuspension) {
+        const endsAt = activeSuspension.endsAt
+          ? new Date(activeSuspension.endsAt).toLocaleDateString("en-US", { month: "long", day: "numeric", year: "numeric" })
+          : null;
+        return res.status(403).json({
+          error: "account_suspended",
+          message: endsAt
+            ? `Your account is suspended until ${endsAt}. You cannot publish listings during this period.`
+            : "Your account is currently suspended. You cannot publish listings.",
+          suspensionEndsAt: activeSuspension.endsAt,
+        });
       }
 
       const incomingListingData = req.body?.listingData;
@@ -7788,7 +8010,8 @@ app.post(
           takedownOffered: vendorListings.takedownOffered,
           takedownFeeEnabled: vendorListings.takedownFeeEnabled,
           takedownFeeAmountCents: vendorListings.takedownFeeAmountCents,
-          cancellationPolicyOverride: vendorListings.cancellationPolicyOverride,
+          cancellationPolicy: vendorListings.cancellationPolicy,
+          cancellationPolicyDays: vendorListings.cancellationPolicyDays,
         })
         .from(vendorListings)
         .where(
@@ -7897,7 +8120,8 @@ app.post(
           takedownOffered: takedownOffered === true,
           takedownFeeEnabled: takedownOffered === true && takedownFeeEnabled === true,
           takedownFeeAmountCents: typeof takedownFeeAmountCents === "number" && takedownFeeAmountCents >= 0 ? Math.floor(takedownFeeAmountCents) : null,
-          cancellationPolicyOverride: cancellationPolicyOverride ?? null,
+          cancellationPolicy: typeof cancellationPolicyOverride?.policy === "string" ? cancellationPolicyOverride.policy : "cancel_anytime",
+          cancellationPolicyDays: typeof cancellationPolicyOverride?.hours === "number" ? cancellationPolicyOverride.hours : null,
         })
         .returning();
 
@@ -7979,7 +8203,10 @@ app.post(
       updatePayload.takedownOffered = takedownOffered === true;
       updatePayload.takedownFeeEnabled = takedownOffered === true && takedownFeeEnabled === true;
       updatePayload.takedownFeeAmountCents = typeof takedownFeeAmountCents === "number" && takedownFeeAmountCents >= 0 ? Math.floor(takedownFeeAmountCents) : null;
-      if (cancellationPolicyOverride !== undefined) updatePayload.cancellationPolicyOverride = cancellationPolicyOverride;
+      if (cancellationPolicyOverride !== undefined) {
+        updatePayload.cancellationPolicy = typeof cancellationPolicyOverride?.policy === "string" ? cancellationPolicyOverride.policy : "cancel_anytime";
+        updatePayload.cancellationPolicyDays = typeof cancellationPolicyOverride?.hours === "number" ? cancellationPolicyOverride.hours : null;
+      }
 
       const [updated] = await db
         .update(vendorListings)
@@ -8786,11 +9013,23 @@ app.post(
       res.setHeader("Cache-Control", "no-store");
 
       // Parse filter params
-      const rawCategory = ((req.query.category as string) ?? "").trim().toLowerCase();
+      // category: comma-separated (single value from hero, multi from browse filters)
+      const rawCategoryParam = ((req.query.category as string) ?? "").trim();
+      const categoriesFilter = rawCategoryParam
+        ? rawCategoryParam.split(",").map((c) => normalizeListingCategory(c.trim())).filter(Boolean)
+        : [];
       const rawSubs = ((req.query.subs as string) ?? "").trim();
       const rawDetails = ((req.query.details as string) ?? "").trim();
-      const rawMinPrice = parseFloat((req.query.minPrice as string) ?? "");
-      const rawMaxPrice = parseFloat((req.query.maxPrice as string) ?? "");
+      // Dual price range — per_day and per_hour filtered independently
+      const rawMinDailyPrice = parseFloat((req.query.minDailyPrice as string) ?? "");
+      const rawMaxDailyPrice = parseFloat((req.query.maxDailyPrice as string) ?? "");
+      const rawMinHourlyPrice = parseFloat((req.query.minHourlyPrice as string) ?? "");
+      const rawMaxHourlyPrice = parseFloat((req.query.maxHourlyPrice as string) ?? "");
+      // Pricing unit filter (e.g. "per_day" to show only daily listings)
+      const rawPricingUnits = ((req.query.pricingUnits as string) ?? "").trim();
+      const pricingUnitsFilter = rawPricingUnits
+        ? rawPricingUnits.split(",").map((u) => u.trim()).filter((u) => u === "per_day" || u === "per_hour")
+        : [];
       const rawSort = ((req.query.sort as string) ?? "recommended").trim();
       const limit = Math.min(Math.max(parseInt((req.query.limit as string) ?? "100", 10) || 100, 1), 500);
       const offset = Math.max(parseInt((req.query.offset as string) ?? "0", 10) || 0, 0);
@@ -8808,8 +9047,11 @@ app.post(
         not(inArray(vendorListings.listingType, ["package_item"])),
       ] as any[];
 
-      if (rawCategory) {
-        conditions.push(eq(vendorListings.category, rawCategory) as any);
+      // Multi-category filter (OR across selected categories)
+      if (categoriesFilter.length === 1) {
+        conditions.push(eq(vendorListings.category, categoriesFilter[0]) as any);
+      } else if (categoriesFilter.length > 1) {
+        conditions.push(inArray(vendorListings.category, categoriesFilter) as any);
       }
       if (subsFilter.length === 1) {
         conditions.push(eq(vendorListings.subcategory, subsFilter[0]) as any);
@@ -8821,11 +9063,49 @@ app.post(
       } else if (detailsFilter.length > 1) {
         conditions.push(inArray(vendorListings.subcategoryDetail, detailsFilter) as any);
       }
-      if (!isNaN(rawMinPrice) && rawMinPrice >= 0) {
-        conditions.push(gte(vendorListings.priceCents, Math.round(rawMinPrice * 100)) as any);
+
+      // Pricing unit filter (when only one type is toggled on)
+      if (pricingUnitsFilter.length === 1) {
+        conditions.push(eq(vendorListings.pricingUnit, pricingUnitsFilter[0]) as any);
       }
-      if (!isNaN(rawMaxPrice) && rawMaxPrice >= 0) {
-        conditions.push(lte(vendorListings.priceCents, Math.round(rawMaxPrice * 100)) as any);
+
+      // Dual price range — each range applies only to its pricing unit type.
+      // A listing passes if it matches its type's range, or no range is set for its type.
+      const hasDailyRange =
+        (!isNaN(rawMinDailyPrice) && rawMinDailyPrice >= 0) ||
+        (!isNaN(rawMaxDailyPrice) && rawMaxDailyPrice >= 0);
+      const hasHourlyRange =
+        (!isNaN(rawMinHourlyPrice) && rawMinHourlyPrice >= 0) ||
+        (!isNaN(rawMaxHourlyPrice) && rawMaxHourlyPrice >= 0);
+
+      if (hasDailyRange || hasHourlyRange) {
+        const priceOrParts: any[] = [];
+
+        if (hasDailyRange) {
+          const dailyParts: any[] = [eq(vendorListings.pricingUnit, "per_day") as any];
+          if (!isNaN(rawMinDailyPrice) && rawMinDailyPrice >= 0)
+            dailyParts.push(gte(vendorListings.priceCents, Math.round(rawMinDailyPrice * 100)) as any);
+          if (!isNaN(rawMaxDailyPrice) && rawMaxDailyPrice >= 0)
+            dailyParts.push(lte(vendorListings.priceCents, Math.round(rawMaxDailyPrice * 100)) as any);
+          priceOrParts.push(and(...dailyParts) as any);
+        } else {
+          priceOrParts.push(eq(vendorListings.pricingUnit, "per_day") as any);
+        }
+
+        if (hasHourlyRange) {
+          const hourlyParts: any[] = [eq(vendorListings.pricingUnit, "per_hour") as any];
+          if (!isNaN(rawMinHourlyPrice) && rawMinHourlyPrice >= 0)
+            hourlyParts.push(gte(vendorListings.priceCents, Math.round(rawMinHourlyPrice * 100)) as any);
+          if (!isNaN(rawMaxHourlyPrice) && rawMaxHourlyPrice >= 0)
+            hourlyParts.push(lte(vendorListings.priceCents, Math.round(rawMaxHourlyPrice * 100)) as any);
+          priceOrParts.push(and(...hourlyParts) as any);
+        } else {
+          priceOrParts.push(eq(vendorListings.pricingUnit, "per_hour") as any);
+        }
+
+        // Any other pricing unit always passes the price filter
+        priceOrParts.push(not(inArray(vendorListings.pricingUnit, ["per_day", "per_hour"])) as any);
+        conditions.push(or(...priceOrParts) as any);
       }
 
       const whereClause = and(...(conditions as any[]));
@@ -9113,9 +9393,12 @@ app.post(
           lr.title,
           lr.body,
           lr.created_at as "createdAt",
-          coalesce(nullif(u.display_name, ''), nullif(u.name, ''), 'Customer') as "authorName"
+          coalesce(nullif(u.display_name, ''), nullif(u.name, ''), 'Customer') as "authorName",
+          rr.reply as "vendorReply",
+          rr.created_at as "vendorRepliedAt"
         from listing_reviews lr
         left join users u on u.id = lr.user_id
+        left join review_replies rr on rr.listing_review_id = lr.id
         where lr.listing_id = ${listing.id}
           and coalesce(lr.is_published, true) = true
         order by lr.created_at desc
@@ -9129,6 +9412,8 @@ app.post(
         body?: string | null;
         createdAt?: string | Date | null;
         authorName?: string | null;
+        vendorReply?: string | null;
+        vendorRepliedAt?: string | Date | null;
       }>(reviewsResult);
 
       const publishedReviews = reviewRows
@@ -9142,6 +9427,10 @@ app.post(
             typeof row.authorName === "string" && row.authorName.trim().length > 0
               ? row.authorName.trim()
               : "Customer",
+          vendorReply: typeof row.vendorReply === "string" && row.vendorReply.trim().length > 0
+            ? row.vendorReply.trim()
+            : null,
+          vendorRepliedAt: row.vendorRepliedAt ?? null,
         }))
         .filter((row) => row.id.length > 0 && Number.isFinite(row.rating) && row.rating > 0);
 
@@ -9212,7 +9501,9 @@ app.post(
               takedownOffered: vendorListings.takedownOffered,
               takedownFeeEnabled: vendorListings.takedownFeeEnabled,
               takedownFeeAmountCents: vendorListings.takedownFeeAmountCents,
-              cancellationPolicyOverride: vendorListings.cancellationPolicyOverride,
+              cancellationPolicy: vendorListings.cancellationPolicy,
+              cancellationPolicyDays: vendorListings.cancellationPolicyDays,
+              listingData: vendorListings.listingData,
             })
             .from(vendorListings)
             .where(
@@ -9265,12 +9556,59 @@ app.post(
       // Overlay translated content if a non-English language is requested.
       const requestedLang = resolveRequestLanguage(
         req.query.lang as string | undefined,
-        undefined, // user preferred language passed via query param from client
+        undefined,
         req.headers["accept-language"]
       );
-      const translation = requestedLang !== "en"
-        ? await getListingTranslation(listing.id, requestedLang)
-        : null;
+
+      // Helper: extract the best-available string array from a value
+      const toStrArr = (v: unknown): string[] =>
+        Array.isArray(v)
+          ? (v as unknown[]).filter((s): s is string => typeof s === "string" && s.trim().length > 0).map((s) => (s as string).trim())
+          : [];
+
+      let translation: Awaited<ReturnType<typeof getListingTranslation>> = null;
+      const pkgTranslationMap = new Map<string, Awaited<ReturnType<typeof getListingTranslation>>>();
+
+      if (requestedLang !== "en") {
+        // Use JSONB listingData as fallback when canonical columns are null/empty.
+        const ld = (listing.listingData ?? {}) as Record<string, any>;
+        const effectiveDescription =
+          (typeof listing.description === "string" && listing.description.trim() ? listing.description : null) ??
+          (typeof ld.description === "string" && ld.description.trim() ? ld.description : null) ??
+          (typeof ld.listingDescription === "string" && ld.listingDescription.trim() ? ld.listingDescription : null) ??
+          (typeof ld.serviceDescription === "string" && ld.serviceDescription.trim() ? ld.serviceDescription : null) ??
+          null;
+        const effectiveWhatsIncluded = listing.whatsIncluded?.length
+          ? listing.whatsIncluded
+          : toStrArr(ld.whatsIncluded ?? ld.includedItems ?? ld.included);
+        const effectiveWhatsNotIncluded = listing.whatsNotIncluded?.length
+          ? listing.whatsNotIncluded
+          : toStrArr(ld.whatsNotIncluded);
+
+        // ensureListingTranslation: returns cached translation or translates synchronously.
+        translation = await ensureListingTranslation(listing.id, {
+          title: listing.title,
+          description: effectiveDescription,
+          whatsIncluded: effectiveWhatsIncluded,
+          whatsNotIncluded: effectiveWhatsNotIncluded,
+        }, requestedLang);
+
+        // Packages: same pattern — synchronous on first miss.
+        if (packages.length > 0) {
+          await Promise.all(packages.map(async (pkg) => {
+            const pkgLd = (pkg as any).listingData ?? {};
+            const pkgTrans = await ensureListingTranslation(pkg.id, {
+              title: pkg.title,
+              description: (typeof pkg.description === "string" && pkg.description.trim() ? pkg.description : null) ??
+                (typeof pkgLd.description === "string" && pkgLd.description.trim() ? pkgLd.description : null) ?? null,
+              whatsIncluded: pkg.whatsIncluded?.length ? pkg.whatsIncluded : toStrArr(pkgLd.whatsIncluded ?? pkgLd.includedItems),
+              whatsNotIncluded: pkg.whatsNotIncluded?.length ? pkg.whatsNotIncluded : toStrArr(pkgLd.whatsNotIncluded),
+            }, requestedLang);
+            if (pkgTrans) pkgTranslationMap.set(pkg.id, pkgTrans);
+          }));
+        }
+      }
+
       const translatedListing = translation
         ? {
             ...listing,
@@ -9290,10 +9628,21 @@ app.post(
         vacationBlocks,
         detectedLanguage: requestedLang,
         // Packages (empty array for single/addon listings)
-        packages: packages.map((pkg) => ({
-          ...pkg,
-          photos: ((pkg.photos ?? []) as string[]).map((p) => resolveStoredUploadPath(p) ?? p),
-        })),
+        packages: packages.map((pkg) => {
+          const pkgTrans = pkgTranslationMap.get(pkg.id);
+          return {
+            ...pkg,
+            photos: ((pkg.photos ?? []) as string[]).map((p) => resolveStoredUploadPath(p) ?? p),
+            ...(pkgTrans
+              ? {
+                  title: pkgTrans.title ?? pkg.title,
+                  description: pkgTrans.description ?? pkg.description,
+                  whatsIncluded: pkgTrans.whatsIncluded.length ? pkgTrans.whatsIncluded : pkg.whatsIncluded,
+                  whatsNotIncluded: pkgTrans.whatsNotIncluded.length ? pkgTrans.whatsNotIncluded : pkg.whatsNotIncluded,
+                }
+              : {}),
+          };
+        }),
         // Attached add-ons ("People that order X frequently add on:")
         attachedAddons: resolvedAddons,
       });
@@ -9690,9 +10039,10 @@ app.post(
       const normalizeAmountToCents = (value: unknown) => {
         const n = Number(value ?? 0);
         if (!Number.isFinite(n) || n <= 0) return 0;
+        // The current booking flow always writes amounts in cents (integers).
+        // Non-integer values are legacy float-dollar rows (e.g. 36.80 → 3680 cents).
         if (!Number.isInteger(n)) return Math.round(n * 100);
-        if (n < 1000) return n * 100;
-        return n;
+        return Math.round(n);
       };
 
       let bookingRows: Array<{
@@ -9874,13 +10224,17 @@ app.post(
       includedItems?: string[];
       deliveryIncluded?: boolean | null;
       setupIncluded?: boolean | null;
+      addOnItems?: { title: string; priceCents: number }[];
     }>;
 
     return Promise.all(
       rows.map(async (row) => {
         const itemRes: any = await db.execute(drizzleSql`
           select
+            bi.item_type as "itemType",
             bi.title,
+            bi.unit_price_cents as "unitPriceCents",
+            bi.total_price_cents as "totalPriceCents",
             bi.listing_id as "listingId",
             bi.item_data as "itemData",
             vl.title as "listingTitle",
@@ -9894,9 +10248,12 @@ app.post(
           left join vendor_listings vl on vl.id = bi.listing_id
           left join vendor_listings parent_listing on parent_listing.id = vl.parent_listing_id
           where bi.booking_id = ${row.id}
-          limit 1
+          order by bi.item_type = 'base' desc
         `);
-        const [item] = extractRows<{
+        const allBookingItems = extractRows<{
+          itemType?: string | null;
+          unitPriceCents?: number | null;
+          totalPriceCents?: number | null;
           title?: string | null;
           listingId?: string | null;
           itemData?: any;
@@ -9908,6 +10265,10 @@ app.post(
           listingProfileId?: string | null;
           parentListingTitle?: string | null;
         }>(itemRes);
+        const item = allBookingItems.find(i => i.itemType !== "addon") ?? allBookingItems[0];
+        const addOnItems: { title: string; priceCents: number }[] = allBookingItems
+          .filter(i => i.itemType === "addon")
+          .map(i => ({ title: i.title ?? "Add-on", priceCents: i.totalPriceCents ?? i.unitPriceCents ?? 0 }));
         const itemData = item?.itemData && typeof item.itemData === "object" ? item.itemData : {};
         const listingSnapshot =
           itemData?.listingSnapshot && typeof itemData.listingSnapshot === "object"
@@ -10028,6 +10389,7 @@ app.post(
           includedItems: normalizedIncluded,
           deliveryIncluded,
           setupIncluded,
+          addOnItems,
         };
       })
     );
@@ -10089,6 +10451,7 @@ app.post(
         left join events e on e.id = b.event_id
         left join vendor_listings listing_owner on listing_owner.id = b.listing_id
         where coalesce(b.vendor_account_id, listing_owner.account_id) = ${vendorAccountId}
+          and b.vendor_dismissed_at is null
         order by b.created_at desc
       `);
 
@@ -10098,6 +10461,37 @@ app.post(
         bookingRowMatchesActiveProfile(row, activeProfileId, profileCount)
       );
       return res.json(scopedRows);
+    } catch (error: any) {
+      return respondWithInternalServerError(req, res, error);
+    }
+  });
+
+  app.get("/api/vendor/bookings/pending-count", ...requireVendorAuth0, async (req, res) => {
+    try {
+      const vendorAuth = (req as any).vendorAuth;
+      const vendorAccountId = vendorAuth?.id as string | undefined;
+      if (!vendorAccountId) return res.json({ pendingCount: 0 });
+
+      const profileContext = await resolveActiveVendorProfile(req);
+      const activeProfileId = profileContext?.activeProfileId;
+      if (!activeProfileId) return res.json({ pendingCount: 0 });
+
+      const sinceParam = typeof req.query.since === "string" ? req.query.since : null;
+      const sinceDate = sinceParam ? new Date(sinceParam) : null;
+      const sinceIsValid = sinceDate && !Number.isNaN(sinceDate.getTime());
+
+      const [row] = await db
+        .select({ count: count() })
+        .from(bookings)
+        .where(
+          and(
+            eq(bookings.vendorProfileId, activeProfileId),
+            inArray(bookings.status, ["pending", "confirmed"]),
+            ...(sinceIsValid ? [gte(bookings.createdAt, sinceDate)] : [])
+          )
+        );
+
+      return res.json({ pendingCount: row?.count ?? 0 });
     } catch (error: any) {
       return respondWithInternalServerError(req, res, error);
     }
@@ -10142,7 +10536,8 @@ app.post(
           b.listing_title_snapshot as "listingTitleSnapshot",
           b.booked_quantity as "bookedQuantity",
           coalesce(b.vendor_profile_id, listing_owner.profile_id) as "vendorProfileId",
-          coalesce(b.event_date::text, e.date) as "eventDate"
+          coalesce(b.event_date::text, e.date) as "eventDate",
+          b.event_end_time as "eventEndTime"
         from bookings b
         left join events e on e.id = b.event_id
         left join vendor_listings listing_owner on listing_owner.id = b.listing_id
@@ -10166,13 +10561,19 @@ app.post(
       const currentStatus = String(current.status || "").toLowerCase();
 
       if (currentStatus === "confirmed" && nextStatus === "completed") {
-        const eventDate = current.eventDate ? new Date(`${current.eventDate}T00:00:00`) : null;
-        if (!(eventDate instanceof Date) || isNaN(eventDate.getTime())) {
+        if (!current.eventDate) {
           return res.status(400).json({ error: "Booking event date is missing or invalid" });
         }
-        const today = new Date();
-        const todayStart = new Date(today.getFullYear(), today.getMonth(), today.getDate());
-        if (todayStart <= eventDate) {
+        // Use the event end time if available so same-day events can be completed
+        // once the end time has passed. Fall back to end of day if no end time.
+        const endTimeStr = asTrimmedString((current as any).eventEndTime);
+        const eventCutoff = endTimeStr
+          ? new Date(`${current.eventDate}T${endTimeStr}`)
+          : new Date(`${current.eventDate}T23:59:59`);
+        if (isNaN(eventCutoff.getTime())) {
+          return res.status(400).json({ error: "Booking event date is missing or invalid" });
+        }
+        if (new Date() <= eventCutoff) {
           return res.status(400).json({
             error: "You can only mark this booking completed after the event date has passed.",
           });
@@ -10222,16 +10623,20 @@ app.post(
         return res.status(500).json({ error: "Failed to update booking status" });
       }
 
-      // When a vendor cancels (pending decline or confirmed cancellation), issue a full
-      // refund to the customer immediately — no cancellation policy penalty since it is
-      // vendor-initiated.
+      // When a vendor cancels (pending decline or confirmed cancellation), issue full
+      // refunds to the customer for all payment types immediately — no cancellation
+      // policy penalty applies since it is vendor-initiated.
       if (nextStatus === "cancelled") {
-        const [existingPayment] = await db
+        // Fetch all succeeded/partially-refunded payments for this booking,
+        // keyed by type so we target the right Stripe payment intent for each.
+        const vendorCancelPayments = await db
           .select({
             id: payments.id,
+            paymentType: payments.paymentType,
             stripePaymentIntentId: payments.stripePaymentIntentId,
             status: payments.status,
             amount: payments.amount,
+            refundAmount: payments.refundAmount,
           })
           .from(payments)
           .where(
@@ -10240,32 +10645,108 @@ app.post(
               or(eq(payments.status, "succeeded"), eq(payments.status, "partially_refunded"))
             )
           )
-          .orderBy(desc(payments.createdAt))
-          .limit(1);
+          .orderBy(desc(payments.createdAt));
 
-        if (existingPayment?.stripePaymentIntentId) {
+        const vcMainPayment = vendorCancelPayments.find(
+          (p) => p.paymentType === "booking" || p.paymentType === "deposit"
+        );
+        const vcTravelFeePayments = vendorCancelPayments.filter(
+          (p) => p.paymentType === "travel_fee"
+        );
+        const vcDepositPayment = vendorCancelPayments.find(
+          (p) => p.paymentType === "security_deposit"
+        );
+
+        // Safety cap helper — never refund more than the remaining balance on a charge.
+        const vcSafeCap = (p: { amount: number; refundAmount: number | null }) => {
+          const alreadyRefunded = typeof p.refundAmount === "number" ? p.refundAmount : 0;
+          return Math.max(0, p.amount - alreadyRefunded);
+        };
+
+        if (vcMainPayment || vcTravelFeePayments.length > 0 || vcDepositPayment) {
           try {
             const { refundBookingPayment } = await import("./stripe");
-            // Omit `amount` to issue a full refund of whatever was charged.
-            await refundBookingPayment({
-              paymentIntentId: existingPayment.stripePaymentIntentId,
-              reason: "requested_by_customer",
-              idempotencyKey: `vendor-cancel:${bookingId}:${existingPayment.id}`,
-            });
 
-            await db
-              .update(payments)
-              .set({
-                status: "refunded",
-                refundAmount: existingPayment.amount,
-                refundReason: "vendor_cancellation",
-                refundedAt: now,
-                payoutStatus: "cancelled",
-                payoutEligibleAt: null,
-                payoutBlockedReason: "vendor_cancellation",
-                payoutAdjustedAmount: 0,
-              })
-              .where(eq(payments.id, existingPayment.id));
+            // Refund main booking payment (full remaining balance)
+            if (vcMainPayment?.stripePaymentIntentId) {
+              const refundable = vcSafeCap(vcMainPayment);
+              if (refundable > 0) {
+                await refundBookingPayment({
+                  paymentIntentId: vcMainPayment.stripePaymentIntentId,
+                  amount: refundable,
+                  reason: "duplicate",
+                  idempotencyKey: `vendor-cancel-booking:${bookingId}:${vcMainPayment.id}`,
+                });
+              }
+              await db
+                .update(payments)
+                .set({
+                  status: "refunded" as any,
+                  refundAmount: vcMainPayment.amount,
+                  refundReason: "vendor_cancellation",
+                  refundedAt: now,
+                  payoutStatus: "cancelled",
+                  payoutEligibleAt: null,
+                  payoutBlockedReason: "vendor_cancellation",
+                  payoutAdjustedAmount: 0,
+                })
+                .where(eq(payments.id, vcMainPayment.id));
+            }
+
+            // Refund each travel fee payment (full remaining balance)
+            for (const tfp of vcTravelFeePayments) {
+              if (!tfp.stripePaymentIntentId) continue;
+              const refundable = vcSafeCap(tfp);
+              if (refundable > 0) {
+                await refundBookingPayment({
+                  paymentIntentId: tfp.stripePaymentIntentId,
+                  amount: refundable,
+                  reason: "duplicate",
+                  idempotencyKey: `vendor-cancel-travelfee:${bookingId}:${tfp.id}`,
+                });
+              }
+              await db
+                .update(payments)
+                .set({
+                  status: "refunded" as any,
+                  refundAmount: tfp.amount,
+                  refundReason: "vendor_cancellation",
+                  refundedAt: now,
+                  payoutStatus: "cancelled",
+                  payoutEligibleAt: null,
+                  payoutBlockedReason: "vendor_cancellation",
+                  payoutAdjustedAmount: 0,
+                })
+                .where(eq(payments.id, tfp.id));
+            }
+
+            // Refund security deposit (full remaining balance)
+            if (vcDepositPayment?.stripePaymentIntentId) {
+              const refundable = vcSafeCap(vcDepositPayment);
+              if (refundable > 0) {
+                await refundBookingPayment({
+                  paymentIntentId: vcDepositPayment.stripePaymentIntentId,
+                  amount: refundable,
+                  reason: "duplicate",
+                  idempotencyKey: `vendor-cancel-deposit:${bookingId}:${vcDepositPayment.id}`,
+                });
+              }
+              await db
+                .update(payments)
+                .set({
+                  status: "refunded" as any,
+                  refundAmount: vcDepositPayment.amount,
+                  refundReason: "vendor_cancellation",
+                  refundedAt: now,
+                })
+                .where(eq(payments.id, vcDepositPayment.id));
+
+              // Mark the deposit as refunded on the booking so the auto-job skips it
+              await db
+                .update(bookings)
+                .set({ securityDepositRefundedAt: now, updatedAt: now })
+                .where(eq(bookings.id, bookingId));
+            }
           } catch (refundErr: any) {
             logger.error(
               { bookingId, err: refundErr?.message },
@@ -10295,7 +10776,7 @@ app.post(
       if (nextStatus === "confirmed" || nextStatus === "cancelled") {
         void (async () => {
           try {
-            const serverUrl = (process.env.SERVER_URL || "http://localhost:5001").replace(/\/$/, "");
+            const serverUrl = appUrl();
             const emailRows: any = await db.execute(drizzleSql`
               select
                 b.customer_id as "customerId",
@@ -10331,6 +10812,17 @@ app.post(
               serverUrl,
             };
 
+            const addonRows: any = await db.execute(drizzleSql`
+              SELECT title, unit_price_cents, total_price_cents
+              FROM booking_items
+              WHERE booking_id = ${bookingId} AND item_type = 'addon'
+              ORDER BY created_at ASC
+            `);
+            const confirmedAddOns = (addonRows.rows as any[]).map((r: any) => ({
+              title: String(r.title ?? "Add-on"),
+              priceCents: Number(r.total_price_cents ?? r.unit_price_cents ?? 0),
+            }));
+
             const tasks: Promise<any>[] = [];
 
             if (nextStatus === "confirmed") {
@@ -10341,18 +10833,8 @@ app.post(
                     recipientName: info.customerName || "Customer",
                     counterpartName: info.vendorName || "Vendor",
                     totalAmountCents: info.totalAmount || 0,
+                    addOns: confirmedAddOns,
                     role: "customer",
-                  })
-                );
-              }
-              if (info.vendorEmail) {
-                tasks.push(
-                  sendBookingConfirmedEmail(info.vendorEmail, {
-                    ...sharedParams,
-                    recipientName: info.vendorName || "Vendor",
-                    counterpartName: info.customerName || "Customer",
-                    totalAmountCents: info.totalAmount || 0,
-                    role: "vendor",
                   })
                 );
               }
@@ -10364,16 +10846,6 @@ app.post(
                     recipientName: info.customerName || "Customer",
                     counterpartName: info.vendorName || "Vendor",
                     role: "customer",
-                  })
-                );
-              }
-              if (info.vendorEmail) {
-                tasks.push(
-                  sendBookingCancelledEmail(info.vendorEmail, {
-                    ...sharedParams,
-                    recipientName: info.vendorName || "Vendor",
-                    counterpartName: info.customerName || "Customer",
-                    role: "vendor",
                   })
                 );
               }
@@ -10404,6 +10876,44 @@ app.post(
         status: updated.status,
         updatedAt: updated.updatedAt,
       });
+    } catch (error: any) {
+      return respondWithInternalServerError(req, res, error);
+    }
+  });
+
+  // DELETE /api/vendor/bookings/:id
+  // Vendor dismisses an expired or failed booking so it no longer appears in their list.
+  app.delete("/api/vendor/bookings/:id", mutationRateLimiter, ...requireVendorAuth0, async (req, res) => {
+    try {
+      const vendorAuth = (req as any).vendorAuth;
+      const vendorAccountId = vendorAuth?.id as string | undefined;
+      if (!vendorAccountId) {
+        return res.status(403).json({ error: "Vendor account required" });
+      }
+      const { id: bookingId } = req.params;
+
+      const [booking] = await db
+        .select({ id: bookings.id, status: bookings.status, vendorAccountId: bookings.vendorAccountId })
+        .from(bookings)
+        .where(eq(bookings.id, bookingId))
+        .limit(1);
+
+      if (!booking) {
+        return res.status(404).json({ error: "Booking not found" });
+      }
+      if (booking.vendorAccountId !== vendorAccountId) {
+        return res.status(403).json({ error: "Not your booking" });
+      }
+      if (booking.status !== "expired" && booking.status !== "failed") {
+        return res.status(400).json({ error: "Only expired or failed bookings can be dismissed" });
+      }
+
+      await db
+        .update(bookings)
+        .set({ vendorDismissedAt: new Date() })
+        .where(eq(bookings.id, bookingId));
+
+      return res.json({ ok: true });
     } catch (error: any) {
       return respondWithInternalServerError(req, res, error);
     }
@@ -10744,7 +11254,7 @@ app.post(
 
       void (async () => {
         try {
-          const serverUrl = (process.env.SERVER_URL || "http://localhost:5001").replace(/\/$/, "");
+          const serverUrl = appUrl();
           const emailRows: any = await db.execute(drizzleSql`
             select
               u.email     as "customerEmail",
@@ -10920,10 +11430,12 @@ app.post(
       const normalizeAmountToCents = (value: unknown) => {
         const n = Number(value ?? 0);
         if (!Number.isFinite(n) || n <= 0) return 0;
-        // Booking totals are stored as either cents (int) or legacy dollars (int/float).
-        // Heuristic: amounts >= 10,000 are almost certainly cents for this MVP range.
-        if (Number.isInteger(n) && n >= 10_000) return n;
-        return Math.round(n * 100);
+        // The current booking flow always writes amounts in cents (integers).
+        // Non-integer values are legacy float-dollar rows (e.g. 36.80 → 3680 cents).
+        // Integer-dollar legacy rows require a data migration; no heuristic can safely
+        // distinguish them from a legitimately small cents value.
+        if (!Number.isInteger(n)) return Math.round(n * 100);
+        return Math.round(n);
       };
 
       let rows: Array<{
@@ -10932,6 +11444,7 @@ app.post(
         paymentStatus: string | null;
         totalAmount: number | null;
         vendorPayout: number | null;
+        platformFee?: number | null;
         listingTitleSnapshot?: string | null;
         bookedQuantity?: number | null;
         baseSubtotalCents?: number | null;
@@ -10941,6 +11454,9 @@ app.post(
         vendorProfileId?: string | null;
         eventDate: string | null;
         createdAt: Date | string | null;
+        payoutStatus?: string | null;
+        payoutEligibleAt?: Date | string | null;
+        paidOutAt?: Date | string | null;
       }> = [];
       const bookingRows: any = await db.execute(drizzleSql`
         select
@@ -10949,6 +11465,7 @@ app.post(
           b.payment_status as "paymentStatus",
           b.total_amount as "totalAmount",
           b.vendor_payout as "vendorPayout",
+          b.platform_fee as "platformFee",
           b.listing_title_snapshot as "listingTitleSnapshot",
           b.booked_quantity as "bookedQuantity",
           b.base_subtotal_cents as "baseSubtotalCents",
@@ -10957,7 +11474,10 @@ app.post(
           b.customer_fee_amount_cents as "customerFeeAmountCents",
           coalesce(b.vendor_profile_id, listing_owner.profile_id) as "vendorProfileId",
           coalesce(b.event_date::text, e.date) as "eventDate",
-          b.created_at as "createdAt"
+          b.created_at as "createdAt",
+          b.payout_status as "payoutStatus",
+          b.payout_eligible_at as "payoutEligibleAt",
+          b.paid_out_at as "paidOutAt"
         from bookings b
         left join events e on e.id = b.event_id
         left join vendor_listings listing_owner on listing_owner.id = b.listing_id
@@ -11018,7 +11538,6 @@ app.post(
       }
 
       const now = new Date();
-      const today = new Date(now.getFullYear(), now.getMonth(), now.getDate());
       const toNetCents = (r: { id: string; vendorPayout?: number | null }) => {
         const typedVendorPayout = normalizeAmountToCents(r.vendorPayout);
         if (typedVendorPayout > 0) return typedVendorPayout;
@@ -11029,25 +11548,31 @@ app.post(
         return Math.max(0, baseAmountCents - vendorFee);
       };
 
-      const totalNetEarned = rows
-        .filter((r) => {
-          const s = String(r.status || "").toLowerCase();
-          return s === "completed";
-        })
+      const toPlatformFeeCents = (r: { id: string; platformFee?: number | null }) => {
+        const typed = normalizeAmountToCents(r.platformFee);
+        if (typed > 0) return typed;
+        const baseAmountCents = baseAmountByBookingId.get(r.id) ?? 0;
+        return Math.round(baseAmountCents * VENDOR_FEE_RATE);
+      };
+
+      const toRowPayoutStatus = (r: { payoutStatus?: string | null }) =>
+        String(r.payoutStatus || "not_ready").toLowerCase();
+
+      const completedRows = rows.filter((r) => String(r.status || "").toLowerCase() === "completed");
+
+      const totalPaidOut = completedRows
+        .filter((r) => toRowPayoutStatus(r) === "paid")
         .reduce((sum, r) => sum + toNetCents(r), 0);
 
-      const upcomingNetPayout = rows
-        .filter((r) => {
-          const s = String(r.status || "").toLowerCase();
-          const paymentState = toCanonicalPaymentStatus((r as any).paymentStatus);
-          if (s !== "completed") return false;
-          return paymentState === "succeeded" || paymentState === "partially_refunded";
-        })
+      const pendingNetPayout = completedRows
+        .filter((r) => ["not_ready", "eligible", "scheduled"].includes(toRowPayoutStatus(r)))
         .reduce((sum, r) => sum + toNetCents(r), 0);
 
-      const historyBase = rows
-        .filter((r) => String(r.status || "").toLowerCase() === "completed")
-        .map((r) => {
+      const blockedRows = completedRows.filter((r) => toRowPayoutStatus(r) === "blocked");
+      const blockedCount = blockedRows.length;
+      const blockedNetAmount = blockedRows.reduce((sum, r) => sum + toNetCents(r), 0);
+
+      const historyBase = completedRows.map((r) => {
         const baseAmountCents = baseAmountByBookingId.get(r.id) ?? normalizeAmountToCents(r.totalAmount);
         const typedCustomerFeeCents = normalizeAmountToCents(r.customerFeeAmountCents);
         const grossCentsFromTypedTotal = normalizeAmountToCents(r.totalAmount);
@@ -11056,22 +11581,29 @@ app.post(
             ? grossCentsFromTypedTotal
             : baseAmountCents + (typedCustomerFeeCents > 0 ? typedCustomerFeeCents : Math.round(baseAmountCents * CUSTOMER_FEE_RATE));
         const netCents = toNetCents(r);
+        const platformFeeAmount = toPlatformFeeCents(r);
         return {
           id: r.id,
           status: String(r.status || "pending").toLowerCase(),
+          payoutStatus: toRowPayoutStatus(r),
+          payoutEligibleAt: r.payoutEligibleAt ?? null,
+          paidOutAt: r.paidOutAt ?? null,
           eventDate: r.eventDate,
           createdAt: r.createdAt,
           listingTitleSnapshot: r.listingTitleSnapshot ?? null,
           netAmount: netCents,
           grossAmount: grossCents,
+          platformFeeAmount,
         };
       });
 
       const historyWithContext = await attachBookingItemContext(historyBase as any);
 
       return res.json({
-        totalNetEarned,
-        upcomingNetPayout,
+        totalPaidOut,
+        pendingNetPayout,
+        blockedCount,
+        blockedNetAmount,
         payoutReleaseMode: PAYOUT_RELEASE_MODE,
         payoutPolicyNote:
           "Funds are auto-released after a 72-hour post-event dispute window unless a dispute is filed.",
@@ -11107,6 +11639,52 @@ app.post(
       res.status(500).json({ error: "Unable to load notifications" });
     }
   });
+
+  app.patch(
+    "/api/vendor/notifications/bulk/read",
+    mutationRateLimiter,
+    ...requireVendorAuth0,
+    async (req, res) => {
+      try {
+        const account = await getVendorAccountFromRequest(req);
+        if (!account?.id) return res.status(403).json({ error: "Vendor account required" });
+
+        const { ids } = req.body as { ids?: unknown };
+        if (!Array.isArray(ids) || ids.some((id) => typeof id !== "string")) {
+          return res.status(400).json({ error: "ids must be an array of strings" });
+        }
+
+        const count = await storage.bulkMarkNotificationsRead(ids, account.id, "vendor");
+        res.json({ updated: count });
+      } catch (error: any) {
+        logRouteError("/api/vendor/notifications/bulk/read", error);
+        res.status(500).json({ error: "Unable to mark notifications as read" });
+      }
+    }
+  );
+
+  app.patch(
+    "/api/vendor/notifications/bulk/archive",
+    mutationRateLimiter,
+    ...requireVendorAuth0,
+    async (req, res) => {
+      try {
+        const account = await getVendorAccountFromRequest(req);
+        if (!account?.id) return res.status(403).json({ error: "Vendor account required" });
+
+        const { ids } = req.body as { ids?: unknown };
+        if (!Array.isArray(ids) || ids.some((id) => typeof id !== "string")) {
+          return res.status(400).json({ error: "ids must be an array of strings" });
+        }
+
+        const count = await storage.bulkArchiveNotifications(ids, account.id, "vendor");
+        res.json({ archived: count });
+      } catch (error: any) {
+        logRouteError("/api/vendor/notifications/bulk/archive", error);
+        res.status(500).json({ error: "Unable to archive notifications" });
+      }
+    }
+  );
 
   app.patch(
     "/api/vendor/notifications/:id/read",
@@ -11536,9 +12114,47 @@ app.post(
         left join vendor_accounts listing_owner_account on listing_owner_account.id = listing_owner.account_id
         left join users u on u.id = coalesce(va.user_id, listing_owner_account.user_id)
         where b.customer_id = ${customerAuth.id}
+          and b.customer_dismissed_at is null
         order by b.created_at desc
       `);
       return res.json(await attachCustomerBookingContext(extractRows(rows) as any));
+    } catch (error: any) {
+      return respondWithInternalServerError(req, res, error);
+    }
+  });
+
+  // DELETE /api/customer/bookings/:id
+  // Customer dismisses an expired or failed booking so it no longer appears in their list.
+  app.delete("/api/customer/bookings/:id", mutationRateLimiter, requireCustomerAnyAuth, async (req, res) => {
+    try {
+      const customerAuth = await resolveCustomerAuthFromRequest(req, { createIfMissing: true });
+      if (!customerAuth?.id) {
+        return res.status(401).json({ error: "Customer authentication required" });
+      }
+      const { id: bookingId } = req.params;
+
+      const [booking] = await db
+        .select({ id: bookings.id, status: bookings.status, customerId: bookings.customerId })
+        .from(bookings)
+        .where(eq(bookings.id, bookingId))
+        .limit(1);
+
+      if (!booking) {
+        return res.status(404).json({ error: "Booking not found" });
+      }
+      if (booking.customerId !== customerAuth.id) {
+        return res.status(403).json({ error: "Not your booking" });
+      }
+      if (booking.status !== "expired" && booking.status !== "failed") {
+        return res.status(400).json({ error: "Only expired or failed bookings can be dismissed" });
+      }
+
+      await db
+        .update(bookings)
+        .set({ customerDismissedAt: new Date() })
+        .where(eq(bookings.id, bookingId));
+
+      return res.json({ ok: true });
     } catch (error: any) {
       return respondWithInternalServerError(req, res, error);
     }
@@ -11604,6 +12220,9 @@ app.post(
         select
           bi.title,
           bi.listing_id as "listingId",
+          bi.item_type as "itemType",
+          bi.unit_price_cents as "unitPriceCents",
+          bi.total_price_cents as "totalPriceCents",
           bi.item_data as "itemData",
           vl.title as "listingTitle",
           va2.business_name as "listingVendorBusinessName"
@@ -11612,15 +12231,19 @@ app.post(
         left join vendor_accounts va2 on va2.id = vl.account_id
         where bi.booking_id = ${bookingId}
         order by bi.created_at asc
-        limit 1
       `);
-      const [item] = extractRows<{
+      const allItems = extractRows<{
         title?: string | null;
         listingId?: string | null;
+        itemType?: string | null;
+        unitPriceCents?: number | null;
+        totalPriceCents?: number | null;
         itemData?: any;
         listingTitle?: string | null;
         listingVendorBusinessName?: string | null;
       }>(itemRes);
+      const item = allItems.find((i) => i.itemType === "base") ?? allItems[0];
+      const addonItems = allItems.filter((i) => i.itemType === "addon");
       const itemData = item?.itemData && typeof item.itemData === "object" ? item.itemData : {};
       const customerEventFromItem = itemData?.customerEvent && typeof itemData.customerEvent === "object"
         ? itemData.customerEvent
@@ -11651,16 +12274,38 @@ app.post(
           ? customerEventFromItem.title.trim()
           : row.eventTitle ?? null;
 
+      // For package bookings, resolve the parent container listing ID so the
+      // detail page shows the container (with all packages) instead of the
+      // individual package_item listing.
+      let resolvedListingId: string | null = row.listingId ?? item?.listingId ?? null;
+      if (row.packageId) {
+        const parentRows: any = await db.execute(drizzleSql`
+          select parent_listing_id as "parentListingId"
+          from vendor_listings
+          where id = ${row.packageId}
+            and listing_type = 'package_item'
+          limit 1
+        `);
+        const [parentRow] = extractRows<{ parentListingId?: string | null }>(parentRows);
+        if (parentRow?.parentListingId) {
+          resolvedListingId = parentRow.parentListingId;
+        }
+      }
+
       return res.json({
         ...row,
         itemTitle: itemTitleResolved,
         displayTitle: itemTitleResolved ? `${itemTitleResolved} from ${vendorName}` : vendorName,
         vendorName,
         customerEventTitle,
-        listingId: row.listingId ?? item?.listingId ?? null,
+        listingId: resolvedListingId,
         bookedQuantity: Math.max(1, parseIntegerValue(row.bookedQuantity) ?? parseIntegerValue(itemData?.quantity) ?? 1),
         customerNotes,
         customerQuestions,
+        addOns: addonItems.map((a) => ({
+          title: a.title ?? "Add-on",
+          priceCents: a.totalPriceCents ?? a.unitPriceCents ?? 0,
+        })),
       });
     } catch (error: any) {
       return respondWithInternalServerError(req, res, error);
@@ -11682,8 +12327,41 @@ app.post(
       const schema = z.object({
         customerEventId: z.string().optional(),
         customerEventTitle: z.string().max(160).optional(),
+        unlink: z.boolean().optional(),
       });
       const data = schema.parse(req.body ?? {});
+
+      // ── Unlink path ───────────────────────────────────────────────────────
+      if (data.unlink === true) {
+        const [bookingCheck] = await db
+          .select({ id: bookings.id })
+          .from(bookings)
+          .where(and(eq(bookings.id, bookingId), eq(bookings.customerId, customerAuth.id)))
+          .limit(1);
+        if (!bookingCheck?.id) {
+          return res.status(404).json({ error: "Booking not found for this customer" });
+        }
+
+        await db
+          .update(bookings)
+          .set({ eventId: null, updatedAt: new Date() })
+          .where(and(eq(bookings.id, bookingId), eq(bookings.customerId, customerAuth.id)));
+
+        await db.execute(drizzleSql`
+          update booking_items bi
+          set item_data = jsonb_set(
+            coalesce(bi.item_data, '{}'::jsonb),
+            '{customerEvent}',
+            'null'::jsonb,
+            true
+          )
+          where bi.booking_id = ${bookingId}
+        `);
+
+        return res.json({ bookingId, customerEvent: null });
+      }
+
+      // ── Link / change path ────────────────────────────────────────────────
       const requestedEventId =
         typeof data.customerEventId === "string" && data.customerEventId.trim().length > 0
           ? data.customerEventId.trim()
@@ -11694,7 +12372,7 @@ app.post(
           : null;
 
       if (!requestedEventId && !requestedEventTitle) {
-        return res.status(400).json({ error: "Provide customerEventId or customerEventTitle" });
+        return res.status(400).json({ error: "Provide customerEventId, customerEventTitle, or unlink: true" });
       }
 
       const [bookingRow] = await db
@@ -11939,7 +12617,7 @@ app.post(
       void (async () => {
         try {
           if (!reviewResult.vendorAccountId) return;
-          const serverUrl = (process.env.SERVER_URL || "http://localhost:5001").replace(/\/$/, "");
+          const serverUrl = appUrl();
           const [vendorRow] = await db
             .select({ email: vendorAccounts.email, businessName: vendorAccounts.businessName })
             .from(vendorAccounts)
@@ -12115,7 +12793,7 @@ app.post(
         .where(eq(payments.bookingId, bookingId));
 
       // Fire-and-forget emails — do not await; never block the 201 response
-      const serverUrl = (process.env.SERVER_URL || "http://localhost:5001").replace(/\/$/, "");
+      const serverUrl = appUrl();
       const disputeEventDate = asTrimmedString(booking.eventDate) || "N/A";
       const disputeListingTitle = asTrimmedString(booking.listingTitle) || "Your booking";
       const disputeFiledAtStr = createdDispute.filedAt
@@ -12243,7 +12921,7 @@ app.post(
 
       // Notify the customer that the vendor has responded
       if (dispute.customerEmail) {
-        const serverUrl = (process.env.SERVER_URL || "http://localhost:5001").replace(/\/$/, "");
+        const serverUrl = appUrl();
         sendDisputeVendorRespondedEmail(dispute.customerEmail, {
           recipientName: asTrimmedString(dispute.customerName) || "Customer",
           vendorBusinessName: asTrimmedString(dispute.vendorBusinessName) || "Vendor",
@@ -12286,27 +12964,49 @@ app.post(
 
       const cases = await db.execute(drizzleSql`
         SELECT
-          dc.id           AS case_id,
+          dc.id                  AS case_id,
           dc.booking_id,
-          dc.status       AS case_status,
+          dc.status              AS case_status,
           dc.resolution,
           dc.resolved_at,
-          dc.created_at   AS case_created_at,
-          dc.updated_at   AS case_updated_at,
-          b.status        AS booking_status,
+          dc.response_deadline_at,
+          dc.created_at          AS case_created_at,
+          dc.updated_at          AS case_updated_at,
+          b.status               AS booking_status,
           b.event_date,
           b.booking_end_at,
           b.listing_title_snapshot,
           b.payout_status,
           b.payout_blocked_reason,
-          cust.name       AS customer_name,
-          cust.email      AS customer_email,
-          va.business_name AS vendor_name,
-          va.email        AS vendor_email
+          b.customer_fee_amount_cents,
+          b.platform_fee         AS booking_platform_fee,
+          b.vendor_payout        AS vendor_payout_cents,
+          cust.name              AS customer_name,
+          cust.email             AS customer_email,
+          va.business_name       AS vendor_name,
+          va.email               AS vendor_email,
+          dep.id                 AS deposit_payment_id,
+          dep.amount             AS deposit_payment_cents,
+          dep.status             AS deposit_payment_status,
+          bkp.amount             AS booking_payment_cents
         FROM dispute_cases dc
         JOIN bookings b ON b.id = dc.booking_id
         LEFT JOIN users cust ON cust.id = b.customer_id
         LEFT JOIN vendor_accounts va ON va.id = b.vendor_account_id
+        LEFT JOIN LATERAL (
+          SELECT id, amount, status
+          FROM payments
+          WHERE booking_id = dc.booking_id
+            AND payment_type IN ('security_deposit', 'deposit')
+          ORDER BY created_at DESC LIMIT 1
+        ) dep ON true
+        LEFT JOIN LATERAL (
+          SELECT amount
+          FROM payments
+          WHERE booking_id = dc.booking_id
+            AND payment_type = 'booking'
+          ORDER BY created_at DESC LIMIT 1
+        ) bkp ON true
         WHERE 1=1 ${statusWhere}
         ORDER BY dc.updated_at DESC
         LIMIT 200
@@ -12320,7 +13020,7 @@ app.post(
         SELECT
           df.id, df.case_id, df.filed_by, df.dispute_type,
           df.description, df.attachment_urls, df.claim_amount_cents,
-          df.created_at,
+          df.is_response, df.created_at,
           u.name           AS filer_customer_name,
           u.email          AS filer_customer_email,
           va.business_name AS filer_vendor_name,
@@ -12328,7 +13028,7 @@ app.post(
         FROM dispute_filings df
         LEFT JOIN users u ON u.id = df.filer_customer_id
         LEFT JOIN vendor_accounts va ON va.id = df.filer_vendor_account_id
-        WHERE df.case_id = ANY(${caseIds})
+        WHERE df.case_id = ANY(${toPgTextArray(caseIds)}::text[])
         ORDER BY df.created_at ASC
       `);
 
@@ -12406,9 +13106,9 @@ app.post(
         .object({
           decision: z.enum(["refund", "payout"]),
           adminNotes: z.string().trim().max(2000).optional(),
-          // For damage claims: how many cents of the security deposit to withhold.
-          // 0 or absent = full refund. Must be <= security deposit amount.
-          withheldAmountCents: z.number().int().min(0).optional(),
+          // How many cents to refund to the customer.
+          // Absent = full deposit refund. Can exceed deposit to also refund booking payment.
+          refundAmountCents: z.number().int().min(0).optional(),
         })
         .parse(req.body ?? {});
 
@@ -12489,43 +13189,107 @@ app.post(
           return res.status(400).json({ error: "Security deposit payment is not in a refundable state" });
         }
 
-        const withheld = payload.withheldAmountCents ?? 0;
-        if (withheld > (depositPayment.amount ?? 0)) {
-          return res.status(400).json({ error: "Withheld amount cannot exceed the security deposit amount" });
+        // Find the booking payment to support full-booking refunds.
+        const bookingPaymentRows = await db
+          .select({
+            id: payments.id,
+            stripePaymentIntentId: payments.stripePaymentIntentId,
+            amount: payments.amount,
+            status: payments.status,
+            vendorNetPayoutAmount: payments.vendorNetPayoutAmount,
+          })
+          .from(payments)
+          .where(and(eq(payments.bookingId, resolvedBookingId), eq(payments.paymentType, "booking")))
+          .orderBy(desc(payments.createdAt))
+          .limit(1);
+        const bookingPayment = bookingPaymentRows[0] ?? null;
+
+        const depositAmt = depositPayment.amount ?? 0;
+        // Max refundable from booking payment = vendor net payout (non-fee portion).
+        const maxBookingRefund = bookingPayment?.vendorNetPayoutAmount ?? 0;
+        const maxTotalRefund = depositAmt + maxBookingRefund;
+
+        const requestedRefund = typeof payload.refundAmountCents === "number"
+          ? payload.refundAmountCents
+          : depositAmt; // default: full deposit refund
+
+        if (requestedRefund > maxTotalRefund) {
+          return res.status(400).json({
+            error: `Refund amount cannot exceed ${formatCentsAsDollars(maxTotalRefund)} (deposit + vendor payout)`,
+          });
         }
 
-        // For a partial withhold, refund only the non-withheld portion.
-        // For a full refund (withheld === 0), omit `amount` so Stripe refunds everything.
-        const refundAmountCents = depositPayment.amount - withheld;
+        // Split the refund: deposit first, then booking payment for any excess.
+        const depositRefundCents = Math.min(requestedRefund, depositAmt);
+        const withheld = depositAmt - depositRefundCents; // withheld from deposit → paid to vendor
+        const bookingRefundCents = Math.max(0, requestedRefund - depositAmt);
 
         const { refundBookingPayment } = await import("./stripe");
-        const refund = refundAmountCents > 0
+
+        // Refund deposit portion.
+        const depositRefund = depositRefundCents > 0
           ? await refundBookingPayment({
               paymentIntentId: depositPayment.stripePaymentIntentId,
-              amount: refundAmountCents < (depositPayment.amount ?? 0) ? refundAmountCents : undefined,
+              amount: depositRefundCents < depositAmt ? depositRefundCents : undefined,
               reason: "requested_by_customer",
               idempotencyKey: `admin-dispute-refund:${resolvedDisputeId}:${depositPayment.id}`,
             })
           : null;
 
-        const resolutionNote = withheld > 0
-          ? (payload.adminNotes ?? `Partial refund: ${formatCentsAsDollars(refundAmountCents)} refunded, ${formatCentsAsDollars(withheld)} withheld for damages`)
-          : (payload.adminNotes ?? "Full refund approved");
+        // Refund booking payment portion (vendor no-show / full cancellation).
+        const bookingRefund = bookingRefundCents > 0 && bookingPayment
+          ? await refundBookingPayment({
+              paymentIntentId: bookingPayment.stripePaymentIntentId,
+              amount: bookingRefundCents < (bookingPayment.amount ?? 0) ? bookingRefundCents : undefined,
+              reason: "requested_by_customer",
+              idempotencyKey: `admin-dispute-refund-booking:${resolvedDisputeId}:${bookingPayment.id}`,
+            })
+          : null;
+
+        const resolutionNote = (() => {
+          if (payload.adminNotes) return payload.adminNotes;
+          if (bookingRefundCents > 0) {
+            return `Full refund: ${formatCentsAsDollars(requestedRefund)} refunded to customer (deposit + booking)`;
+          }
+          if (withheld > 0) {
+            return `Partial refund: ${formatCentsAsDollars(depositRefundCents)} refunded, ${formatCentsAsDollars(withheld)} withheld for damages`;
+          }
+          return "Full deposit refund approved";
+        })();
 
         await db.transaction(async (tx) => {
+          // Deposit payment: refunded portion goes to customer; withheld portion queued for vendor payout.
           await tx
             .update(payments)
             .set({
               status: withheld > 0 ? "partially_refunded" : "refunded",
-              refundAmount: refundAmountCents,
+              refundAmount: depositRefundCents,
               refundReason: "admin_dispute_refund",
               refundedAt: now,
-              payoutStatus: "cancelled",
-              payoutEligibleAt: null,
-              payoutBlockedReason: "dispute_refund_approved",
+              // Withheld portion → make eligible for vendor payout via payout worker.
+              payoutStatus: withheld > 0 ? "eligible" : "cancelled",
+              payoutEligibleAt: withheld > 0 ? now : null,
+              payoutBlockedReason: withheld > 0 ? null : "dispute_refund_approved",
               payoutAdjustedAmount: withheld > 0 ? withheld : 0,
             })
             .where(eq(payments.id, depositPayment.id));
+
+          // Booking payment: cancel payout if we refunded any of it.
+          if (bookingRefundCents > 0 && bookingPayment) {
+            await tx
+              .update(payments)
+              .set({
+                status: "refunded",
+                refundAmount: bookingRefundCents,
+                refundReason: "admin_dispute_refund",
+                refundedAt: now,
+                payoutStatus: "cancelled",
+                payoutEligibleAt: null,
+                payoutBlockedReason: "dispute_full_refund",
+                payoutAdjustedAmount: 0,
+              })
+              .where(eq(payments.id, bookingPayment.id));
+          }
 
           await tx
             .update(bookings)
@@ -12548,7 +13312,7 @@ app.post(
             })
             .where(eq(bookingDisputes.id, resolvedDisputeId));
 
-          // Update dispute_cases with withheld amount and resolution note
+          // Update dispute_cases
           if (activeCaseId) {
             await tx.execute(drizzleSql`
               UPDATE dispute_cases
@@ -12566,11 +13330,20 @@ app.post(
           }
         });
 
+        // If withheld > 0, trigger vendor payout for the withheld portion immediately.
+        if (withheld > 0) {
+          processSinglePayoutCandidate({
+            paymentId: depositPayment.id,
+            bookingId: resolvedBookingId,
+            dryRun: false,
+          }).catch(() => {});
+        }
+
         // Fire-and-forget outcome emails
-        const serverUrlRefund = (process.env.SERVER_URL || "http://localhost:5001").replace(/\/$/, "");
+        const serverUrlRefund = appUrl();
         const resolveListingTitle = asTrimmedString(dispute.listingTitle) || "Your booking";
         const resolveEventDate = asTrimmedString(dispute.eventDate) || "N/A";
-        const emailRefundAmountCents = refundAmountCents > 0 ? refundAmountCents : undefined;
+        const emailRefundAmountCents = requestedRefund > 0 ? requestedRefund : undefined;
 
         if (dispute.customerEmail) {
           sendDisputeResolvedEmail(dispute.customerEmail, {
@@ -12600,7 +13373,8 @@ app.post(
           disputeId: resolvedDisputeId,
           bookingId: resolvedBookingId,
           decision: "refund",
-          refund,
+          depositRefund,
+          bookingRefund,
           resolvedAt: now,
         });
       }
@@ -12633,10 +13407,12 @@ app.post(
 
         // Update dispute_cases
         if (activeCaseId) {
+          const withheldForCase = null; // payout path: vendor receives full deposit, nothing withheld
           await tx.execute(drizzleSql`
             UPDATE dispute_cases
             SET status = 'resolved',
                 resolution = ${payload.adminNotes ?? "Payout approved to vendor"},
+                withheld_amount_cents = ${withheldForCase},
                 resolved_at = ${now},
                 updated_at = ${now}
             WHERE id = ${activeCaseId}
@@ -12674,7 +13450,7 @@ app.post(
         : null;
 
       // Fire-and-forget outcome emails
-      const serverUrlPayout = (process.env.SERVER_URL || "http://localhost:5001").replace(/\/$/, "");
+      const serverUrlPayout = appUrl();
       const payoutListingTitle = asTrimmedString(dispute.listingTitle) || "Your booking";
       const payoutEventDate = asTrimmedString(dispute.eventDate) || "N/A";
 
@@ -12864,7 +13640,8 @@ app.post(
         takedownFeeEnabled: vendorListings.takedownFeeEnabled,
         takedownFeeAmountCents: vendorListings.takedownFeeAmountCents,
         listingData: vendorListings.listingData,
-        cancellationPolicyOverride: vendorListings.cancellationPolicyOverride,
+        cancellationPolicy: vendorListings.cancellationPolicy,
+        cancellationPolicyDays: vendorListings.cancellationPolicyDays,
         securityDepositEnabled: vendorListings.securityDepositEnabled,
         securityDepositCents: vendorListings.securityDepositCents,
         profileOperatingTimezone: vendorProfiles.operatingTimezone,
@@ -13058,32 +13835,40 @@ app.post(
         }
       }
 
+      // ── Service radius enforcement ────────────────────────────────────────────
+      // Geographic configuration (service center, radius, travelOffered) lives on
+      // the container listing for package bookings — the package_item child row has
+      // no coordinates of its own. Use containerRow when present so the radius check
+      // always reads from the right row regardless of listing type.
+      // We only enforce when coordinates are present — if the customer didn't supply
+      // event coordinates we allow the booking through (coordinates are optional at
+      // checkout for some flows).
+      const serviceAreaRow = containerRow ?? listingRow;
+      const bookingOutsideServiceRadius =
+        serviceAreaRow != null &&
+        serviceAreaRow.travelOffered === false &&
+        data.eventLocationLat != null &&
+        data.eventLocationLng != null
+          ? isEventOutsideServiceRadius({
+              listingCenterLat: serviceAreaRow.listingServiceCenterLat,
+              listingCenterLng: serviceAreaRow.listingServiceCenterLng,
+              serviceRadiusMiles: serviceAreaRow.serviceRadiusMiles,
+              eventLat: data.eventLocationLat,
+              eventLng: data.eventLocationLng,
+            })
+          : false;
+
       // Resolve and snapshot the cancellation policy before the booking insert.
-      // Order: listing override → vendor default → platform default (Moderate).
-      let bookingCancellationPolicySnapshot: CancellationPolicy;
-      if (listingRow?.cancellationPolicyOverride) {
-        bookingCancellationPolicySnapshot = listingRow.cancellationPolicyOverride as CancellationPolicy;
-      } else {
-        const [vendorPolicy] = await db
-          .select()
-          .from(vendorCancellationPolicies)
-          .where(eq(vendorCancellationPolicies.vendorId, vendorAccount.id))
-          .limit(1);
-        if (vendorPolicy) {
-          bookingCancellationPolicySnapshot = {
-            preset_type: vendorPolicy.presetType as any,
-            tiers: vendorPolicy.tiers as any,
-            allow_reschedule: vendorPolicy.allowReschedule,
-            reschedule_window_months: vendorPolicy.rescheduleWindowMonths,
-            weather_clause: vendorPolicy.weatherClause,
-            force_majeure_clause: vendorPolicy.forceMajeureClause,
-            notes: vendorPolicy.notes,
-          };
-        } else {
-          // Vendor hasn't configured a policy yet — default to Moderate
-          bookingCancellationPolicySnapshot = { ...PRESET_MODERATE };
-        }
-      }
+      //
+      // Package items have their own policy set in the wizard — use that if booking a package.
+      // Otherwise fall back to the listing's policy.
+      // Both are stored as proper columns (cancellation_policy, cancellation_policy_days).
+      // Legacy bookings with no policy snapshot get a full refund by default.
+      const policySource = packageRow?.cancellationPolicy ? packageRow : listingRow;
+      const bookingCancellationPolicySnapshot: CancellationPolicy = policyFromListingWizard(
+        policySource?.cancellationPolicy,
+        policySource?.cancellationPolicyDays,
+      );
 
       const listingDataAny = (listingRow?.listingData ?? {}) as any;
       const itemTitle = isAlaCarte
@@ -13380,10 +14165,12 @@ app.post(
         listingRow?.securityDepositEnabled && listingRow?.securityDepositCents && listingRow.securityDepositCents > 0
           ? Math.round(listingRow.securityDepositCents)
           : 0;
-      // MVP checkout policy: collect the full amount up-front at booking time.
+      // Collect the full amount up-front at booking time — service total + security deposit
+      // in a single Stripe PaymentIntent. The security deposit is tracked separately in the
+      // payments table so it can be partially refunded without touching the service amount.
       // vendorPayout / platformFee are calculated on the service subtotal only — the
-      // security deposit is excluded so it can be fully refunded to the customer.
-      const enforcedTotalAmount = discountedSubtotal + customerFee;
+      // security deposit is excluded from payout calculations.
+      const enforcedTotalAmount = discountedSubtotal + customerFee + securityDepositCents;
       const platformFee = Math.round(discountedSubtotal * VENDOR_FEE_RATE);
       const vendorPayout = discountedSubtotal - platformFee;
       const enforcedDepositAmount = enforcedTotalAmount;
@@ -13391,7 +14178,14 @@ app.post(
         listingCategory: listingRow?.category ?? null,
         listingInstantBookEnabled: listingRow?.instantBookEnabled ?? false,
       });
-      const bookingStatus = bookingLifecycle.initialStatus;
+      // Any booking whose event falls outside the listing's service radius must go
+      // pending so the vendor can propose a travel fee or decline before confirming,
+      // regardless of category or instant-book setting.
+      const isDeliveryCategory =
+        listingRow?.category === "Rentals" || listingRow?.category === "Catering";
+      const bookingStatus = bookingOutsideServiceRadius
+        ? "pending"
+        : bookingLifecycle.initialStatus;
       const bookingConfirmedAt = bookingStatus === "confirmed" ? new Date() : null;
       const bookingVendorProfileId = resolvedVendorProfileId ?? null;
       const customerNotes =
@@ -13406,7 +14200,7 @@ app.post(
       stage = "insert-booking";
       const bookingInsertResult = await db.transaction(async (tx) => {
         if (listingRow) {
-          await tx.execute(drizzleSql`select pg_advisory_xact_lock(hashtext(${listingRow.id}))`);
+          await tx.execute(drizzleSql`select pg_advisory_xact_lock(1, hashtext(${listingRow.id}))`);
 
           const overlapRows: any = await tx.execute(drizzleSql`
             select
@@ -13459,31 +14253,52 @@ app.post(
         let txBookingEventId = resolvedBookingEventId;
         let txCustomerEvent = resolvedCustomerEvent;
         if (requestedCustomerEventTitle) {
-          const [createdEvent] = await tx
-            .insert(events)
-            .values({
-              eventType: "custom",
-              location: data.eventLocation ?? "TBD",
-              date: data.eventDate,
-              startTime: data.eventStartTime ?? "00:00",
-              guestCount: data.guestCount ?? 1,
-              vendorsNeeded: ["rentals"],
-              path: requestedCustomerEventTitle,
-              customerId: customerAuth.id,
-              photographerDetails: null,
-              videographerDetails: null,
-              floristDetails: null,
-              cateringDetails: null,
-              djDetails: null,
-              propDecorDetails: null,
-            })
-            .returning({ id: events.id, path: events.path });
-          if (createdEvent?.id) {
-            txBookingEventId = createdEvent.id;
+          // Find-or-create: if an event with this title already exists for the customer,
+          // reuse it so multiple bookings for the same event share one event record.
+          const [existingEvent] = await tx
+            .select({ id: events.id, path: events.path })
+            .from(events)
+            .where(
+              and(
+                eq(events.customerId, customerAuth.id),
+                eq(events.path, requestedCustomerEventTitle)
+              )
+            )
+            .limit(1);
+
+          if (existingEvent?.id) {
+            txBookingEventId = existingEvent.id;
             txCustomerEvent = {
-              id: createdEvent.id,
-              title: createdEvent.path || requestedCustomerEventTitle,
+              id: existingEvent.id,
+              title: existingEvent.path || requestedCustomerEventTitle,
             };
+          } else {
+            const [createdEvent] = await tx
+              .insert(events)
+              .values({
+                eventType: "custom",
+                location: data.eventLocation ?? "TBD",
+                date: data.eventDate,
+                startTime: data.eventStartTime ?? "00:00",
+                guestCount: data.guestCount ?? 1,
+                vendorsNeeded: ["rentals"],
+                path: requestedCustomerEventTitle,
+                customerId: customerAuth.id,
+                photographerDetails: null,
+                videographerDetails: null,
+                floristDetails: null,
+                cateringDetails: null,
+                djDetails: null,
+                propDecorDetails: null,
+              })
+              .returning({ id: events.id, path: events.path });
+            if (createdEvent?.id) {
+              txBookingEventId = createdEvent.id;
+              txCustomerEvent = {
+                id: createdEvent.id,
+                title: createdEvent.path || requestedCustomerEventTitle,
+              };
+            }
           }
         }
 
@@ -13503,13 +14318,7 @@ app.post(
                 eventLocation: data.eventLocation ?? null,
             eventLocationLat: data.eventLocationLat ?? null,
             eventLocationLng: data.eventLocationLng ?? null,
-            outsideServiceRadius: isEventOutsideServiceRadius({
-              listingCenterLat: listingRow?.listingServiceCenterLat,
-              listingCenterLng: listingRow?.listingServiceCenterLng,
-              serviceRadiusMiles: listingRow?.serviceRadiusMiles,
-              eventLat: data.eventLocationLat,
-              eventLng: data.eventLocationLng,
-            }),
+            outsideServiceRadius: bookingOutsideServiceRadius,
             eventTimezone: resolvedEventTimeZone,
             guestCount: data.guestCount ?? null,
             specialRequests: data.specialRequests ?? null,
@@ -13724,18 +14533,15 @@ app.post(
       ]);
 
       // If the event falls outside the listing's service radius, send the vendor
-      // an additional notification prompting them to propose a travel/delivery fee.
+      // an additional notification explaining what action is needed.
       if (booking.outsideServiceRadius) {
-        const isRentalOrCatering =
-          (listingRow?.category ?? "").toLowerCase() === "rental" ||
-          (listingRow?.category ?? "").toLowerCase() === "catering";
-        const feeLabel = isRentalOrCatering ? "delivery fee" : "travel fee";
+        const notifFeeLabel = isDeliveryCategory ? "delivery fee" : "travel fee";
         await storage.createNotification({
           recipientId: vendorAccount.id,
           recipientType: "vendor",
-          type: "travel_fee_proposed" as any,
-          title: `Travel fee required for booking`,
-          message: `The event address for booking on ${data.eventDate} is outside your service radius. Visit the booking to propose a ${feeLabel}.`,
+          type: "new_booking" as any,
+          title: `Booking outside your service area`,
+          message: `The event on ${data.eventDate} is outside your service area. Accept and propose a ${notifFeeLabel}, or decline the booking.`,
           link: `/vendor/bookings?bookingId=${encodeURIComponent(booking.id)}`,
           read: false,
         }).catch(() => { /* non-blocking */ });
@@ -13752,8 +14558,30 @@ app.post(
         .where(eq(users.id, customerAuth.id))
         .limit(1);
 
-      const serverUrl = (process.env.SERVER_URL || "http://localhost:5001").replace(/\/$/, "");
+      const serverUrl = appUrl();
       const emailTasks: Promise<any>[] = [];
+      // isInstant reflects whether the booking was *actually* confirmed immediately.
+      // Outside-radius delivery bookings are forced to pending even when the listing
+      // has instant book enabled, so we use bookingStatus rather than isInstantBooking.
+      const emailIsInstant = bookingStatus === "confirmed";
+      const emailFeeLabel: "delivery fee" | "travel fee" =
+        isDeliveryCategory ? "delivery fee" : "travel fee";
+
+      const emailAddOns = resolvedAddonRows.map((a) => ({
+        title: a.title ?? "Add-on",
+        priceCents: a.priceCents ?? 0,
+      }));
+      const emailPackageName = packageRow?.title ?? null;
+      const emailPriceBreakdown = {
+        basePriceCents: isAlaCarte ? null : unitPriceCentsTotal,
+        deliveryFeeAmountCents: logisticsFees.deliveryFeeCents || null,
+        setupFeeAmountCents: logisticsFees.setupFeeCents || null,
+        travelFeeAmountCents: logisticsFees.travelFlatFeeCents || null,
+        discountAmountCents: discountAmountCents > 0 ? discountAmountCents : null,
+        serviceFeeAmountCents: customerFee > 0 ? customerFee : null,
+        securityDepositCents: securityDepositCents > 0 ? securityDepositCents : null,
+      };
+
       if (customerRow?.email) {
         emailTasks.push(
           sendBookingRequestedEmail(customerRow.email, {
@@ -13761,9 +14589,14 @@ app.post(
             counterpartName: vendorAccount.businessName || "Vendor",
             eventDate: data.eventDate,
             listingTitle: itemTitle || "Service",
+            packageName: emailPackageName,
+            addOns: emailAddOns,
+            ...emailPriceBreakdown,
             totalAmountCents: enforcedTotalAmount,
             role: "customer",
-            isInstant: bookingLifecycle.isInstantBooking,
+            isInstant: emailIsInstant,
+            outsideServiceRadius: bookingOutsideServiceRadius,
+            feeLabel: emailFeeLabel,
             serverUrl,
           })
         );
@@ -13775,9 +14608,14 @@ app.post(
             counterpartName: customerRow?.name || "Customer",
             eventDate: data.eventDate,
             listingTitle: itemTitle || "Service",
+            packageName: emailPackageName,
+            addOns: emailAddOns,
+            ...emailPriceBreakdown,
             totalAmountCents: enforcedTotalAmount,
             role: "vendor",
-            isInstant: bookingLifecycle.isInstantBooking,
+            isInstant: emailIsInstant,
+            outsideServiceRadius: bookingOutsideServiceRadius,
+            feeLabel: emailFeeLabel,
             serverUrl,
           })
         );
@@ -13857,12 +14695,8 @@ app.post(
 
         if (!booking) return res.status(404).json({ error: "Booking not found" });
         if (booking.vendorAccountId !== vendorId) return res.status(403).json({ error: "Access denied" });
-        if (
-          booking.status === "cancelled" ||
-          booking.status === "completed" ||
-          booking.status === "expired"
-        ) {
-          return res.status(409).json({ error: "Cannot propose a fee on a booking in this state" });
+        if (booking.status !== "pending") {
+          return res.status(409).json({ error: "Travel fee proposals can only be sent before accepting a booking" });
         }
 
         const [existingPending] = await db
@@ -13915,6 +14749,40 @@ app.post(
             message: `${vendorRow?.businessName ?? "Your vendor"} proposed a travel/delivery fee of ${amountFormatted} for your booking on ${booking.eventDate}.`,
             link: "/dashboard/events",
             read: false,
+          }).catch(() => {});
+
+          // Email customer about the proposed fee (non-blocking)
+          db.execute(drizzleSql`
+            select u.email as "customerEmail", u.name as "customerName",
+                   coalesce(b.listing_title_snapshot, '') as "listingTitle",
+                   vl.category as "listingCategory"
+            from bookings b
+            join users u on u.id = b.customer_id
+            left join vendor_listings vl on vl.id = b.listing_id
+            where b.id = ${bookingId}
+            limit 1
+          `).then((rows: any) => {
+            const [info] = extractRows<{
+              customerEmail?: string | null;
+              customerName?: string | null;
+              listingTitle?: string | null;
+              listingCategory?: string | null;
+            }>(rows);
+            if (!info?.customerEmail) return;
+            const feeLabel: "travel fee" | "delivery fee" =
+              info.listingCategory === "Rentals" || info.listingCategory === "Catering"
+                ? "delivery fee"
+                : "travel fee";
+            sendTravelFeeProposedEmail(info.customerEmail, {
+              recipientName: info.customerName || "Customer",
+              vendorName: vendorRow?.businessName || "Vendor",
+              listingTitle: info.listingTitle || "your booking",
+              eventDate: booking.eventDate ?? "",
+              amountCents: data.amountCents,
+              reason: data.reason ?? null,
+              feeLabel,
+              serverUrl: appUrl(),
+            });
           }).catch(() => {});
         }
 
@@ -14080,18 +14948,96 @@ app.post(
           payoutStatus: "not_ready",
         }).onConflictDoNothing();
 
+        // Do NOT mark the proposal as accepted yet — wait until the customer
+        // completes payment via the confirm-payment endpoint. This prevents the
+        // chat from showing "Payment is being processed" if the user cancels.
+        return res.json({
+          clientSecret: paymentIntent.client_secret,
+          amountCents: proposal.amountCents,
+          proposalId: proposal.id,
+        });
+      } catch {
+        return res.status(500).json({ error: "Failed to accept proposal" });
+      }
+    }
+  );
+
+  // Confirm that a travel fee PaymentIntent actually succeeded and finalize the proposal.
+  // Called by the client after Stripe card confirmation succeeds.
+  app.post(
+    "/api/bookings/:bookingId/travel-fee-proposals/:proposalId/confirm-payment",
+    mutationRateLimiter,
+    requireCustomerAnyAuth,
+    async (req, res) => {
+      try {
+        const { bookingId, proposalId } = req.params;
+        const customerAuth = await resolveCustomerAuthFromRequest(req, { createIfMissing: false });
+        if (!customerAuth?.id) return res.status(401).json({ error: "Customer authentication required" });
+
+        const [booking] = await db
+          .select({
+            id: bookings.id,
+            customerId: bookings.customerId,
+            vendorAccountId: bookings.vendorAccountId,
+            eventDate: bookings.eventDate,
+          })
+          .from(bookings)
+          .where(eq(bookings.id, bookingId))
+          .limit(1);
+
+        if (!booking) return res.status(404).json({ error: "Booking not found" });
+        if (booking.customerId !== customerAuth.id) return res.status(403).json({ error: "Access denied" });
+
+        const [proposal] = await db
+          .select()
+          .from(travelFeeProposals)
+          .where(and(eq(travelFeeProposals.id, proposalId), eq(travelFeeProposals.bookingId, bookingId)))
+          .limit(1);
+
+        if (!proposal) return res.status(404).json({ error: "Proposal not found" });
+        // Idempotent: if already accepted just return success
+        if (proposal.status === "accepted") return res.json({ proposal });
+        if (proposal.status !== "pending") return res.status(409).json({ error: "Proposal is not in a payable state" });
+
+        // Look up the travel fee payment record to get the Stripe PaymentIntent ID
+        const [travelPayment] = await db
+          .select({ stripePaymentIntentId: payments.stripePaymentIntentId })
+          .from(payments)
+          .where(
+            and(
+              eq(payments.bookingId, bookingId),
+              eq(payments.paymentType, "travel_fee" as any)
+            )
+          )
+          .limit(1);
+
+        if (!travelPayment?.stripePaymentIntentId) {
+          return res.status(400).json({ error: "No travel fee payment record found. Please start the payment again." });
+        }
+
+        // Verify with Stripe that payment actually succeeded
+        const { stripeClient } = await import("./stripe");
+        const pi = await stripeClient.paymentIntents.retrieve(travelPayment.stripePaymentIntentId);
+        if (pi.status !== "succeeded" && pi.status !== "processing") {
+          return res.status(402).json({ error: "Payment has not completed. Please try again." });
+        }
+
+        // Mark proposal as accepted
         const [updated] = await db
           .update(travelFeeProposals)
           .set({ status: "accepted", respondedAt: new Date(), updatedAt: new Date() })
           .where(eq(travelFeeProposals.id, proposalId))
           .returning();
 
+        // Payment record status is updated by the Stripe webhook when the
+        // PaymentIntent fires payment_intent.succeeded — no manual update needed here.
+
         const amountFormatted = new Intl.NumberFormat("en-US", { style: "currency", currency: "USD" })
           .format(proposal.amountCents / 100);
 
         await sendBookingSystemMessage({
           bookingId,
-          text: `The travel/delivery fee of ${amountFormatted} has been accepted. Payment is being processed.`,
+          text: `The travel/delivery fee of ${amountFormatted} has been paid.`,
           metadata: { proposal_id: proposalId, proposal_status: "accepted" },
         });
 
@@ -14100,20 +15046,54 @@ app.post(
             recipientId: booking.vendorAccountId,
             recipientType: "vendor",
             type: "travel_fee_accepted" as any,
-            title: "Travel fee accepted",
-            message: `The customer accepted the travel/delivery fee of ${amountFormatted} for the booking on ${booking.eventDate}.`,
+            title: "Travel fee paid",
+            message: `The customer paid the travel/delivery fee of ${amountFormatted} for the booking on ${booking.eventDate}.`,
             link: `/vendor/bookings?bookingId=${encodeURIComponent(bookingId)}`,
             read: false,
           }).catch(() => {});
+
+          // Email vendor that the fee was paid (non-blocking)
+          db.execute(drizzleSql`
+            select va.email as "vendorEmail", va.business_name as "vendorName",
+                   u.name as "customerName",
+                   coalesce(b.listing_title_snapshot, '') as "listingTitle",
+                   vl.category as "listingCategory"
+            from bookings b
+            join vendor_accounts va on va.id = b.vendor_account_id
+            join users u on u.id = b.customer_id
+            left join vendor_listings vl on vl.id = b.listing_id
+            where b.id = ${bookingId}
+            limit 1
+          `).then((rows: any) => {
+            const [info] = extractRows<{
+              vendorEmail?: string | null;
+              vendorName?: string | null;
+              customerName?: string | null;
+              listingTitle?: string | null;
+              listingCategory?: string | null;
+            }>(rows);
+            if (!info?.vendorEmail) return;
+            const feeLabel: "travel fee" | "delivery fee" =
+              info.listingCategory === "Rentals" || info.listingCategory === "Catering"
+                ? "delivery fee"
+                : "travel fee";
+            sendTravelFeeRespondedEmail(info.vendorEmail, {
+              recipientName: info.vendorName || "Vendor",
+              customerName: info.customerName || "Customer",
+              listingTitle: info.listingTitle || "your booking",
+              eventDate: booking.eventDate ?? "",
+              amountCents: proposal.amountCents,
+              action: "accepted",
+              feeLabel,
+              serverUrl: appUrl(),
+            });
+          }).catch(() => {});
         }
 
-        return res.json({
-          proposal: updated,
-          clientSecret: paymentIntent.client_secret,
-          listingId: booking.listingId,
-        });
-      } catch {
-        return res.status(500).json({ error: "Failed to accept proposal" });
+        return res.json({ proposal: updated });
+      } catch (err) {
+        console.error("[confirm-payment] Unexpected error:", err);
+        return res.status(500).json({ error: "Failed to confirm travel fee payment" });
       }
     }
   );
@@ -14180,6 +15160,43 @@ app.post(
             message: `The customer declined the travel/delivery fee of ${amountFormatted} for the booking on ${booking.eventDate}. You can propose a revised amount or proceed without the fee.`,
             link: `/vendor/bookings?bookingId=${encodeURIComponent(bookingId)}`,
             read: false,
+          }).catch(() => {});
+
+          // Email vendor that the fee was declined (non-blocking)
+          db.execute(drizzleSql`
+            select va.email as "vendorEmail", va.business_name as "vendorName",
+                   u.name as "customerName",
+                   coalesce(b.listing_title_snapshot, '') as "listingTitle",
+                   vl.category as "listingCategory"
+            from bookings b
+            join vendor_accounts va on va.id = b.vendor_account_id
+            join users u on u.id = b.customer_id
+            left join vendor_listings vl on vl.id = b.listing_id
+            where b.id = ${bookingId}
+            limit 1
+          `).then((rows: any) => {
+            const [info] = extractRows<{
+              vendorEmail?: string | null;
+              vendorName?: string | null;
+              customerName?: string | null;
+              listingTitle?: string | null;
+              listingCategory?: string | null;
+            }>(rows);
+            if (!info?.vendorEmail) return;
+            const feeLabel: "travel fee" | "delivery fee" =
+              info.listingCategory === "Rentals" || info.listingCategory === "Catering"
+                ? "delivery fee"
+                : "travel fee";
+            sendTravelFeeRespondedEmail(info.vendorEmail, {
+              recipientName: info.vendorName || "Vendor",
+              customerName: info.customerName || "Customer",
+              listingTitle: info.listingTitle || "your booking",
+              eventDate: booking.eventDate ?? "",
+              amountCents: proposal.amountCents,
+              action: "declined",
+              feeLabel,
+              serverUrl: appUrl(),
+            });
           }).catch(() => {});
         }
 
@@ -14571,6 +15588,22 @@ app.post(
                 })
                 .where(eq(payments.id, payment.id));
 
+              // Mark the security deposit row (same PaymentIntent, separate row) as
+              // succeeded so the auto-refund job and cancellation logic can find it.
+              await tx
+                .update(payments)
+                .set({
+                  status: "succeeded",
+                  paidAt: now,
+                  stripeChargeId: latestChargeId || null,
+                })
+                .where(
+                  and(
+                    eq(payments.stripePaymentIntentId, paymentIntentId),
+                    eq(payments.paymentType, "security_deposit")
+                  )
+                );
+
               const nextBookingPaymentStatus = await recomputeBookingPaymentStatusInTx(
                 tx,
                 payment.bookingId
@@ -14664,91 +15697,11 @@ app.post(
             })();
           }
 
-          // After a booking payment succeeds, charge the security deposit off-session
-          // using the payment method saved via setup_future_usage='off_session'.
-          if (eventType === "payment_intent.succeeded") {
-            void (async () => {
-              try {
-                const paymentMethod = paymentIntent?.payment_method;
-                const pmId = typeof paymentMethod === "string" ? paymentMethod : paymentMethod?.id;
-                if (!pmId) return;
-
-                // Look up the booking and check if a security deposit is required.
-                const depositRows: any = await db.execute(drizzleSql`
-                  select
-                    b.id as "bookingId",
-                    b.customer_id as "customerId",
-                    b.security_deposit_cents as "securityDepositCents",
-                    u.stripe_customer_id as "stripeCustomerId",
-                    u.email as "customerEmail"
-                  from payments p
-                  join bookings b on b.id = p.booking_id
-                  join users u on u.id = b.customer_id
-                  where p.stripe_payment_intent_id = ${paymentIntentId}
-                    and p.payment_type = 'booking'
-                  limit 1
-                `);
-                const depositRow = extractRows<{
-                  bookingId: string;
-                  customerId: string;
-                  securityDepositCents: number | null;
-                  stripeCustomerId: string | null;
-                  customerEmail: string;
-                }>(depositRows)[0];
-
-                if (!depositRow || !depositRow.securityDepositCents || depositRow.securityDepositCents <= 0) return;
-
-                // Ensure Stripe Customer exists (it should — ensureStripeCustomer was called at PI creation)
-                const stripeCustomerId = depositRow.stripeCustomerId
-                  ?? await ensureStripeCustomer(depositRow.customerId, depositRow.customerEmail);
-
-                // Check if security deposit payment already exists (idempotent)
-                const [existingDeposit] = await db
-                  .select({ id: payments.id })
-                  .from(payments)
-                  .where(and(
-                    eq(payments.bookingId, depositRow.bookingId),
-                    eq(payments.paymentType, "security_deposit")
-                  ))
-                  .limit(1);
-                if (existingDeposit) return;
-
-                const { createSecurityDepositPaymentIntent } = await import("./stripe");
-                const depositPI = await createSecurityDepositPaymentIntent({
-                  amount: depositRow.securityDepositCents,
-                  stripeCustomerId,
-                  paymentMethodId: pmId,
-                  bookingId: depositRow.bookingId,
-                  idempotencyKey: `security-deposit:${depositRow.bookingId}`,
-                });
-
-                await db.insert(payments).values({
-                  bookingId: depositRow.bookingId,
-                  customerId: depositRow.customerId,
-                  stripePaymentIntentId: depositPI.id,
-                  amount: depositRow.securityDepositCents,
-                  totalAmount: depositRow.securityDepositCents,
-                  platformFeeAmount: 0,
-                  vendorGrossAmount: 0,
-                  vendorNetPayoutAmount: 0,
-                  paymentType: "security_deposit",
-                  status: depositPI.status === "succeeded" ? "succeeded" : "pending",
-                  paidAt: depositPI.status === "succeeded" ? new Date() : null,
-                  // Security deposits are never paid out to the vendor.
-                  payoutStatus: "blocked",
-                  payoutBlockedReason: "security_deposit",
-                }).onConflictDoNothing();
-              } catch (err: any) {
-                logger.error({ paymentIntentId, err: err?.message }, "[webhook] Security deposit charge failed");
-              }
-            })();
-          }
-
           // Fire-and-forget: send payment receipt to customer + booking confirmed to vendor
           if (eventType === "payment_intent.succeeded") {
             void (async () => {
               try {
-                const serverUrl = (process.env.SERVER_URL || "http://localhost:5001").replace(/\/$/, "");
+                const serverUrl = appUrl();
                 const receiptRows: any = await db.execute(drizzleSql`
                   select
                     u.email          as "customerEmail",
@@ -14780,6 +15733,17 @@ app.post(
                   totalCents: number;
                   paymentIntentId: string;
                 }>(receiptRows)[0];
+                const receiptAddonRows: any = fallbackBookingId ? await db.execute(drizzleSql`
+                  SELECT title, unit_price_cents, total_price_cents
+                  FROM booking_items
+                  WHERE booking_id = ${fallbackBookingId} AND item_type = 'addon'
+                  ORDER BY created_at ASC
+                `) : { rows: [] };
+                const receiptAddOns = (receiptAddonRows.rows as any[]).map((r: any) => ({
+                  title: String(r.title ?? "Add-on"),
+                  priceCents: Number(r.total_price_cents ?? r.unit_price_cents ?? 0),
+                }));
+
                 const emailTasks: Promise<any>[] = [];
                 if (receipt?.customerEmail) {
                   emailTasks.push(
@@ -14792,6 +15756,7 @@ app.post(
                       platformFeeCents: receipt.feeCents ?? 0,
                       totalCents: receipt.totalCents,
                       paymentIntentId: receipt.paymentIntentId,
+                      addOns: receiptAddOns,
                       serverUrl,
                     })
                   );
@@ -14804,6 +15769,7 @@ app.post(
                       eventDate: receipt.eventDate,
                       listingTitle: receipt.listingTitle || "Service",
                       totalAmountCents: receipt.totalCents,
+                      addOns: receiptAddOns,
                       role: "vendor",
                       serverUrl,
                     })
@@ -15132,104 +16098,6 @@ app.post(
       return res.json({ received: true });
     } catch {
       return res.status(500).json({ error: "Webhook processing failed" });
-    }
-  });
-
-  // ---------------------------------------------------------------------------
-  // Stripe V2 Thin-Event Webhook
-  // ---------------------------------------------------------------------------
-  // Handles account requirement and capability changes for V2 Connect accounts.
-  //
-  // V2 events arrive as "thin" payloads — the body contains only a notification
-  // envelope (id, type, related_object). Full event data is fetched on demand.
-  //
-  // Setup (Stripe Dashboard → Developers → Webhooks → Add destination):
-  //   1. Events from: Connected accounts
-  //   2. Show advanced options → Payload style: Thin
-  //   3. Event types: v2.core.account[requirements].updated
-  //                   v2.core.account[configuration.recipient].capability_status_updated
-  //
-  // Local dev forwarding (requires Stripe CLI):
-  //   stripe listen \
-  //     --thin-events 'v2.core.account[requirements].updated,v2.core.account[configuration.recipient].capability_status_updated' \
-  //     --forward-thin-to http://localhost:5001/api/stripe/webhook/v2
-  //
-  // PLACEHOLDER: Add STRIPE_WEBHOOK_SECRET_V2 to your .env file.
-  // This is the signing secret for the V2 thin-event destination — keep it
-  // separate from STRIPE_WEBHOOK_SECRET which is used for V1 events.
-  app.post("/api/stripe/webhook/v2", async (req, res) => {
-    try {
-      const signatureHeader = req.headers["stripe-signature"];
-      const signature = Array.isArray(signatureHeader) ? signatureHeader[0] : signatureHeader;
-      if (!signature) {
-        return res.status(400).json({ error: "Missing Stripe-Signature header" });
-      }
-
-      // PLACEHOLDER: STRIPE_WEBHOOK_SECRET_V2 = signing secret for this V2 destination.
-      // Get it from Stripe Dashboard after creating the thin-event webhook destination.
-      const webhookSecretV2 = (process.env.STRIPE_WEBHOOK_SECRET_V2 || "").trim();
-      if (!webhookSecretV2) {
-        logger.warn("[webhook/v2] STRIPE_WEBHOOK_SECRET_V2 is not configured");
-        return res.status(503).json({ error: "V2 webhook signing secret is not configured" });
-      }
-
-      if (!(req.rawBody instanceof Buffer)) {
-        return res.status(400).json({ error: "Missing raw request body — ensure express.json verify middleware is active" });
-      }
-      const rawBody = req.rawBody;
-
-      const { stripeClient, checkAccountOnboardingStatus } = await import("./stripe");
-
-      // parseEventNotification verifies the Stripe-Signature header and returns
-      // the thin event notification envelope. This does NOT contain event data —
-      // use notification.fetchRelatedObject() or notification.fetchEvent() for that.
-      let notification: any;
-      try {
-        notification = stripeClient.parseEventNotification(rawBody, signature, webhookSecretV2);
-      } catch {
-        return res.status(400).json({ error: "Invalid Stripe V2 signature" });
-      }
-
-      const eventType = asTrimmedString(notification?.type);
-      // related_object.id is the Stripe account ID (acct_...) for account events.
-      const accountId = asTrimmedString(notification?.related_object?.id);
-
-      // ── v2.core.account[requirements].updated ────────────────────────────
-      // Fired when financial regulators, card networks, or Stripe change the
-      // requirements for a connected account (e.g. request new documentation).
-      // Re-check status and mark the vendor as needing re-onboarding if needed.
-      if (eventType === "v2.core.account[requirements].updated" && accountId) {
-        try {
-          const status = await checkAccountOnboardingStatus(accountId);
-          await db
-            .update(vendorAccounts)
-            .set({ stripeOnboardingComplete: status.complete })
-            .where(eq(vendorAccounts.stripeConnectId, accountId));
-        } catch (err: any) {
-          logger.error("[webhook/v2] requirements update failed:", err?.message);
-        }
-      }
-
-      // ── v2.core.account[configuration.recipient].capability_status_updated ─
-      // Fired when the stripe_transfers capability changes status for the
-      // recipient configuration (e.g. becomes "active" after onboarding, or
-      // "inactive" if new requirements arrive). Sync the latest status to our DB.
-      if (eventType === "v2.core.account[configuration.recipient].capability_status_updated" && accountId) {
-        try {
-          const status = await checkAccountOnboardingStatus(accountId);
-          await db
-            .update(vendorAccounts)
-            .set({ stripeOnboardingComplete: status.complete })
-            .where(eq(vendorAccounts.stripeConnectId, accountId));
-        } catch (err: any) {
-          logger.error("[webhook/v2] capability status update failed:", err?.message);
-        }
-      }
-
-      return res.json({ received: true });
-    } catch (err: any) {
-      logger.error("[webhook/v2] Unhandled error:", err?.message);
-      return res.status(500).json({ error: "V2 webhook processing failed" });
     }
   });
 
@@ -16272,59 +17140,6 @@ app.post(
     }
   });
 
-  // ── Add admin note to dispute (without resolving) ─────────────────────────
-  app.post("/api/admin/disputes/:id/note", adminRateLimiter, requireAdminAuth, async (req, res) => {
-    try {
-      await ensureBookingDisputesTable();
-      const disputeId = asTrimmedString(req.params?.id);
-      if (!disputeId) return res.status(400).json({ error: "Dispute id required" });
-
-      const { content } = z.object({ content: z.string().trim().min(1).max(5000) }).parse(req.body ?? {});
-
-      // Ensure dispute exists
-      const [dispute] = await db
-        .select({ id: bookingDisputes.id })
-        .from(bookingDisputes)
-        .where(eq(bookingDisputes.id, disputeId))
-        .limit(1);
-      if (!dispute?.id) return res.status(404).json({ error: "Dispute not found" });
-
-      // Also update the top-level adminNotes field (latest note as summary)
-      await db
-        .update(bookingDisputes)
-        .set({ adminNotes: content, updatedAt: new Date() })
-        .where(eq(bookingDisputes.id, disputeId));
-
-      // Insert into history log
-      const [note] = await db
-        .insert(disputeAdminNotes)
-        .values({ disputeId, content })
-        .returning();
-
-      return res.json(note);
-    } catch (error: any) {
-      return respondWithInternalServerError(req, res, error);
-    }
-  });
-
-  // ── Get admin notes history for a dispute ─────────────────────────────────
-  app.get("/api/admin/disputes/:id/notes", adminRateLimiter, requireAdminAuth, async (req, res) => {
-    try {
-      const disputeId = asTrimmedString(req.params?.id);
-      if (!disputeId) return res.status(400).json({ error: "Dispute id required" });
-
-      const notes = await db
-        .select()
-        .from(disputeAdminNotes)
-        .where(eq(disputeAdminNotes.disputeId, disputeId))
-        .orderBy(drizzleSql`created_at ASC`);
-
-      return res.json(notes);
-    } catch (error: any) {
-      return respondWithInternalServerError(req, res, error);
-    }
-  });
-
   // ── Stripe platform balance ───────────────────────────────────────────────
   app.get("/api/admin/stripe/balance", adminRateLimiter, requireAdminAuth, async (req, res) => {
     try {
@@ -16403,7 +17218,10 @@ app.post(
           notifiedEmail: false,
         });
 
-        // Deactivate all listings for this vendor
+        // Deactivate all listings for this vendor.
+        // Intentionally leaves all existing bookings untouched — suspension
+        // prevents NEW bookings by hiding listings, but does not cancel
+        // in-progress or confirmed bookings that customers already made.
         await db
           .update(vendorListings)
           .set({ status: "inactive", updatedAt: new Date() })
@@ -16464,6 +17282,95 @@ app.post(
     return { warningNumber, suspended, endsAt };
   }
 
+  // ── Soft-attempt thresholds ───────────────────────────────────────────────
+  // Vendors get 5 "fix it" soft attempts before formal warnings begin.
+  // Formal warnings count toward the 3-warning suspension threshold.
+  const SOFT_ATTEMPT_LIMIT = 5;
+
+  type ViolationResult =
+    | { phase: "soft"; softAttemptNumber: number; flagId: string }
+    | { phase: "hard"; warningNumber: number; suspended: boolean; endsAt: Date | null; flagId: string };
+
+  /**
+   * Central handler for automated hard-block detection across listings,
+   * profiles, and chat messages.
+   *
+   * Phase 1 (soft attempts 1–5): logs the flag as `soft_attempt`, returns
+   *   immediately — no warning issued, no email sent, no account action.
+   * Phase 2 (hard warnings 1–3): logs flag as `hard_block_attempt`, issues
+   *   a formal warning via issueCircumventionWarning, sends a warning email.
+   * Phase 3 (after warning 3): suspension is triggered inside
+   *   issueCircumventionWarning, email sent, listings deactivated.
+   */
+  async function handleCircumventionViolation(params: {
+    vendorAccountId: string;
+    contentType: string;
+    contentSnapshot: string;
+    matches: string[];
+    reason: string;
+    listingId?: string | null;
+    bookingId?: string | null;
+    serverUrl: string;
+  }): Promise<ViolationResult> {
+    const { vendorAccountId, contentType, contentSnapshot, matches, reason, listingId, bookingId, serverUrl } = params;
+
+    // Count soft attempts already recorded for this vendor.
+    const softRows = await db
+      .select({ id: circumventionFlags.id })
+      .from(circumventionFlags)
+      .where(
+        and(
+          eq(circumventionFlags.vendorAccountId, vendorAccountId),
+          drizzleSql`flag_type = 'soft_attempt'`
+        )
+      );
+    const softAttemptCount = softRows.length;
+
+    if (softAttemptCount < SOFT_ATTEMPT_LIMIT) {
+      // ── Soft phase: log and return, no warning ──────────────────────────
+      const [flag] = await db.insert(circumventionFlags).values({
+        flagType: "soft_attempt" as any,
+        contentType: contentType as any,
+        contentSnapshot: contentSnapshot.slice(0, 2000),
+        matches,
+        vendorAccountId,
+        listingId: listingId ?? undefined,
+        bookingId: bookingId ?? undefined,
+        status: "pending",
+      }).returning();
+
+      return { phase: "soft", softAttemptNumber: softAttemptCount + 1, flagId: flag.id };
+    }
+
+    // ── Hard phase: log and issue formal warning ──────────────────────────
+    const [flag] = await db.insert(circumventionFlags).values({
+      flagType: "hard_block_attempt" as any,
+      contentType: contentType as any,
+      contentSnapshot: contentSnapshot.slice(0, 2000),
+      matches,
+      vendorAccountId,
+      listingId: listingId ?? undefined,
+      bookingId: bookingId ?? undefined,
+      status: "pending",
+    }).returning();
+
+    const warningResult = await issueCircumventionWarning(
+      vendorAccountId,
+      flag.id,
+      reason,
+      "system",
+      serverUrl
+    );
+
+    return {
+      phase: "hard",
+      warningNumber: warningResult.warningNumber,
+      suspended: warningResult.suspended,
+      endsAt: warningResult.endsAt,
+      flagId: flag.id,
+    };
+  }
+
   // Helper: get active suspension for a vendor (null if none)
   async function getActiveSuspension(vendorAccountId: string) {
     const now = new Date();
@@ -16492,7 +17399,7 @@ app.post(
         matches: z.array(z.string()).default([]),
       }).parse(req.body ?? {});
 
-      const serverUrl = (process.env.SERVER_URL || "http://localhost:5001").replace(/\/$/, "");
+      const serverUrl = appUrl();
 
       // Resolve who is sending
       const vendorAuth = (req as any).vendorAuth;
@@ -16505,34 +17412,54 @@ app.post(
       const actorUserId = vendorAuth?.userId || customerAuth?.id || null;
       const vendorAccountId = vendorAuth?.id || null;
 
-      // Insert flag
+      if (vendorAccountId) {
+        // Vendor-side message: run through the escalation ladder.
+        const result = await handleCircumventionViolation({
+          vendorAccountId,
+          contentType: "chat_message",
+          contentSnapshot: payload.contentSnapshot,
+          matches: payload.matches,
+          reason: "Attempted to send contact information in booking chat",
+          bookingId: payload.bookingId,
+          serverUrl,
+        });
+
+        // Also tag the flag with the actor user id (handleCircumventionViolation
+        // inserts the flag, but doesn't know the userId — update it now).
+        if (actorUserId) {
+          db.execute(drizzleSql`
+            UPDATE circumvention_flags SET user_id = ${actorUserId} WHERE id = ${result.flagId}
+          `).catch(() => {});
+        }
+
+        return res.status(201).json({
+          flagId: result.flagId,
+          phase: result.phase,
+          softAttemptNumber: result.phase === "soft" ? result.softAttemptNumber : null,
+          warningNumber: result.phase === "hard" ? result.warningNumber : null,
+          suspended: result.phase === "hard" ? result.suspended : false,
+          suspensionEndsAt: result.phase === "hard" ? result.endsAt : null,
+        });
+      }
+
+      // Customer-side message (no vendor account): just log and return.
       const [flag] = await db.insert(circumventionFlags).values({
-        flagType: "hard_block_attempt",
-        contentType: "chat_message",
-        contentSnapshot: payload.contentSnapshot,
+        flagType: "hard_block_attempt" as any,
+        contentType: "chat_message" as any,
+        contentSnapshot: payload.contentSnapshot.slice(0, 2000),
         matches: payload.matches,
-        vendorAccountId: vendorAccountId ?? undefined,
         userId: actorUserId ?? undefined,
         bookingId: payload.bookingId,
         status: "pending",
       }).returning();
 
-      let warningResult: { warningNumber: number; suspended: boolean; endsAt: Date | null } | null = null;
-      if (vendorAccountId) {
-        warningResult = await issueCircumventionWarning(
-          vendorAccountId,
-          flag.id,
-          "Attempted to send contact information in booking chat",
-          "system",
-          serverUrl
-        );
-      }
-
       return res.status(201).json({
         flagId: flag.id,
-        warningNumber: warningResult?.warningNumber ?? null,
-        suspended: warningResult?.suspended ?? false,
-        suspensionEndsAt: warningResult?.endsAt ?? null,
+        phase: "soft",
+        softAttemptNumber: null,
+        warningNumber: null,
+        suspended: false,
+        suspensionEndsAt: null,
       });
     } catch (error: any) {
       return respondWithInternalServerError(req, res, error);
@@ -16583,26 +17510,37 @@ app.post(
 
       const vendorAccountId = String(vendorAuth.id);
 
-      const warnings = await db
-        .select()
-        .from(circumventionWarnings)
-        .where(eq(circumventionWarnings.vendorAccountId, vendorAccountId))
-        .orderBy(desc(circumventionWarnings.createdAt));
-
-      const suspension = await getActiveSuspension(vendorAccountId);
-
-      const removedListings = await db
-        .select({ id: vendorListings.id, title: vendorListings.title, pendingAdminReview: vendorListings.pendingAdminReview })
-        .from(vendorListings)
-        .where(
-          and(
-            eq(vendorListings.accountId, vendorAccountId),
-            eq(vendorListings.violationRemoval, true)
-          )
-        );
+      const [warnings, softAttemptRows, suspension, removedListings] = await Promise.all([
+        db
+          .select()
+          .from(circumventionWarnings)
+          .where(eq(circumventionWarnings.vendorAccountId, vendorAccountId))
+          .orderBy(desc(circumventionWarnings.createdAt)),
+        db
+          .select({ id: circumventionFlags.id })
+          .from(circumventionFlags)
+          .where(
+            and(
+              eq(circumventionFlags.vendorAccountId, vendorAccountId),
+              drizzleSql`flag_type = 'soft_attempt'`
+            )
+          ),
+        getActiveSuspension(vendorAccountId),
+        db
+          .select({ id: vendorListings.id, title: vendorListings.title, pendingAdminReview: vendorListings.pendingAdminReview })
+          .from(vendorListings)
+          .where(
+            and(
+              eq(vendorListings.accountId, vendorAccountId),
+              eq(vendorListings.violationRemoval, true)
+            )
+          ),
+      ]);
 
       return res.json({
         warningCount: warnings.length,
+        softAttemptCount: softAttemptRows.length,
+        softAttemptLimit: SOFT_ATTEMPT_LIMIT,
         warnings,
         suspension: suspension
           ? { id: suspension.id, reason: suspension.reason, endsAt: suspension.endsAt, startsAt: suspension.startsAt }
@@ -16750,7 +17688,7 @@ app.post(
 
       const adminAuth = (req as any).adminAuth;
       const adminEmail = adminAuth?.email || "admin";
-      const serverUrl = (process.env.SERVER_URL || "http://localhost:5001").replace(/\/$/, "");
+      const serverUrl = appUrl();
 
       const [flag] = await db
         .select()
@@ -16871,6 +17809,35 @@ app.post(
         .where(eq(vendorListings.id, listingId));
 
       return res.json({ success: true });
+    } catch (error: any) {
+      return respondWithInternalServerError(req, res, error);
+    }
+  });
+
+  // GET /api/admin/circumvention/suspensions
+  // Returns all currently active vendor suspensions (not yet expired, not manually lifted).
+  app.get("/api/admin/circumvention/suspensions", adminRateLimiter, requireAdminAuth, async (req, res) => {
+    try {
+      const now = new Date();
+      const rows: any = await db.execute(drizzleSql`
+        SELECT
+          vs.id,
+          vs.reason,
+          vs.starts_at         AS "startsAt",
+          vs.ends_at           AS "endsAt",
+          vs.warning_snapshot  AS "warningSnapshot",
+          vs.lifted_at         AS "liftedAt",
+          va.business_name     AS "businessName",
+          va.email             AS "vendorEmail",
+          va.id                AS "vendorAccountId"
+        FROM vendor_suspensions vs
+        JOIN vendor_accounts va ON va.id = vs.vendor_account_id
+        WHERE vs.ends_at > ${now}
+          AND vs.lifted_at IS NULL
+        ORDER BY vs.starts_at DESC
+        LIMIT 200
+      `);
+      return res.json(extractRows(rows));
     } catch (error: any) {
       return respondWithInternalServerError(req, res, error);
     }
@@ -17151,9 +18118,9 @@ app.post(
         const filename = `${crypto.randomUUID()}${ext}`;
 
         if (isObjectStorageConfigured()) {
-          const key = makeObjectKey("feedback" as UploadFolder, filename);
-          await uploadBufferToObjectStorage({ buffer: req.file.buffer, key, contentType: req.file.mimetype });
-          return res.json({ url: `/uploads/feedback/${filename}` });
+          const key = `feedback/${filename}`;
+          const { url } = await uploadBufferToObjectStorage({ buffer: req.file.buffer, key, contentType: req.file.mimetype });
+          return res.json({ url });
         }
 
         await fs.mkdir(feedbackUploadsDir, { recursive: true });
@@ -17281,8 +18248,8 @@ app.post(
     if (existing.rows[0]) return String((existing.rows[0] as any).id);
 
     const inserted = await db.execute(drizzleSql`
-      INSERT INTO dispute_cases (booking_id, status, created_at, updated_at)
-      VALUES (${bookingId}, 'open', now(), now())
+      INSERT INTO dispute_cases (booking_id, status, response_deadline_at, created_at, updated_at)
+      VALUES (${bookingId}, 'open', now() + interval '72 hours', now(), now())
       ON CONFLICT (booking_id) DO UPDATE SET updated_at = now()
       RETURNING id
     `);
@@ -17300,17 +18267,18 @@ app.post(
 
       const rows = await db.execute(drizzleSql`
         SELECT
-          dc.id            AS case_id,
+          dc.id                  AS case_id,
           dc.booking_id,
-          dc.status        AS case_status,
+          dc.status              AS case_status,
           dc.resolution,
           dc.resolved_at,
-          dc.created_at    AS case_created_at,
-          dc.updated_at    AS case_updated_at,
+          dc.response_deadline_at,
+          dc.created_at          AS case_created_at,
+          dc.updated_at          AS case_updated_at,
           b.event_date,
           b.listing_title_snapshot,
-          b.status         AS booking_status,
-          u.name           AS customer_name
+          b.status               AS booking_status,
+          u.name                 AS customer_name
         FROM dispute_cases dc
         JOIN bookings b ON b.id = dc.booking_id
         LEFT JOIN users u ON u.id = b.customer_id
@@ -17327,13 +18295,13 @@ app.post(
         SELECT
           df.id, df.case_id, df.filed_by, df.dispute_type,
           df.description, df.attachment_urls, df.claim_amount_cents,
-          df.created_at,
+          df.is_response, df.created_at,
           u.name           AS filer_customer_name,
           va.business_name AS filer_vendor_name
         FROM dispute_filings df
         LEFT JOIN users u ON u.id = df.filer_customer_id
         LEFT JOIN vendor_accounts va ON va.id = df.filer_vendor_account_id
-        WHERE df.case_id = ANY(${caseIds})
+        WHERE df.case_id = ANY(${toPgTextArray(caseIds)}::text[])
         ORDER BY df.created_at ASC
       `);
 
@@ -17365,7 +18333,7 @@ app.post(
         bookingId: z.string().min(1),
         disputeType: z.enum(["travel_cost_recovery", "damage_claim", "customer_no_show", "other"]),
         description: z.string().trim().min(10).max(3000),
-        attachmentUrls: z.array(z.string().url()).max(5).default([]),
+        attachmentUrls: z.array(z.string().min(1)).max(5).default([]),
         claimAmountCents: z.number().int().positive().optional(),
       }).parse(req.body ?? {});
 
@@ -17405,7 +18373,7 @@ app.post(
           ${caseId}, ${payload.bookingId}, 'vendor',
           ${account.id},
           ${payload.disputeType}, ${payload.description},
-          ${payload.attachmentUrls}, ${payload.claimAmountCents ?? null},
+          ${toPgTextArray(payload.attachmentUrls)}::text[], ${payload.claimAmountCents ?? null},
           now(), now()
         )
         RETURNING *
@@ -17429,17 +18397,18 @@ app.post(
 
       const rows = await db.execute(drizzleSql`
         SELECT
-          dc.id            AS case_id,
+          dc.id                  AS case_id,
           dc.booking_id,
-          dc.status        AS case_status,
+          dc.status              AS case_status,
           dc.resolution,
           dc.resolved_at,
-          dc.created_at    AS case_created_at,
-          dc.updated_at    AS case_updated_at,
+          dc.response_deadline_at,
+          dc.created_at          AS case_created_at,
+          dc.updated_at          AS case_updated_at,
           b.event_date,
           b.listing_title_snapshot,
-          b.status         AS booking_status,
-          va.business_name AS vendor_name
+          b.status               AS booking_status,
+          va.business_name       AS vendor_name
         FROM dispute_cases dc
         JOIN bookings b ON b.id = dc.booking_id
         LEFT JOIN vendor_accounts va ON va.id = b.vendor_account_id
@@ -17456,13 +18425,13 @@ app.post(
         SELECT
           df.id, df.case_id, df.filed_by, df.dispute_type,
           df.description, df.attachment_urls, df.claim_amount_cents,
-          df.created_at,
+          df.is_response, df.created_at,
           u.name           AS filer_customer_name,
           va.business_name AS filer_vendor_name
         FROM dispute_filings df
         LEFT JOIN users u ON u.id = df.filer_customer_id
         LEFT JOIN vendor_accounts va ON va.id = df.filer_vendor_account_id
-        WHERE df.case_id = ANY(${caseIds})
+        WHERE df.case_id = ANY(${toPgTextArray(caseIds)}::text[])
         ORDER BY df.created_at ASC
       `);
 
@@ -17494,12 +18463,13 @@ app.post(
         bookingId: z.string().min(1),
         disputeType: z.enum(["service_not_as_described", "vendor_no_show", "safety_concern", "other"]),
         description: z.string().trim().min(10).max(3000),
-        attachmentUrls: z.array(z.string().url()).max(5).default([]),
+        attachmentUrls: z.array(z.string().min(1)).max(5).default([]),
+        claimAmountCents: z.number().int().positive().optional(),
       }).parse(req.body ?? {});
 
       const bookingResult = await db.execute(drizzleSql`
         SELECT id, status, customer_id, vendor_account_id,
-               listing_title_snapshot, event_date
+               listing_title_snapshot, event_date, booking_end_at
         FROM bookings
         WHERE id = ${payload.bookingId}
           AND customer_id = ${customerAuth.id}
@@ -17510,6 +18480,29 @@ app.post(
       const allowedStatuses = ["pending", "confirmed", "completed", "cancelled"];
       if (!allowedStatuses.includes(bk.status)) {
         return res.status(400).json({ error: "Disputes can only be filed on active or closed bookings" });
+      }
+
+      // Event must have ended and dispute window must still be open
+      if (bk.booking_end_at) {
+        const endAt = new Date(bk.booking_end_at);
+        const now = new Date();
+        if (now < endAt) {
+          return res.status(400).json({ error: "Disputes can only be filed after the event has ended" });
+        }
+        if (!isDisputeWindowOpen(endAt, now)) {
+          return res.status(400).json({
+            error: `Dispute window closed. Disputes are only allowed within ${DISPUTE_WINDOW_HOURS} hours after event completion.`,
+          });
+        }
+      }
+
+      // Block filing on an already-resolved case
+      const existingCaseResult = await db.execute(drizzleSql`
+        SELECT id, status FROM dispute_cases WHERE booking_id = ${payload.bookingId} LIMIT 1
+      `);
+      const existingCase = existingCaseResult.rows[0] as any;
+      if (existingCase?.status === "resolved") {
+        return res.status(409).json({ error: "This dispute has already been resolved" });
       }
 
       const caseId = await findOrCreateDisputeCase(payload.bookingId);
@@ -17524,19 +18517,225 @@ app.post(
         INSERT INTO dispute_filings (
           case_id, booking_id, filed_by,
           filer_customer_id,
-          dispute_type, description, attachment_urls,
+          dispute_type, description, attachment_urls, claim_amount_cents,
           created_at, updated_at
         ) VALUES (
           ${caseId}, ${payload.bookingId}, 'customer',
           ${customerAuth.id},
           ${payload.disputeType}, ${payload.description},
-          ${payload.attachmentUrls},
+          ${toPgTextArray(payload.attachmentUrls)}::text[], ${payload.claimAmountCents ?? null},
           now(), now()
         )
         RETURNING *
       `);
 
       return res.status(201).json({ caseId, filing: (filing.rows[0] as any) });
+    } catch (err: any) {
+      if (err?.name === "ZodError") return res.status(400).json({ error: "Validation failed", details: err.errors });
+      return respondWithInternalServerError(req, res, err);
+    }
+  });
+
+  /**
+   * POST /api/vendor/disputes/:caseId/respond
+   * Vendor submits a one-time response to a customer-initiated dispute case.
+   * Blocked if: case is resolved, deadline passed, vendor already responded,
+   * or the original filing was from the vendor (can't respond to your own).
+   */
+  app.post("/api/vendor/disputes/:caseId/respond", socialRateLimiter, ...requireVendorAuth0, async (req: any, res: any) => {
+    try {
+      const account = await getVendorAccountFromRequest(req);
+      if (!account?.id) return res.status(401).json({ error: "Vendor auth required" });
+
+      const caseId = asTrimmedString(req.params?.caseId);
+      if (!caseId) return res.status(400).json({ error: "Case id required" });
+
+      const payload = z.object({
+        description: z.string().trim().min(10).max(3000),
+        attachmentUrls: z.array(z.string().min(1)).max(5).default([]),
+      }).parse(req.body ?? {});
+
+      // Load the case and verify it belongs to this vendor's booking
+      const caseResult = await db.execute(drizzleSql`
+        SELECT
+          dc.id, dc.status, dc.response_deadline_at,
+          b.vendor_account_id,
+          b.listing_title_snapshot,
+          b.event_date,
+          cust.email AS customer_email,
+          cust.name  AS customer_name,
+          va.business_name AS vendor_name
+        FROM dispute_cases dc
+        JOIN bookings b ON b.id = dc.booking_id
+        LEFT JOIN users cust ON cust.id = b.customer_id
+        LEFT JOIN vendor_accounts va ON va.id = b.vendor_account_id
+        WHERE dc.id = ${caseId}
+        LIMIT 1
+      `);
+      const dc = caseResult.rows[0] as any;
+      if (!dc) return res.status(404).json({ error: "Dispute case not found" });
+      if (dc.vendor_account_id !== account.id) return res.status(403).json({ error: "Access denied" });
+      if (dc.status === "resolved") return res.status(409).json({ error: "This dispute has already been resolved" });
+
+      const now = new Date();
+      if (dc.response_deadline_at && now > new Date(dc.response_deadline_at)) {
+        return res.status(409).json({ error: "The 72-hour response window for this dispute has closed" });
+      }
+
+      // Check all filings: ensure at least one is from a customer, and vendor hasn't already responded
+      const filingsResult = await db.execute(drizzleSql`
+        SELECT filed_by, is_response FROM dispute_filings WHERE case_id = ${caseId}
+      `);
+      const filings = filingsResult.rows as any[];
+      const hasCustomerFiling = filings.some((f: any) => f.filed_by === "customer");
+      const vendorAlreadyResponded = filings.some((f: any) => f.filed_by === "vendor" && f.is_response === true);
+
+      if (!hasCustomerFiling) {
+        return res.status(409).json({ error: "There is no customer filing to respond to" });
+      }
+      if (vendorAlreadyResponded) {
+        return res.status(409).json({ error: "You have already submitted a response to this dispute" });
+      }
+
+      // Insert the response filing
+      const filing = await db.execute(drizzleSql`
+        INSERT INTO dispute_filings (
+          case_id, booking_id, filed_by,
+          filer_vendor_account_id,
+          dispute_type, description, attachment_urls,
+          is_response, created_at, updated_at
+        )
+        SELECT
+          ${caseId}, dc.booking_id, 'vendor',
+          ${account.id},
+          'response_to_dispute', ${payload.description},
+          ${toPgTextArray(payload.attachmentUrls)}::text[],
+          true, now(), now()
+        FROM dispute_cases dc WHERE dc.id = ${caseId}
+        RETURNING *
+      `);
+
+      await db.execute(drizzleSql`
+        UPDATE dispute_cases
+        SET status = 'pending_review', updated_at = now()
+        WHERE id = ${caseId} AND status = 'open'
+      `);
+
+      // Notify the customer that the vendor has responded
+      if (dc.customer_email) {
+        sendDisputeResponseEmail(dc.customer_email, {
+          recipientName: asTrimmedString(dc.customer_name) || "Customer",
+          otherPartyName: asTrimmedString(dc.vendor_name) || "Vendor",
+          listingTitle: asTrimmedString(dc.listing_title_snapshot) || "Your booking",
+          eventDate: asTrimmedString(dc.event_date) || "N/A",
+          serverUrl: appUrl(),
+        }).catch(() => {});
+      }
+
+      return res.status(201).json({ caseId, filing: filing.rows[0] });
+    } catch (err: any) {
+      if (err?.name === "ZodError") return res.status(400).json({ error: "Validation failed", details: err.errors });
+      return respondWithInternalServerError(req, res, err);
+    }
+  });
+
+  /**
+   * POST /api/customer/disputes/:caseId/respond
+   * Customer submits a one-time response to a vendor-initiated dispute case.
+   * Blocked if: case is resolved, deadline passed, customer already responded,
+   * or the original filing was from the customer (can't respond to your own).
+   */
+  app.post("/api/customer/disputes/:caseId/respond", socialRateLimiter, requireCustomerAnyAuth, async (req: any, res: any) => {
+    try {
+      const customerAuth = await resolveCustomerAuthFromRequest(req, { createIfMissing: false });
+      if (!customerAuth?.id) return res.status(401).json({ error: "Customer auth required" });
+
+      const caseId = asTrimmedString(req.params?.caseId);
+      if (!caseId) return res.status(400).json({ error: "Case id required" });
+
+      const payload = z.object({
+        description: z.string().trim().min(10).max(3000),
+        attachmentUrls: z.array(z.string().min(1)).max(5).default([]),
+      }).parse(req.body ?? {});
+
+      // Load the case and verify it belongs to this customer's booking
+      const caseResult = await db.execute(drizzleSql`
+        SELECT
+          dc.id, dc.status, dc.response_deadline_at,
+          b.customer_id,
+          b.listing_title_snapshot,
+          b.event_date,
+          cust.name AS customer_name,
+          va.email  AS vendor_email,
+          va.business_name AS vendor_name
+        FROM dispute_cases dc
+        JOIN bookings b ON b.id = dc.booking_id
+        LEFT JOIN users cust ON cust.id = b.customer_id
+        LEFT JOIN vendor_accounts va ON va.id = b.vendor_account_id
+        WHERE dc.id = ${caseId}
+        LIMIT 1
+      `);
+      const dc = caseResult.rows[0] as any;
+      if (!dc) return res.status(404).json({ error: "Dispute case not found" });
+      if (dc.customer_id !== customerAuth.id) return res.status(403).json({ error: "Access denied" });
+      if (dc.status === "resolved") return res.status(409).json({ error: "This dispute has already been resolved" });
+
+      const now = new Date();
+      if (dc.response_deadline_at && now > new Date(dc.response_deadline_at)) {
+        return res.status(409).json({ error: "The 72-hour response window for this dispute has closed" });
+      }
+
+      // Check all filings: ensure at least one is from a vendor, and customer hasn't already responded
+      const filingsResult = await db.execute(drizzleSql`
+        SELECT filed_by, is_response FROM dispute_filings WHERE case_id = ${caseId}
+      `);
+      const filings = filingsResult.rows as any[];
+      const hasVendorFiling = filings.some((f: any) => f.filed_by === "vendor");
+      const customerAlreadyResponded = filings.some((f: any) => f.filed_by === "customer" && f.is_response === true);
+
+      if (!hasVendorFiling) {
+        return res.status(409).json({ error: "There is no vendor filing to respond to" });
+      }
+      if (customerAlreadyResponded) {
+        return res.status(409).json({ error: "You have already submitted a response to this dispute" });
+      }
+
+      // Insert the response filing
+      const filing = await db.execute(drizzleSql`
+        INSERT INTO dispute_filings (
+          case_id, booking_id, filed_by,
+          filer_customer_id,
+          dispute_type, description, attachment_urls,
+          is_response, created_at, updated_at
+        )
+        SELECT
+          ${caseId}, dc.booking_id, 'customer',
+          ${customerAuth.id},
+          'response_to_dispute', ${payload.description},
+          ${toPgTextArray(payload.attachmentUrls)}::text[],
+          true, now(), now()
+        FROM dispute_cases dc WHERE dc.id = ${caseId}
+        RETURNING *
+      `);
+
+      await db.execute(drizzleSql`
+        UPDATE dispute_cases
+        SET status = 'pending_review', updated_at = now()
+        WHERE id = ${caseId} AND status = 'open'
+      `);
+
+      // Notify the vendor that the customer has responded
+      if (dc.vendor_email) {
+        sendDisputeResponseEmail(dc.vendor_email, {
+          recipientName: asTrimmedString(dc.vendor_name) || "Vendor",
+          otherPartyName: asTrimmedString(dc.customer_name) || "Customer",
+          listingTitle: asTrimmedString(dc.listing_title_snapshot) || "Your booking",
+          eventDate: asTrimmedString(dc.event_date) || "N/A",
+          serverUrl: appUrl(),
+        }).catch(() => {});
+      }
+
+      return res.status(201).json({ caseId, filing: filing.rows[0] });
     } catch (err: any) {
       if (err?.name === "ZodError") return res.status(400).json({ error: "Validation failed", details: err.errors });
       return respondWithInternalServerError(req, res, err);
@@ -17554,7 +18753,11 @@ app.post(
 
       const rows = await db.execute(drizzleSql`
         SELECT
-          b.id, b.status, b.event_date, b.listing_title_snapshot,
+          b.id, b.status, b.event_date, b.booking_end_at, b.listing_title_snapshot,
+          b.total_amount, b.vendor_payout, b.platform_fee, b.base_subtotal_cents,
+          b.delivery_fee_amount_cents, b.setup_fee_amount_cents, b.travel_fee_amount_cents,
+          b.discount_amount_cents, b.security_deposit_cents,
+          b.booked_quantity, b.unit_price_cents_snapshot, b.pricing_unit_snapshot,
           u.name AS customer_name,
           dc.id  AS existing_case_id
         FROM bookings b
@@ -17562,7 +18765,19 @@ app.post(
         LEFT JOIN dispute_cases dc ON dc.booking_id = b.id
         WHERE b.vendor_account_id = ${account.id}
           AND b.status IN ('pending', 'confirmed', 'completed', 'cancelled')
-        ORDER BY b.event_date DESC NULLS LAST
+          AND (
+            b.booking_end_at IS NULL
+            OR (now() >= b.booking_end_at AND now() < b.booking_end_at + INTERVAL '72 hours')
+          )
+        ORDER BY
+          CASE b.status
+            WHEN 'pending'   THEN 1
+            WHEN 'confirmed' THEN 2
+            WHEN 'completed' THEN 3
+            WHEN 'cancelled' THEN 4
+            ELSE 5
+          END,
+          b.event_date DESC NULLS LAST
         LIMIT 200
       `);
       return res.json(rows.rows);
@@ -17582,7 +18797,11 @@ app.post(
 
       const rows = await db.execute(drizzleSql`
         SELECT
-          b.id, b.status, b.event_date, b.listing_title_snapshot,
+          b.id, b.status, b.event_date, b.booking_end_at, b.listing_title_snapshot,
+          b.total_amount, b.base_subtotal_cents, b.customer_fee_amount_cents,
+          b.delivery_fee_amount_cents, b.setup_fee_amount_cents, b.travel_fee_amount_cents,
+          b.discount_amount_cents, b.security_deposit_cents,
+          b.booked_quantity, b.unit_price_cents_snapshot, b.pricing_unit_snapshot,
           va.business_name AS vendor_name,
           dc.id            AS existing_case_id
         FROM bookings b
@@ -17590,7 +18809,19 @@ app.post(
         LEFT JOIN dispute_cases dc ON dc.booking_id = b.id
         WHERE b.customer_id = ${customerAuth.id}
           AND b.status IN ('pending', 'confirmed', 'completed', 'cancelled')
-        ORDER BY b.event_date DESC NULLS LAST
+          AND (
+            b.booking_end_at IS NULL
+            OR (now() >= b.booking_end_at AND now() < b.booking_end_at + INTERVAL '72 hours')
+          )
+        ORDER BY
+          CASE b.status
+            WHEN 'pending'   THEN 1
+            WHEN 'confirmed' THEN 2
+            WHEN 'completed' THEN 3
+            WHEN 'cancelled' THEN 4
+            ELSE 5
+          END,
+          b.event_date DESC NULLS LAST
         LIMIT 200
       `);
       return res.json(rows.rows);
@@ -17600,6 +18831,52 @@ app.post(
   });
 
   // ── End Dispute Case System ────────────────────────────────────────────────
+
+  // ── Booking Add-on Items ───────────────────────────────────────────────────
+
+  app.get("/api/vendor/bookings/:bookingId/addon-items", ...requireVendorAuth0, async (req: any, res: any) => {
+    try {
+      const account = await getVendorAccountFromRequest(req);
+      if (!account?.id) return res.status(401).json({ error: "Vendor auth required" });
+      const { bookingId } = req.params;
+      const owns = await db.execute(drizzleSql`SELECT id FROM bookings WHERE id = ${bookingId} AND vendor_account_id = ${account.id} LIMIT 1`);
+      if (!owns.rows[0]) return res.status(403).json({ error: "Not authorized" });
+      const rows = await db.execute(drizzleSql`
+        SELECT title, unit_price_cents, total_price_cents
+        FROM booking_items
+        WHERE booking_id = ${bookingId} AND item_type = 'addon'
+        ORDER BY created_at ASC
+      `);
+      return res.json((rows.rows as any[]).map(r => ({
+        title: r.title ?? "Add-on",
+        priceCents: r.total_price_cents ?? r.unit_price_cents ?? 0,
+      })));
+    } catch (err: any) {
+      return respondWithInternalServerError(req, res, err);
+    }
+  });
+
+  app.get("/api/customer/bookings/:bookingId/addon-items", requireCustomerAnyAuth, async (req: any, res: any) => {
+    try {
+      const customerAuth = await resolveCustomerAuthFromRequest(req, { createIfMissing: false });
+      if (!customerAuth?.id) return res.status(401).json({ error: "Customer auth required" });
+      const { bookingId } = req.params;
+      const owns = await db.execute(drizzleSql`SELECT id FROM bookings WHERE id = ${bookingId} AND customer_id = ${customerAuth.id} LIMIT 1`);
+      if (!owns.rows[0]) return res.status(403).json({ error: "Not authorized" });
+      const rows = await db.execute(drizzleSql`
+        SELECT title, unit_price_cents, total_price_cents
+        FROM booking_items
+        WHERE booking_id = ${bookingId} AND item_type = 'addon'
+        ORDER BY created_at ASC
+      `);
+      return res.json((rows.rows as any[]).map(r => ({
+        title: r.title ?? "Add-on",
+        priceCents: r.total_price_cents ?? r.unit_price_cents ?? 0,
+      })));
+    } catch (err: any) {
+      return respondWithInternalServerError(req, res, err);
+    }
+  });
 
   // ── Platform Health Monitor ────────────────────────────────────────────────
 

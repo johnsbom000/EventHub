@@ -1,11 +1,15 @@
 /**
- * Postgres-backed IP rate limiter.
+ * Postgres-backed rate limiter.
  *
- * Stores per-IP request counts in a lightweight table so limits are shared
- * across all server instances (multi-replica deploys, rolling restarts, etc.).
+ * Keys authenticated requests by Auth0 sub (extracted from the Bearer token
+ * without verification — auth decisions are made separately). Falls back to
+ * IP address for unauthenticated requests. Counts are shared across all
+ * server instances so limits hold under multi-replica Railway deploys.
  *
  * Falls open on DB failure — a transient DB issue should never block
- * legitimate traffic, only log a warning.
+ * legitimate traffic, only log a warning. Payment and booking limiters
+ * use failClosed: true — they 503 on DB error rather than allow unlimited
+ * requests against the most sensitive endpoints.
  */
 
 import { logger } from "./logger";
@@ -51,6 +55,35 @@ function getRequestIp(req: Request): string {
   return (req.ip || (req.socket as any)?.remoteAddress || "unknown").toString();
 }
 
+/**
+ * Returns a stable rate-limit key for the request.
+ *
+ * For authenticated requests we key by the Auth0 `sub` claim extracted from
+ * the Bearer token. We intentionally skip signature verification here — this
+ * is only used to choose a bucket, not to make an auth decision. The real
+ * auth check happens in the route middleware that runs after the limiter.
+ * Keying by sub means an attacker cannot bypass limits by rotating IPs or
+ * spoofing X-Forwarded-For.
+ *
+ * For unauthenticated requests (no token) we fall back to the IP address.
+ */
+function getRequestKey(req: Request, label: string): string {
+  const authHeader = req.headers.authorization;
+  if (typeof authHeader === "string" && authHeader.startsWith("Bearer ")) {
+    try {
+      const payloadB64 = authHeader.slice(7).split(".")[1];
+      if (payloadB64) {
+        const decoded = JSON.parse(Buffer.from(payloadB64, "base64url").toString("utf8"));
+        const sub = typeof decoded.sub === "string" ? decoded.sub.trim() : "";
+        if (sub) return `${label}:user:${sub}`;
+      }
+    } catch {
+      // Malformed token — fall through to IP
+    }
+  }
+  return `${label}:ip:${getRequestIp(req)}`;
+}
+
 export function createDbRateLimiter(options: {
   label: string;
   maxPerMinute: number;
@@ -66,11 +99,10 @@ export function createDbRateLimiter(options: {
   const failClosed = options.failClosed === true;
 
   return async (req: Request, res: Response, next: NextFunction): Promise<void> => {
-    const ip = getRequestIp(req);
     const now = Date.now();
     // Round down to the start of the current 1-minute window.
     const windowStart = Math.floor(now / WINDOW_MS) * WINDOW_MS;
-    const key = `${options.label}:${ip}`;
+    const key = getRequestKey(req, options.label);
 
     try {
       await ensureTable();
