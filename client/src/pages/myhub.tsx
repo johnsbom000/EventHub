@@ -1,5 +1,6 @@
 import { useTranslation } from "react-i18next";
 import { useEffect, useMemo, useRef, useState } from "react";
+import { useAuth0 } from "@auth0/auth0-react";
 import { useLocation } from "wouter";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { AlertCircle, Copy, Eye, ImagePlus, Trash2 } from "lucide-react";
@@ -27,6 +28,7 @@ import {
 } from "@/components/ui/dialog";
 import type { ListingPublic } from "@/types/listing";
 import { serializeHobbyList } from "@shared/hobby-tags";
+import { HardBlockModal, SoftFlagNotice } from "@/components/CircumventionWarningModal";
 
 const ACCEPTED_SHOP_PHOTO_TYPES = new Set(["image/png", "image/jpeg", "image/jpg", "image/webp", "image/gif"]);
 const MAX_SHOP_PHOTO_BYTES = 2 * 1024 * 1024;
@@ -398,17 +400,20 @@ async function uploadShopPhotoDataUrl(dataUrl: string): Promise<string> {
     throw new Error(payload?.error || `Upload failed (${response.status})`);
   }
 
+  // Prefer the resolved public URL (CDN or local). The storagePath is a
+  // legacy /uploads/ relative path that only works when routed through the
+  // API server — in production the file lives on object storage, not on disk.
+  const nextUrl = asTrimmedString(payload?.url);
+  if (nextUrl) {
+    return nextUrl;
+  }
+
   const nextStoragePath = asTrimmedString(payload?.storagePath);
   if (nextStoragePath) {
     return nextStoragePath;
   }
 
-  const nextUrl = asTrimmedString(payload?.url);
-  if (!nextUrl) {
-    throw new Error("Upload response did not include a valid image URL.");
-  }
-
-  return nextUrl;
+  throw new Error("Upload response did not include a valid image URL.");
 }
 
 export default function MyHub() {
@@ -416,6 +421,7 @@ export default function MyHub() {
   const [, setLocation] = useLocation();
   const queryClient = useQueryClient();
   const { toast } = useToast();
+  const { isAuthenticated, isLoading: isAuthLoading } = useAuth0();
   const coverPhotoInputRef = useRef<HTMLInputElement | null>(null);
   const shopPhotoInputRef = useRef<HTMLInputElement | null>(null);
   const shopPhotoDragStateRef = useRef<{
@@ -437,6 +443,7 @@ export default function MyHub() {
 
   const { data: vendorMe, isLoading: isVendorLoading } = useQuery<VendorMe | null>({
     queryKey: ["/api/vendor/me", "vendor-shop-page"],
+    enabled: isAuthenticated && !isAuthLoading,
     retry: 1,
     queryFn: async () => {
       const token = await getFreshAccessToken();
@@ -455,6 +462,7 @@ export default function MyHub() {
 
   const { data: vendorProfile, isLoading: isProfileLoading } = useQuery<VendorProfile | null>({
     queryKey: ["/api/vendor/profile", "vendor-shop"],
+    enabled: isAuthenticated && !isAuthLoading,
     retry: false,
     queryFn: async () => {
       const token = await getFreshAccessToken();
@@ -474,6 +482,7 @@ export default function MyHub() {
 
   const { data: activeListings = [], isLoading: isListingsLoading } = useQuery<VendorListing[]>({
     queryKey: ["/api/vendor/listings", "active", "vendor-shop"],
+    enabled: isAuthenticated && !isAuthLoading,
     queryFn: async () => {
       const res = await apiRequest("GET", "/api/vendor/listings?status=active");
       return res.json();
@@ -515,6 +524,10 @@ export default function MyHub() {
   const [isUploadingPhoto, setIsUploadingPhoto] = useState(false);
   const [shopPhotoDirty, setShopPhotoDirty] = useState(false);
   const [validationError, setValidationError] = useState("");
+  const [profileBlockModal, setProfileBlockModal] = useState<{
+    open: boolean; field?: string; reason?: string; warningNumber?: number | null; suspended?: boolean; suspensionEndsAt?: string | null;
+  }>({ open: false });
+  const [profileSoftFlagNotice, setProfileSoftFlagNotice] = useState(false);
 
   useEffect(() => {
     if (typeof window === "undefined") return;
@@ -1029,18 +1042,24 @@ export default function MyHub() {
 
       if (!profileResponse.ok) {
         const payload = await profileResponse.json().catch(() => ({} as Record<string, unknown>));
+        if (profileResponse.status === 422 && (payload as any)?.error === "content_blocked") {
+          throw Object.assign(new Error("content_blocked"), { blockData: payload });
+        }
         const details = Array.isArray((payload as any)?.details) ? (payload as any).details : [];
         const firstDetail = details.find((detail: any) => typeof detail?.message === "string")?.message;
         throw new Error(firstDetail || String((payload as any)?.error || `Failed to update profile (${profileResponse.status})`));
       }
 
+      const responseData = await profileResponse.json().catch(() => ({}));
       return {
         nextShopProfileImageUrl,
         nextShopCoverImageUrl,
+        softFlagged: (responseData as any)?.softFlagged ?? false,
       };
     },
-    onSuccess: async ({ nextShopProfileImageUrl, nextShopCoverImageUrl }) => {
+    onSuccess: async ({ nextShopProfileImageUrl, nextShopCoverImageUrl, softFlagged }) => {
       setValidationError("");
+      if (softFlagged) setProfileSoftFlagNotice(true);
       setShopPhotoDirty(false);
       setCoverPhotoDirty(false);
       setCoverPhotoNeedsUpload(false);
@@ -1073,6 +1092,17 @@ export default function MyHub() {
     },
     onError: (error: any) => {
       setIsUploadingPhoto(false);
+      if (error?.blockData?.error === "content_blocked") {
+        setProfileBlockModal({
+          open: true,
+          field: error.blockData.field || "Profile",
+          reason: error.blockData.reason || "Contact information is not allowed.",
+          warningNumber: error.blockData.warningNumber ?? null,
+          suspended: error.blockData.suspended ?? false,
+          suspensionEndsAt: error.blockData.suspensionEndsAt ?? null,
+        });
+        return;
+      }
       setValidationError(error?.message || "Please review required fields.");
       toast({
         title: "Could not save My Hub",
@@ -2107,6 +2137,19 @@ export default function MyHub() {
           </DialogFooter>
         </DialogContent>
       </Dialog>
+      <HardBlockModal
+        open={profileBlockModal.open}
+        onClose={() => setProfileBlockModal({ open: false })}
+        field={profileBlockModal.field ?? "Profile"}
+        reason={profileBlockModal.reason ?? "Contact information is not allowed."}
+        warningNumber={profileBlockModal.warningNumber}
+        suspended={profileBlockModal.suspended}
+        suspensionEndsAt={profileBlockModal.suspensionEndsAt}
+      />
+      <SoftFlagNotice
+        open={profileSoftFlagNotice}
+        onClose={() => setProfileSoftFlagNotice(false)}
+      />
     </VendorShell>
   );
 }
