@@ -226,13 +226,13 @@ app.get("/api/health", async (_req, res) => {
   }
 });
 
+// Temporary route to verify Sentry is connected — remove after confirming.
+app.get("/api/debug-sentry", (_req, _res) => {
+  throw new Error("My first Sentry error!");
+});
+
 (async () => {
   const server = await registerRoutes(app);
-
-  // Temporary route to verify Sentry is receiving errors — remove after confirming.
-  app.get("/debug-sentry", (_req, _res) => {
-    throw new Error("My first Sentry error!");
-  });
 
   // Sentry error handler must come after routes and before the custom error handler.
   Sentry.setupExpressErrorHandler(app);
