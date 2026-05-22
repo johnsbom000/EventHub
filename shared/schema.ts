@@ -393,7 +393,8 @@ export const vendorListings = pgTable("vendor_listings", {
   takedownFeeAmountCents: integer("takedown_fee_amount_cents"),
   photos: text("photos").array().notNull().default(sql`'{}'`),
   listingData: jsonb("listing_data"), // Complete listing wizard form data
-  cancellationPolicyOverride: jsonb("cancellation_policy_override"), // null = use vendor default
+  cancellationPolicy: text("cancellation_policy"),
+  cancellationPolicyDays: integer("cancellation_policy_days"),
   // ─── Dimensions (Rental listings and package_item rows) ───────────────────
   dimensionUnit: text("dimension_unit"),
   dimensionWidth: doublePrecision("dimension_width"),
@@ -757,6 +758,7 @@ export const notifications = pgTable("notifications", {
   message: text("message").notNull(),
   link: text("link"), // URL to relevant page
   read: boolean("read").default(false).notNull(),
+  archived: boolean("archived").default(false).notNull(),
   createdAt: timestamp("created_at").defaultNow(),
   expiresAt: timestamp("expires_at", { withTimezone: true }).default(sql`now() + interval '90 days'`),
 });

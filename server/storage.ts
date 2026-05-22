@@ -5,7 +5,7 @@ import {
 } from "@shared/schema";
 import { randomUUID } from "crypto";
 import { db } from "./db";
-import { and, desc, eq, or, isNull, gt, sql as drizzleSql } from "drizzle-orm";
+import { and, desc, eq, inArray, ne, or, isNull, gt, sql as drizzleSql } from "drizzle-orm";
 
 /**
  * IStorage — minimal interface for the notification helpers called via
@@ -16,6 +16,8 @@ export interface IStorage {
   createNotification(notification: InsertNotification): Promise<Notification>;
   getNotificationsByRecipient(recipientId: string, recipientType: string): Promise<Notification[]>;
   markNotificationAsRead(id: string, recipientId: string, recipientType: string): Promise<boolean>;
+  bulkMarkNotificationsRead(ids: string[], recipientId: string, recipientType: string): Promise<number>;
+  bulkArchiveNotifications(ids: string[], recipientId: string, recipientType: string): Promise<number>;
 }
 
 class DbStorage implements IStorage {
@@ -49,6 +51,7 @@ class DbStorage implements IStorage {
         and(
           eq(notifications.recipientId, recipientId),
           eq(notifications.recipientType, recipientType as "customer" | "vendor"),
+          ne(notifications.archived, true),
           // Exclude notifications past their 90-day expiry window.
           // isNull guard handles rows created before migration 0053 ran.
           or(isNull(notifications.expiresAt), gt(notifications.expiresAt, drizzleSql`now()`))
@@ -78,6 +81,46 @@ class DbStorage implements IStorage {
       .returning({ id: notifications.id });
 
     return rows.length > 0;
+  }
+
+  async bulkMarkNotificationsRead(
+    ids: string[],
+    recipientId: string,
+    recipientType: string
+  ): Promise<number> {
+    if (ids.length === 0) return 0;
+    const rows = await db
+      .update(notifications)
+      .set({ read: true })
+      .where(
+        and(
+          inArray(notifications.id, ids),
+          eq(notifications.recipientId, recipientId),
+          eq(notifications.recipientType, recipientType as "customer" | "vendor")
+        )
+      )
+      .returning({ id: notifications.id });
+    return rows.length;
+  }
+
+  async bulkArchiveNotifications(
+    ids: string[],
+    recipientId: string,
+    recipientType: string
+  ): Promise<number> {
+    if (ids.length === 0) return 0;
+    const rows = await db
+      .update(notifications)
+      .set({ archived: true })
+      .where(
+        and(
+          inArray(notifications.id, ids),
+          eq(notifications.recipientId, recipientId),
+          eq(notifications.recipientType, recipientType as "customer" | "vendor")
+        )
+      )
+      .returning({ id: notifications.id });
+    return rows.length;
   }
 }
 
