@@ -1,0 +1,1018 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8" />
+<title>EventHub QA Checklist</title>
+<style>
+  @import url('https://fonts.googleapis.com/css2?family=Inter:wght@400;600;700&display=swap');
+
+  * { box-sizing: border-box; margin: 0; padding: 0; }
+
+  body {
+    font-family: 'Inter', 'Helvetica Neue', Arial, sans-serif;
+    font-size: 10pt;
+    line-height: 1.5;
+    color: #1a1a2e;
+    background: #ffffff;
+  }
+
+  /* ── Cover Page ── */
+  .cover {
+    height: 100vh;
+    display: flex;
+    flex-direction: column;
+    align-items: center;
+    justify-content: center;
+    text-align: center;
+    background: #0f172a;
+    color: #ffffff;
+    page-break-after: always;
+    padding: 60px;
+  }
+
+  .cover .logo-ring {
+    width: 80px;
+    height: 80px;
+    border-radius: 50%;
+    background: linear-gradient(135deg, #6366f1 0%, #8b5cf6 100%);
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    margin: 0 auto 28px;
+    font-size: 32px;
+    font-weight: 700;
+    color: #fff;
+    letter-spacing: -1px;
+  }
+
+  .cover h1 {
+    font-size: 36pt;
+    font-weight: 700;
+    letter-spacing: -1px;
+    margin-bottom: 12px;
+  }
+
+  .cover h1 span { color: #818cf8; }
+
+  .cover .subtitle {
+    font-size: 13pt;
+    color: #94a3b8;
+    margin-bottom: 40px;
+    max-width: 440px;
+  }
+
+  .cover .meta-grid {
+    display: flex;
+    gap: 40px;
+    justify-content: center;
+    margin-top: 20px;
+  }
+
+  .cover .meta-item {
+    text-align: center;
+  }
+
+  .cover .meta-item .label {
+    font-size: 8pt;
+    text-transform: uppercase;
+    letter-spacing: 1px;
+    color: #64748b;
+    margin-bottom: 4px;
+  }
+
+  .cover .meta-item .value {
+    font-size: 11pt;
+    font-weight: 600;
+    color: #e2e8f0;
+  }
+
+  .cover .divider {
+    width: 60px;
+    height: 3px;
+    background: linear-gradient(90deg, #6366f1, #8b5cf6);
+    border-radius: 2px;
+    margin: 32px auto;
+  }
+
+  .cover .roles {
+    display: flex;
+    gap: 12px;
+    justify-content: center;
+    margin-top: 8px;
+  }
+
+  .cover .role-badge {
+    padding: 6px 16px;
+    border-radius: 999px;
+    font-size: 9pt;
+    font-weight: 600;
+    letter-spacing: 0.5px;
+  }
+
+  .role-customer { background: #1e40af; color: #bfdbfe; }
+  .role-vendor   { background: #065f46; color: #a7f3d0; }
+  .role-admin    { background: #7c2d12; color: #fed7aa; }
+
+  /* ── TOC ── */
+  .toc-page {
+    padding: 48px 56px;
+    page-break-after: always;
+  }
+
+  .toc-page h2 {
+    font-size: 20pt;
+    font-weight: 700;
+    color: #0f172a;
+    margin-bottom: 6px;
+  }
+
+  .toc-page .toc-sub {
+    font-size: 9pt;
+    color: #64748b;
+    margin-bottom: 32px;
+  }
+
+  .toc-entry {
+    display: flex;
+    justify-content: space-between;
+    align-items: baseline;
+    padding: 7px 0;
+    border-bottom: 1px dotted #e2e8f0;
+  }
+
+  .toc-entry:last-child { border-bottom: none; }
+
+  .toc-entry .toc-title {
+    font-size: 10pt;
+    color: #1e293b;
+    font-weight: 500;
+  }
+
+  .toc-entry .toc-badge {
+    display: inline-flex;
+    gap: 5px;
+    margin-left: 10px;
+  }
+
+  .badge {
+    font-size: 7pt;
+    font-weight: 700;
+    padding: 2px 7px;
+    border-radius: 999px;
+    text-transform: uppercase;
+    letter-spacing: 0.5px;
+  }
+
+  .badge-customer { background: #dbeafe; color: #1e40af; }
+  .badge-vendor   { background: #d1fae5; color: #065f46; }
+  .badge-admin    { background: #ffedd5; color: #7c2d12; }
+  .badge-all      { background: #f1f5f9; color: #475569; }
+
+  .toc-entry .toc-count {
+    font-size: 9pt;
+    color: #94a3b8;
+    margin-left: auto;
+    padding-left: 12px;
+    white-space: nowrap;
+  }
+
+  /* ── Content Pages ── */
+  .page {
+    padding: 44px 52px;
+    page-break-after: always;
+  }
+
+  .page:last-child { page-break-after: auto; }
+
+  /* Part header */
+  .part-header {
+    display: flex;
+    align-items: center;
+    gap: 16px;
+    margin-bottom: 28px;
+    padding-bottom: 16px;
+    border-bottom: 2.5px solid #e2e8f0;
+  }
+
+  .part-number {
+    width: 44px;
+    height: 44px;
+    border-radius: 10px;
+    background: #0f172a;
+    color: #ffffff;
+    font-size: 14pt;
+    font-weight: 700;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    flex-shrink: 0;
+  }
+
+  .part-title-block { flex: 1; }
+
+  .part-title-block h2 {
+    font-size: 16pt;
+    font-weight: 700;
+    color: #0f172a;
+    line-height: 1.2;
+  }
+
+  .part-title-block .part-desc {
+    font-size: 8.5pt;
+    color: #64748b;
+    margin-top: 3px;
+  }
+
+  .part-badges { display: flex; gap: 6px; flex-shrink: 0; }
+
+  /* Section */
+  .section {
+    margin-bottom: 22px;
+  }
+
+  .section-title {
+    font-size: 9pt;
+    font-weight: 700;
+    text-transform: uppercase;
+    letter-spacing: 0.8px;
+    color: #6366f1;
+    margin-bottom: 8px;
+    padding-bottom: 4px;
+    border-bottom: 1px solid #e0e7ff;
+  }
+
+  /* Checklist items */
+  .item {
+    display: flex;
+    align-items: flex-start;
+    gap: 9px;
+    padding: 4px 0;
+    line-height: 1.45;
+  }
+
+  .item .box {
+    width: 13px;
+    height: 13px;
+    border: 1.5px solid #94a3b8;
+    border-radius: 3px;
+    flex-shrink: 0;
+    margin-top: 2px;
+  }
+
+  .item .text {
+    font-size: 9.5pt;
+    color: #1e293b;
+  }
+
+  .item .text em {
+    font-style: normal;
+    font-weight: 600;
+    color: #4f46e5;
+  }
+
+  /* Warning / known gap box */
+  .gap-box {
+    background: #fff7ed;
+    border: 1.5px solid #fb923c;
+    border-radius: 8px;
+    padding: 14px 18px;
+    margin-top: 10px;
+  }
+
+  .gap-box .gap-title {
+    font-size: 9pt;
+    font-weight: 700;
+    color: #c2410c;
+    text-transform: uppercase;
+    letter-spacing: 0.6px;
+    margin-bottom: 6px;
+  }
+
+  .gap-box .item .box {
+    border-color: #fb923c;
+  }
+
+  /* Notes column layout for dense sections */
+  .two-col {
+    columns: 2;
+    column-gap: 24px;
+  }
+
+  .two-col .section {
+    break-inside: avoid;
+  }
+
+  /* Page footer */
+  @page {
+    size: Letter;
+    margin: 0.6in 0.65in 0.75in 0.65in;
+
+    @bottom-center {
+      content: "EventHub QA Checklist  •  Confidential  •  Page " counter(page);
+      font-size: 7.5pt;
+      color: #94a3b8;
+      font-family: 'Inter', sans-serif;
+    }
+  }
+
+  /* Utility */
+  .mt-4 { margin-top: 16px; }
+  .text-muted { color: #64748b; font-size: 8.5pt; }
+
+  /* Print */
+  @media print {
+    body { -webkit-print-color-adjust: exact; print-color-adjust: exact; }
+    .cover { height: 100vh; }
+  }
+</style>
+</head>
+<body>
+
+<!-- ══════════════════ COVER ══════════════════ -->
+<div class="cover">
+  <div class="logo-ring">EH</div>
+  <h1>Event<span>Hub</span></h1>
+  <div class="subtitle">Complete QA &amp; User Acceptance Checklist — All Roles, All Scenarios</div>
+  <div class="divider"></div>
+  <div class="roles">
+    <span class="role-badge role-customer">Customer</span>
+    <span class="role-badge role-vendor">Vendor</span>
+    <span class="role-badge role-admin">Admin</span>
+  </div>
+  <div class="meta-grid" style="margin-top:36px;">
+    <div class="meta-item">
+      <div class="label">Document Type</div>
+      <div class="value">QA Runbook</div>
+    </div>
+    <div class="meta-item">
+      <div class="label">Prepared</div>
+      <div class="value">May 2026</div>
+    </div>
+    <div class="meta-item">
+      <div class="label">Branch</div>
+      <div class="value">feature/dispute-case-system</div>
+    </div>
+  </div>
+</div>
+
+<!-- ══════════════════ TABLE OF CONTENTS ══════════════════ -->
+<div class="toc-page">
+  <h2>Table of Contents</h2>
+  <div class="toc-sub">Work through each part in order. Use a fresh test account for each role.</div>
+
+  <div class="toc-entry">
+    <span class="toc-title"><strong>Part 1</strong> — Authentication &amp; Onboarding</span>
+    <span class="toc-badge">
+      <span class="badge badge-customer">Customer</span>
+      <span class="badge badge-vendor">Vendor</span>
+      <span class="badge badge-admin">Admin</span>
+    </span>
+  </div>
+  <div class="toc-entry">
+    <span class="toc-title"><strong>Part 2</strong> — Public Browsing (Unauthenticated)</span>
+    <span class="toc-badge"><span class="badge badge-all">All / Public</span></span>
+  </div>
+  <div class="toc-entry">
+    <span class="toc-title"><strong>Part 3</strong> — Customer Flows</span>
+    <span class="toc-badge"><span class="badge badge-customer">Customer</span></span>
+  </div>
+  <div class="toc-entry">
+    <span class="toc-title"><strong>Part 4</strong> — Vendor Flows</span>
+    <span class="toc-badge"><span class="badge badge-vendor">Vendor</span></span>
+  </div>
+  <div class="toc-entry">
+    <span class="toc-title"><strong>Part 5</strong> — Admin Flows</span>
+    <span class="toc-badge"><span class="badge badge-admin">Admin</span></span>
+  </div>
+  <div class="toc-entry">
+    <span class="toc-title"><strong>Part 6</strong> — Cross-Cutting Scenarios</span>
+    <span class="toc-badge"><span class="badge badge-all">All Roles</span></span>
+  </div>
+  <div class="toc-entry">
+    <span class="toc-title"><strong>Part 7</strong> — Known Gaps</span>
+    <span class="toc-badge"><span class="badge badge-all">All Roles</span></span>
+  </div>
+</div>
+
+<!-- ══════════════════ PART 1 — AUTH ══════════════════ -->
+<div class="page">
+  <div class="part-header">
+    <div class="part-number">1</div>
+    <div class="part-title-block">
+      <h2>Authentication &amp; Onboarding</h2>
+      <div class="part-desc">Sign-up, login, logout, role-based access control, and Stripe Connect setup</div>
+    </div>
+    <div class="part-badges">
+      <span class="badge badge-customer">Customer</span>
+      <span class="badge badge-vendor">Vendor</span>
+      <span class="badge badge-admin">Admin</span>
+    </div>
+  </div>
+
+  <div class="section">
+    <div class="section-title">Customer Auth</div>
+    <div class="item"><div class="box"></div><div class="text">Sign up as a new customer via Auth0</div></div>
+    <div class="item"><div class="box"></div><div class="text">Log in as an existing customer</div></div>
+    <div class="item"><div class="box"></div><div class="text">Log out and confirm session is fully cleared</div></div>
+    <div class="item"><div class="box"></div><div class="text">Confirm redirect to correct dashboard after login</div></div>
+    <div class="item"><div class="box"></div><div class="text">Try accessing <em>/dashboard</em> while logged out — should redirect to login</div></div>
+  </div>
+
+  <div class="section">
+    <div class="section-title">Vendor Auth &amp; Onboarding</div>
+    <div class="item"><div class="box"></div><div class="text">Sign up as a new vendor via Auth0</div></div>
+    <div class="item"><div class="box"></div><div class="text">Complete onboarding wizard — business name, owner info, confirmation step</div></div>
+    <div class="item"><div class="box"></div><div class="text">Verify vendor account is created and linked to the user record</div></div>
+    <div class="item"><div class="box"></div><div class="text">Initiate Stripe Connect onboarding — confirm redirect to Stripe</div></div>
+    <div class="item"><div class="box"></div><div class="text">Complete Stripe Connect and confirm successful return to vendor dashboard</div></div>
+    <div class="item"><div class="box"></div><div class="text">Trigger Stripe Connect refresh page (<em>/vendor/connect/refresh</em>) — handles gracefully</div></div>
+    <div class="item"><div class="box"></div><div class="text">Log out as vendor and confirm session is cleared</div></div>
+    <div class="item"><div class="box"></div><div class="text">Try accessing <em>/vendor/dashboard</em> while logged out — should redirect to login</div></div>
+    <div class="item"><div class="box"></div><div class="text">Try accessing <em>/vendor/dashboard</em> as a customer — should be blocked / redirected</div></div>
+  </div>
+
+  <div class="section">
+    <div class="section-title">Admin Auth</div>
+    <div class="item"><div class="box"></div><div class="text">Log in as admin and confirm admin dashboard loads correctly</div></div>
+    <div class="item"><div class="box"></div><div class="text">Try accessing <em>/admin</em> as a customer — should be blocked</div></div>
+    <div class="item"><div class="box"></div><div class="text">Try accessing <em>/admin</em> as a vendor — should be blocked</div></div>
+  </div>
+</div>
+
+<!-- ══════════════════ PART 2 — PUBLIC ══════════════════ -->
+<div class="page">
+  <div class="part-header">
+    <div class="part-number">2</div>
+    <div class="part-title-block">
+      <h2>Public Browsing</h2>
+      <div class="part-desc">All pages and flows accessible without logging in</div>
+    </div>
+    <div class="part-badges"><span class="badge badge-all">Public / Unauthenticated</span></div>
+  </div>
+
+  <div class="section">
+    <div class="section-title">Home &amp; Navigation</div>
+    <div class="item"><div class="box"></div><div class="text">Home page loads with featured listings carousel</div></div>
+    <div class="item"><div class="box"></div><div class="text">Hero search (category, subcategory, location) redirects to Browse with filters pre-applied</div></div>
+    <div class="item"><div class="box"></div><div class="text">Terms of service page loads</div></div>
+    <div class="item"><div class="box"></div><div class="text">Privacy policy page loads</div></div>
+    <div class="item"><div class="box"></div><div class="text">404 page renders for a nonexistent route</div></div>
+  </div>
+
+  <div class="section">
+    <div class="section-title">Browse &amp; Search</div>
+    <div class="item"><div class="box"></div><div class="text">Browse page loads with listing cards</div></div>
+    <div class="item"><div class="box"></div><div class="text">Filter by category — listing results update correctly</div></div>
+    <div class="item"><div class="box"></div><div class="text">Filter by subcategory — results narrow correctly</div></div>
+    <div class="item"><div class="box"></div><div class="text">Filter by price range — results respect min/max</div></div>
+    <div class="item"><div class="box"></div><div class="text">Filter by tag — results respect the tag filter</div></div>
+    <div class="item"><div class="box"></div><div class="text">Sort by relevance, price (low→high), price (high→low), newest</div></div>
+    <div class="item"><div class="box"></div><div class="text">Search by location — results reflect geographic filter</div></div>
+    <div class="item"><div class="box"></div><div class="text">Pagination or infinite scroll works through multiple pages of results</div></div>
+  </div>
+
+  <div class="section">
+    <div class="section-title">Listing Detail</div>
+    <div class="item"><div class="box"></div><div class="text">Click a listing card — navigates to listing detail page</div></div>
+    <div class="item"><div class="box"></div><div class="text">Listing detail shows photo gallery, description, pricing, and service area info</div></div>
+    <div class="item"><div class="box"></div><div class="text">Package container listing shows child package items</div></div>
+    <div class="item"><div class="box"></div><div class="text">Add-ons section displays attached add-ons</div></div>
+    <div class="item"><div class="box"></div><div class="text">Reviews section renders star ratings and written reviews</div></div>
+    <div class="item"><div class="box"></div><div class="text">Vendor shop link is present and navigates to public vendor shop</div></div>
+    <div class="item"><div class="box"></div><div class="text">Public vendor shop (<em>/vendor/hub/:id</em>) loads with cover photo, tagline, and listings</div></div>
+  </div>
+</div>
+
+<!-- ══════════════════ PART 3 — CUSTOMER ══════════════════ -->
+<div class="page">
+  <div class="part-header">
+    <div class="part-number">3</div>
+    <div class="part-title-block">
+      <h2>Customer Flows</h2>
+      <div class="part-desc">Profile, planning, checkout, bookings, messaging, reviews, and disputes</div>
+    </div>
+    <div class="part-badges"><span class="badge badge-customer">Customer</span></div>
+  </div>
+
+  <div class="section">
+    <div class="section-title">Profile &amp; Account</div>
+    <div class="item"><div class="box"></div><div class="text">View and edit profile — name, email, location, preferred language</div></div>
+    <div class="item"><div class="box"></div><div class="text">Change preferred language — UI updates to selected language</div></div>
+    <div class="item"><div class="box"></div><div class="text">Save default location — persists on next visit / page reload</div></div>
+    <div class="item"><div class="box"></div><div class="text">Delete customer account — data is soft-deleted, session ends</div></div>
+  </div>
+
+  <div class="section">
+    <div class="section-title">Planning Boards (Save Listings)</div>
+    <div class="item"><div class="box"></div><div class="text">Click heart icon while logged out — prompted to log in</div></div>
+    <div class="item"><div class="box"></div><div class="text">Click heart icon while logged in — board picker opens</div></div>
+    <div class="item"><div class="box"></div><div class="text">Create a new planning board from the picker</div></div>
+    <div class="item"><div class="box"></div><div class="text">Save a listing to an existing board</div></div>
+    <div class="item"><div class="box"></div><div class="text">Remove a listing from a board</div></div>
+    <div class="item"><div class="box"></div><div class="text">Delete a board entirely</div></div>
+    <div class="item"><div class="box"></div><div class="text">View board contents — all saved listings appear</div></div>
+    <div class="item"><div class="box"></div><div class="text">Heart icon shows filled / active state if listing is already saved</div></div>
+  </div>
+
+  <div class="section">
+    <div class="section-title">Event Planning</div>
+    <div class="item"><div class="box"></div><div class="text">Create a new event — select event type (photographer, caterer, DJ, florist, videographer, prop/decor)</div></div>
+    <div class="item"><div class="box"></div><div class="text">Fill in event-specific details: guest count, location, date, start time</div></div>
+    <div class="item"><div class="box"></div><div class="text">Fill in category-specific fields (e.g. photographer details, catering details)</div></div>
+    <div class="item"><div class="box"></div><div class="text">View saved events in Customer Events page</div></div>
+    <div class="item"><div class="box"></div><div class="text">Vendor recommendations load correctly based on event type and location</div></div>
+    <div class="item"><div class="box"></div><div class="text">Reuse a saved event when starting a new booking</div></div>
+  </div>
+</div>
+
+<div class="page">
+  <div class="part-header">
+    <div class="part-number">3</div>
+    <div class="part-title-block">
+      <h2>Customer Flows (continued)</h2>
+      <div class="part-desc">Checkout, booking lifecycle, travel fees, messaging, reviews, disputes</div>
+    </div>
+    <div class="part-badges"><span class="badge badge-customer">Customer</span></div>
+  </div>
+
+  <div class="section">
+    <div class="section-title">Checkout &amp; Booking Creation</div>
+    <div class="item"><div class="box"></div><div class="text">Navigate to a listing and click "Book"</div></div>
+    <div class="item"><div class="box"></div><div class="text">Fill in event details — location, date, time, guest count</div></div>
+    <div class="item"><div class="box"></div><div class="text">Select an available date — date picker shows no error</div></div>
+    <div class="item"><div class="box"></div><div class="text">Try selecting a date blocked by vendor vacation — date is unavailable</div></div>
+    <div class="item"><div class="box"></div><div class="text">Try selecting a date with an existing confirmed booking — date is unavailable</div></div>
+    <div class="item"><div class="box"></div><div class="text">Apply a valid promo code — discount reflects in pricing breakdown</div></div>
+    <div class="item"><div class="box"></div><div class="text">Apply an expired promo code — error message shown, no discount applied</div></div>
+    <div class="item"><div class="box"></div><div class="text">Apply a promo code that has reached its usage limit — error shown</div></div>
+    <div class="item"><div class="box"></div><div class="text">Apply an invalid / nonexistent promo code — error shown</div></div>
+    <div class="item"><div class="box"></div><div class="text">Checkout for a listing with a security deposit — deposit line item appears separately</div></div>
+    <div class="item"><div class="box"></div><div class="text">Checkout for an out-of-service-radius listing — travel fee notice is shown</div></div>
+    <div class="item"><div class="box"></div><div class="text">Checkout for a listing with add-ons — select add-ons, pricing updates in real time</div></div>
+    <div class="item"><div class="box"></div><div class="text">Review full pricing breakdown (base, platform fee, deposit if any)</div></div>
+    <div class="item"><div class="box"></div><div class="text">Complete payment with a Stripe test card</div></div>
+    <div class="item"><div class="box"></div><div class="text">Booking created as <em>pending</em> (non-instant-book) or <em>confirmed</em> (instant-book)</div></div>
+    <div class="item"><div class="box"></div><div class="text">Confirmation screen displays after successful payment</div></div>
+    <div class="item"><div class="box"></div><div class="text">Customer receives a <em>new_booking</em> notification</div></div>
+  </div>
+
+  <div class="section">
+    <div class="section-title">Booking Lifecycle</div>
+    <div class="item"><div class="box"></div><div class="text">View all bookings in Customer Dashboard (pending, confirmed, completed, cancelled)</div></div>
+    <div class="item"><div class="box"></div><div class="text">View a single booking detail — timeline, status, and full pricing breakdown</div></div>
+    <div class="item"><div class="box"></div><div class="text">Status updates to <em>confirmed</em> after vendor confirms</div></div>
+    <div class="item"><div class="box"></div><div class="text">Status updates to <em>completed</em> after event date passes</div></div>
+    <div class="item"><div class="box"></div><div class="text">Cancel a booking before vendor confirms — refund per cancellation policy</div></div>
+    <div class="item"><div class="box"></div><div class="text">Cancel a confirmed booking — refund per policy applied</div></div>
+    <div class="item"><div class="box"></div><div class="text">Update event details on an existing booking — changes are saved</div></div>
+  </div>
+
+  <div class="section">
+    <div class="section-title">Travel Fee Proposals</div>
+    <div class="item"><div class="box"></div><div class="text">Vendor proposes a travel fee — customer sees it in booking detail</div></div>
+    <div class="item"><div class="box"></div><div class="text">Customer receives <em>travel_fee_proposed</em> notification</div></div>
+    <div class="item"><div class="box"></div><div class="text">Customer accepts the travel fee — booking proceeds normally</div></div>
+    <div class="item"><div class="box"></div><div class="text">Customer declines the travel fee — booking enters cancelled / negotiation state</div></div>
+  </div>
+
+  <div class="section">
+    <div class="section-title">Messaging</div>
+    <div class="item"><div class="box"></div><div class="text">Open Customer Messages from dashboard — conversation list loads</div></div>
+    <div class="item"><div class="box"></div><div class="text">Send a message to a vendor in an active booking chat</div></div>
+    <div class="item"><div class="box"></div><div class="text">Receive a vendor message and see it appear without refresh</div></div>
+    <div class="item"><div class="box"></div><div class="text">Unread count badge updates and clears when message is opened</div></div>
+    <div class="item"><div class="box"></div><div class="text">Send a file attachment in chat</div></div>
+    <div class="item"><div class="box"></div><div class="text">Type a phone number / email / URL in chat — circumvention warning modal appears, send is blocked</div></div>
+    <div class="item"><div class="box"></div><div class="text">Chat is locked / expired 30 days after event date</div></div>
+  </div>
+
+  <div class="section">
+    <div class="section-title">Reviews</div>
+    <div class="item"><div class="box"></div><div class="text">After event completion, a review prompt appears (notification or dashboard prompt)</div></div>
+    <div class="item"><div class="box"></div><div class="text">Submit a star rating + written review for a completed booking</div></div>
+    <div class="item"><div class="box"></div><div class="text">Try submitting a second review for the same booking — should be blocked</div></div>
+    <div class="item"><div class="box"></div><div class="text">Review appears on the public listing detail page</div></div>
+  </div>
+
+  <div class="section">
+    <div class="section-title">Disputes</div>
+    <div class="item"><div class="box"></div><div class="text">Navigate to Customer Disputes in dashboard</div></div>
+    <div class="item"><div class="box"></div><div class="text">File a dispute on an eligible completed booking</div></div>
+    <div class="item"><div class="box"></div><div class="text">Select dispute type — service not as described, vendor no-show, safety concern, other</div></div>
+    <div class="item"><div class="box"></div><div class="text">Upload a PDF attachment with the dispute filing</div></div>
+    <div class="item"><div class="box"></div><div class="text">Enter a claim amount</div></div>
+    <div class="item"><div class="box"></div><div class="text">Dispute appears in customer dispute list with status <em>open</em></div></div>
+    <div class="item"><div class="box"></div><div class="text">View dispute status transitions — open → pending_review → resolved</div></div>
+    <div class="item"><div class="box"></div><div class="text">Try to file a dispute on an ineligible booking — action is blocked</div></div>
+    <div class="item"><div class="box"></div><div class="text">Receive notification when dispute is resolved by admin</div></div>
+  </div>
+</div>
+
+<!-- ══════════════════ PART 4 — VENDOR ══════════════════ -->
+<div class="page">
+  <div class="part-header">
+    <div class="part-number">4</div>
+    <div class="part-title-block">
+      <h2>Vendor Flows</h2>
+      <div class="part-desc">Shop setup, listing management, bookings, payments, reviews, calendar sync, and more</div>
+    </div>
+    <div class="part-badges"><span class="badge badge-vendor">Vendor</span></div>
+  </div>
+
+  <div class="section">
+    <div class="section-title">Profile &amp; Shop Setup</div>
+    <div class="item"><div class="box"></div><div class="text">View and edit vendor profile — business name, address, service radius, qualifications, about text</div></div>
+    <div class="item"><div class="box"></div><div class="text">Upload a shop profile photo — renders correctly in circular crop</div></div>
+    <div class="item"><div class="box"></div><div class="text">Upload a shop cover photo — renders correctly as banner</div></div>
+    <div class="item"><div class="box"></div><div class="text">Add / edit shop tagline</div></div>
+    <div class="item"><div class="box"></div><div class="text">Select hobbies / interests as multi-select pills</div></div>
+    <div class="item"><div class="box"></div><div class="text">Add social / online profile links</div></div>
+    <div class="item"><div class="box"></div><div class="text">Toggle shop <em>inactive</em> — shop disappears from public Browse immediately</div></div>
+    <div class="item"><div class="box"></div><div class="text">Toggle shop <em>active</em> — shop re-appears in Browse</div></div>
+    <div class="item"><div class="box"></div><div class="text">Delete vendor account — soft-deleted, session ends</div></div>
+  </div>
+
+  <div class="section">
+    <div class="section-title">Multiple Vendor Profiles</div>
+    <div class="item"><div class="box"></div><div class="text">Create a second vendor profile</div></div>
+    <div class="item"><div class="box"></div><div class="text">Switch between profiles — active profile context updates</div></div>
+    <div class="item"><div class="box"></div><div class="text">Deactivate a profile — hidden from public</div></div>
+    <div class="item"><div class="box"></div><div class="text">Reactivate a profile — returns to public visibility</div></div>
+  </div>
+
+  <div class="section">
+    <div class="section-title">Listing Management</div>
+    <div class="item"><div class="box"></div><div class="text">Create a new listing — fill in title, description, category, subcategory</div></div>
+    <div class="item"><div class="box"></div><div class="text">Upload at least one photo — appears in listing editor and preview</div></div>
+    <div class="item"><div class="box"></div><div class="text">Upload multiple photos — all photos saved and displayed in correct order</div></div>
+    <div class="item"><div class="box"></div><div class="text">Set pricing (per day, per hour, or per quantity)</div></div>
+    <div class="item"><div class="box"></div><div class="text">Configure service area — <em>travel-to-guests</em> with radius, or <em>guests-come-to-me</em></div></div>
+    <div class="item"><div class="box"></div><div class="text">Configure logistics fees — travel, delivery, setup, takedown toggles + amounts</div></div>
+    <div class="item"><div class="box"></div><div class="text">Toggle instant book on — bookings skip vendor confirmation</div></div>
+    <div class="item"><div class="box"></div><div class="text">Toggle instant book off — bookings require vendor confirmation</div></div>
+    <div class="item"><div class="box"></div><div class="text">Set a security deposit amount</div></div>
+    <div class="item"><div class="box"></div><div class="text">Set cancellation policy — select flexible / moderate / strict preset</div></div>
+    <div class="item"><div class="box"></div><div class="text">Customize cancellation tiers (days before event, refund %)</div></div>
+    <div class="item"><div class="box"></div><div class="text">Toggle weather clause on the policy</div></div>
+    <div class="item"><div class="box"></div><div class="text">Toggle force majeure clause</div></div>
+    <div class="item"><div class="box"></div><div class="text">Set a reschedule window (months allowed)</div></div>
+    <div class="item"><div class="box"></div><div class="text">Save as draft — appears in listings with "Draft" status</div></div>
+    <div class="item"><div class="box"></div><div class="text">Publish listing — status changes to "Pending" (admin review) or "Active"</div></div>
+    <div class="item"><div class="box"></div><div class="text">Unpublish an active listing — status changes to "Inactive"</div></div>
+    <div class="item"><div class="box"></div><div class="text">Edit an existing listing — all changes are persisted</div></div>
+    <div class="item"><div class="box"></div><div class="text">Delete a listing — removed from vendor list and public Browse</div></div>
+  </div>
+</div>
+
+<div class="page">
+  <div class="part-header">
+    <div class="part-number">4</div>
+    <div class="part-title-block">
+      <h2>Vendor Flows (continued)</h2>
+      <div class="part-desc">Packages, add-ons, bookings, travel fees, messaging, reviews, payments, discounts</div>
+    </div>
+    <div class="part-badges"><span class="badge badge-vendor">Vendor</span></div>
+  </div>
+
+  <div class="section">
+    <div class="section-title">Packages &amp; Add-ons</div>
+    <div class="item"><div class="box"></div><div class="text">Create a package container listing</div></div>
+    <div class="item"><div class="box"></div><div class="text">Add package items to the container</div></div>
+    <div class="item"><div class="box"></div><div class="text">Edit a package item</div></div>
+    <div class="item"><div class="box"></div><div class="text">Create a standalone add-on listing</div></div>
+    <div class="item"><div class="box"></div><div class="text">Attach the add-on to a listing</div></div>
+    <div class="item"><div class="box"></div><div class="text">Detach an add-on from a listing</div></div>
+    <div class="item"><div class="box"></div><div class="text">Package and add-ons display correctly on the public listing detail page</div></div>
+  </div>
+
+  <div class="section">
+    <div class="section-title">Bookings</div>
+    <div class="item"><div class="box"></div><div class="text">New booking appears in Vendor Bookings page with "Pending" status</div></div>
+    <div class="item"><div class="box"></div><div class="text">Receive a <em>new_booking</em> notification</div></div>
+    <div class="item"><div class="box"></div><div class="text">Confirm a pending booking — status changes to <em>confirmed</em>, customer is notified</div></div>
+    <div class="item"><div class="box"></div><div class="text">Reject a pending booking — booking cancelled, customer is notified</div></div>
+    <div class="item"><div class="box"></div><div class="text">View booking detail — event date, customer info, pricing, line items</div></div>
+  </div>
+
+  <div class="section">
+    <div class="section-title">Travel Fee Proposals</div>
+    <div class="item"><div class="box"></div><div class="text">Propose a travel fee on an out-of-radius booking</div></div>
+    <div class="item"><div class="box"></div><div class="text">View proposal status — pending, accepted, declined</div></div>
+    <div class="item"><div class="box"></div><div class="text">Receive notification when customer accepts or declines</div></div>
+  </div>
+
+  <div class="section">
+    <div class="section-title">Messaging</div>
+    <div class="item"><div class="box"></div><div class="text">Open Vendor Messages — conversation list loads</div></div>
+    <div class="item"><div class="box"></div><div class="text">Send a message to a customer</div></div>
+    <div class="item"><div class="box"></div><div class="text">Receive and open a message — unread count clears</div></div>
+    <div class="item"><div class="box"></div><div class="text">Type a phone number / email / URL in chat — circumvention warning modal blocks send</div></div>
+    <div class="item"><div class="box"></div><div class="text">Send a file attachment in chat</div></div>
+    <div class="item"><div class="box"></div><div class="text">Chat is locked / expired 30 days after event date</div></div>
+  </div>
+
+  <div class="section">
+    <div class="section-title">Reviews</div>
+    <div class="item"><div class="box"></div><div class="text">View all customer reviews on Vendor Reviews page</div></div>
+    <div class="item"><div class="box"></div><div class="text">Aggregate rating displays correctly (average, total count, response rate)</div></div>
+    <div class="item"><div class="box"></div><div class="text">Reply to a customer review — reply appears under the review on the listing page</div></div>
+    <div class="item"><div class="box"></div><div class="text">Attempt to reply twice to the same review — should be blocked</div></div>
+  </div>
+
+  <div class="section">
+    <div class="section-title">Payments &amp; Payouts</div>
+    <div class="item"><div class="box"></div><div class="text">View payment history in Vendor Payments — statuses are accurate</div></div>
+    <div class="item"><div class="box"></div><div class="text">Payout statuses shown correctly — not_ready, eligible, scheduled, paid</div></div>
+    <div class="item"><div class="box"></div><div class="text">Access Stripe Connect dashboard link from Payments page</div></div>
+    <div class="item"><div class="box"></div><div class="text">Verify payout amount = booking total minus platform fee</div></div>
+  </div>
+
+  <div class="section">
+    <div class="section-title">Discounts</div>
+    <div class="item"><div class="box"></div><div class="text">Create a promo code — set percentage off, date range, usage limit</div></div>
+    <div class="item"><div class="box"></div><div class="text">Create a public sale on selected listings — set date range and percentage</div></div>
+    <div class="item"><div class="box"></div><div class="text">Confirm promo code validates correctly during customer checkout</div></div>
+    <div class="item"><div class="box"></div><div class="text">Confirm promo code respects the usage limit (declines once exceeded)</div></div>
+    <div class="item"><div class="box"></div><div class="text">Confirm promo code respects date range (declines outside window)</div></div>
+    <div class="item"><div class="box"></div><div class="text">Edit an existing discount</div></div>
+    <div class="item"><div class="box"></div><div class="text">Delete a discount — no longer redeemable</div></div>
+  </div>
+</div>
+
+<div class="page">
+  <div class="part-header">
+    <div class="part-number">4</div>
+    <div class="part-title-block">
+      <h2>Vendor Flows (continued)</h2>
+      <div class="part-desc">Notifications, vacation blocks, Google Calendar, and disputes</div>
+    </div>
+    <div class="part-badges"><span class="badge badge-vendor">Vendor</span></div>
+  </div>
+
+  <div class="section">
+    <div class="section-title">Notifications</div>
+    <div class="item"><div class="box"></div><div class="text">View Vendor Notifications page</div></div>
+    <div class="item"><div class="box"></div><div class="text">Filter notifications by type — bookings, messages, payments, reviews, calendar</div></div>
+    <div class="item"><div class="box"></div><div class="text">Mark a notification as read — read indicator updates</div></div>
+    <div class="item"><div class="box"></div><div class="text">Old notifications (90+ days) are not shown</div></div>
+  </div>
+
+  <div class="section">
+    <div class="section-title">Vacation Blocks &amp; Availability</div>
+    <div class="item"><div class="box"></div><div class="text">Create a vacation block for a date range</div></div>
+    <div class="item"><div class="box"></div><div class="text">Confirm blocked dates are unavailable during customer checkout</div></div>
+    <div class="item"><div class="box"></div><div class="text">Delete a vacation block — dates become available again</div></div>
+  </div>
+
+  <div class="section">
+    <div class="section-title">Google Calendar Sync</div>
+    <div class="item"><div class="box"></div><div class="text">Initiate Google OAuth from vendor settings — redirects to Google consent screen</div></div>
+    <div class="item"><div class="box"></div><div class="text">Complete OAuth and confirm token stored — calendar list appears</div></div>
+    <div class="item"><div class="box"></div><div class="text">Select an existing calendar to sync with EventHub</div></div>
+    <div class="item"><div class="box"></div><div class="text">Create a new EventHub-specific Google Calendar</div></div>
+    <div class="item"><div class="box"></div><div class="text">Confirm a booking syncs as an event to Google Calendar after vendor confirms</div></div>
+    <div class="item"><div class="box"></div><div class="text">Cancel a booking — Google Calendar event is removed</div></div>
+    <div class="item"><div class="box"></div><div class="text">Sync an existing calendar — past events appear in unmatched events list</div></div>
+    <div class="item"><div class="box"></div><div class="text">Map an unmatched Google event to an EventHub listing</div></div>
+    <div class="item"><div class="box"></div><div class="text">Unmap a previously mapped event</div></div>
+    <div class="item"><div class="box"></div><div class="text">Mark a Google event as a vendor vacation block</div></div>
+    <div class="item"><div class="box"></div><div class="text">View reconciliation status — any sync issues are flagged</div></div>
+    <div class="item"><div class="box"></div><div class="text">Use repair tool to fix a broken booking sync</div></div>
+  </div>
+
+  <div class="section">
+    <div class="section-title">Disputes</div>
+    <div class="item"><div class="box"></div><div class="text">File a dispute on an eligible completed booking — travel cost recovery, damage claim, customer no-show, other</div></div>
+    <div class="item"><div class="box"></div><div class="text">Upload a PDF attachment with the dispute filing</div></div>
+    <div class="item"><div class="box"></div><div class="text">Enter a claim amount</div></div>
+    <div class="item"><div class="box"></div><div class="text">View dispute in Vendor Disputes list with correct status</div></div>
+    <div class="item"><div class="box"></div><div class="text">Respond to a customer-filed dispute</div></div>
+    <div class="item"><div class="box"></div><div class="text">Receive notification when admin resolves the dispute</div></div>
+  </div>
+
+  <div class="section">
+    <div class="section-title">Circumvention Warning System</div>
+    <div class="item"><div class="box"></div><div class="text">Enter a phone number in a listing description — content is blocked (hard block)</div></div>
+    <div class="item"><div class="box"></div><div class="text">Enter an email address in a listing description — content is blocked</div></div>
+    <div class="item"><div class="box"></div><div class="text">Enter a URL or social handle in a listing description — content is blocked</div></div>
+    <div class="item"><div class="box"></div><div class="text">Enter soft-flag keyword in description — content saves but is flagged for admin review</div></div>
+    <div class="item"><div class="box"></div><div class="text">Same tests for vendor description and tagline fields</div></div>
+    <div class="item"><div class="box"></div><div class="text">Receive first circumvention warning — notification and warning count increment</div></div>
+    <div class="item"><div class="box"></div><div class="text">Trigger third warning — account is suspended, suspension record created</div></div>
+    <div class="item"><div class="box"></div><div class="text">Suspension lift email is sent when suspension expires</div></div>
+  </div>
+</div>
+
+<!-- ══════════════════ PART 5 — ADMIN ══════════════════ -->
+<div class="page">
+  <div class="part-header">
+    <div class="part-number">5</div>
+    <div class="part-title-block">
+      <h2>Admin Flows</h2>
+      <div class="part-desc">Dashboard metrics, moderation, disputes, payouts, and feedback triaging</div>
+    </div>
+    <div class="part-badges"><span class="badge badge-admin">Admin</span></div>
+  </div>
+
+  <div class="section">
+    <div class="section-title">Dashboard &amp; Metrics</div>
+    <div class="item"><div class="box"></div><div class="text">Admin dashboard loads — user, listing, booking, and revenue stats visible</div></div>
+    <div class="item"><div class="box"></div><div class="text">User growth metric reflects recent signups</div></div>
+    <div class="item"><div class="box"></div><div class="text">Listing metric shows correct active / pending / draft counts</div></div>
+    <div class="item"><div class="box"></div><div class="text">Booking metric reflects pending / confirmed / completed / cancelled counts</div></div>
+    <div class="item"><div class="box"></div><div class="text">Revenue dashboard shows gross revenue, platform fees, vendor payouts</div></div>
+    <div class="item"><div class="box"></div><div class="text">Web traffic analytics show page visit data</div></div>
+    <div class="item"><div class="box"></div><div class="text">Stripe account balance displays correctly</div></div>
+  </div>
+
+  <div class="section">
+    <div class="section-title">Circumvention Moderation</div>
+    <div class="item"><div class="box"></div><div class="text">View list of pending circumvention flags — hard blocks, soft flags, customer reports</div></div>
+    <div class="item"><div class="box"></div><div class="text">Dismiss a flag — removed from the queue</div></div>
+    <div class="item"><div class="box"></div><div class="text">Issue a warning + remove content — vendor receives warning notification</div></div>
+    <div class="item"><div class="box"></div><div class="text">Approve a listing pending review after compliance check — status changes to Active</div></div>
+    <div class="item"><div class="box"></div><div class="text">View vendor warnings list — warning number, reason, and date shown</div></div>
+    <div class="item"><div class="box"></div><div class="text">View active vendor suspensions</div></div>
+    <div class="item"><div class="box"></div><div class="text">View content flagged for re-review</div></div>
+  </div>
+
+  <div class="section">
+    <div class="section-title">Listing Moderation</div>
+    <div class="item"><div class="box"></div><div class="text">View listings in "Pending" status (flagged by circumvention on publish)</div></div>
+    <div class="item"><div class="box"></div><div class="text">Approve a pending listing — status changes to Active, listing appears in Browse</div></div>
+    <div class="item"><div class="box"></div><div class="text">Remove a listing with a warning — listing deactivated, vendor warned</div></div>
+  </div>
+
+  <div class="section">
+    <div class="section-title">Dispute Management</div>
+    <div class="item"><div class="box"></div><div class="text">View all open dispute cases in admin panel</div></div>
+    <div class="item"><div class="box"></div><div class="text">Open a specific dispute case — all filings visible</div></div>
+    <div class="item"><div class="box"></div><div class="text">Add an admin note to a case</div></div>
+    <div class="item"><div class="box"></div><div class="text">View full chronological note history for a case</div></div>
+    <div class="item"><div class="box"></div><div class="text">Resolve a dispute — set withheld amount (refund to customer or release to vendor)</div></div>
+    <div class="item"><div class="box"></div><div class="text">Confirm customer receives notification after resolution</div></div>
+    <div class="item"><div class="box"></div><div class="text">Confirm vendor receives notification after resolution</div></div>
+  </div>
+
+  <div class="section">
+    <div class="section-title">Payout Processing</div>
+    <div class="item"><div class="box"></div><div class="text">View payout history — vendor, amount, status, and date shown</div></div>
+    <div class="item"><div class="box"></div><div class="text">Trigger payout processing for eligible bookings</div></div>
+    <div class="item"><div class="box"></div><div class="text">Verify payout status transitions: eligible → scheduled → paid</div></div>
+  </div>
+
+  <div class="section">
+    <div class="section-title">Chat Moderation</div>
+    <div class="item"><div class="box"></div><div class="text">View flagged chat messages in admin panel</div></div>
+    <div class="item"><div class="box"></div><div class="text">Moderation stats show accurate flagged message counts</div></div>
+  </div>
+
+  <div class="section">
+    <div class="section-title">Feedback Submissions</div>
+    <div class="item"><div class="box"></div><div class="text">View all feedback submissions — feature requests and bug reports</div></div>
+    <div class="item"><div class="box"></div><div class="text">Flag a submission for priority follow-up</div></div>
+    <div class="item"><div class="box"></div><div class="text">Submissions include vendor / customer identification</div></div>
+  </div>
+</div>
+
+<!-- ══════════════════ PART 6 — CROSS-CUTTING ══════════════════ -->
+<div class="page">
+  <div class="part-header">
+    <div class="part-number">6</div>
+    <div class="part-title-block">
+      <h2>Cross-Cutting Scenarios</h2>
+      <div class="part-desc">End-to-end flows that span multiple roles and systems</div>
+    </div>
+    <div class="part-badges"><span class="badge badge-all">All Roles</span></div>
+  </div>
+
+  <div class="section">
+    <div class="section-title">Notification End-to-End</div>
+    <div class="item"><div class="box"></div><div class="text">Customer creates booking → vendor receives <em>new_booking</em> notification</div></div>
+    <div class="item"><div class="box"></div><div class="text">Vendor confirms booking → customer receives <em>booking_confirmed</em> notification</div></div>
+    <div class="item"><div class="box"></div><div class="text">Vendor rejects / cancels booking → customer receives <em>booking_cancelled</em> notification</div></div>
+    <div class="item"><div class="box"></div><div class="text">Either party sends a message → other party receives <em>new_message</em> notification</div></div>
+    <div class="item"><div class="box"></div><div class="text">Customer submits review → vendor receives <em>review_received</em> notification</div></div>
+    <div class="item"><div class="box"></div><div class="text">Travel fee proposed → customer receives <em>travel_fee_proposed</em> notification</div></div>
+    <div class="item"><div class="box"></div><div class="text">Travel fee accepted → vendor receives <em>travel_fee_accepted</em> notification</div></div>
+    <div class="item"><div class="box"></div><div class="text">Travel fee declined → vendor receives <em>travel_fee_declined</em> notification</div></div>
+    <div class="item"><div class="box"></div><div class="text">Payout processed → vendor receives <em>payout_processed</em> notification</div></div>
+    <div class="item"><div class="box"></div><div class="text">Payment received → vendor receives <em>payment_received</em> notification</div></div>
+    <div class="item"><div class="box"></div><div class="text">Google Calendar event updated → vendor receives <em>google_calendar_booking_updated</em></div></div>
+    <div class="item"><div class="box"></div><div class="text">Google Calendar event deleted → vendor receives <em>google_calendar_booking_deleted</em></div></div>
+    <div class="item"><div class="box"></div><div class="text">Google sync error occurs → vendor receives <em>google_calendar_sync_error</em></div></div>
+  </div>
+
+  <div class="section">
+    <div class="section-title">Security Deposit Flow</div>
+    <div class="item"><div class="box"></div><div class="text">Book a listing with a security deposit — deposit charge appears as a separate line item</div></div>
+    <div class="item"><div class="box"></div><div class="text">Vendor files a damage claim dispute within the window — deposit is withheld pending resolution</div></div>
+    <div class="item"><div class="box"></div><div class="text">Admin resolves dispute — deposit refunded to customer or released to vendor per decision</div></div>
+  </div>
+
+  <div class="section">
+    <div class="section-title">Cancellation Policy Edge Cases</div>
+    <div class="item"><div class="box"></div><div class="text">Book and cancel within the full-refund window — full refund is issued</div></div>
+    <div class="item"><div class="box"></div><div class="text">Book and cancel in a partial-refund window — correct partial amount is refunded</div></div>
+    <div class="item"><div class="box"></div><div class="text">Book and cancel in the no-refund window — no refund is issued</div></div>
+    <div class="item"><div class="box"></div><div class="text">Cancel a booking where a weather clause applies — verify clause affects the refund calculation</div></div>
+    <div class="item"><div class="box"></div><div class="text">Confirm the cancellation policy snapshot on the booking matches the policy at the time of booking (not any later vendor edits)</div></div>
+  </div>
+
+  <div class="section">
+    <div class="section-title">Instant Book vs. Manual Confirm</div>
+    <div class="item"><div class="box"></div><div class="text">Book an instant-book listing — booking immediately goes to <em>confirmed</em>, no vendor action needed</div></div>
+    <div class="item"><div class="box"></div><div class="text">Book a non-instant-book listing — booking stays <em>pending</em> until vendor confirms</div></div>
+  </div>
+
+  <div class="section">
+    <div class="section-title">Payment Edge Cases</div>
+    <div class="item"><div class="box"></div><div class="text">Use Stripe 3DS test card — flow handles <em>requires_action</em> state and completes authentication</div></div>
+    <div class="item"><div class="box"></div><div class="text">Payment intent fails — booking does <strong>not</strong> enter confirmed state</div></div>
+    <div class="item"><div class="box"></div><div class="text">Stripe webhook fires for payment event — booking status updates correctly</div></div>
+    <div class="item"><div class="box"></div><div class="text">Duplicate / replayed Stripe webhook event — second event is deduplicated, no double processing</div></div>
+  </div>
+
+  <div class="section">
+    <div class="section-title">File Uploads</div>
+    <div class="item"><div class="box"></div><div class="text">Upload a listing photo — appears in listing editor and public listing</div></div>
+    <div class="item"><div class="box"></div><div class="text">Upload a photo over the size limit — error message is shown, upload rejected</div></div>
+    <div class="item"><div class="box"></div><div class="text">Upload vendor shop profile photo — circular crop renders correctly</div></div>
+    <div class="item"><div class="box"></div><div class="text">Upload shop cover photo — banner renders correctly</div></div>
+    <div class="item"><div class="box"></div><div class="text">Upload a PDF dispute attachment — file attached to dispute filing</div></div>
+    <div class="item"><div class="box"></div><div class="text">Upload a feedback attachment — file attached to submission</div></div>
+  </div>
+
+  <div class="section">
+    <div class="section-title">Multi-Language</div>
+    <div class="item"><div class="box"></div><div class="text">Change preferred language to Spanish — UI renders in Spanish</div></div>
+    <div class="item"><div class="box"></div><div class="text">Change to Portuguese — UI renders in Portuguese</div></div>
+    <div class="item"><div class="box"></div><div class="text">A listing with an active translation shows translated content in the correct language</div></div>
+  </div>
+
+  <div class="section">
+    <div class="section-title">Feedback Submission (All Roles)</div>
+    <div class="item"><div class="box"></div><div class="text">Submit a feature request with description and optional file attachment</div></div>
+    <div class="item"><div class="box"></div><div class="text">Submit a bug report with description and optional file attachment</div></div>
+    <div class="item"><div class="box"></div><div class="text">Submission appears in admin feedback queue with correct type and submitter identity</div></div>
+  </div>
+</div>
+
+<!-- ══════════════════ PART 7 — KNOWN GAPS ══════════════════ -->
+<div class="page">
+  <div class="part-header">
+    <div class="part-number">7</div>
+    <div class="part-title-block">
+      <h2>Known Gaps</h2>
+      <div class="part-desc">Features that are incomplete or not yet built — do not mark these as passed</div>
+    </div>
+    <div class="part-badges"><span class="badge badge-all">All Roles</span></div>
+  </div>
+
+  <div class="gap-box">
+    <div class="gap-title">Do Not Mark Complete</div>
+    <div class="item">
+      <div class="box"></div>
+      <div class="text">
+        <strong>Security Deposit — Automated Post-Dispute-Window Refund</strong><br/>
+        <span class="text-muted">The schema and checkout logic for security deposits are done (migration 0068), but the automated trigger that refunds the deposit 48 hours after the event (when no damage claim has been filed) has <strong>not yet been built</strong>. Manual testing of this auto-refund flow will fail. Do not mark this as passed.</span>
+      </div>
+    </div>
+  </div>
+
+  <div class="mt-4">
+    <div class="text-muted">As additional gaps are discovered during QA, record them here with the date found and the failing scenario.</div>
+  </div>
+
+  <div style="margin-top: 28px; border: 1.5px solid #e2e8f0; border-radius: 8px; padding: 18px 20px;">
+    <div style="font-size:9pt;font-weight:700;color:#0f172a;margin-bottom:14px;">Gap Log</div>
+    <table style="width:100%;border-collapse:collapse;font-size:8.5pt;color:#334155;">
+      <thead>
+        <tr style="border-bottom:1.5px solid #e2e8f0;">
+          <th style="text-align:left;padding:4px 8px;width:15%;">Date</th>
+          <th style="text-align:left;padding:4px 8px;width:10%;">Role</th>
+          <th style="text-align:left;padding:4px 8px;width:40%;">Scenario / Step</th>
+          <th style="text-align:left;padding:4px 8px;">Notes</th>
+        </tr>
+      </thead>
+      <tbody>
+        <tr style="border-bottom:1px solid #f1f5f9;"><td style="padding:6px 8px;color:#94a3b8;font-style:italic;">__________</td><td style="padding:6px 8px;"></td><td style="padding:6px 8px;"></td><td style="padding:6px 8px;"></td></tr>
+        <tr style="border-bottom:1px solid #f1f5f9;"><td style="padding:6px 8px;color:#94a3b8;font-style:italic;">__________</td><td style="padding:6px 8px;"></td><td style="padding:6px 8px;"></td><td style="padding:6px 8px;"></td></tr>
+        <tr style="border-bottom:1px solid #f1f5f9;"><td style="padding:6px 8px;color:#94a3b8;font-style:italic;">__________</td><td style="padding:6px 8px;"></td><td style="padding:6px 8px;"></td><td style="padding:6px 8px;"></td></tr>
+        <tr style="border-bottom:1px solid #f1f5f9;"><td style="padding:6px 8px;color:#94a3b8;font-style:italic;">__________</td><td style="padding:6px 8px;"></td><td style="padding:6px 8px;"></td><td style="padding:6px 8px;"></td></tr>
+        <tr style="border-bottom:1px solid #f1f5f9;"><td style="padding:6px 8px;color:#94a3b8;font-style:italic;">__________</td><td style="padding:6px 8px;"></td><td style="padding:6px 8px;"></td><td style="padding:6px 8px;"></td></tr>
+        <tr style="border-bottom:1px solid #f1f5f9;"><td style="padding:6px 8px;color:#94a3b8;font-style:italic;">__________</td><td style="padding:6px 8px;"></td><td style="padding:6px 8px;"></td><td style="padding:6px 8px;"></td></tr>
+        <tr style="border-bottom:1px solid #f1f5f9;"><td style="padding:6px 8px;color:#94a3b8;font-style:italic;">__________</td><td style="padding:6px 8px;"></td><td style="padding:6px 8px;"></td><td style="padding:6px 8px;"></td></tr>
+        <tr style="border-bottom:1px solid #f1f5f9;"><td style="padding:6px 8px;color:#94a3b8;font-style:italic;">__________</td><td style="padding:6px 8px;"></td><td style="padding:6px 8px;"></td><td style="padding:6px 8px;"></td></tr>
+        <tr><td style="padding:6px 8px;color:#94a3b8;font-style:italic;">__________</td><td style="padding:6px 8px;"></td><td style="padding:6px 8px;"></td><td style="padding:6px 8px;"></td></tr>
+      </tbody>
+    </table>
+  </div>
+
+  <div style="margin-top: 40px; text-align:center; color:#94a3b8; font-size:8pt; border-top: 1px solid #f1f5f9; padding-top: 20px;">
+    EventHub QA Checklist &nbsp;·&nbsp; Confidential &nbsp;·&nbsp; Generated May 2026
+  </div>
+</div>
+
+</body>
+</html>

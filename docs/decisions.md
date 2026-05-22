@@ -1,6 +1,6 @@
 # Event Hub Decisions Log
 
-Last updated: May 2, 2026
+Last updated: May 21, 2026
 
 ## Purpose
 This file tracks decisions that affect product scope, architecture, and launch tradeoffs.
@@ -13,6 +13,15 @@ Template for new entries:
 - Why:
 - Impact:
 - Revisit trigger:
+
+---
+
+## [2026-05-21] Reset left-sidebar count badges after navigation to their destination page
+- Context: Left-sidebar count badges (messages/disputes/health) stayed visible with cumulative counts after users clicked into those sections, and badge placement looked inconsistent near icon corners.
+- Decision: Add a shared hook `client/src/hooks/useResettableBadgeCount.ts` and wire it into `vendor-sidebar`, `customer-sidebar`, and `admin-sidebar`. Persist a local baseline in `localStorage` and display only `currentCount - baseline` (minimum 0); clear that baseline when the current route is on the destination page (for example `/vendor/messages`, `/dashboard/messages`, `/admin/disputes`, `/admin/health`). Standardize badge positioning to top-center over each icon.
+- Why: This is a thin-slice UX reliability fix that matches notification expectations without changing backend unread/dispute/health APIs or introducing cross-page state coupling.
+- Impact: Sidebar badges now clear when users land on the corresponding page, remain cleared across refresh, and return only for new increments; all left-sidebar badges use a consistent top placement.
+- Revisit trigger: If backend APIs later support per-user “last seen” timestamps for each badge type, replace local baseline persistence with server-driven read state to synchronize across devices.
 
 ---
 
