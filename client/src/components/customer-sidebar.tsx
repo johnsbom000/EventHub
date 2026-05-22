@@ -1,4 +1,5 @@
 import { Calendar, MessageSquare, PlusCircle, User, Scale, AlertTriangle } from "lucide-react";
+import { useEffect } from "react";
 import { Link, useLocation } from "wouter";
 import { useQuery } from "@tanstack/react-query";
 import { useAuth0 } from "@auth0/auth0-react";
@@ -16,6 +17,7 @@ import {
 } from "@/components/ui/sidebar";
 import { Avatar, AvatarFallback } from "@/components/ui/avatar";
 import { cn } from "@/lib/utils";
+import { useResettableBadgeCount } from "@/hooks/useResettableBadgeCount";
 
 interface CustomerMe {
  id: string;
@@ -76,6 +78,14 @@ export function CustomerSidebar({ className, showWarningBadge = false, onWarning
  });
 
  const unreadCount = Math.max(0, Number(unreadData?.unreadCount || 0));
+ const { visibleCount: visibleUnreadCount, dismissCurrent: dismissUnreadCount } = useResettableBadgeCount({
+ id: "customer:messages",
+ count: unreadCount,
+ });
+ useEffect(() => {
+ if (!location.startsWith("/dashboard/messages")) return;
+ dismissUnreadCount();
+ }, [dismissUnreadCount, location]);
  const displayName = customer?.displayName?.trim() || customer?.name || "Customer";
 
  return (
@@ -121,9 +131,9 @@ export function CustomerSidebar({ className, showWarningBadge = false, onWarning
  <item.icon className="!h-8 !w-8" />
  </span>
  <span className="sr-only">{label}</span>
- {item.key === "messages" && unreadCount > 0 ? (
- <span className="pointer-events-none absolute right-0 top-0 z-[70] flex h-5 min-w-5 translate-x-1/3 -translate-y-1/3 items-center justify-center rounded-full bg-[hsl(var(--secondary-accent))] px-1 text-[10px] font-semibold text-[hsl(var(--secondary-accent-foreground))]">
- {unreadCount > 99 ? "99+" : unreadCount}
+ {item.key === "messages" && visibleUnreadCount > 0 ? (
+ <span className="pointer-events-none absolute left-1/2 top-0 z-[70] flex h-5 min-w-5 -translate-x-1/2 -translate-y-1/3 items-center justify-center rounded-full bg-[hsl(var(--secondary-accent))] px-1 text-[10px] font-semibold text-[hsl(var(--secondary-accent-foreground))]">
+ {visibleUnreadCount > 99 ? "99+" : visibleUnreadCount}
  </span>
  ) : null}
  </Link>
