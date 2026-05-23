@@ -1534,6 +1534,19 @@ export async function deleteGoogleCalendarEvent(
  * Inserts a vendor notification into the notifications table.
  * Imported and used by googleWebhookHandler.ts to avoid circular deps.
  */
+export async function fetchGoogleAccountEmail(accessToken: string): Promise<string | null> {
+  try {
+    const res = await fetch("https://www.googleapis.com/oauth2/v2/userinfo", {
+      headers: { Authorization: `Bearer ${accessToken}` },
+    });
+    if (!res.ok) return null;
+    const data = (await res.json()) as { email?: string };
+    return typeof data.email === "string" ? data.email : null;
+  } catch {
+    return null;
+  }
+}
+
 export async function createVendorNotification(params: {
   vendorAccountId: string;
   type:

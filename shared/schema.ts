@@ -255,6 +255,7 @@ export const vendorAccounts = pgTable(
     googleTokenExpiresAt: timestamp("google_token_expires_at"),
     googleCalendarId: text("google_calendar_id"),
     googleConnectionStatus: text("google_connection_status").notNull().default("disconnected"),
+    googleAccountEmail: varchar("google_account_email"),
     shopActive: boolean("shop_active").notNull().default(true),
     ownerFirstName: text("owner_first_name"),
     ownerLastName: text("owner_last_name"),
