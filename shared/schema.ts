@@ -39,7 +39,7 @@ export const paymentStatusEnum = pgEnum("payment_status", [
 export const paymentTypeEnum = pgEnum("payment_type", [
   // Active values
   "booking",          // full booking total (base + add-ons + platform fee)
-  "security_deposit", // fixed-amount hold; refunded 48h post-event if no damage claim
+  "security_deposit", // fixed-amount hold; refunded 72h post-event if no damage claim
   "travel_fee",       // vendor-proposed travel/delivery fee for out-of-radius bookings
   // Legacy values — still in DB for existing rows; new rows use 'booking' instead of 'deposit'
   "deposit",
@@ -255,6 +255,7 @@ export const vendorAccounts = pgTable(
     googleTokenExpiresAt: timestamp("google_token_expires_at"),
     googleCalendarId: text("google_calendar_id"),
     googleConnectionStatus: text("google_connection_status").notNull().default("disconnected"),
+    googleAccountEmail: varchar("google_account_email"),
     shopActive: boolean("shop_active").notNull().default(true),
     ownerFirstName: text("owner_first_name"),
     ownerLastName: text("owner_last_name"),
@@ -457,7 +458,7 @@ export const bookings = pgTable("bookings", {
   platformFee: integer("platform_fee").notNull(), // vendor fee portion in cents
   vendorPayout: integer("vendor_payout").notNull(), // totalAmount - platformFee
   depositAmount: integer("deposit_amount").notNull(), // down payment
-  depositPaidAt: timestamp("deposit_paid_at"), // track when deposit was paid for 48hr refund policy
+  depositPaidAt: timestamp("deposit_paid_at"), // track when deposit was paid for 72hr refund policy
   finalPaymentStrategy: text("final_payment_strategy"), // 'immediately', '2_weeks_prior', 'day_of_event'
   securityDepositCents: integer("security_deposit_cents"), // refundable security deposit (snapshotted at booking time)
   securityDepositRefundedAt: timestamp("security_deposit_refunded_at", { withTimezone: true }), // when security deposit was refunded to customer

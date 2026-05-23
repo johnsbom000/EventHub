@@ -1,16 +1,22 @@
+import { useRef } from "react";
 import { useLocation } from "wouter";
 import { CreateListingWizard } from "@/features/vendor/create-listing/CreateListingWizard";
 
 export default function VendorCreateListing() {
   const [, setLocation] = useLocation();
+  const didPublishRef = useRef(false);
 
   const handleClose = () => {
-    setLocation("/vendor/listings");
+    setLocation(didPublishRef.current ? "/vendor/my-hub" : "/vendor/listings");
+  };
+
+  const handleComplete = () => {
+    didPublishRef.current = true;
   };
 
   return (
     <div data-testid="page-vendor-create-listing">
-      <CreateListingWizard onClose={handleClose} />
+      <CreateListingWizard onClose={handleClose} onComplete={handleComplete} />
     </div>
   );
 }

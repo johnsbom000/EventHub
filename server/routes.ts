@@ -117,6 +117,7 @@ import {
   stopAllGoogleCalendarWatchChannelsForVendor,
   stopGoogleCalendarWatchChannel,
   syncEventHubBookingToGoogleCalendar,
+  fetchGoogleAccountEmail,
 } from "./google";
 import {
   handleGoogleCalendarWebhook,
@@ -4137,7 +4138,7 @@ export async function registerRoutes(app: Express): Promise<Server> {
               .set({
                 status: "refunded",
                 refundAmount: row.deposit_cents,
-                refundReason: "auto_deposit_refund_48h",
+                refundReason: "auto_deposit_refund_72h",
                 refundedAt: now,
                 payoutStatus: "cancelled",
                 payoutEligibleAt: null,
@@ -4486,6 +4487,7 @@ app.post(
         operatingTimezone: normalizeIanaTimeZone(activeProfile?.operatingTimezone),
         googleConnectionStatus: account.googleConnectionStatus,
         googleCalendarId: account.googleCalendarId,
+        googleAccountEmail: account.googleAccountEmail ?? null,
         hasVendorAccount,
         hasAnyVendorProfiles,
         hasActiveVendorProfile,
@@ -5086,6 +5088,7 @@ app.post(
           id: vendorAccounts.id,
           googleRefreshToken: vendorAccounts.googleRefreshToken,
           googleCalendarId: vendorAccounts.googleCalendarId,
+          googleAccountEmail: vendorAccounts.googleAccountEmail,
         })
         .from(vendorAccounts)
         .where(eq(vendorAccounts.id, parsedState.vendorAccountId))
@@ -5162,6 +5165,8 @@ app.post(
           ? new Date(Date.now() + tokens.expires_in * 1000)
           : null;
 
+      const googleAccountEmail = await fetchGoogleAccountEmail(accessToken);
+
       await db
         .update(vendorAccounts)
         .set({
@@ -5170,6 +5175,7 @@ app.post(
           googleTokenExpiresAt: expiresAt,
           googleCalendarId: vendorAccount.googleCalendarId ?? null,
           googleConnectionStatus: "connected",
+          googleAccountEmail: googleAccountEmail ?? vendorAccount.googleAccountEmail ?? null,
         })
         .where(eq(vendorAccounts.id, vendorAccount.id));
 
@@ -5186,6 +5192,50 @@ app.post(
     } catch (error: any) {
       logger.error("Google OAuth callback error:", error?.message || error);
       return errorRedirect(returnPath, "server_exception");
+    }
+  });
+
+  app.post("/api/google/oauth/disconnect", mutationRateLimiter, ...requireVendorAuth0, async (req, res) => {
+    try {
+      const account = await getVendorAccountFromRequest(req);
+      if (!account?.id) {
+        return res.status(404).json({ error: "Vendor account not found" });
+      }
+      if (account.googleConnectionStatus !== "connected") {
+        return res.status(400).json({ error: "Google Calendar is not connected" });
+      }
+
+      // Best-effort token revocation — non-fatal if it fails
+      if (account.googleAccessToken) {
+        try {
+          const rawToken = decryptToken(account.googleAccessToken);
+          await fetch(`https://oauth2.googleapis.com/revoke?token=${encodeURIComponent(rawToken)}`, {
+            method: "POST",
+            headers: { "Content-Type": "application/x-www-form-urlencoded" },
+          });
+        } catch (revokeErr) {
+          logger.warn({ vendorAccountId: account.id }, "[google disconnect] token revocation failed (non-fatal)");
+        }
+      }
+
+      await stopAllGoogleCalendarWatchChannelsForVendor(account.id);
+
+      await db
+        .update(vendorAccounts)
+        .set({
+          googleAccessToken: null,
+          googleRefreshToken: null,
+          googleTokenExpiresAt: null,
+          googleCalendarId: null,
+          googleConnectionStatus: "disconnected",
+          googleAccountEmail: null,
+        })
+        .where(eq(vendorAccounts.id, account.id));
+
+      return res.json({ success: true });
+    } catch (error: any) {
+      logRouteError("/api/google/oauth/disconnect", error);
+      res.status(500).json({ error: "Failed to disconnect Google Calendar" });
     }
   });
 
@@ -16413,8 +16463,8 @@ app.post(
 
         if (booking.depositPaidAt) {
           const hoursSinceDeposit = (Date.now() - booking.depositPaidAt.getTime()) / (1000 * 60 * 60);
-          if (hoursSinceDeposit > 48) {
-            return res.status(400).json({ error: "Refund period has expired (48 hours)" });
+          if (hoursSinceDeposit > 72) {
+            return res.status(400).json({ error: "Refund period has expired (72 hours)" });
           }
         }
 

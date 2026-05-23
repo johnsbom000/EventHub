@@ -1,6 +1,8 @@
-import React, { useEffect, useState } from "react";
+import React, { useEffect, useRef, useState } from "react";
 import { SidebarProvider } from "@/components/ui/sidebar";
 import { Button } from "@/components/ui/button";
+import VendorTourModal from "@/components/VendorTourModal";
+import { getTourKey, hasTourBeenSeen, markTourSeen, VENDOR_TOURS } from "@/lib/vendorTourContent";
 import {
   ArrowLeft,
   Calendar,
@@ -179,6 +181,29 @@ export default function VendorShell({ children, onOpenAccountSettings }: VendorS
     circumventionStatus && !circumventionStatus.suspension && circumventionStatus.warningCount > 0
   );
   const [showWarningBanner, setShowWarningBanner] = useState(false);
+
+  // Tour system
+  const [activeTourKey, setActiveTourKey] = useState<string | null>(null);
+  const tourTimerRef = useRef<ReturnType<typeof window.setTimeout> | null>(null);
+
+  useEffect(() => {
+    const key = getTourKey(location);
+    if (!key) return;
+
+    if (tourTimerRef.current) clearTimeout(tourTimerRef.current);
+    tourTimerRef.current = window.setTimeout(() => {
+      if (!hasTourBeenSeen(key)) {
+        markTourSeen(key);
+        setActiveTourKey(key);
+      }
+    }, 600);
+
+    return () => {
+      if (tourTimerRef.current) clearTimeout(tourTimerRef.current);
+    };
+  }, [location]);
+
+  const handleTourDismiss = () => setActiveTourKey(null);
 
   const displayName = activeProfileName || vendorAccount?.email || "Vendor";
   const initials = getInitialsFromName(displayName);
@@ -419,6 +444,14 @@ export default function VendorShell({ children, onOpenAccountSettings }: VendorS
           <MobileNavLink href="/vendor/payments" icon={DollarSign} label={t("vendorShell.mobile.payments")} />
         </nav>
       </div>
+
+      {activeTourKey && VENDOR_TOURS[activeTourKey] && (
+        <VendorTourModal
+          key={activeTourKey}
+          steps={VENDOR_TOURS[activeTourKey].steps}
+          onDismiss={handleTourDismiss}
+        />
+      )}
     </SidebarProvider>
   );
 }

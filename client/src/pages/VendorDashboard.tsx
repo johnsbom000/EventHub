@@ -43,6 +43,7 @@ type VendorMe = {
  stripeOnboardingComplete?: boolean | null;
  googleConnectionStatus?: string | null;
  googleCalendarId?: string | null;
+ googleAccountEmail?: string | null;
  hasVendorAccount?: boolean | null;
  hasAnyVendorProfiles?: boolean | null;
  hasActiveVendorProfile?: boolean | null;
@@ -472,6 +473,7 @@ export default function VendorDashboard() {
  const [vacationFormError, setVacationFormError] = useState<string | null>(null);
  const [isShopShutdownDialogOpen, setIsShopShutdownDialogOpen] = useState(false);
  const [isCreateCalendarConfirmOpen, setIsCreateCalendarConfirmOpen] = useState(false);
+ const [isDisconnectGoogleCalendarDialogOpen, setIsDisconnectGoogleCalendarDialogOpen] = useState(false);
  // Vacation blocks query
  const {
  data: vacationBlocks = [],
@@ -845,6 +847,29 @@ export default function VendorDashboard() {
  onError: (error: any) => {
  toast({
  title: "Unable to sync existing bookings",
+ description: error?.message || "Please try again.",
+ variant: "destructive",
+ });
+ },
+ });
+
+ const disconnectGoogleCalendarMutation = useMutation({
+ mutationFn: async () => {
+ const response = await apiRequest("POST", "/api/google/oauth/disconnect", {});
+ if (!response.ok) {
+ const body = await response.json().catch(() => ({}));
+ throw new Error((body as any)?.error || "Failed to disconnect");
+ }
+ return response.json();
+ },
+ onSuccess: async () => {
+ setIsDisconnectGoogleCalendarDialogOpen(false);
+ await qc.invalidateQueries({ queryKey: ["/api/vendor/me"] });
+ toast({ title: "Google Calendar disconnected" });
+ },
+ onError: (error: any) => {
+ toast({
+ title: "Unable to disconnect Google Calendar",
  description: error?.message || "Please try again.",
  variant: "destructive",
  });
@@ -1364,6 +1389,11 @@ export default function VendorDashboard() {
  {isGoogleConnected ? t("vendorDashboard.googleConnected") : t("vendorDashboard.googleNotConnected")}
  </span>
  </div>
+ {vendorAccount?.googleAccountEmail ? (
+ <div className="mt-1 text-sm text-muted-foreground">
+ Connected as {vendorAccount.googleAccountEmail}
+ </div>
+ ) : null}
  {vendorAccount?.googleCalendarId ? (
  <div className="mt-2 text-sm text-muted-foreground">
  {t("vendorDashboard.currentCalendar")} {selectedGoogleCalendar?.summary || vendorAccount.googleCalendarId}
@@ -1426,6 +1456,15 @@ export default function VendorDashboard() {
  data-testid="button-reconnect-google-calendar"
  >
  {isGoogleCalendarConnectLoading ? t("vendorDashboard.openingGoogle") : t("vendorDashboard.reconnectGoogle")}
+ </Button>
+ <Button
+ variant="outline"
+ onClick={() => setIsDisconnectGoogleCalendarDialogOpen(true)}
+ disabled={disconnectGoogleCalendarMutation.isPending}
+ data-testid="button-disconnect-google-calendar"
+ className="text-destructive hover:text-destructive"
+ >
+ Disconnect
  </Button>
  </div>
 
@@ -2101,6 +2140,34 @@ export default function VendorDashboard() {
  t("vendorDashboard.keepCurrentCalendar")}
  </Button>
  </div>
+ </DialogContent>
+ </Dialog>
+
+ {/* Disconnect Google Calendar confirmation dialog */}
+ <Dialog open={isDisconnectGoogleCalendarDialogOpen} onOpenChange={setIsDisconnectGoogleCalendarDialogOpen}>
+ <DialogContent className="sm:max-w-md">
+ <DialogHeader>
+ <DialogTitle>Disconnect Google Calendar?</DialogTitle>
+ <DialogDescription>
+ Your existing bookings will keep their calendar events, but no new events will be synced until you reconnect.
+ </DialogDescription>
+ </DialogHeader>
+ <DialogFooter className="flex gap-2 sm:justify-end">
+ <Button
+ variant="outline"
+ onClick={() => setIsDisconnectGoogleCalendarDialogOpen(false)}
+ disabled={disconnectGoogleCalendarMutation.isPending}
+ >
+ Cancel
+ </Button>
+ <Button
+ variant="destructive"
+ onClick={() => disconnectGoogleCalendarMutation.mutate()}
+ disabled={disconnectGoogleCalendarMutation.isPending}
+ >
+ {disconnectGoogleCalendarMutation.isPending ? "Disconnecting…" : "Disconnect"}
+ </Button>
+ </DialogFooter>
  </DialogContent>
  </Dialog>
 
