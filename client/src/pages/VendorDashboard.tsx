@@ -1270,9 +1270,6 @@ export default function VendorDashboard() {
  <VendorShell onOpenAccountSettings={() => setIsAccountSettingsDialogOpen(true)}>
  <div className="mx-auto max-w-2xl space-y-3 rounded-lg border p-5 text-sm text-muted-foreground">
  <p>{t("vendorDashboard.nonVendor")}</p>
- <p className="text-xs text-red-500 font-mono">
-   DEBUG: auth sub = {(user as any)?.sub ?? "(none)"} | email = {(user as any)?.email ?? "(none)"}
- </p>
  </div>
  </VendorShell>
  );
