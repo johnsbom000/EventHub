@@ -4137,7 +4137,7 @@ export async function registerRoutes(app: Express): Promise<Server> {
               .set({
                 status: "refunded",
                 refundAmount: row.deposit_cents,
-                refundReason: "auto_deposit_refund_48h",
+                refundReason: "auto_deposit_refund_72h",
                 refundedAt: now,
                 payoutStatus: "cancelled",
                 payoutEligibleAt: null,
@@ -16413,8 +16413,8 @@ app.post(
 
         if (booking.depositPaidAt) {
           const hoursSinceDeposit = (Date.now() - booking.depositPaidAt.getTime()) / (1000 * 60 * 60);
-          if (hoursSinceDeposit > 48) {
-            return res.status(400).json({ error: "Refund period has expired (48 hours)" });
+          if (hoursSinceDeposit > 72) {
+            return res.status(400).json({ error: "Refund period has expired (72 hours)" });
           }
         }
 

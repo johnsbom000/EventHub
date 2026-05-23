@@ -53,6 +53,9 @@ export default function AuthModal({
   const startLogin = async (opts: Parameters<typeof loginWithRedirect>[0]) => {
     const fallbackReturnTo = `${window.location.pathname}${window.location.search}${window.location.hash}`;
     const resolvedReturnTo = getSafeReturnTo(returnTo, fallbackReturnTo);
+    // Route root sign-ins through /post-login so vendor/customer redirect
+    // happens in a freshly-mounted component after the Auth0 callback fires.
+    const finalReturnTo = resolvedReturnTo === "/" ? "/post-login" : resolvedReturnTo;
     const normalizedPrompt = (opts?.authorizationParams?.prompt ?? "login") as
       | "login"
       | "none"
@@ -67,7 +70,7 @@ export default function AuthModal({
       authorizationParams: normalizedAuthorizationParams,
       appState: {
         ...(opts?.appState || {}),
-        returnTo: resolvedReturnTo,
+        returnTo: finalReturnTo,
       },
     };
 

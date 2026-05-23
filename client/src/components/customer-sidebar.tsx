@@ -31,8 +31,8 @@ const menuItems = [
  { key: "myEvents",      url: "/dashboard/events",   icon: Calendar },
  { key: "messages",      url: "/dashboard/messages",  icon: MessageSquare },
  { key: "planNewEvent",  url: "/dashboard/plan",      icon: PlusCircle },
- { key: "myProfile",     url: "/dashboard/profile",   icon: User },
  { key: "disputes",      url: "/dashboard/disputes",  icon: Scale },
+ { key: "myProfile",     url: "/dashboard/profile",   icon: User },
 ];
 
 function getInitials(name: string) {

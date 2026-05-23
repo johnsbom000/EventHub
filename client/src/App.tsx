@@ -42,14 +42,66 @@ import { deriveVendorDetection, type VendorMeState } from "@/lib/vendorState";
 import { useToast } from "@/hooks/use-toast";
 import Privacy from "@/pages/Privacy";
 
+// Handles the post-sign-in redirect for normal logins (not "Become a Vendor").
+// AuthModal routes here via appState.returnTo so this mounts fresh after
+// onRedirectCallback fires — avoiding the useState timing race in RootEntry.
+function PostLogin() {
+  const [, setLocation] = useLocation();
+  const { isAuthenticated, isLoading: isAuthLoading } = useAuth0();
+  const hasRedirectedRef = useRef(false);
+
+  const {
+    data: vendorAccount,
+    isLoading: isVendorLoading,
+    isFetching: isVendorFetching,
+    error: vendorError,
+  } = useQuery<VendorMeState>({
+    queryKey: ["/api/vendor/me"],
+    enabled: isAuthenticated && !isAuthLoading,
+    retry: false,
+    staleTime: 0,
+  });
+
+  const vendorDetection = deriveVendorDetection({
+    data: vendorAccount,
+    isLoading: isVendorLoading,
+    isFetching: isVendorFetching,
+    error: vendorError,
+  });
+
+  useEffect(() => {
+    if (isAuthLoading) return;
+    if (!isAuthenticated) { setLocation("/"); return; }
+    if (vendorDetection.status === "loading") return;
+    if (hasRedirectedRef.current) return;
+    hasRedirectedRef.current = true;
+
+    if (vendorDetection.status === "vendor") {
+      setLocation("/vendor/my-hub");
+    } else if (vendorDetection.status === "non_vendor") {
+      setLocation("/dashboard");
+    } else {
+      const lastKnownVendorAccount =
+        typeof window !== "undefined" &&
+        window.localStorage.getItem("eventhub:last-known-vendor-account") === "1";
+      setLocation(lastKnownVendorAccount ? "/vendor/my-hub" : "/dashboard");
+    }
+  }, [isAuthLoading, isAuthenticated, vendorDetection, setLocation]);
+
+  return (
+    <div className="min-h-screen bg-background flex items-center justify-center">
+      <p className="text-sm text-muted-foreground">Loading your account...</p>
+    </div>
+  );
+}
+
 function RootEntry() {
   const [location, setLocation] = useLocation();
   const { isAuthenticated, isLoading: isAuthLoading } = useAuth0();
   const { toast } = useToast();
-  const hasShownExistingVendorToastRef = useRef(false);
+  const hasShownToastRef = useRef(false);
 
-  // Read vendor intent once on mount — check both the URL param and sessionStorage
-  // (sessionStorage is the fallback if Auth0's redirect drops the ?intent=vendor param).
+  // "Become a Vendor" flow — check vendor status and redirect to dashboard/onboarding.
   const [vendorIntent] = useState(() => {
     if (typeof window === "undefined") return false;
     const urlIntent = new URLSearchParams(window.location.search).get("intent");
@@ -64,8 +116,8 @@ function RootEntry() {
     isFetching: isVendorFetching,
     error: vendorError,
   } = useQuery<VendorMeState>({
-    queryKey: ["/api/vendor/me", "root-entry"],
-    enabled: isAuthenticated,
+    queryKey: ["/api/vendor/me"],
+    enabled: isAuthenticated && vendorIntent,
     retry: false,
     staleTime: 0,
     refetchOnMount: "always",
@@ -79,54 +131,39 @@ function RootEntry() {
   });
 
   useEffect(() => {
-    if (isAuthLoading || !isAuthenticated || vendorDetection.status === "loading") {
-      return;
-    }
+    if (!vendorIntent || isAuthLoading || !isAuthenticated || vendorDetection.status === "loading") return;
 
     let nextPath: string;
-
     if (vendorDetection.status === "vendor") {
-      const needsOnboarding =
-        vendorDetection.needsNewVendorProfileOnboarding ||
-        !vendorDetection.hasAnyVendorProfiles ||
-        !vendorDetection.hasActiveVendorProfile;
-      nextPath = vendorIntent ? "/vendor/dashboard" : needsOnboarding ? "/vendor/onboarding" : "/vendor/dashboard";
+      nextPath = "/vendor/dashboard";
+      if (!hasShownToastRef.current) {
+        toast({ title: "Welcome back", description: "It looks like you already have a vendor account!" });
+        hasShownToastRef.current = true;
+      }
     } else if (vendorDetection.status === "non_vendor") {
-      nextPath = vendorIntent ? "/vendor/onboarding" : "/dashboard";
+      nextPath = "/vendor/onboarding";
     } else {
       const lastKnownVendorAccount =
         typeof window !== "undefined" &&
         window.localStorage.getItem("eventhub:last-known-vendor-account") === "1";
-      if (vendorIntent) {
-        nextPath = lastKnownVendorAccount ? "/vendor/dashboard" : "/vendor/onboarding";
-      } else {
-        nextPath = lastKnownVendorAccount ? "/vendor/dashboard" : "/dashboard";
-      }
+      nextPath = lastKnownVendorAccount ? "/vendor/dashboard" : "/vendor/onboarding";
     }
 
     const pathname = location.split("?")[0] || "/";
-    if (pathname === "/" && vendorIntent && vendorDetection.status === "vendor" && !hasShownExistingVendorToastRef.current) {
-      toast({
-        title: "Welcome back",
-        description: "It looks like you already have an account with us!",
-      });
-      hasShownExistingVendorToastRef.current = true;
-    }
+    if (pathname !== nextPath) setLocation(nextPath);
+  }, [vendorIntent, isAuthLoading, isAuthenticated, location, setLocation, vendorDetection, toast]);
 
-    if (pathname !== nextPath) {
-      setLocation(nextPath);
-    }
-  }, [isAuthLoading, isAuthenticated, location, setLocation, vendorDetection, vendorIntent, toast]);
-
-  if (!isAuthenticated && !isAuthLoading) {
-    return <TemporaryLanding />;
+  if (isAuthLoading) return <Home />;
+  if (!isAuthenticated) return <TemporaryLanding />;
+  if (vendorIntent && vendorDetection.status === "loading") {
+    return (
+      <div className="min-h-screen bg-background flex items-center justify-center">
+        <p className="text-sm text-muted-foreground">Loading your account...</p>
+      </div>
+    );
   }
 
-  return (
-    <div className="min-h-screen bg-background flex items-center justify-center">
-      <p className="text-sm text-muted-foreground">Loading your account...</p>
-    </div>
-  );
+  return <Home />;
 }
 
 function Router() {
@@ -135,6 +172,7 @@ function Router() {
       <ScrollToTop />
       <Switch>
         <Route path="/" component={RootEntry} />
+        <Route path="/post-login" component={PostLogin} />
         <Route path="/marketplace" component={Home} />
 
         {/* Customer */}

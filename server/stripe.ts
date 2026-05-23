@@ -379,7 +379,7 @@ export async function createBookingPaymentIntent(params: {
  * saved payment method. Called server-side after the booking payment succeeds.
  *
  * The security deposit is NEVER transferred to the vendor. It stays in the
- * EventHub Stripe platform account and is either refunded (48h post-event,
+ * EventHub Stripe platform account and is either refunded (72h post-event,
  * no damage claim) or partially/fully withheld by admin after a damage claim.
  *
  * Requires:
