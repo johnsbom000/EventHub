@@ -1,4 +1,4 @@
-import { Calendar, MessageSquare, PlusCircle, User, Scale, AlertTriangle } from "lucide-react";
+import { Bell, Calendar, MessageSquare, PlusCircle, User, Scale, AlertTriangle } from "lucide-react";
 import { useEffect } from "react";
 import { Link, useLocation } from "wouter";
 import { useQuery } from "@tanstack/react-query";
@@ -28,11 +28,12 @@ interface CustomerMe {
 
 // Stable keys — used for routing, test IDs, and translation lookup.
 const menuItems = [
- { key: "myEvents",      url: "/dashboard/events",   icon: Calendar },
- { key: "messages",      url: "/dashboard/messages",  icon: MessageSquare },
- { key: "planNewEvent",  url: "/dashboard/plan",      icon: PlusCircle },
- { key: "disputes",      url: "/dashboard/disputes",  icon: Scale },
- { key: "myProfile",     url: "/dashboard/profile",   icon: User },
+ { key: "myEvents",       url: "/dashboard/events",        icon: Calendar },
+ { key: "messages",       url: "/dashboard/messages",       icon: MessageSquare },
+ { key: "notifications",  url: "/dashboard/notifications",  icon: Bell },
+ { key: "planNewEvent",   url: "/dashboard/plan",           icon: PlusCircle },
+ { key: "disputes",       url: "/dashboard/disputes",       icon: Scale },
+ { key: "myProfile",      url: "/dashboard/profile",        icon: User },
 ];
 
 function getInitials(name: string) {
@@ -86,6 +87,22 @@ export function CustomerSidebar({ className, showWarningBadge = false, onWarning
  if (!location.startsWith("/dashboard/messages")) return;
  dismissUnreadCount();
  }, [dismissUnreadCount, location]);
+
+ const { data: notifData } = useQuery<{ unreadCount: number }>({
+ queryKey: ["/api/customer/notifications/unread-count"],
+ enabled: isAuthenticated && !isAuthLoading,
+ refetchInterval: (query) => (query.state.status === "error" ? false : 30000),
+ staleTime: 30_000,
+ });
+ const notifUnreadCount = Math.max(0, Number(notifData?.unreadCount || 0));
+ const { visibleCount: visibleNotifCount, dismissCurrent: dismissNotifCount } = useResettableBadgeCount({
+ id: "customer:notifications",
+ count: notifUnreadCount,
+ });
+ useEffect(() => {
+ if (!location.startsWith("/dashboard/notifications")) return;
+ dismissNotifCount();
+ }, [dismissNotifCount, location]);
  const displayName = customer?.displayName?.trim() || customer?.name || "Customer";
 
  return (
@@ -134,6 +151,11 @@ export function CustomerSidebar({ className, showWarningBadge = false, onWarning
  {item.key === "messages" && visibleUnreadCount > 0 ? (
  <span className="pointer-events-none absolute left-1/2 top-0 z-[70] flex h-5 min-w-5 -translate-x-1/2 -translate-y-1/3 items-center justify-center rounded-full bg-[hsl(var(--secondary-accent))] px-1 text-[10px] font-semibold text-[hsl(var(--secondary-accent-foreground))]">
  {visibleUnreadCount > 99 ? "99+" : visibleUnreadCount}
+ </span>
+ ) : null}
+ {item.key === "notifications" && visibleNotifCount > 0 ? (
+ <span className="pointer-events-none absolute left-1/2 top-0 z-[70] flex h-5 min-w-5 -translate-x-1/2 -translate-y-1/3 items-center justify-center rounded-full bg-[hsl(var(--secondary-accent))] px-1 text-[10px] font-semibold text-[hsl(var(--secondary-accent-foreground))]">
+ {visibleNotifCount > 99 ? "99+" : visibleNotifCount}
  </span>
  ) : null}
  </Link>

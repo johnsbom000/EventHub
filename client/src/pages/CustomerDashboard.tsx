@@ -4,6 +4,7 @@ import { useQuery } from "@tanstack/react-query";
 import { useAuth0 } from "@auth0/auth0-react";
 import {
   ArrowLeft,
+  Bell,
   Calendar,
   HelpCircle,
   Home,
@@ -24,6 +25,7 @@ import { deriveVendorDetection, type VendorMeState } from "@/lib/vendorState";
 import CustomerProfile from "./customer/CustomerProfile";
 import CustomerEvents from "./customer/CustomerEvents";
 import CustomerMessages from "./customer/CustomerMessages";
+import CustomerNotifications from "./customer/CustomerNotifications";
 import CustomerPlanEvent from "./customer/CustomerPlanEvent";
 import CustomerDisputes from "./customer/CustomerDisputes";
 import { SuspensionBanner, WarningCountBanner } from "@/components/CircumventionWarningModal";
@@ -47,7 +49,7 @@ interface Customer {
   createdAt: string;
 }
 
-type Section = "profile" | "events" | "messages" | "plan" | "disputes";
+type Section = "profile" | "events" | "messages" | "notifications" | "plan" | "disputes";
 
 const POLICY_WARNING_LAST_SHOWN_COUNT_KEY = "eventhub:policy-warning-last-shown-count";
 
@@ -172,6 +174,7 @@ export default function CustomerDashboard() {
   const activeSection = useMemo<Section>(() => {
     if (location.startsWith("/dashboard/events")) return "events";
     if (location.startsWith("/dashboard/messages")) return "messages";
+    if (location.startsWith("/dashboard/notifications")) return "notifications";
     if (location.startsWith("/dashboard/plan")) return "plan";
     if (location.startsWith("/dashboard/disputes")) return "disputes";
     // Default to profile for /dashboard and /dashboard/profile
@@ -405,6 +408,7 @@ export default function CustomerDashboard() {
               {activeSection === "profile" && <CustomerProfile customer={customer} />}
               {activeSection === "events" && <CustomerEvents customer={customer} newBookingId={newBookingId} />}
               {activeSection === "messages" && <CustomerMessages customer={customer} initialBookingId={newBookingId} />}
+              {activeSection === "notifications" && <CustomerNotifications />}
               {activeSection === "plan" && <CustomerPlanEvent />}
               {activeSection === "disputes" && <CustomerDisputes />}
             </div>
@@ -415,6 +419,7 @@ export default function CustomerDashboard() {
         <nav className="lg:hidden fixed bottom-0 left-0 right-0 z-50 flex items-center justify-around border-t border-[rgba(74,106,125,0.22)] bg-[#ffffff] px-2 py-2">
           <CustomerMobileNavLink href="/dashboard/events" icon={Calendar} label={t("customerDashboard.mobile.events")} currentPath={location} />
           <CustomerMobileNavLink href="/dashboard/messages" icon={MessageSquare} label={t("customerDashboard.mobile.messages")} currentPath={location} />
+          <CustomerMobileNavLink href="/dashboard/notifications" icon={Bell} label={t("customerDashboard.mobile.notifications")} currentPath={location} />
           <CustomerMobileNavLink href="/dashboard/plan" icon={PlusCircle} label={t("customerDashboard.mobile.planEvent")} currentPath={location} />
           <CustomerMobileNavLink href="/dashboard/profile" icon={User} label={t("customerDashboard.mobile.profile")} currentPath={location} />
         </nav>

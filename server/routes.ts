@@ -11690,6 +11690,19 @@ app.post(
     }
   });
 
+  app.get("/api/vendor/notifications/unread-count", ...requireVendorAuth0, async (req, res) => {
+    try {
+      const account = await getVendorAccountFromRequest(req);
+      if (!account?.id) return res.json({ unreadCount: 0 });
+      const notifications = await storage.getNotificationsByRecipient(account.id, "vendor");
+      const unreadCount = notifications.filter((n: any) => !n.read).length;
+      res.json({ unreadCount });
+    } catch (error: any) {
+      logRouteError("/api/vendor/notifications/unread-count", error);
+      res.json({ unreadCount: 0 });
+    }
+  });
+
   app.patch(
     "/api/vendor/notifications/bulk/read",
     mutationRateLimiter,
@@ -18055,7 +18068,10 @@ app.post(
         })
         .from(boardSavedListings)
         .innerJoin(vendorListings, eq(vendorListings.id, boardSavedListings.listingId))
-        .where(eq(boardSavedListings.boardId, boardId))
+        .where(and(
+          eq(boardSavedListings.boardId, boardId),
+          ne(vendorListings.status, "deleted")
+        ))
         .orderBy(desc(boardSavedListings.savedAt));
 
       return res.json({
@@ -18138,6 +18154,64 @@ app.post(
     }
   });
   // ── End Planning Boards ────────────────────────────────────────────────────
+
+  // ── Customer Notifications ─────────────────────────────────────────────────
+
+  app.get("/api/customer/notifications", requireCustomerAnyAuth, async (req, res) => {
+    try {
+      const customerAuth = await resolveCustomerAuthFromRequest(req, { createIfMissing: false });
+      if (!customerAuth?.id) return res.json([]);
+      const notifs = await storage.getNotificationsByRecipient(customerAuth.id, "customer");
+      res.json(notifs);
+    } catch (err: any) {
+      logRouteError("/api/customer/notifications", err);
+      res.status(500).json({ error: "Unable to load notifications" });
+    }
+  });
+
+  app.get("/api/customer/notifications/unread-count", requireCustomerAnyAuth, async (req, res) => {
+    try {
+      const customerAuth = await resolveCustomerAuthFromRequest(req, { createIfMissing: false });
+      if (!customerAuth?.id) return res.json({ unreadCount: 0 });
+      const notifs = await storage.getNotificationsByRecipient(customerAuth.id, "customer");
+      const unreadCount = notifs.filter((n: any) => !n.read).length;
+      res.json({ unreadCount });
+    } catch (err: any) {
+      logRouteError("/api/customer/notifications/unread-count", err);
+      res.status(500).json({ unreadCount: 0 });
+    }
+  });
+
+  app.patch("/api/customer/notifications/bulk/read", mutationRateLimiter, requireCustomerAnyAuth, async (req, res) => {
+    try {
+      const customerAuth = await resolveCustomerAuthFromRequest(req, { createIfMissing: false });
+      if (!customerAuth?.id) return res.status(401).json({ error: "Authentication required" });
+      const { ids } = req.body as { ids?: unknown };
+      if (!Array.isArray(ids) || ids.some((id) => typeof id !== "string")) {
+        return res.status(400).json({ error: "ids must be an array of strings" });
+      }
+      const updated = await storage.bulkMarkNotificationsRead(ids, customerAuth.id, "customer");
+      res.json({ updated });
+    } catch (err: any) {
+      logRouteError("/api/customer/notifications/bulk/read", err);
+      res.status(500).json({ error: "Unable to mark notifications as read" });
+    }
+  });
+
+  app.patch("/api/customer/notifications/:id/read", mutationRateLimiter, requireCustomerAnyAuth, async (req, res) => {
+    try {
+      const customerAuth = await resolveCustomerAuthFromRequest(req, { createIfMissing: false });
+      if (!customerAuth?.id) return res.status(401).json({ error: "Authentication required" });
+      const updated = await storage.markNotificationAsRead(req.params.id, customerAuth.id, "customer");
+      if (!updated) return res.status(404).json({ error: "Notification not found" });
+      res.json({ success: true });
+    } catch (err: any) {
+      logRouteError("/api/customer/notifications/:id/read", err);
+      res.status(500).json({ error: "Unable to update notification" });
+    }
+  });
+
+  // ── End Customer Notifications ─────────────────────────────────────────────
 
   // ── Feedback Submissions ───────────────────────────────────────────────────
   // Customers and vendors can submit feature requests and bug reports.

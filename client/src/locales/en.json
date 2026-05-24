@@ -164,6 +164,7 @@
     "mobile": {
       "events": "Events",
       "messages": "Messages",
+      "notifications": "Alerts",
       "planEvent": "Plan Event",
       "profile": "Profile"
     }
@@ -183,9 +184,10 @@
   "customerSidebar": {
     "myEvents": "My Events",
     "messages": "Messages",
+    "notifications": "Notifications",
     "planNewEvent": "Plan New Event",
-    "myProfile": "My profile",
-    "disputes": "Disputes"
+    "disputes": "Disputes",
+    "myProfile": "My profile"
   },
   "vendorDashboard": {
     "pageTitle": "Dashboard",
