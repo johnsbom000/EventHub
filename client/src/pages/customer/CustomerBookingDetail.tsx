@@ -68,6 +68,8 @@ interface BookingDetail {
   baseSubtotalCents: number | null;
   subtotalAmountCents: number | null;
   customerFeeAmountCents: number | null;
+  securityDepositCents: number | null;
+  addOns?: Array<{ title: string; priceCents: number }>;
   createdAt: string;
   confirmedAt: string | null;
   cancelledAt: string | null;
@@ -218,10 +220,16 @@ function BookingCard({
       value: money(unitPriceDollars * qty) ?? "—",
     });
   }
+  for (const addon of booking.addOns ?? []) {
+    if (addon.priceCents > 0) {
+      rows.push({ label: addon.title || "Add-on", value: money(addon.priceCents) ?? "—" });
+    }
+  }
   if (deliveryFee) rows.push({ label: "Delivery fee", value: money(deliveryFee) ?? "—" });
   if (setupFee) rows.push({ label: "Setup fee", value: money(setupFee) ?? "—" });
   if (travelFee) rows.push({ label: "Travel fee", value: money(travelFee) ?? "—" });
   if (customerFee) rows.push({ label: "Service fee", value: money(customerFee) ?? "—" });
+  if (booking.securityDepositCents) rows.push({ label: "Security deposit (refundable)", value: money(booking.securityDepositCents) ?? "—" });
 
   return (
     <div className="rounded-2xl border border-border bg-background shadow-sm p-5 space-y-5">
@@ -504,7 +512,12 @@ export default function CustomerBookingDetail() {
 
   const title = raw?.title ?? ld?.listingTitle ?? booking.itemTitle ?? "Listing";
   const vendorName = raw?.vendorName ?? raw?.vendor?.businessName ?? booking.vendorName ?? "Vendor";
-  const city = raw?.city ?? raw?.listingServiceCenterLabel ?? ld?.serviceLocation?.city ?? "";
+  const city = (() => {
+    const cityName = raw?.city || ld?.serviceLocation?.city || "";
+    const state = raw?.businessState || "";
+    if (!cityName) return "";
+    return state ? `${cityName}, ${state}` : cityName;
+  })();
   const rating = Number(raw?.rating ?? 0);
   const reviewCount = Number(raw?.reviewCount ?? 0);
   const reviews = Array.isArray(raw?.reviews)

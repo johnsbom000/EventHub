@@ -16,7 +16,7 @@ import {
   DialogDescription,
 } from "@/components/ui/dialog";
 import { Textarea } from "@/components/ui/textarea";
-import { Calendar, ChevronLeft, ChevronRight, MapPin, MessageSquare } from "lucide-react";
+import { Calendar, ChevronLeft, ChevronRight, Clock, Globe, MapPin, MessageSquare } from "lucide-react";
 import VendorShell from "@/components/VendorShell";
 import EventLinkPicker from "@/components/EventLinkPicker";
 import { apiRequest } from "@/lib/queryClient";
@@ -54,6 +54,10 @@ type VendorBooking = {
   googleCalendarId?: string | null;
   outsideServiceRadius?: boolean | null;
   eventLocation?: string | null;
+  eventTimezone?: string | null;
+  vendorTimezoneSnapshot?: string | null;
+  instantBookSnapshot?: boolean | null;
+  addOnItems?: Array<{ title: string; priceCents: number }>;
 };
 
 type TabKey = "all" | "upcoming" | "pending" | "completed" | "cancelled";
@@ -96,6 +100,35 @@ function isChatWindowOpen(eventDate: string | null | undefined): boolean {
   const endOfDay = new Date(`${eventDate}T23:59:59.999Z`);
   if (Number.isNaN(endOfDay.getTime())) return true;
   return Date.now() <= endOfDay.getTime() + 48 * 60 * 60 * 1000;
+}
+
+function getTzAbbr(tz: string): string {
+  try {
+    return (
+      new Intl.DateTimeFormat("en-US", { timeZone: tz, timeZoneName: "short" })
+        .formatToParts(new Date())
+        .find((p) => p.type === "timeZoneName")?.value ?? tz
+    );
+  } catch {
+    return tz;
+  }
+}
+
+function getTzName(tz: string): string {
+  try {
+    return (
+      new Intl.DateTimeFormat("en-US", { timeZone: tz, timeZoneName: "long" })
+        .formatToParts(new Date())
+        .find((p) => p.type === "timeZoneName")?.value ?? tz
+    );
+  } catch {
+    return tz;
+  }
+}
+
+function isTimezoneMismatch(eventTz: string | null | undefined, vendorTz: string | null | undefined): boolean {
+  if (!eventTz || !vendorTz) return false;
+  return eventTz !== vendorTz;
 }
 
 function deriveBookingAmounts(booking: VendorBooking, vendorFeeRate: number) {
@@ -774,6 +807,15 @@ export default function VendorBookings() {
                           <span> · {start}{end ? ` – ${end}` : ""}</span>
                         );
                       })()}
+                      {isTimezoneMismatch(item.raw.eventTimezone, item.raw.vendorTimezoneSnapshot) ? (
+                        <span
+                          className="ml-2 inline-flex items-center gap-1 rounded-full border border-violet-200 bg-violet-50 px-1.5 py-0.5 text-xs font-medium text-violet-700"
+                          title={`Event is in ${getTzName(item.raw.eventTimezone!)} (${getTzAbbr(item.raw.eventTimezone!)})`}
+                        >
+                          <Globe className="h-3 w-3" />
+                          {getTzAbbr(item.raw.eventTimezone!)}
+                        </span>
+                      ) : null}
                     </div>
                     <EventLinkPicker bookingId={item.id} currentEventTitle={item.raw.customerEventTitle} />
                     <div className="mt-1 text-sm">
@@ -804,6 +846,23 @@ export default function VendorBookings() {
                     </div>
                     {expandedBookingId === item.id ? (
                       <div className="mt-3 rounded-md border bg-muted/30 p-3 space-y-3">
+                        {isTimezoneMismatch(item.raw.eventTimezone, item.raw.vendorTimezoneSnapshot) ? (
+                          <div className="rounded-md border border-violet-200 bg-violet-50 p-3 flex items-start gap-2">
+                            <Clock className="h-4 w-4 text-violet-600 mt-0.5 shrink-0" />
+                            <div className="space-y-0.5">
+                              <div className="text-sm font-medium text-violet-800">Event is in a different timezone</div>
+                              <div className="text-xs text-violet-700">
+                                Event location: {getTzName(item.raw.eventTimezone!)} ({getTzAbbr(item.raw.eventTimezone!)})
+                              </div>
+                              <div className="text-xs text-violet-700">
+                                Your listing: {getTzName(item.raw.vendorTimezoneSnapshot!)} ({getTzAbbr(item.raw.vendorTimezoneSnapshot!)})
+                              </div>
+                              <div className="text-xs text-violet-600 pt-0.5">
+                                Booking times are displayed in the event's local timezone.
+                              </div>
+                            </div>
+                          </div>
+                        ) : null}
                         <div className="space-y-1">
                           <div className="text-sm uppercase tracking-wide text-muted-foreground">{t("vendorBookings.feeBreakdown")}</div>
                           <div className="text-sm flex items-center justify-between gap-3">
@@ -814,6 +873,12 @@ export default function VendorBookings() {
                             <span className="text-muted-foreground">{t("vendorBookings.listingPrice")}</span>
                             <span>{formatUsd(item.listingPriceCents)}</span>
                           </div>
+                          {item.raw.addOnItems?.map((a) => (
+                            <div key={a.title} className="text-sm flex items-center justify-between gap-3">
+                              <span className="text-muted-foreground">{a.title}</span>
+                              <span>{formatUsd(a.priceCents)}</span>
+                            </div>
+                          ))}
                           <div className="text-sm flex items-center justify-between gap-3">
                             <span className="text-muted-foreground">{t("vendorBookings.customerServiceFee")}</span>
                             <span>{formatUsd(item.customerFeeCents)}</span>
@@ -845,7 +910,8 @@ export default function VendorBookings() {
                         ) : null}
                       </div>
                     ) : null}
-                    {item.status === "pending" ? (
+                    {/* Pending: request-to-book or instant-book outside service radius — vendor must accept or decline */}
+                    {(item.status === "pending" || (item.status === "confirmed" && item.raw.outsideServiceRadius)) ? (
                       <div className="mt-3 flex items-center gap-2">
                         <Button
                           size="sm"
@@ -869,20 +935,23 @@ export default function VendorBookings() {
                         </Button>
                       </div>
                     ) : null}
-                    {item.status === "confirmed" ? (
+                    {/* Confirmed and NOT outside service radius: show Completed only after event date, always show Decline */}
+                    {item.status === "confirmed" && !item.raw.outsideServiceRadius ? (
                       <div className="mt-3 flex items-center gap-2">
-                        <Button
-                          size="sm"
-                          onClick={() => {
-                            setActionBookingId(item.id);
-                            bookingActionMutation.mutate({ id: item.id, status: "completed" });
-                          }}
-                          disabled={bookingActionMutation.isPending}
-                        >
-                          {bookingActionMutation.isPending && actionBookingId === item.id
-                            ? t("vendorBookings.completing")
-                            : t("vendorBookings.completed")}
-                        </Button>
+                        {item.date < new Date() ? (
+                          <Button
+                            size="sm"
+                            onClick={() => {
+                              setActionBookingId(item.id);
+                              bookingActionMutation.mutate({ id: item.id, status: "completed" });
+                            }}
+                            disabled={bookingActionMutation.isPending}
+                          >
+                            {bookingActionMutation.isPending && actionBookingId === item.id
+                              ? t("vendorBookings.completing")
+                              : t("vendorBookings.completed")}
+                          </Button>
+                        ) : null}
                         <Button
                           size="sm"
                           variant="outline"

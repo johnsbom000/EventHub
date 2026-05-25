@@ -4,6 +4,7 @@ import { useEffect, useRef, useState } from "react";
 import { useLocation } from "wouter";
 import { BadgeCheck, Building2, Check, ClipboardList, Sparkles } from "lucide-react";
 import { useMutation } from "@tanstack/react-query";
+import { detectBrowserTimezone } from "@/components/TimezoneSelect";
 import { queryClient } from "@/lib/queryClient";
 import { useToast } from "@/hooks/use-toast";
 import Navigation from "@/components/Navigation";
@@ -60,6 +61,8 @@ export interface VendorOnboardingData {
  shopProfilePhotoDataUrl: string;
  shopCoverPhotoDataUrl: string;
 
+
+ operatingTimezone: string;
 
  // Derived
  homeBaseLocation?: {
@@ -200,6 +203,7 @@ function isAuthRequiredError(error: unknown): boolean {
 
 const DEFAULT_ONBOARDING_DATA: VendorOnboardingData = {
  vendorType: SINGLE_VENDOR_MODE ? SINGLE_VENDOR_TYPE : "",
+ operatingTimezone: detectBrowserTimezone(),
 
  // Owner personal details
  ownerFirstName: "",
@@ -392,9 +396,6 @@ export default function VendorOnboarding() {
  if (!token) {
  throw new Error(AUTH_LOGIN_REQUIRED_ERROR);
  }
- const browserTimeZone =
- typeof Intl !== "undefined" ? Intl.DateTimeFormat().resolvedOptions().timeZone || undefined : undefined;
-
  const res = await fetch("/api/vendor/onboarding/complete", {
  method: "POST",
  headers: {
@@ -403,7 +404,7 @@ export default function VendorOnboarding() {
  },
  body: JSON.stringify({
  ...data,
- operatingTimezone: browserTimeZone,
+ operatingTimezone: data.operatingTimezone || detectBrowserTimezone(),
  createNewProfile: isCreatingAdditionalProfile,
  }),
  });

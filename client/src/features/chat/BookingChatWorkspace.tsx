@@ -4,14 +4,23 @@ import { AlertTriangle, ArrowLeft, Flag, MessageSquare, ShieldAlert } from "luci
 import { Filter } from "bad-words";
 import { Chat, Channel, ChannelHeader, MessageInput, MessageList, Thread, Window } from "stream-chat-react";
 import { StreamChat, type Message as StreamMessage, type SendMessageOptions, type LocalMessage } from "stream-chat";
+import { CardElement, Elements, useElements, useStripe } from "@stripe/react-stripe-js";
+import { loadStripe } from "@stripe/stripe-js";
 
 import { apiRequest } from "@/lib/queryClient";
 import { cn } from "@/lib/utils";
 import { Badge } from "@/components/ui/badge";
+import { Button } from "@/components/ui/button";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
+import { Dialog, DialogContent, DialogHeader, DialogTitle } from "@/components/ui/dialog";
 import { useToast } from "@/hooks/use-toast";
 import { chatBlockMessage } from "@/components/CircumventionWarningModal";
 import { useTranslation } from "react-i18next";
+
+const stripePromise = (() => {
+  const key = ((import.meta.env.VITE_STRIPE_PUBLISHABLE_KEY as string | undefined) || "").trim();
+  return key.startsWith("pk_") ? loadStripe(key) : Promise.resolve(null);
+})();
 
 type Role = "customer" | "vendor";
 
@@ -126,6 +135,119 @@ function getConversationEventKey(conversation: Conversation) {
   return `name:${title}|date:${date}`;
 }
 
+type PendingTravelFeePayment = {
+  clientSecret: string;
+  proposalId: string;
+  amountCents: number;
+  bookingId: string;
+};
+
+function TravelFeePaymentForm({
+  pending,
+  onSuccess,
+  onClose,
+}: {
+  pending: PendingTravelFeePayment;
+  onSuccess: () => void;
+  onClose: () => void;
+}) {
+  const stripe = useStripe();
+  const elements = useElements();
+  const { toast } = useToast();
+  const [submitting, setSubmitting] = useState(false);
+  const [error, setError] = useState<string | null>(null);
+
+  const fmt = (cents: number) =>
+    new Intl.NumberFormat("en-US", { style: "currency", currency: "USD" }).format(cents / 100);
+
+  const handlePay = async () => {
+    if (!stripe || !elements) return;
+    const cardElement = elements.getElement(CardElement);
+    if (!cardElement) return;
+
+    setSubmitting(true);
+    setError(null);
+
+    const result = await stripe.confirmCardPayment(pending.clientSecret, {
+      payment_method: { card: cardElement },
+    });
+
+    if (result.error) {
+      setError(result.error.message ?? "Payment failed. Please try again.");
+      setSubmitting(false);
+      return;
+    }
+
+    try {
+      const confirmRes = await apiRequest(
+        "POST",
+        `/api/bookings/${pending.bookingId}/travel-fee-proposals/${pending.proposalId}/confirm-payment`
+      );
+      if (!confirmRes.ok) {
+        const body = await confirmRes.json().catch(() => ({}));
+        throw new Error(body?.error || "Failed to confirm payment");
+      }
+      toast({ title: "Travel fee paid", description: "The vendor has been notified." });
+      onSuccess();
+    } catch (err: any) {
+      setError(err?.message || "Payment confirmed but failed to finalize. Contact support.");
+      setSubmitting(false);
+    }
+  };
+
+  return (
+    <div className="space-y-4">
+      <p className="text-sm text-muted-foreground">
+        You are paying a travel / delivery fee of{" "}
+        <span className="font-semibold text-foreground">{fmt(pending.amountCents)}</span>.
+      </p>
+      <div className="rounded-md border p-3">
+        <CardElement
+          options={{
+            style: {
+              base: { fontSize: "14px", color: "#1a1a1a", "::placeholder": { color: "#9ca3af" } },
+            },
+          }}
+        />
+      </div>
+      {error ? <p className="text-sm text-destructive">{error}</p> : null}
+      <div className="flex gap-2">
+        <Button onClick={handlePay} disabled={submitting || !stripe} className="flex-1">
+          {submitting ? "Processing…" : `Pay ${fmt(pending.amountCents)}`}
+        </Button>
+        <Button variant="outline" onClick={onClose} disabled={submitting}>
+          Cancel
+        </Button>
+      </div>
+    </div>
+  );
+}
+
+function TravelFeePaymentModal({
+  pending,
+  onSuccess,
+  onClose,
+}: {
+  pending: PendingTravelFeePayment | null;
+  onSuccess: () => void;
+  onClose: () => void;
+}) {
+  return (
+    <Dialog open={Boolean(pending)} onOpenChange={(open) => { if (!open) onClose(); }}>
+      <DialogContent className="sm:max-w-md">
+        <DialogHeader>
+          <DialogTitle>Pay travel / delivery fee</DialogTitle>
+        </DialogHeader>
+        {pending ? (
+          <Elements stripe={stripePromise}>
+            <TravelFeePaymentForm pending={pending} onSuccess={onSuccess} onClose={onClose} />
+          </Elements>
+        ) : null}
+      </DialogContent>
+    </Dialog>
+  );
+}
+
 export function BookingChatWorkspace({ role, initialBookingId }: { role: Role; initialBookingId?: string }) {
   const { toast } = useToast();
   const { t, i18n } = useTranslation();
@@ -135,6 +257,7 @@ export function BookingChatWorkspace({ role, initialBookingId }: { role: Role; i
   const [chatClient, setChatClient] = useState<StreamChat | null>(null);
   const [chatChannelId, setChatChannelId] = useState<string>("");
   const streamClientRef = useRef<StreamChat | null>(null);
+  const [pendingTravelFeePayment, setPendingTravelFeePayment] = useState<PendingTravelFeePayment | null>(null);
 
   const listPath =
     role === "customer"
@@ -263,7 +386,7 @@ export function BookingChatWorkspace({ role, initialBookingId }: { role: Role; i
     },
   });
 
-  // ── Travel fee proposals (customer-only) ──────────────────────────────────────
+  // ── Travel fee proposals ──────────────────────────────────────────────────────
   type TravelFeeProposal = {
     id: string;
     bookingId: string;
@@ -288,6 +411,80 @@ export function BookingChatWorkspace({ role, initialBookingId }: { role: Role; i
     refetchInterval: 20_000,
   });
 
+  const { data: vendorProposals = [], refetch: refetchVendorProposals } = useQuery<TravelFeeProposal[]>({
+    queryKey: [`/api/vendor/bookings/${selectedBookingId}/travel-fee-proposals`, selectedBookingId],
+    queryFn: async () => {
+      if (!selectedBookingId || role !== "vendor") return [];
+      const res = await apiRequest("GET", `/api/vendor/bookings/${selectedBookingId}/travel-fee-proposals`);
+      if (!res.ok) return [];
+      return res.json();
+    },
+    enabled: role === "vendor" && Boolean(selectedBookingId),
+    staleTime: 15_000,
+    refetchInterval: 20_000,
+  });
+
+  // Most-recent vendor proposal that was declined and has no newer pending/accepted proposal
+  const declinedVendorProposal = (() => {
+    if (role !== "vendor" || vendorProposals.length === 0) return null;
+    const hasPendingOrAccepted = vendorProposals.some(
+      (p) => p.status === "pending" || p.status === "accepted"
+    );
+    if (hasPendingOrAccepted) return null;
+    return vendorProposals.find((p) => p.status === "declined") ?? null;
+  })();
+
+  const [vendorProposalAmount, setVendorProposalAmount] = useState("");
+  const [vendorProposalReason, setVendorProposalReason] = useState("");
+  const [vendorProposalError, setVendorProposalError] = useState<string | null>(null);
+  const [showVendorProposalForm, setShowVendorProposalForm] = useState(false);
+
+  const vendorProposeMutation = useMutation({
+    mutationFn: async ({ bookingId, amountCents, reason }: { bookingId: string; amountCents: number; reason?: string }) => {
+      const res = await apiRequest("POST", `/api/bookings/${bookingId}/travel-fee-proposals`, {
+        amountCents,
+        reason: reason || undefined,
+      });
+      if (!res.ok) {
+        const body = await res.json().catch(() => ({}));
+        throw new Error(body?.error || "Failed to submit proposal");
+      }
+      return res.json();
+    },
+    onSuccess: async () => {
+      toast({ title: "Travel fee proposed", description: "The customer has been notified." });
+      setShowVendorProposalForm(false);
+      setVendorProposalAmount("");
+      setVendorProposalReason("");
+      setVendorProposalError(null);
+      await refetchVendorProposals();
+    },
+    onError: (err: Error) => {
+      setVendorProposalError(err.message);
+    },
+  });
+
+  const vendorCancelBookingMutation = useMutation({
+    mutationFn: async (bookingId: string) => {
+      const res = await apiRequest("PATCH", `/api/vendor/bookings/${bookingId}`, {
+        status: "cancelled",
+        cancellationReason: "vendor_declined_travel_fee",
+      });
+      if (!res.ok) {
+        const body = await res.json().catch(() => ({}));
+        throw new Error(body?.error || "Failed to cancel booking");
+      }
+      return res.json();
+    },
+    onSuccess: async () => {
+      toast({ title: "Booking declined", description: "The booking has been cancelled." });
+      await refetchVendorProposals();
+    },
+    onError: (err: Error) => {
+      toast({ title: "Error", description: err.message, variant: "destructive" });
+    },
+  });
+
   const pendingProposal = proposals.find((p) => p.status === "pending") ?? null;
 
   const acceptProposalMutation = useMutation({
@@ -302,20 +499,14 @@ export function BookingChatWorkspace({ role, initialBookingId }: { role: Role; i
       }
       return res.json();
     },
-    onSuccess: async (data) => {
-      toast({ title: "Travel fee accepted", description: "You can now pay the travel/delivery fee." });
-      await refetchProposals();
-      if (data?.clientSecret && data?.listingId) {
-        // Seed the checkout's resume-payment draft in localStorage so checkout
-        // skips booking creation and goes straight to payment confirmation.
-        const draft = {
-          listingId: data.listingId,
-          bookingId: selectedBookingId,
-          idempotencyKey: `travel-fee-${selectedBookingId}`,
-          createdAt: new Date().toISOString(),
-        };
-        window.localStorage.setItem("eventhub.checkout.pending_payment.v1", JSON.stringify(draft));
-        window.location.href = `/checkout/${data.listingId}`;
+    onSuccess: (data, variables) => {
+      if (data?.clientSecret) {
+        setPendingTravelFeePayment({
+          clientSecret: data.clientSecret,
+          proposalId: variables.proposalId,
+          amountCents: data.amountCents,
+          bookingId: variables.bookingId,
+        });
       }
     },
     onError: (err: Error) => {
@@ -845,6 +1036,98 @@ export function BookingChatWorkspace({ role, initialBookingId }: { role: Role; i
               );
             })() : null}
 
+            {/* Travel fee declined — vendor action banner */}
+            {role === "vendor" && declinedVendorProposal ? (
+              <div className="shrink-0 border-b border-red-200 bg-red-50 px-4 py-3 space-y-2">
+                <p className="text-sm font-semibold text-red-900">Customer declined your travel fee</p>
+                <p className="text-xs text-red-700">
+                  Proposed {new Intl.NumberFormat("en-US", { style: "currency", currency: "USD" }).format(declinedVendorProposal.amountCents / 100)}
+                  {declinedVendorProposal.reason ? ` — ${declinedVendorProposal.reason}` : ""}
+                </p>
+                {showVendorProposalForm ? (
+                  <div className="space-y-2 pt-1">
+                    <div className="space-y-1">
+                      <label className="text-xs font-medium text-red-900">New fee amount (USD)</label>
+                      <div className="relative max-w-[160px]">
+                        <span className="pointer-events-none absolute left-3 top-1/2 -translate-y-1/2 text-muted-foreground text-sm">$</span>
+                        <input
+                          className="w-full rounded-md border border-input pl-7 pr-3 h-8 text-sm bg-white focus:outline-none focus:ring-2 focus:ring-ring"
+                          inputMode="decimal"
+                          placeholder="e.g. 75"
+                          value={vendorProposalAmount}
+                          onChange={(e) => setVendorProposalAmount(e.target.value.replace(/[^\d.]/g, ""))}
+                        />
+                      </div>
+                    </div>
+                    <div className="space-y-1">
+                      <label className="text-xs font-medium text-red-900">Reason (optional)</label>
+                      <input
+                        className="w-full rounded-md border border-input px-3 h-8 text-sm bg-white focus:outline-none focus:ring-2 focus:ring-ring"
+                        placeholder="e.g. 45 miles outside service area"
+                        value={vendorProposalReason}
+                        onChange={(e) => setVendorProposalReason(e.target.value)}
+                      />
+                    </div>
+                    {vendorProposalError ? (
+                      <p className="text-xs text-destructive">{vendorProposalError}</p>
+                    ) : null}
+                    <div className="flex gap-2">
+                      <button
+                        type="button"
+                        disabled={vendorProposeMutation.isPending || !vendorProposalAmount}
+                        onClick={() => {
+                          const cents = Math.round(parseFloat(vendorProposalAmount) * 100);
+                          if (!cents || cents <= 0) {
+                            setVendorProposalError("Enter a valid amount");
+                            return;
+                          }
+                          setVendorProposalError(null);
+                          vendorProposeMutation.mutate({
+                            bookingId: selectedBookingId,
+                            amountCents: cents,
+                            reason: vendorProposalReason || undefined,
+                          });
+                        }}
+                        className="rounded-md bg-red-700 px-3 py-1.5 text-xs font-medium text-white hover:bg-red-800 disabled:opacity-50"
+                      >
+                        {vendorProposeMutation.isPending ? "Sending…" : "Send new proposal"}
+                      </button>
+                      <button
+                        type="button"
+                        onClick={() => {
+                          setShowVendorProposalForm(false);
+                          setVendorProposalAmount("");
+                          setVendorProposalReason("");
+                          setVendorProposalError(null);
+                        }}
+                        className="rounded-md border border-red-300 bg-white px-3 py-1.5 text-xs font-medium text-red-800 hover:bg-red-50"
+                      >
+                        Cancel
+                      </button>
+                    </div>
+                  </div>
+                ) : (
+                  <div className="flex items-center gap-2 pt-1">
+                    <button
+                      type="button"
+                      onClick={() => setShowVendorProposalForm(true)}
+                      className="rounded-md bg-red-700 px-3 py-1.5 text-xs font-medium text-white hover:bg-red-800"
+                    >
+                      Propose new fee
+                    </button>
+                    <button
+                      type="button"
+                      disabled={vendorCancelBookingMutation.isPending}
+                      onClick={() => vendorCancelBookingMutation.mutate(selectedBookingId)}
+                      className="rounded-md border border-red-300 bg-white px-3 py-1.5 text-xs font-medium text-red-800 hover:bg-red-50 disabled:opacity-50"
+                    >
+                      {vendorCancelBookingMutation.isPending ? "Declining…" : "Decline the job"}
+                    </button>
+                  </div>
+                )}
+              </div>
+            ) : null}
+
             <div className="eventhub-stream-chat flex-1 min-h-0">
               <Chat client={chatClient} theme="str-chat__theme-light">
                 <Channel channel={activeChannel}>
@@ -860,6 +1143,15 @@ export function BookingChatWorkspace({ role, initialBookingId }: { role: Role; i
           </CardContent>
         )}
       </Card>
+
+      <TravelFeePaymentModal
+        pending={pendingTravelFeePayment}
+        onSuccess={async () => {
+          setPendingTravelFeePayment(null);
+          await refetchProposals();
+        }}
+        onClose={() => setPendingTravelFeePayment(null)}
+      />
     </div>
   );
 }

@@ -3,7 +3,6 @@ import { useAuth0 } from "@auth0/auth0-react";
 import { useToast } from "@/hooks/use-toast";
 import BrandWordmark from "@/components/BrandWordmark";
 import AuthModal from "@/components/AuthModal";
-import { Facebook } from "lucide-react";
 
 type Step = "question" | "signup" | "not-vendor";
 type AuthTab = "login" | "signup";
@@ -69,12 +68,10 @@ function QuestionStep({ onYes, onNo, onSignIn }: { onYes: () => void; onNo: () =
 function SignupStep({
   onBack,
   onGoogle,
-  onFacebook,
   onEmail,
 }: {
   onBack: () => void;
   onGoogle: () => void;
-  onFacebook: () => void;
   onEmail: () => void;
 }) {
   return (
@@ -107,18 +104,7 @@ function SignupStep({
         Continue with Google
       </button>
 
-      <button
-        type="button"
-        onClick={onFacebook}
-        className="mb-3 flex w-full items-center justify-center gap-3 rounded-[14px] border-[2px] border-[rgba(74,106,125,0.22)] bg-white py-3.5 font-sans text-[1.5rem] font-semibold text-[#2a3a42] transition-colors hover:border-[#4a6a7d] hover:bg-[#f8fafb]"
-      >
-        <span className="inline-flex h-6 w-6 items-center justify-center rounded-full bg-[#1c74e9] text-white">
-          <Facebook className="h-3.5 w-3.5" />
-        </span>
-        Continue with Facebook
-      </button>
-
-      <div className="my-3 flex items-center gap-3">
+<div className="my-3 flex items-center gap-3">
         <div className="h-px flex-1 bg-[rgba(74,106,125,0.22)]" />
         <span className="font-sans text-[1.2rem] font-medium text-[#7c8095]">or</span>
         <div className="h-px flex-1 bg-[rgba(74,106,125,0.22)]" />
@@ -339,15 +325,7 @@ export default function TemporaryLanding() {
       },
     });
 
-  const handleFacebook = () =>
-    triggerAuth({
-      authorizationParams: {
-        connection: "facebook",
-        screen_hint: "signup",
-      },
-    });
-
-  const handleEmail = () =>
+const handleEmail = () =>
     triggerAuth({
       authorizationParams: {
         screen_hint: "signup",
@@ -374,7 +352,6 @@ export default function TemporaryLanding() {
             <SignupStep
               onBack={() => setStep("question")}
               onGoogle={handleGoogle}
-              onFacebook={handleFacebook}
               onEmail={handleEmail}
             />
           )}

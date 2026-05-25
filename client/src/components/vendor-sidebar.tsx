@@ -17,6 +17,7 @@ import { Avatar, AvatarFallback } from "@/components/ui/avatar";
 import { useAuth0 } from "@auth0/auth0-react";
 import { cn } from "@/lib/utils";
 import { useResettableBadgeCount } from "@/hooks/useResettableBadgeCount";
+import { SidebarCountBadge } from "@/components/sidebar-count-badge";
 
 interface VendorAccount {
  businessName: string;
@@ -85,6 +86,32 @@ export function VendorSidebar({ className, showWarningBadge = false, onWarningBa
  dismissUnreadCount();
  }, [dismissUnreadCount, location]);
 
+ const { data: notifData } = useQuery<{ unreadCount: number }>({
+ queryKey: ["/api/vendor/notifications/unread-count"],
+ enabled: isAuthenticated && !isAuthLoading,
+ refetchInterval: (query) => (query.state.status === "error" ? false : 30000),
+ staleTime: 30_000,
+ queryFn: async () => {
+ const token = await getAccessTokenSilently({
+ authorizationParams: { audience: "https://eventhub-api" },
+ });
+ const res = await fetch("/api/vendor/notifications/unread-count", {
+ headers: { Authorization: `Bearer ${token}` },
+ });
+ if (!res.ok) return { unreadCount: 0 };
+ return res.json();
+ },
+ });
+ const notifUnreadCount = Math.max(0, Number(notifData?.unreadCount || 0));
+ const { visibleCount: visibleNotifCount, dismissCurrent: dismissNotifCount } = useResettableBadgeCount({
+ id: "vendor:notifications",
+ count: notifUnreadCount,
+ });
+ useEffect(() => {
+ if (!location.startsWith("/vendor/notifications")) return;
+ dismissNotifCount();
+ }, [dismissNotifCount, location]);
+
  return (
  <Sidebar
  collapsible="none"
@@ -124,15 +151,16 @@ export function VendorSidebar({ className, showWarningBadge = false, onWarningBa
  className="relative isolate flex h-14 w-14 items-center justify-center overflow-visible"
  data-testid={`link-vendor-${item.key}`}
  >
- <span className="pointer-events-none absolute inset-0 flex items-center justify-center">
+ <span className="pointer-events-none relative z-10 flex h-8 w-8 items-center justify-center overflow-visible">
  <item.icon className="!h-8 !w-8" />
+ {item.key === "messages" && visibleUnreadCount > 0 ? (
+ <SidebarCountBadge count={visibleUnreadCount} className="text-[#f5f0e8]" />
+ ) : null}
+ {item.key === "notifications" && visibleNotifCount > 0 ? (
+ <SidebarCountBadge count={visibleNotifCount} className="text-[#f5f0e8]" />
+ ) : null}
  </span>
  <span className="sr-only">{label}</span>
- {item.key === "messages" && visibleUnreadCount > 0 ? (
- <span className="pointer-events-none absolute left-1/2 top-0 z-[70] min-w-[18px] -translate-x-1/2 -translate-y-1/3 rounded-full bg-[#e07a6a] px-1 text-center text-[11px] font-semibold leading-4 text-[#f5f0e8]">
- {visibleUnreadCount > 99 ? "99+" : visibleUnreadCount}
- </span>
- ) : null}
  </Link>
  </SidebarMenuButton>
  </SidebarMenuItem>

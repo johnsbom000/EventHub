@@ -37,6 +37,7 @@ export interface PaymentReceiptParams {
   totalCents: number;
   paymentIntentId: string;
   serverUrl: string;
+  addOns?: Array<{ title: string; priceCents: number }>;
 }
 
 export function paymentReceiptTemplate(params: PaymentReceiptParams): {
@@ -54,6 +55,7 @@ export function paymentReceiptTemplate(params: PaymentReceiptParams): {
     totalCents,
     paymentIntentId,
     serverUrl,
+    addOns,
   } = params;
 
   const subject = `EventHub: Payment receipt — ${listingTitle}`;
@@ -68,6 +70,7 @@ export function paymentReceiptTemplate(params: PaymentReceiptParams): {
       <tr><td style="padding:8px 0;border-bottom:1px solid #f0eeec;font-size:14px;color:#666;">Service</td><td style="padding:8px 0;border-bottom:1px solid #f0eeec;font-size:14px;font-weight:600;text-align:right;">${listingTitle}</td></tr>
       <tr><td style="padding:8px 0;border-bottom:1px solid #f0eeec;font-size:14px;color:#666;">Vendor</td><td style="padding:8px 0;border-bottom:1px solid #f0eeec;font-size:14px;font-weight:600;text-align:right;">${vendorName}</td></tr>
       <tr><td style="padding:8px 0;border-bottom:1px solid #f0eeec;font-size:14px;color:#666;">Event Date</td><td style="padding:8px 0;border-bottom:1px solid #f0eeec;font-size:14px;font-weight:600;text-align:right;">${eventDate}</td></tr>
+      ${(addOns ?? []).map(a => `<tr><td style="padding:8px 0;border-bottom:1px solid #f0eeec;font-size:14px;color:#666;">${a.title}</td><td style="padding:8px 0;border-bottom:1px solid #f0eeec;font-size:14px;text-align:right;">${formatCents(a.priceCents)}</td></tr>`).join("")}
       <tr><td style="padding:8px 0;border-bottom:1px solid #f0eeec;font-size:14px;color:#666;">Subtotal</td><td style="padding:8px 0;border-bottom:1px solid #f0eeec;font-size:14px;text-align:right;">${formatCents(subtotalCents)}</td></tr>
       <tr><td style="padding:8px 0;border-bottom:1px solid #f0eeec;font-size:14px;color:#666;">Service Fee</td><td style="padding:8px 0;border-bottom:1px solid #f0eeec;font-size:14px;text-align:right;">${formatCents(platformFeeCents)}</td></tr>
       <tr><td style="padding:8px 0;font-size:15px;font-weight:700;">Total Charged</td><td style="padding:8px 0;font-size:15px;font-weight:700;text-align:right;color:${CORAL};">${formatCents(totalCents)}</td></tr>
@@ -86,6 +89,7 @@ export function paymentReceiptTemplate(params: PaymentReceiptParams): {
     `Service: ${listingTitle}`,
     `Vendor: ${vendorName}`,
     `Event Date: ${eventDate}`,
+    ...(addOns ?? []).map(a => `${a.title}: ${formatCents(a.priceCents)}`),
     `Subtotal: ${formatCents(subtotalCents)}`,
     `Service Fee: ${formatCents(platformFeeCents)}`,
     `Total Charged: ${formatCents(totalCents)}`,

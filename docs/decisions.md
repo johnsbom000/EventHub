@@ -16,6 +16,15 @@ Template for new entries:
 
 ---
 
+## [2026-05-25] Anchor sidebar count badges to icon top-right corners
+- Context: Sidebar count badges were resettable, but their top-center placement made them look detached from the icon and could appear visually clipped near icon bounds.
+- Decision: Reuse a shared `SidebarCountBadge` component across vendor, customer, and admin sidebars, rendering it inside each icon wrapper at the icon's top-right corner with explicit high z-index and visible overflow.
+- Why: This keeps the existing local baseline reset behavior while standardizing badge placement and reducing duplicate badge markup across sidebar variants.
+- Impact: Message, notification, dispute, and health count badges now sit on the top-right of their icons, remain above surrounding UI, and still disappear/restart after the user visits the corresponding page.
+- Revisit trigger: If badge read state moves server-side, keep this shared visual component and replace only the local baseline count source.
+
+---
+
 ## [2026-05-21] Reset left-sidebar count badges after navigation to their destination page
 - Context: Left-sidebar count badges (messages/disputes/health) stayed visible with cumulative counts after users clicked into those sections, and badge placement looked inconsistent near icon corners.
 - Decision: Add a shared hook `client/src/hooks/useResettableBadgeCount.ts` and wire it into `vendor-sidebar`, `customer-sidebar`, and `admin-sidebar`. Persist a local baseline in `localStorage` and display only `currentCount - baseline` (minimum 0); clear that baseline when the current route is on the destination page (for example `/vendor/messages`, `/dashboard/messages`, `/admin/disputes`, `/admin/health`). Standardize badge positioning to top-center over each icon.

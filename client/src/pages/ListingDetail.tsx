@@ -118,6 +118,11 @@ type PhotoRenderMeta = {
  objectPosition?: string;
 };
 
+function fmtDate(s: string): string {
+  const [y, m, d] = s.split("-");
+  return `${m}/${d}/${y}`;
+}
+
 function clamp(value: number, min: number, max: number): number {
  if (!Number.isFinite(value)) return min;
  return Math.max(min, Math.min(max, value));
@@ -300,11 +305,21 @@ export default function ListingDetailPage() {
  const vendorName = raw?.vendorName ?? raw?.vendor?.businessName ?? "Vendor";
 
  const city = (() => {
-   if (raw?.listingServiceCenterLabel) return raw.listingServiceCenterLabel.split(",")[0].trim();
-   if (ld?.serviceLocation?.city) return ld.serviceLocation.city;
-   if (typeof ld?.serviceLocation?.label === "string") return ld.serviceLocation.label.split(",")[0].trim();
-   if (raw?.city) return raw.city;
-   return "";
+   // Prefer the listing's own service center label over vendor profile city
+   const label = (raw?.listingServiceCenterLabel as string | null | undefined) ?? "";
+   if (label) {
+     const parts = label.split(",").map((p: string) => p.trim());
+     const firstLooksLikeStreet = /^\d/.test(parts[0] ?? "");
+     const cityPart = firstLooksLikeStreet ? (parts[1] ?? "") : (parts[0] ?? "");
+     const statePart = firstLooksLikeStreet ? (parts[2] ?? "") : (parts[1] ?? "");
+     const stateOnly = statePart.replace(/\s+\d{5}(-\d{4})?$/, "").trim();
+     if (cityPart) return stateOnly ? `${cityPart}, ${stateOnly}` : cityPart;
+   }
+   // Fallback to vendor profile for listings without a service center label
+   const cityName = raw?.city || ld?.serviceLocation?.city || "";
+   const state = raw?.businessState || "";
+   if (!cityName) return "";
+   return state ? `${cityName}, ${state}` : cityName;
  })();
 
  const rating = Number(raw?.rating ?? 0);
@@ -1078,15 +1093,26 @@ export default function ListingDetailPage() {
  if (startTime) params.set("startTime", startTime);
  if (endTime) params.set("endTime", endTime);
  if (selectedPackageId) params.set("packageId", selectedPackageId);
+ if (selectedAddonIds.length > 0) params.set("addonIds", selectedAddonIds.join(","));
  setLocation(`/checkout/${listingId}?${params.toString()}`);
  }}
  />
  )}
 
- {/* Reactive price summary — shown when a package is selected */}
- {selectedPackageId && (() => {
+ {/* Reactive price summary — shown when a package or add-on is selected */}
+ {(selectedPackageId || selectedAddonIds.length > 0) && (() => {
  const selectedPkg = data.packages.find((p: { id: string; priceCents: number | null }) => p.id === selectedPackageId);
  const pkgPrice = selectedPkg?.priceCents != null ? selectedPkg.priceCents / 100 : (data.price ?? null);
+ const baseAmountDollars = pkgPrice ?? data.price ?? 0;
+ const addonTotalCents = selectedAddonIds
+   .map((id) => data.attachedAddons.find((a: { id: string; priceCents: number | null }) => String(a.id) === id)?.priceCents ?? 0)
+   .reduce((s: number, c: number) => s + c, 0);
+ const subtotalDollars = baseAmountDollars + addonTotalCents / 100;
+ const serviceFeeEst = Math.round(subtotalDollars * 100 * 0.05) / 100;
+ const depositDollars = data.securityDepositEnabled && (data.securityDepositCents ?? 0) > 0
+   ? (data.securityDepositCents ?? 0) / 100
+   : 0;
+ const totalDollars = subtotalDollars + serviceFeeEst + depositDollars;
  return (
  <div className="rounded-2xl border border-border bg-muted/30 p-5 space-y-3">
  <h3 className="text-sm font-semibold text-foreground">Price breakdown</h3>
@@ -1103,10 +1129,30 @@ export default function ListingDetailPage() {
  <span className="font-medium">{money(data.price)}</span>
  </div>
  )}
+ {selectedAddonIds.map((id) => {
+   const addon = data.attachedAddons.find((a: { id: string; title: string | null; priceCents: number | null }) => String(a.id) === id);
+   if (!addon?.priceCents) return null;
+   return (
+     <div key={id} className="flex justify-between gap-2">
+       <span className="text-muted-foreground">{addon.title ?? "Add-on"}</span>
+       <span className="font-medium">{money(addon.priceCents / 100)}</span>
+     </div>
+   );
+ })}
+ <div className="flex justify-between gap-2">
+   <span className="text-muted-foreground">Service fee (est.)</span>
+   <span className="font-medium">{money(serviceFeeEst)}</span>
+ </div>
+ {depositDollars > 0 && (
+   <div className="flex justify-between gap-2">
+     <span className="text-muted-foreground">Security deposit <span className="text-xs">(refundable)</span></span>
+     <span className="font-medium">{money(depositDollars)}</span>
+   </div>
+ )}
  </div>
  <div className="border-t border-border pt-2.5 flex justify-between gap-2">
  <span className="text-sm font-semibold">Total</span>
- <span className="text-sm font-bold text-primary">{money(pkgPrice)}</span>
+ <span className="text-sm font-bold text-primary">{money(totalDollars)}</span>
  </div>
  </div>
  );
@@ -1416,7 +1462,7 @@ function ReservationCard({
  />
  {vacationConflict && (
  <p className="mt-1 text-sm text-destructive">
- Vendor is unavailable {vacationConflict.startDate} – {vacationConflict.endDate}. Choose a different date.
+ Vendor is unavailable {fmtDate(vacationConflict.startDate)} – {fmtDate(vacationConflict.endDate)}. Choose a different date.
  </p>
  )}
  </div>

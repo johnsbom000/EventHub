@@ -2,6 +2,7 @@ import React, { useEffect, useRef, useState } from "react";
 import { SidebarProvider } from "@/components/ui/sidebar";
 import { Button } from "@/components/ui/button";
 import VendorTourModal from "@/components/VendorTourModal";
+import { VendorTimezoneModal, useShowTimezoneModal } from "@/components/VendorTimezoneModal";
 import { getTourKey, hasTourBeenSeen, markTourSeen, VENDOR_TOURS } from "@/lib/vendorTourContent";
 import {
   ArrowLeft,
@@ -44,6 +45,7 @@ type VendorShellProps = {
 type VendorHeaderAccount = {
   businessName?: string | null;
   email?: string | null;
+  operatingTimezone?: string | null;
 };
 
 type VendorProfileSummary = {
@@ -137,6 +139,9 @@ export default function VendorShell({ children, onOpenAccountSettings }: VendorS
     vendorProfiles.find((profile) => profile.id === activeProfileId)?.profileName ||
     vendorAccount?.businessName ||
     "Vendor Profile";
+
+  const showTimezoneModal = useShowTimezoneModal(vendorAccount?.operatingTimezone);
+  const [tzModalDismissed, setTzModalDismissed] = useState(false);
 
   const switchVendorProfile = async (profileId: string) => {
     const token = await getAccessTokenSilently({
@@ -452,6 +457,11 @@ export default function VendorShell({ children, onOpenAccountSettings }: VendorS
           onDismiss={handleTourDismiss}
         />
       )}
+
+      <VendorTimezoneModal
+        open={showTimezoneModal && !tzModalDismissed}
+        onClose={() => setTzModalDismissed(true)}
+      />
     </SidebarProvider>
   );
 }
