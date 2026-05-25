@@ -36,6 +36,7 @@ export interface BookingRequestedParams {
   role: "customer" | "vendor";
   isInstant: boolean;
   serverUrl: string;
+  addOns?: Array<{ title: string; priceCents: number }>;
 }
 
 export function bookingRequestedTemplate(params: BookingRequestedParams): {
@@ -43,7 +44,7 @@ export function bookingRequestedTemplate(params: BookingRequestedParams): {
   html: string;
   text: string;
 } {
-  const { recipientName, counterpartName, eventDate, listingTitle, totalAmountCents, role, isInstant, serverUrl } = params;
+  const { recipientName, counterpartName, eventDate, listingTitle, totalAmountCents, role, isInstant, serverUrl, addOns } = params;
 
   const dashboardUrl = role === "vendor"
     ? `${serverUrl}/vendor/bookings`
@@ -82,6 +83,7 @@ export function bookingRequestedTemplate(params: BookingRequestedParams): {
     ${urgencyBanner}
     <table style="width:100%;border-collapse:collapse;margin-bottom:24px;">
       <tr><td style="padding:8px 0;border-bottom:1px solid #f0eeec;font-size:14px;color:#666;">Service</td><td style="padding:8px 0;border-bottom:1px solid #f0eeec;font-size:14px;font-weight:600;text-align:right;">${listingTitle}</td></tr>
+      ${(addOns ?? []).map(a => `<tr><td style="padding:8px 0;border-bottom:1px solid #f0eeec;font-size:14px;color:#666;">${a.title}</td><td style="padding:8px 0;border-bottom:1px solid #f0eeec;font-size:14px;text-align:right;">${formatCents(a.priceCents)}</td></tr>`).join("")}
       <tr><td style="padding:8px 0;border-bottom:1px solid #f0eeec;font-size:14px;color:#666;">Event Date</td><td style="padding:8px 0;border-bottom:1px solid #f0eeec;font-size:14px;font-weight:600;text-align:right;">${eventDate}</td></tr>
       <tr><td style="padding:8px 0;font-size:14px;color:#666;">Total</td><td style="padding:8px 0;font-size:14px;font-weight:700;text-align:right;color:${CORAL};">${formatCents(totalAmountCents)}</td></tr>
     </table>
@@ -102,6 +104,7 @@ export function bookingRequestedTemplate(params: BookingRequestedParams): {
         : `New booking request from ${counterpartName}. Please accept or decline within 7 days or the booking will be automatically cancelled.`,
     ``,
     `Service: ${listingTitle}`,
+    ...(addOns ?? []).map(a => `${a.title}: ${formatCents(a.priceCents)}`),
     `Event Date: ${eventDate}`,
     `Total: ${formatCents(totalAmountCents)}`,
     ``,

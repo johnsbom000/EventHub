@@ -18,6 +18,7 @@ import {
 import { Avatar, AvatarFallback } from "@/components/ui/avatar";
 import { cn } from "@/lib/utils";
 import { useResettableBadgeCount } from "@/hooks/useResettableBadgeCount";
+import { SidebarCountBadge } from "@/components/sidebar-count-badge";
 
 interface CustomerMe {
  id: string;
@@ -144,20 +145,22 @@ export function CustomerSidebar({ className, showWarningBadge = false, onWarning
  className="relative isolate flex h-14 w-14 items-center justify-center overflow-visible"
  data-testid={`link-customer-${item.key}`}
  >
- <span className="pointer-events-none absolute inset-0 flex items-center justify-center">
+ <span className="pointer-events-none relative z-10 flex h-8 w-8 items-center justify-center overflow-visible">
  <item.icon className="!h-8 !w-8" />
- </span>
- <span className="sr-only">{label}</span>
  {item.key === "messages" && visibleUnreadCount > 0 ? (
- <span className="pointer-events-none absolute left-1/2 top-0 z-[70] flex h-5 min-w-5 -translate-x-1/2 -translate-y-1/3 items-center justify-center rounded-full bg-[hsl(var(--secondary-accent))] px-1 text-[10px] font-semibold text-[hsl(var(--secondary-accent-foreground))]">
- {visibleUnreadCount > 99 ? "99+" : visibleUnreadCount}
- </span>
+ <SidebarCountBadge
+ count={visibleUnreadCount}
+ className="bg-[hsl(var(--secondary-accent))] text-[hsl(var(--secondary-accent-foreground))]"
+ />
  ) : null}
  {item.key === "notifications" && visibleNotifCount > 0 ? (
- <span className="pointer-events-none absolute left-1/2 top-0 z-[70] flex h-5 min-w-5 -translate-x-1/2 -translate-y-1/3 items-center justify-center rounded-full bg-[hsl(var(--secondary-accent))] px-1 text-[10px] font-semibold text-[hsl(var(--secondary-accent-foreground))]">
- {visibleNotifCount > 99 ? "99+" : visibleNotifCount}
- </span>
+ <SidebarCountBadge
+ count={visibleNotifCount}
+ className="bg-[hsl(var(--secondary-accent))] text-[hsl(var(--secondary-accent-foreground))]"
+ />
  ) : null}
+ </span>
+ <span className="sr-only">{label}</span>
  </Link>
  </SidebarMenuButton>
  </SidebarMenuItem>

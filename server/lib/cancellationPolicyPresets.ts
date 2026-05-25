@@ -1,9 +1,10 @@
 /**
- * Cancellation policy types and preset definitions.
+ * Cancellation policy types and conversion utilities.
  *
- * Presets are seed data used to pre-fill the policy editor.
- * Once a vendor selects a preset, their policy is stored as a regular
- * editable policy — presets have no ongoing behavioral significance.
+ * Vendors set their cancellation policy in the listing wizard. That choice is
+ * converted to a CancellationPolicy object here and snapshotted onto each
+ * booking at checkout. Refund logic always reads the snapshot — never the
+ * live listing policy.
  */
 
 export interface PolicyTier {
@@ -14,71 +15,13 @@ export interface PolicyTier {
 }
 
 export interface CancellationPolicy {
-  preset_type: "flexible" | "moderate" | "strict" | "custom";
+  preset_type: string;
   tiers: PolicyTier[];
   allow_reschedule: boolean;
   reschedule_window_months: number;
   weather_clause: boolean;
   force_majeure_clause: boolean;
   notes?: string | null;
-}
-
-// ── Preset definitions ─────────────────────────────────────────────────────
-
-export const PRESET_FLEXIBLE: CancellationPolicy = {
-  preset_type: "flexible",
-  tiers: [
-    { days_before_event: 7, refund_percentage: 100 },
-    { days_before_event: 3, refund_percentage: 50 },
-    { days_before_event: 0, refund_percentage: 0 },
-  ],
-  allow_reschedule: true,
-  reschedule_window_months: 12,
-  weather_clause: false,
-  force_majeure_clause: false,
-};
-
-export const PRESET_MODERATE: CancellationPolicy = {
-  preset_type: "moderate",
-  tiers: [
-    { days_before_event: 30, refund_percentage: 100 },
-    { days_before_event: 14, refund_percentage: 50 },
-    { days_before_event: 7,  refund_percentage: 25 },
-    { days_before_event: 0,  refund_percentage: 0 },
-  ],
-  allow_reschedule: true,
-  reschedule_window_months: 12,
-  weather_clause: false,
-  force_majeure_clause: true,
-};
-
-export const PRESET_STRICT: CancellationPolicy = {
-  preset_type: "strict",
-  tiers: [
-    { days_before_event: 60, refund_percentage: 100 },
-    { days_before_event: 30, refund_percentage: 50 },
-    { days_before_event: 0,  refund_percentage: 0 },
-  ],
-  allow_reschedule: true,
-  reschedule_window_months: 12,
-  weather_clause: false,
-  force_majeure_clause: true,
-};
-
-export const PRESETS: Record<"flexible" | "moderate" | "strict", CancellationPolicy> = {
-  flexible: PRESET_FLEXIBLE,
-  moderate: PRESET_MODERATE,
-  strict:   PRESET_STRICT,
-};
-
-/**
- * Auto-select preset based on listing category.
- * Rental → Moderate, everything else → Strict.
- */
-export function defaultPresetForCategory(category: string | null | undefined): CancellationPolicy {
-  const cat = (category || "").toLowerCase();
-  if (cat.includes("rental") || cat.includes("equipment")) return PRESET_MODERATE;
-  return PRESET_STRICT;
 }
 
 // ── Validation ─────────────────────────────────────────────────────────────
@@ -101,7 +44,7 @@ export function policyFromListingWizard(
   switch (policy) {
     case "cancel_anytime":
       return {
-        preset_type: "flexible",
+        preset_type: "custom",
         tiers: [{ days_before_event: 0, refund_percentage: 100 }],
         allow_reschedule: false,
         reschedule_window_months: 1,
@@ -150,7 +93,15 @@ export function policyFromListingWizard(
       };
 
     default:
-      return PRESET_FLEXIBLE;
+      // Pre-policy bookings had no policy disclosed — full refund is the fair default.
+      return {
+        preset_type: "custom",
+        tiers: [{ days_before_event: 0, refund_percentage: 100 }],
+        allow_reschedule: false,
+        reschedule_window_months: 1,
+        weather_clause: false,
+        force_majeure_clause: false,
+      };
   }
 }
 
@@ -163,10 +114,8 @@ export function validatePolicy(policy: CancellationPolicy): PolicyValidationErro
   }
 
   const seenDays = new Set<number>();
-  let prevDays = Infinity;
   let prevRefund = -1;
 
-  // Expect tiers sorted descending by days_before_event
   const sorted = [...policy.tiers].sort((a, b) => b.days_before_event - a.days_before_event);
 
   for (const tier of sorted) {
@@ -181,7 +130,6 @@ export function validatePolicy(policy: CancellationPolicy): PolicyValidationErro
     }
     seenDays.add(tier.days_before_event);
 
-    // Refund % must be non-increasing as days decreases (can't have a better refund when less notice given)
     if (prevRefund !== -1 && tier.refund_percentage > prevRefund) {
       errors.push({
         field: "tiers",
@@ -189,7 +137,6 @@ export function validatePolicy(policy: CancellationPolicy): PolicyValidationErro
       });
     }
     prevRefund = tier.refund_percentage;
-    prevDays = tier.days_before_event;
   }
 
   if (typeof policy.reschedule_window_months !== "number" || policy.reschedule_window_months < 1) {

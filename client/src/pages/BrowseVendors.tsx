@@ -246,22 +246,6 @@ const isListingAvailableOnDate = (listing: ListingPublic, dateValue: string) => 
  return true;
 };
 
-const milesBetween = (lat1: number, lng1: number, lat2: number, lng2: number) => {
- const R = 3958.8; // Earth radius in miles
- const toRad = (d: number) => (d * Math.PI) / 180;
-
- const dLat = toRad(lat2 - lat1);
- const dLng = toRad(lng2 - lng1);
-
- const a =
- Math.sin(dLat / 2) ** 2 +
- Math.cos(toRad(lat1)) *
- Math.cos(toRad(lat2)) *
- Math.sin(dLng / 2) ** 2;
-
- return R * 2 * Math.atan2(Math.sqrt(a), Math.sqrt(1 - a));
-};
-
 export default function BrowseVendors() {
  const { t } = useTranslation();
  const [, setLocation] = useLocation();
@@ -300,9 +284,9 @@ export default function BrowseVendors() {
  // Track which subcategory groups are expanded in the filter panel
  const [expandedSubcatGroups, setExpandedSubcatGroups] = useState<string[]>([]);
 
- // Build server-side filter params — category, subcategory, price range, and sort
- // are handled by the server. Text search, location, tags, bestFor, availability,
- // delivery, and setup remain as client-side post-filters.
+ // Build server-side filter params — category, subcategory, price range, sort,
+ // and location (lat/lng) are handled by the server. Text search, tags, bestFor,
+ // availability, delivery, and setup remain as client-side post-filters.
  const serverParams = useMemo(() => {
  const p: Record<string, string> = { sort: sortBy, limit: "200" };
  if (selectedCategory) p.category = selectedCategory;
@@ -310,8 +294,12 @@ export default function BrowseVendors() {
  if (selectedSubcategoryDetails.length > 0) p.details = selectedSubcategoryDetails.join(",");
  if (minPrice.trim()) p.minPrice = minPrice.trim();
  if (maxPrice.trim()) p.maxPrice = maxPrice.trim();
+ if (searchLat != null && searchLng != null) {
+   p.lat = String(searchLat);
+   p.lng = String(searchLng);
+ }
  return p;
- }, [selectedCategory, selectedSubcategories, selectedSubcategoryDetails, minPrice, maxPrice, sortBy]);
+ }, [selectedCategory, selectedSubcategories, selectedSubcategoryDetails, minPrice, maxPrice, sortBy, searchLat, searchLng]);
 
  const { data: listingPage, isLoading } = useQuery<{
  listings: ListingPublic[];
@@ -556,7 +544,11 @@ export default function BrowseVendors() {
  });
  }
 
- if (normalizedLocation) {
+ // Text-based location filter: only applies when no geocoded coordinates are set.
+ // When lat/lng are present the server already filtered by Haversine distance, so
+ // doing a text match here would incorrectly exclude listings whose address label
+ // uses abbreviations (e.g. "MT" vs "Montana") even though they're in the right area.
+ if (normalizedLocation && searchLat == null && searchLng == null) {
  filtered = filtered.filter((listing) =>
  normalizeText(`${getListingLocation(listing)} ${listing.city ?? ""}`).includes(normalizedLocation)
  );
@@ -588,58 +580,8 @@ export default function BrowseVendors() {
  });
  }
 
- // Radius / service area filtering, if lat/lng was passed in query.
- if (searchLat != null && searchLng != null) {
- filtered = filtered.filter((listing) => {
- const listingAny = listing as any;
- const listingData = listingAny?.listingData || {};
- const mode =
- listingAny?.serviceAreaMode ??
- listingData?.deliverySetup?.serviceAreaMode ??
- listingData?.serviceAreaMode;
-
- if (mode === "nationwide") {
- const searchLabel = searchLocationLabel.toLowerCase();
- const searchCountry = searchLabel.split(",").pop()?.trim();
-
- let listingCountry = listingData?.serviceLocation?.label
- ? String(listingData.serviceLocation.label).toLowerCase().split(",").pop()?.trim()
- : null;
-
- if (!listingCountry && listing.city) {
- listingCountry = "united states";
- }
-
- return Boolean(listingCountry && searchCountry && listingCountry === searchCountry);
- }
-
- if (mode === "radius") {
- const center = {
- lat:
- listingAny?.listingServiceCenterLat ??
- listingData?.deliverySetup?.serviceCenter?.lat ??
- listingData?.serviceCenter?.lat,
- lng:
- listingAny?.listingServiceCenterLng ??
- listingData?.deliverySetup?.serviceCenter?.lng ??
- listingData?.serviceCenter?.lng,
- };
- const listingRadius = Number(
- listingAny?.serviceRadiusMiles ??
- listingData?.deliverySetup?.serviceRadiusMiles ??
- listingData?.serviceRadiusMiles ??
- 0
- );
- if (center?.lat == null || center?.lng == null || !Number.isFinite(listingRadius)) return false;
-
- const distance = milesBetween(searchLat, searchLng, Number(center.lat), Number(center.lng));
- return distance <= listingRadius + searchRadiusMiles;
- }
-
- // Unknown mode: keep listing visible so MVP filtering remains forgiving.
- return true;
- });
- }
+ // Location filtering by coordinates is handled server-side (Haversine in /api/listings/public).
+ // No client-side radius filter needed — all results already passed the server check.
 
  return filtered;
  }, [
@@ -653,8 +595,6 @@ export default function BrowseVendors() {
  selectedBestFor,
  searchLat,
  searchLng,
- searchRadiusMiles,
- searchLocationLabel,
  ]);
 
  const browseSearchBarContent = (

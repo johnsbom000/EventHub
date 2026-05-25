@@ -20,6 +20,7 @@ import {
   SelectValue,
 } from "@/components/ui/select";
 import { LocationPicker } from "@/components/LocationPicker";
+import { MapLocationPicker } from "@/components/MapLocationPicker";
 import type { LocationResult } from "@/types/location";
 import { resolveAssetUrl } from "@/lib/runtimeUrls";
 import { useFeeRates } from "@/hooks/useFeeRates";
@@ -316,6 +317,7 @@ function CheckoutContent({
   const [deliveryState, setDeliveryState] = useState("");
   const [deliveryZip, setDeliveryZip] = useState("");
   const [deliveryLocation, setDeliveryLocation] = useState<LocationResult | null>(null);
+  const [useMapPicker, setUseMapPicker] = useState(false);
   const [eventMode, setEventMode] = useState<"existing" | "new">("existing");
   const [selectedCustomerEventId, setSelectedCustomerEventId] = useState("");
   const [newEventTitle, setNewEventTitle] = useState("");
@@ -638,6 +640,9 @@ function CheckoutContent({
         packages: Array.isArray(raw?.packages)
           ? (raw.packages as Array<{ id: string; title: string | null; priceCents: number | null; pricingUnit: string | null; whatsIncluded: string[] }>)
           : [],
+        attachedAddons: Array.isArray(raw?.attachedAddons)
+          ? (raw.attachedAddons as Array<{ id: string; title: string | null; priceCents: number | null }>)
+          : [],
       };
     },
   });
@@ -860,6 +865,15 @@ function CheckoutContent({
     }
     return null;
   }, [isHourlyBooking, eventStartTime, eventEndTime, hourlyMinimumHours, t]);
+  const perDayTimeError = useMemo(() => {
+    if (isHourlyBooking || !shouldShowPerDayLogistics) return null;
+    if (!eventStartTime || !eventEndTime) return t("checkout.errorSelectTimes");
+    const startMinutes = parseTimeToMinutes(eventStartTime);
+    const endMinutes = parseTimeToMinutes(eventEndTime);
+    if (startMinutes == null || endMinutes == null) return t("checkout.errorSelectTimes");
+    if (endMinutes <= startMinutes) return t("checkout.errorEndBeforeStart");
+    return null;
+  }, [isHourlyBooking, shouldShowPerDayLogistics, eventStartTime, eventEndTime, t]);
   const hourlyWindowGuidance = useMemo(() => {
     if (!data?.title) return "";
     return buildHourlyWindowGuidance({
@@ -890,8 +904,10 @@ function CheckoutContent({
             : newEventTitle.trim().length > 0
         ) &&
         (!isHourlyBooking || !hourlyTimeRangeError) &&
+        (!shouldShowPerDayLogistics || !perDayTimeError) &&
         Boolean(deliveryLocation) &&
-        (!data?.deliveryIncluded || (deliveryAddress && deliveryCity && deliveryState && deliveryZip))) &&
+        (useMapPicker || Boolean(deliveryAddress)) &&
+        (!data?.deliveryIncluded || (deliveryCity && deliveryState && deliveryZip))) &&
     stripeConfigured &&
     !stripeConfigError &&
     Boolean(stripe) &&
@@ -901,6 +917,9 @@ function CheckoutContent({
   const baseSubtotal = isHourlyBooking && hourlyDurationHours != null
     ? Math.round(effectivePriceCents * hourlyDurationHours)
     : effectivePriceCents * normalizedQuantity;
+  const addonSubtotalCents = selectedAddonIds
+    .map((id) => data?.attachedAddons?.find((a: { id: string; priceCents: number | null }) => String(a.id) === id)?.priceCents ?? 0)
+    .reduce((s: number, c: number) => s + c, 0);
   const deliveryFeeCents =
     data?.deliveryIncluded && data?.deliveryFeeEnabled
       ? Math.max(0, Math.round(data?.deliveryFeeAmountCents || 0))
@@ -946,9 +965,9 @@ function CheckoutContent({
       : null;
   const discountAmountCents =
     activeDiscountPercent > 0
-      ? Math.round((baseSubtotal + logisticsSubtotal) * activeDiscountPercent / 100)
+      ? Math.round((baseSubtotal + addonSubtotalCents + logisticsSubtotal) * activeDiscountPercent / 100)
       : 0;
-  const discountedSubtotal = Math.max(0, baseSubtotal + logisticsSubtotal - discountAmountCents);
+  const discountedSubtotal = Math.max(0, baseSubtotal + addonSubtotalCents + logisticsSubtotal - discountAmountCents);
   const customerFeeAmount = Math.round(discountedSubtotal * customerFeeRate);
   const customerTotal = discountedSubtotal + customerFeeAmount;
 
@@ -996,6 +1015,10 @@ function CheckoutContent({
     }
     if (!hasPendingPaymentToResume && isHourlyBooking && hourlyTimeRangeError) {
       setSubmitError(hourlyTimeRangeError);
+      return;
+    }
+    if (!hasPendingPaymentToResume && perDayTimeError) {
+      setSubmitError(perDayTimeError);
       return;
     }
 
@@ -1261,99 +1284,151 @@ function CheckoutContent({
               )}
             </div>
 
-            {/* Event / delivery address — always shown.
-                Label and helper text differ based on whether the listing includes delivery. */}
+            {/* Event / delivery address — always shown. */}
             <div className="space-y-2">
-              <Label htmlFor="delivery-line1">
-                {effectiveData.deliveryIncluded
-                  ? `Where would you like ${effectiveData.title || "this"} delivered?`
-                  : "Where will the event be taking place?"}
-                {" "}<span className="text-red-500">*</span>
-              </Label>
-              <LocationPicker
-                value={deliveryLocation}
-                onChange={(loc) => {
-                  setDeliveryLocation(loc);
-                  if (!loc) {
+              <div className="flex items-center justify-between">
+                <Label htmlFor="delivery-line1">
+                  {effectiveData.deliveryIncluded
+                    ? `Where would you like ${effectiveData.title || "this"} delivered?`
+                    : "Where will the event be taking place?"}
+                  {" "}<span className="text-red-500">*</span>
+                </Label>
+                <button
+                  type="button"
+                  onClick={() => {
+                    setUseMapPicker((v) => !v);
+                    setDeliveryLocation(null);
                     setDeliveryAddress("");
                     setDeliveryCity("");
                     setDeliveryState("");
                     setDeliveryZip("");
-                    return;
+                  }}
+                  className="text-xs text-[#4a6a7d] hover:underline shrink-0"
+                >
+                  {useMapPicker ? "Search by address" : "No address? Pick on map"}
+                </button>
+              </div>
+
+              {useMapPicker ? (
+                <MapLocationPicker
+                  value={deliveryLocation ? { lat: deliveryLocation.lat, lng: deliveryLocation.lng } : null}
+                  onChange={({ lat, lng }) => {
+                    setDeliveryLocation({
+                      id: `map-pin-${lat}-${lng}`,
+                      label: `Pin dropped at ${lat.toFixed(6)}, ${lng.toFixed(6)}`,
+                      lat,
+                      lng,
+                    });
+                  }}
+                  onGeocode={({ city, state, zip, label }) => {
+                    if (city) setDeliveryCity(city);
+                    if (state) setDeliveryState(state);
+                    if (zip) setDeliveryZip(zip);
+                    setDeliveryLocation((prev) =>
+                      prev ? { ...prev, label } : prev
+                    );
+                  }}
+                />
+              ) : (
+                <LocationPicker
+                  value={deliveryLocation}
+                  onChange={(loc) => {
+                    setDeliveryLocation(loc);
+                    if (!loc) {
+                      setDeliveryAddress("");
+                      setDeliveryCity("");
+                      setDeliveryState("");
+                      setDeliveryZip("");
+                      return;
+                    }
+                    setDeliveryAddress(loc.street || "");
+                    setDeliveryCity(loc.city || "");
+                    setDeliveryState(loc.state || "");
+                    setDeliveryZip(loc.postalCode || "");
+                  }}
+                  placeholder={
+                    effectiveData.deliveryIncluded
+                      ? t("checkout.deliveryAddressPlaceholder")
+                      : "Search for the event location..."
                   }
-
-                  const label = (loc as any).label || (loc as any).place_name || "";
-                  const parsed = parseAddressFromLabel(label);
-
-                  setDeliveryAddress(parsed.streetAddress || label);
-                  setDeliveryCity((loc as any).city || parsed.city || "");
-                  setDeliveryState((loc as any).state || parsed.state || "");
-                  setDeliveryZip((loc as any).zipCode || parsed.zipCode || "");
-                }}
-                placeholder={
-                  effectiveData.deliveryIncluded
-                    ? t("checkout.deliveryAddressPlaceholder")
-                    : "Search for the event location..."
-                }
-              />
-              {!effectiveData.deliveryIncluded && (
-                <p className="text-xs text-muted-foreground">
-                  Collected for logistics — helps make sure timing is correct for your event.
-                </p>
+                />
               )}
+
               {hasAttemptedSubmit && !deliveryLocation && (
                 <p className="text-xs text-red-600">Please enter the event location.</p>
               )}
             </div>
 
-            {/* City / ZIP / State breakdown — only needed for delivery bookings */}
-            {effectiveData.deliveryIncluded && (
-              <>
-                <div className="grid grid-cols-1 gap-3 md:grid-cols-2">
-                  <div className="space-y-2">
-                    <Label htmlFor="delivery-city">{t("checkout.deliveryCity")} <span className="text-red-500">*</span></Label>
-                    <Input
-                      id="delivery-city"
-                      value={deliveryCity}
-                      onChange={(e) => setDeliveryCity(e.target.value)}
-                      placeholder={t("checkout.deliveryCity")}
-                      className={`h-10 ${hasAttemptedSubmit && !deliveryCity ? "border-red-500 focus-visible:ring-red-500" : ""}`}
-                    />
-                    {hasAttemptedSubmit && !deliveryCity && (
-                      <p className="text-xs text-red-600">City is required.</p>
-                    )}
-                  </div>
+            {/* Street / City / ZIP / State — always shown */}
+            <div className="space-y-2">
+              <Label htmlFor="delivery-street">
+                Street Address
+                {!useMapPicker && <span className="text-red-500"> *</span>}
+              </Label>
+              <Input
+                id="delivery-street"
+                value={deliveryAddress}
+                onChange={(e) => setDeliveryAddress(e.target.value)}
+                placeholder={useMapPicker ? "Optional — no street address needed for pin locations" : "123 Main St"}
+                className={`h-10 ${hasAttemptedSubmit && !useMapPicker && !deliveryAddress ? "border-red-500 focus-visible:ring-red-500" : ""}`}
+              />
+              {hasAttemptedSubmit && !useMapPicker && !deliveryAddress && (
+                <p className="text-xs text-red-600">Street address is required.</p>
+              )}
+            </div>
 
-                  <div className="space-y-2">
-                    <Label htmlFor="delivery-zip">{t("checkout.deliveryZip")} <span className="text-red-500">*</span></Label>
-                    <Input
-                      id="delivery-zip"
-                      value={deliveryZip}
-                      onChange={(e) => setDeliveryZip(e.target.value)}
-                      placeholder="ZIP"
-                      className={`h-10 ${hasAttemptedSubmit && !deliveryZip ? "border-red-500 focus-visible:ring-red-500" : ""}`}
-                    />
-                    {hasAttemptedSubmit && !deliveryZip && (
-                      <p className="text-xs text-red-600">ZIP code is required.</p>
-                    )}
-                  </div>
-                </div>
+            <div className="grid grid-cols-1 gap-3 md:grid-cols-2">
+              <div className="space-y-2">
+                <Label htmlFor="delivery-city">
+                  {t("checkout.deliveryCity")}
+                  {effectiveData.deliveryIncluded && <span className="text-red-500"> *</span>}
+                </Label>
+                <Input
+                  id="delivery-city"
+                  value={deliveryCity}
+                  onChange={(e) => setDeliveryCity(e.target.value)}
+                  placeholder={t("checkout.deliveryCity")}
+                  className={`h-10 ${hasAttemptedSubmit && effectiveData.deliveryIncluded && !deliveryCity ? "border-red-500 focus-visible:ring-red-500" : ""}`}
+                />
+                {hasAttemptedSubmit && effectiveData.deliveryIncluded && !deliveryCity && (
+                  <p className="text-xs text-red-600">City is required.</p>
+                )}
+              </div>
 
-                <div className="space-y-2">
-                  <Label htmlFor="delivery-state">{t("checkout.deliveryState")} <span className="text-red-500">*</span></Label>
-                  <Input
-                    id="delivery-state"
-                    value={deliveryState}
-                    onChange={(e) => setDeliveryState(e.target.value)}
-                    placeholder={t("checkout.deliveryState")}
-                    className={`h-10 ${hasAttemptedSubmit && !deliveryState ? "border-red-500 focus-visible:ring-red-500" : ""}`}
-                  />
-                  {hasAttemptedSubmit && !deliveryState && (
-                    <p className="text-xs text-red-600">State is required.</p>
-                  )}
-                </div>
-              </>
-            )}
+              <div className="space-y-2">
+                <Label htmlFor="delivery-zip">
+                  {t("checkout.deliveryZip")}
+                  {effectiveData.deliveryIncluded && <span className="text-red-500"> *</span>}
+                </Label>
+                <Input
+                  id="delivery-zip"
+                  value={deliveryZip}
+                  onChange={(e) => setDeliveryZip(e.target.value)}
+                  placeholder="ZIP"
+                  className={`h-10 ${hasAttemptedSubmit && effectiveData.deliveryIncluded && !deliveryZip ? "border-red-500 focus-visible:ring-red-500" : ""}`}
+                />
+                {hasAttemptedSubmit && effectiveData.deliveryIncluded && !deliveryZip && (
+                  <p className="text-xs text-red-600">ZIP code is required.</p>
+                )}
+              </div>
+            </div>
+
+            <div className="space-y-2">
+              <Label htmlFor="delivery-state">
+                {t("checkout.deliveryState")}
+                {effectiveData.deliveryIncluded && <span className="text-red-500"> *</span>}
+              </Label>
+              <Input
+                id="delivery-state"
+                value={deliveryState}
+                onChange={(e) => setDeliveryState(e.target.value)}
+                placeholder={t("checkout.deliveryState")}
+                className={`h-10 ${hasAttemptedSubmit && effectiveData.deliveryIncluded && !deliveryState ? "border-red-500 focus-visible:ring-red-500" : ""}`}
+              />
+              {hasAttemptedSubmit && effectiveData.deliveryIncluded && !deliveryState && (
+                <p className="text-xs text-red-600">State is required.</p>
+              )}
+            </div>
           </div>
         </section>
 
@@ -1559,6 +1634,9 @@ function CheckoutContent({
                   </div>
 
                 </div>
+                {perDayTimeError && (eventStartTime || eventEndTime) ? (
+                  <div className="text-sm text-red-600">{perDayTimeError}</div>
+                ) : null}
               </div>
             ) : null}
           </div>
@@ -1705,6 +1783,17 @@ function CheckoutContent({
                 <span className="font-medium">{formatUsdFromCents(baseSubtotal)}</span>
               </div>
 
+              {selectedAddonIds.map((id) => {
+                const addon = data?.attachedAddons?.find((a: { id: string; title: string | null; priceCents: number | null }) => String(a.id) === id);
+                if (!addon?.priceCents) return null;
+                return (
+                  <div key={id} className="flex items-center justify-between">
+                    <span className="text-sm text-muted-foreground">{addon.title ?? "Add-on"}</span>
+                    <span className="font-medium">{formatUsdFromCents(addon.priceCents)}</span>
+                  </div>
+                );
+              })}
+
               {combinedLogisticsCents > 0 ? (
                 <div className="flex items-center justify-between">
                   <span className="text-sm text-muted-foreground">
@@ -1741,6 +1830,15 @@ function CheckoutContent({
                 <span className="font-medium">{formatUsdFromCents(customerFeeAmount)}</span>
               </div>
 
+              {securityDepositCents > 0 ? (
+                <div className="flex items-center justify-between">
+                  <span className="text-sm text-muted-foreground">
+                    Security deposit <span className="text-xs">(refundable)</span>
+                  </span>
+                  <span className="font-medium">{formatUsdFromCents(securityDepositCents)}</span>
+                </div>
+              ) : null}
+
               <div className="border-t border-[rgba(74,106,125,0.22)] pt-4 flex items-end justify-between">
                 <div>
                   <div className="text-xl font-semibold">{t("checkout.orderSummaryTotal")}</div>
@@ -1750,15 +1848,9 @@ function CheckoutContent({
               </div>
 
               {securityDepositCents > 0 ? (
-                <div className="rounded-lg border border-border bg-muted/40 px-4 py-3 space-y-0.5">
-                  <div className="flex items-center justify-between text-sm">
-                    <span className="font-medium">Security deposit (refundable)</span>
-                    <span className="font-medium">{formatUsdFromCents(securityDepositCents)}</span>
-                  </div>
-                  <p className="text-xs text-muted-foreground">
-                    Charged separately after booking confirmation. Refunded automatically after your event if no dispute is filed.
-                  </p>
-                </div>
+                <p className="text-xs text-muted-foreground">
+                  Security deposit of {formatUsdFromCents(securityDepositCents)} is charged separately after booking confirmation and refunded after your event.
+                </p>
               ) : null}
 
               <div className="space-y-2">

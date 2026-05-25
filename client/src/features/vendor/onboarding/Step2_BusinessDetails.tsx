@@ -6,6 +6,7 @@ import { Textarea } from "@/components/ui/textarea";
 import HobbyPillInput from "@/components/HobbyPillInput";
 import { LocationPicker } from "@/components/LocationPicker";
 import OnboardingStepHeader from "@/features/vendor/onboarding/OnboardingStepHeader";
+import { TimezoneSelect } from "@/components/TimezoneSelect";
 import type { LocationResult } from "@/types/location";
 
 interface Step2BusinessDetailsProps {
@@ -28,6 +29,8 @@ interface Step2BusinessDetailsProps {
     inBusinessSinceYear: string;
     specialties: string;
     eventsServedBaseline: string;
+
+    operatingTimezone: string;
 
     // proof the address came from dropdown
     homeBaseLocation?: { lat: number; lng: number };
@@ -150,6 +153,7 @@ export default function Step2_BusinessDetails({
       formData.city.trim() !== "" &&
       formData.state.trim() !== "" &&
       formData.zipCode.trim() !== "" &&
+      formData.operatingTimezone.trim() !== "" &&
       isAddressVerified
     );
   }, [formData, isAddressVerified]);
@@ -355,6 +359,17 @@ export default function Step2_BusinessDetails({
                   required
                 />
               </div>
+            </div>
+            <div className="space-y-2">
+              <Label htmlFor="onboarding-timezone">Your timezone</Label>
+              <TimezoneSelect
+                id="onboarding-timezone"
+                value={formData.operatingTimezone}
+                onChange={(tz) => updateFormData({ operatingTimezone: tz })}
+              />
+              <p className="text-sm text-muted-foreground">
+                Used to schedule bookings and Google Calendar events correctly.
+              </p>
             </div>
             </div>
 

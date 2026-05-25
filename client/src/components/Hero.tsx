@@ -1,11 +1,10 @@
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
-import { useState, useRef, useEffect } from "react";
+import { useState, useRef } from "react";
 import { useLocation } from "wouter";
 import { useQuery } from "@tanstack/react-query";
 import { apiRequest } from "@/lib/queryClient";
 import { LocationPicker } from "@/components/LocationPicker";
-import { useLocationContext } from "../context/LocationContext";
 import type { LocationResult } from "@/types/location";
 import { EVENT_TYPE_OPTIONS } from "@/constants/eventTypes";
 import { ChevronDown } from "lucide-react";
@@ -27,9 +26,6 @@ export default function Hero() {
   const { t } = useTranslation();
   const heroRotatingWords = t("hero.rotatingWords", { returnObjects: true }) as string[];
   const [, setLocation] = useLocation();
-  const { selectedLocation, setLocation: setGlobalLocation } =
-    useLocationContext();
-
   const [searchLocation, setSearchLocation] = useState<LocationResult | null>(
     null
   );
@@ -48,12 +44,6 @@ export default function Hero() {
     },
     staleTime: 5 * 60 * 1000,
   });
-
-  useEffect(() => {
-    if (selectedLocation) {
-      setSearchLocation(selectedLocation);
-    }
-  }, [selectedLocation?.id]);
 
   const handleSearch = () => {
     const params = new URLSearchParams();
@@ -124,10 +114,7 @@ export default function Hero() {
             <div className="hero-search-location flex min-h-[58px] items-center border-b border-[rgba(74,106,125,0.14)] px-4 py-2 md:min-h-0 md:border-b-0 lg:border-r lg:border-[rgba(74,106,125,0.12)] lg:px-[0.84rem] lg:py-[0.55rem]">
               <LocationPicker
                 value={searchLocation}
-                onChange={(loc) => {
-                  setSearchLocation(loc);
-                  if (loc) setGlobalLocation(loc);
-                }}
+                onChange={setSearchLocation}
                 placeholder={t("hero.search.locationPlaceholder")}
                 className="hero-location-field"
                 showCurrentLocationButton={false}

@@ -168,6 +168,11 @@ type PendingGoogleCalendarSelection = {
  isSwitch: boolean;
 };
 
+function fmtDate(s: string): string {
+  const [y, m, d] = s.split("-");
+  return `${m}/${d}/${y}`;
+}
+
 function buildServiceAddress(street: string, city: string, state: string, zip: string) {
  const a = street.trim();
  const c = city.trim();
@@ -2084,7 +2089,7 @@ export default function VendorDashboard() {
  className="flex items-center justify-between rounded-lg border border-[rgba(74,106,125,0.22)] px-4 py-2"
  >
  <span className="text-sm">
- {block.startDate} → {block.endDate}
+ {fmtDate(block.startDate)} → {fmtDate(block.endDate)}
  </span>
  <Button
  variant="ghost"

@@ -13,6 +13,21 @@ interface LocationPickerProps {
   showCurrentLocationButton?: boolean;
 }
 
+// Display-only: strips county-level segments and trailing country from Nominatim labels.
+// The underlying LocationResult.label is never modified — this only affects rendered text.
+function formatDisplayLabel(label: string): string {
+  const parts = label.split(", ");
+  const filtered = parts.filter((part, index) => {
+    if (/\b(county|parish|borough|township|district)\b/i.test(part)) return false;
+    if (
+      index === parts.length - 1 &&
+      /^(united states|canada|united kingdom|australia|mexico|france|germany|spain|italy|japan|china|brazil|india)$/i.test(part)
+    ) return false;
+    return true;
+  });
+  return filtered.length > 0 ? filtered.join(", ") : label;
+}
+
 export function LocationPicker({
   value,
   onChange,
@@ -28,6 +43,23 @@ export function LocationPicker({
   const [debouncedQuery, setDebouncedQuery] = useState("");
   const inputRef = useRef<HTMLInputElement>(null);
   const containerRef = useRef<HTMLDivElement>(null);
+  const biasRef = useRef<{ lat: number; lng: number } | null>(null);
+
+  // Silently read already-granted geolocation to bias search results.
+  // Uses navigator.permissions so we never trigger a permission prompt.
+  useEffect(() => {
+    if (!navigator?.permissions || !navigator?.geolocation) return;
+    navigator.permissions.query({ name: "geolocation" }).then((result) => {
+      if (result.state !== "granted") return;
+      navigator.geolocation.getCurrentPosition(
+        (pos) => {
+          biasRef.current = { lat: pos.coords.latitude, lng: pos.coords.longitude };
+        },
+        () => {},
+        { maximumAge: 600_000, timeout: 5_000 }
+      );
+    });
+  }, []);
 
   // Close dropdown when clicking outside
   useEffect(() => {
@@ -47,7 +79,7 @@ export function LocationPicker({
   // Keep input text in sync with selected value
   useEffect(() => {
     if (value) {
-      setQuery(value.label);
+      setQuery(formatDisplayLabel(value.label));
     } else {
       setQuery("");
     }
@@ -72,8 +104,10 @@ export function LocationPicker({
 
       try {
         setIsLoading(true);
+        const bias = biasRef.current;
+        const biasParams = bias ? `&bias_lat=${bias.lat}&bias_lng=${bias.lng}` : "";
         const res = await fetch(
-          `/api/locations/search?q=${encodeURIComponent(debouncedQuery)}`
+          `/api/locations/search?q=${encodeURIComponent(debouncedQuery)}${biasParams}`
         );
 
         if (!res.ok) throw new Error("Failed to fetch locations");
@@ -94,7 +128,7 @@ export function LocationPicker({
 
   const handleSelect = (location: LocationResult) => {
     onChange(location);
-    setQuery(location.label);
+    setQuery(formatDisplayLabel(location.label));
     setIsOpen(false);
   };
 
@@ -218,7 +252,7 @@ export function LocationPicker({
                 className="cursor-pointer rounded-[10px] px-4 py-2 text-sm font-sans transition-colors hover:bg-accent hover:text-accent-foreground"
                 onClick={() => handleSelect(item)}
               >
-                {item.label}
+                {formatDisplayLabel(item.label)}
               </li>
             ))}
           </ul>

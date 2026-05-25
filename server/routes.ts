@@ -78,7 +78,6 @@ import {
 import { calculateRefund } from "./lib/calculateRefund";
 import {
   CancellationPolicy,
-  PRESET_FLEXIBLE,
   policyFromListingWizard,
 } from "./lib/cancellationPolicyPresets";
 import { checkContent, blockReasonSummary } from "../shared/circumvention-detection";
@@ -2308,8 +2307,8 @@ function computeCanonicalBookingTimeRange(input: {
 
   const hasEventTimeRange = Boolean(eventStartTime && eventEndTime);
 
-  if ((eventStartTime && !eventEndTime) || (!eventStartTime && eventEndTime)) {
-    throw new Error("Per-day bookings require both event start and end times");
+  if (!eventStartTime || !eventEndTime) {
+    throw new Error("Per-day bookings require a start time and end time");
   }
 
   if (hasEventTimeRange) {
@@ -4324,39 +4323,53 @@ app.post(
       const q = String(req.query.q || "").trim();
       if (!q || q.length < 2) return res.json([]);
 
-      // Accept legacy/current env names so autocomplete works across environments.
-      const token =
-        (process.env.MAPBOX_ACCESS_TOKEN || "").trim() ||
-        (process.env.MAPBOX_PLACES_TOKEN || "").trim() ||
-        (process.env.MAPBOX_TOKEN || "").trim() ||
-        (process.env.VITE_MAPBOX_TOKEN || "").trim();
-      if (!token) {
-        logRouteError(
-          "/api/locations/search",
-          new Error(
-            "Mapbox token missing (expected MAPBOX_ACCESS_TOKEN, MAPBOX_PLACES_TOKEN, MAPBOX_TOKEN, or VITE_MAPBOX_TOKEN)"
-          )
-        );
-        return res.status(500).json({ error: "Location search is unavailable" });
-      }
+      const biasLat = parseFloat(String(req.query.bias_lat || ""));
+      const biasLng = parseFloat(String(req.query.bias_lng || ""));
+      const hasBias = Number.isFinite(biasLat) && Number.isFinite(biasLng);
 
+      // Nominatim (OpenStreetMap) — free, no API key required.
+      // Usage policy: max 1 req/s, valid User-Agent with contact info.
+      // viewbox biases results toward the user's region; bounded=0 keeps global fallback.
+      const viewboxParam = hasBias
+        ? `&viewbox=${biasLng - 2},${biasLat + 1.5},${biasLng + 2},${biasLat - 1.5}&bounded=0`
+        : "";
       const url =
-        `https://api.mapbox.com/geocoding/v5/mapbox.places/` +
-        `${encodeURIComponent(q)}.json` +
-        `?autocomplete=true&limit=5&access_token=${token}`;
+        `https://nominatim.openstreetmap.org/search` +
+        `?q=${encodeURIComponent(q)}&format=json&addressdetails=1&limit=5${viewboxParam}`;
 
-      const response = await fetch(url);
+      const response = await fetch(url, {
+        headers: {
+          "User-Agent": "EventHub/1.0 (eventhubglobal@gmail.com)",
+          "Accept-Language": "en",
+        },
+      });
+
       if (!response.ok) {
-        throw new Error(`Mapbox responded with status ${response.status}`);
+        throw new Error(`Nominatim responded with status ${response.status}`);
       }
-      const data = await response.json();
 
-      const results = (data.features || []).map((f: any) => ({
-        id: f.id,
-        label: f.place_name,
-        lat: f.center[1],
-        lng: f.center[0],
-      }));
+      const data: any[] = await response.json();
+
+      const results = data.map((f) => {
+        const addr = f.address ?? {};
+        const houseNumber = (addr.house_number ?? "").trim();
+        const road = (addr.road ?? addr.pedestrian ?? addr.path ?? "").trim();
+        const street = houseNumber && road ? `${houseNumber} ${road}` : road || houseNumber;
+        // Nominatim city may appear under several keys depending on place type.
+        const city =
+          addr.city ?? addr.town ?? addr.village ?? addr.municipality ?? addr.hamlet ?? "";
+        return {
+          id: `nominatim-${f.place_id}`,
+          label: f.display_name,
+          lat: parseFloat(f.lat),
+          lng: parseFloat(f.lon),
+          street: street || undefined,
+          city: city || undefined,
+          state: addr.state || undefined,
+          postalCode: addr.postcode || undefined,
+          country: addr.country_code?.toUpperCase() || undefined,
+        };
+      });
 
       return res.json(results);
     } catch (err: any) {
@@ -6969,7 +6982,7 @@ app.post(
       // (pre-policy bookings had no policy disclosed — full refund is the fair default)
       const policy: CancellationPolicy = booking.cancellationPolicySnapshot
         ? (booking.cancellationPolicySnapshot as unknown as CancellationPolicy)
-        : { ...PRESET_FLEXIBLE, tiers: [{ days_before_event: 0, refund_percentage: 100 }] };
+        : policyFromListingWizard("cancel_anytime", null);
 
       const result = calculateRefund({
         totalAmountCents: booking.totalAmount,
@@ -7072,7 +7085,7 @@ app.post(
       // ── Resolve policy ────────────────────────────────────────────────────
       const policy: CancellationPolicy = booking.cancellationPolicySnapshot
         ? (booking.cancellationPolicySnapshot as CancellationPolicy)
-        : { ...PRESET_FLEXIBLE, tiers: [{ days_before_event: 0, refund_percentage: 100 }] };
+        : policyFromListingWizard("cancel_anytime", null);
 
       const cancellationDate = new Date();
       const refundCalc = calculateRefund({
@@ -9083,6 +9096,9 @@ app.post(
       const rawSort = ((req.query.sort as string) ?? "recommended").trim();
       const limit = Math.min(Math.max(parseInt((req.query.limit as string) ?? "100", 10) || 100, 1), 500);
       const offset = Math.max(parseInt((req.query.offset as string) ?? "0", 10) || 0, 0);
+      const rawSearchLat = parseFloat((req.query.lat as string) ?? "");
+      const rawSearchLng = parseFloat((req.query.lng as string) ?? "");
+      const hasLocationFilter = !isNaN(rawSearchLat) && !isNaN(rawSearchLng);
 
       const subsFilter = rawSubs ? rawSubs.split(",").map((s) => s.trim()).filter(Boolean) : [];
       const detailsFilter = rawDetails ? rawDetails.split(",").map((s) => s.trim()).filter(Boolean) : [];
@@ -9156,6 +9172,26 @@ app.post(
         // Any other pricing unit always passes the price filter
         priceOrParts.push(not(inArray(vendorListings.pricingUnit, ["per_day", "per_hour"])) as any);
         conditions.push(or(...priceOrParts) as any);
+      }
+
+      // Location filter: the search point must fall within each listing's service radius.
+      // Nationwide/global listings always pass. Listings with no coordinates are kept (forgiving).
+      if (hasLocationFilter) {
+        conditions.push(drizzleSql`(
+          vendor_listings.service_area_mode IN ('nationwide', 'global')
+          OR vendor_listings.listing_service_center_lat IS NULL
+          OR vendor_listings.listing_service_center_lng IS NULL
+          OR vendor_listings.service_radius_miles IS NULL
+          OR (
+            3958.8 * acos(
+              GREATEST(-1.0::float8, LEAST(1.0::float8,
+                cos(radians(${rawSearchLat}::float8)) * cos(radians(vendor_listings.listing_service_center_lat)) *
+                cos(radians(vendor_listings.listing_service_center_lng) - radians(${rawSearchLng}::float8)) +
+                sin(radians(${rawSearchLat}::float8)) * sin(radians(vendor_listings.listing_service_center_lat))
+              ))
+            ) <= vendor_listings.service_radius_miles
+          )
+        )` as any);
       }
 
       const whereClause = and(...(conditions as any[]));
@@ -9377,6 +9413,7 @@ app.post(
           listingData: vendorListings.listingData,
 
           city: vendorProfiles.city,
+          businessState: vendorProfiles.businessState,
           vendorId: vendorAccounts.id,
           vendorName: vendorAccounts.businessName,
           vendorOnlineProfiles: vendorProfiles.onlineProfiles,
@@ -10492,11 +10529,14 @@ app.post(
           coalesce(b.event_date::text, e.date) as "eventDate",
           coalesce(b.event_start_time, e.start_time) as "eventStartTime",
           b.event_end_time as "eventEndTime",
+          b.event_timezone as "eventTimezone",
+          b.vendor_timezone_snapshot as "vendorTimezoneSnapshot",
           b.payout_status as "payoutStatus",
           b.payout_eligible_at as "payoutEligibleAt",
           b.payout_blocked_reason as "payoutBlockedReason",
           b.paid_out_at as "paidOutAt",
-          b.outside_service_radius as "outsideServiceRadius"
+          b.outside_service_radius as "outsideServiceRadius",
+          b.instant_book_snapshot as "instantBookSnapshot"
         from bookings b
         left join events e on e.id = b.event_id
         left join vendor_listings listing_owner on listing_owner.id = b.listing_id
@@ -12251,6 +12291,7 @@ app.post(
           b.base_subtotal_cents as "baseSubtotalCents",
           b.subtotal_amount_cents as "subtotalAmountCents",
           b.customer_fee_amount_cents as "customerFeeAmountCents",
+          b.security_deposit_cents as "securityDepositCents",
           b.event_date as "eventDate",
           b.event_start_time as "eventStartTime",
           b.event_end_time as "eventEndTime",
@@ -14033,11 +14074,17 @@ app.post(
         data.eventLocationLat != null && data.eventLocationLng != null
           ? timezoneFromCoords(data.eventLocationLat, data.eventLocationLng)
           : null;
+      // Use listing service center timezone as the location fallback — this is where
+      // the service is actually offered from, which may differ from the vendor's home base.
+      const resolvedListingTimeZone =
+        listingRow?.listingServiceCenterLat != null && listingRow?.listingServiceCenterLng != null
+          ? timezoneFromCoords(listingRow.listingServiceCenterLat, listingRow.listingServiceCenterLng)
+          : null;
       const canonicalBookingTimeRange = computeCanonicalBookingTimeRange({
         listingData: listingRow?.listingData ?? {},
         listingPricingUnit: listingRow?.pricingUnit,
         listingMinimumHours: listingRow?.minimumHours,
-        vendorTimeZone: resolvedVendorTimeZone,
+        vendorTimeZone: resolvedListingTimeZone ?? resolvedVendorTimeZone,
         eventTimeZone: resolvedEventTimeZone,
         eventDate: data.eventDate,
         eventStartTime: data.eventStartTime ?? null,
@@ -14751,6 +14798,7 @@ app.post(
             customerId: bookings.customerId,
             status: bookings.status,
             eventDate: bookings.eventDate,
+            outsideServiceRadius: bookings.outsideServiceRadius,
           })
           .from(bookings)
           .where(eq(bookings.id, bookingId))
@@ -14758,7 +14806,12 @@ app.post(
 
         if (!booking) return res.status(404).json({ error: "Booking not found" });
         if (booking.vendorAccountId !== vendorId) return res.status(403).json({ error: "Access denied" });
-        if (booking.status !== "pending") {
+        // Allow proposals when pending, or when confirmed but location is outside the service
+        // radius (vendor must still confirm the out-of-area booking).
+        const canPropose =
+          booking.status === "pending" ||
+          (booking.status === "confirmed" && booking.outsideServiceRadius === true);
+        if (!canPropose) {
           return res.status(409).json({ error: "Travel fee proposals can only be sent before accepting a booking" });
         }
 
@@ -15581,6 +15634,7 @@ app.post(
                 subtotalAmountCents: bookings.subtotalAmountCents,
                 vendorPayout: bookings.vendorPayout,
                 instantBookSnapshot: bookings.instantBookSnapshot,
+                outsideServiceRadius: bookings.outsideServiceRadius,
               })
               .from(bookings)
               .where(eq(bookings.id, payment.bookingId))
@@ -15690,13 +15744,15 @@ app.post(
               } else {
                 // Request-to-book listings (instantBookSnapshot = false) must stay
                 // "pending" after payment — the vendor needs to explicitly accept.
-                // Only instant-book listings (or legacy rows without the snapshot)
-                // are auto-confirmed when payment succeeds.
+                // Instant-book listings outside the service radius also stay
+                // "pending" because the vendor must confirm the out-of-area booking.
+                // Only instant-book listings within the service radius are auto-confirmed.
                 const isInstantBook = bookingRow.instantBookSnapshot !== false;
+                const requiresVendorConfirmation = !isInstantBook || bookingRow.outsideServiceRadius === true;
                 await tx
                   .update(bookings)
                   .set({
-                    ...(isInstantBook
+                    ...(!requiresVendorConfirmation
                       ? { status: "confirmed" as const, confirmedAt: now }
                       : {}),
                     paymentStatus: nextBookingPaymentStatus as any,
@@ -15775,7 +15831,7 @@ app.post(
                     b.listing_title_snapshot as "listingTitle",
                     b.subtotal_amount_cents   as "subtotalCents",
                     b.customer_fee_amount_cents as "feeCents",
-                    b.total_amount   as "totalCents",
+                    (b.total_amount - coalesce(b.security_deposit_cents, 0)) as "totalCents",
                     p.stripe_payment_intent_id as "paymentIntentId"
                   from payments p
                   join bookings b on b.id = p.booking_id

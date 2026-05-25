@@ -214,7 +214,7 @@ function BookingRow({ booking, isHighlighted }: { booking: CustomerBooking; isHi
  <div
    data-booking-id={booking.id}
    className={`py-3 rounded-lg transition-all duration-700 ${
-     isHighlighted ? "ring-2 ring-[#e07a6a] ring-offset-2 px-2 bg-[rgba(224,122,106,0.05)]" : "px-2"
+     isHighlighted ? "ring-2 ring-[#4a9a6a] ring-offset-2 px-2 bg-[rgba(74,154,106,0.07)]" : "px-2"
    }`}
  >
    <button

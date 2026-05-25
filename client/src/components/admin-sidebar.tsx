@@ -13,6 +13,7 @@ import { Avatar, AvatarFallback } from "@/components/ui/avatar";
 import { useAuth0 } from "@auth0/auth0-react";
 import { cn } from "@/lib/utils";
 import { useResettableBadgeCount } from "@/hooks/useResettableBadgeCount";
+import { SidebarCountBadge } from "@/components/sidebar-count-badge";
 
 const menuItems = [
   { title: "Overview",    url: "/admin",            icon: LayoutDashboard },
@@ -103,15 +104,13 @@ export function AdminSidebar({ className }: { className?: string }) {
                     >
                       <Link
                         href={item.url}
-                        className="relative flex h-14 w-14 items-center justify-center overflow-visible"
+                        className="relative isolate flex h-14 w-14 items-center justify-center overflow-visible"
                       >
-                        <item.icon className="!h-6 !w-6" />
+                        <span className="pointer-events-none relative z-10 flex h-6 w-6 items-center justify-center overflow-visible">
+                          <item.icon className="!h-6 !w-6" />
+                          {badge ? <SidebarCountBadge count={badge} /> : null}
+                        </span>
                         <span className="sr-only">{item.title}</span>
-                        {badge ? (
-                          <span className="pointer-events-none absolute left-1/2 top-0 z-[70] min-w-[18px] -translate-x-1/2 -translate-y-1/3 rounded-full bg-[#e07a6a] px-1 text-center text-[11px] font-semibold leading-4 text-white">
-                            {badge > 99 ? "99+" : badge}
-                          </span>
-                        ) : null}
                       </Link>
                     </SidebarMenuButton>
                   </SidebarMenuItem>
