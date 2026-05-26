@@ -313,8 +313,10 @@ export default function VendorOnboarding() {
  });
  const [isFinalizingOnboarding, setIsFinalizingOnboarding] = useState(false);
  const [pendingFinalAction, setPendingFinalAction] = useState<"createListing" | "myHub" | "dashboard" | null>(null);
+ const [businessNameError, setBusinessNameError] = useState<string | null>(null);
 
  const updateFormData = (updates: Partial<VendorOnboardingData>) => {
+ if ("businessName" in updates) setBusinessNameError(null);
  setFormData((prev) => ({ ...prev, ...updates }));
  };
 
@@ -415,6 +417,9 @@ export default function VendorOnboarding() {
  if (res.status === 401 || res.status === 403 || isAuthRequiredError(errorMessage)) {
  throw new Error(AUTH_LOGIN_REQUIRED_ERROR);
  }
+ if (res.status === 409 && err?.code === "business_name_taken") {
+ throw Object.assign(new Error(errorMessage || "This business name is already taken."), { code: "business_name_taken" });
+ }
  throw new Error(errorMessage || "Failed to complete onboarding");
  }
 
@@ -514,11 +519,16 @@ export default function VendorOnboarding() {
  }
  }
 
+ if ((e as any)?.code === "business_name_taken") {
+ setBusinessNameError("This business name is already taken. Please choose a different name.");
+ setCurrentStep(1);
+ } else {
  toast({
  title: "Onboarding failed",
  description: e?.message || "Please try again.",
  variant: "destructive",
  });
+ }
  } finally {
  setIsFinalizingOnboarding(false);
  setPendingFinalAction(null);
@@ -541,6 +551,7 @@ export default function VendorOnboarding() {
  updateFormData={updateFormData}
  onNext={handleNext}
  onBack={handleBack}
+ businessNameError={businessNameError}
  />
  );
  case 2:
@@ -580,6 +591,7 @@ export default function VendorOnboarding() {
  updateFormData={updateFormData}
  onNext={handleNext}
  onBack={handleBack}
+ businessNameError={businessNameError}
  />
  );
  case 3:

@@ -209,6 +209,16 @@ export function normalizeTagEntry(rawTag: unknown): { label: string; slug: strin
   return { label, slug };
 }
 
+export function deriveVendorSlug(businessName: string): string {
+  return businessName
+    .toLowerCase()
+    .replace(/[^a-z0-9\s-]/g, "")
+    .replace(/\s+/g, "-")
+    .replace(/-+/g, "-")
+    .trim()
+    .slice(0, 80);
+}
+
 export function normalizeTagsByPropType(rawTagsByPropType: unknown): unknown {
   if (!rawTagsByPropType || typeof rawTagsByPropType !== "object" || Array.isArray(rawTagsByPropType)) {
     return rawTagsByPropType;

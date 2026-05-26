@@ -28,6 +28,7 @@ import ListingCard from "@/components/ListingCard";
 interface CustomerEventsProps {
  customer: { id: string; name: string; email: string };
  newBookingId?: string;
+ pendingReason?: string;
 }
 
 type BookingStatus =
@@ -593,7 +594,7 @@ function CompletedEventGroup({
 
 type Tab = "planned" | "completed";
 
-export default function CustomerEvents({ customer, newBookingId }: CustomerEventsProps) {
+export default function CustomerEvents({ customer, newBookingId, pendingReason }: CustomerEventsProps) {
  const { t } = useTranslation();
  const [tab, setTab] = useState<Tab>("planned");
  const [highlightedId, setHighlightedId] = useState<string | undefined>(newBookingId);
@@ -686,8 +687,27 @@ export default function CustomerEvents({ customer, newBookingId }: CustomerEvent
 
  const isLoading = loadingBookings || loadingBoards;
 
+ const [pendingBannerVisible, setPendingBannerVisible] = useState(
+   pendingReason === "vendor_has_other_booking"
+ );
+
  return (
  <div className="space-y-6">
+ {pendingBannerVisible && (
+   <div className="flex items-start justify-between gap-3 rounded-xl border border-amber-200 bg-amber-50 px-4 py-3 text-sm text-amber-800">
+     <span>
+       Your booking request has been sent. This vendor already has a booking on the same date or time — they'll confirm once they've reviewed.
+     </span>
+     <button
+       type="button"
+       onClick={() => setPendingBannerVisible(false)}
+       className="shrink-0 text-amber-600 hover:text-amber-800 font-medium"
+       aria-label="Dismiss"
+     >
+       ✕
+     </button>
+   </div>
+ )}
  {/* Header + tab toggle */}
  <div className="flex flex-wrap items-end justify-between gap-3">
  <div>

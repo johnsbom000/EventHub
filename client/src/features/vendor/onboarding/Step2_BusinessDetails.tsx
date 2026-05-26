@@ -10,6 +10,7 @@ import { TimezoneSelect } from "@/components/TimezoneSelect";
 import type { LocationResult } from "@/types/location";
 
 interface Step2BusinessDetailsProps {
+  businessNameError?: string | null;
   formData: {
     businessName: string;
 
@@ -131,6 +132,7 @@ export default function Step2_BusinessDetails({
   updateFormData,
   onNext,
   onBack,
+  businessNameError,
 }: Step2BusinessDetailsProps) {
   const currentYear = new Date().getFullYear();
   const hasAddressFields =
@@ -196,7 +198,11 @@ export default function Step2_BusinessDetails({
                   updateFormData({ businessName: normalizeBusinessNameInput(e.target.value) })
                 }
                 required
+                className={businessNameError ? "border-red-500 focus-visible:ring-red-500" : ""}
               />
+              {businessNameError && (
+                <p className="text-sm text-red-600">{businessNameError}</p>
+              )}
             </div>
 
             <div className="space-y-2">

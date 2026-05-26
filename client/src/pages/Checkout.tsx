@@ -300,11 +300,23 @@ function CheckoutContent({
     return "";
   }, [searchParams]);
   const selectedPackageId = useMemo(() => searchParams.get("packageId") || undefined, [searchParams]);
-  const selectedAddonIds = useMemo(() => {
-    const raw = searchParams.get("addonIds");
-    if (!raw) return [];
-    return raw.split(",").filter(Boolean);
+  // Parse add-ons with quantities. Preferred format: addons=id1:qty1,id2:qty2
+  // Fallback: legacy addonIds=id1,id2 (each defaults to qty=1)
+  const selectedAddons = useMemo<{ id: string; quantity: number }[]>(() => {
+    const addonsRaw = searchParams.get("addons");
+    if (addonsRaw) {
+      return addonsRaw.split(",").filter(Boolean).map((part) => {
+        const [id, qtyStr] = part.split(":");
+        const qty = Math.max(1, parseInt(qtyStr ?? "1", 10) || 1);
+        return { id, quantity: qty };
+      });
+    }
+    const legacyRaw = searchParams.get("addonIds");
+    if (!legacyRaw) return [];
+    return legacyRaw.split(",").filter(Boolean).map((id) => ({ id, quantity: 1 }));
   }, [searchParams]);
+  // Derived list of just IDs for backward-compat rendering logic
+  const selectedAddonIds = useMemo(() => selectedAddons.map((a) => a.id), [selectedAddons]);
 
   const [eventDate, setEventDate] = useState(initialDate);
   const [quantity, setQuantity] = useState(initialQuantity);
@@ -336,6 +348,7 @@ function CheckoutContent({
   const [appliedPromo, setAppliedPromo] = useState<{ code: string; percentOff: number; discountId: string } | null>(null);
   const [promoError, setPromoError] = useState<string | null>(null);
   const [promoLoading, setPromoLoading] = useState(false);
+  const [bookingPendingReason, setBookingPendingReason] = useState<string | null>(null);
 
   const stripe = useStripe();
   const elements = useElements();
@@ -917,9 +930,10 @@ function CheckoutContent({
   const baseSubtotal = isHourlyBooking && hourlyDurationHours != null
     ? Math.round(effectivePriceCents * hourlyDurationHours)
     : effectivePriceCents * normalizedQuantity;
-  const addonSubtotalCents = selectedAddonIds
-    .map((id) => data?.attachedAddons?.find((a: { id: string; priceCents: number | null }) => String(a.id) === id)?.priceCents ?? 0)
-    .reduce((s: number, c: number) => s + c, 0);
+  const addonSubtotalCents = selectedAddons.reduce((sum, { id, quantity }) => {
+    const unitPrice = data?.attachedAddons?.find((a: { id: string; priceCents: number | null }) => String(a.id) === id)?.priceCents ?? 0;
+    return sum + unitPrice * quantity;
+  }, 0);
   const deliveryFeeCents =
     data?.deliveryIncluded && data?.deliveryFeeEnabled
       ? Math.max(0, Math.round(data?.deliveryFeeAmountCents || 0))
@@ -1110,7 +1124,7 @@ function CheckoutContent({
             finalPaymentStrategy: "immediately",
             promoCode: appliedPromo ? appliedPromo.code : undefined,
             packageId: selectedPackageId || undefined,
-            addOnIds: selectedAddonIds.length > 0 ? selectedAddonIds : undefined,
+            addOns: selectedAddons.length > 0 ? selectedAddons : undefined,
           }),
         });
 
@@ -1123,6 +1137,9 @@ function CheckoutContent({
         bookingId = typeof bookingJson?.id === "string" ? bookingJson.id : "";
         if (!bookingId) {
           throw new Error("Booking was created, but booking ID is missing. Please try again.");
+        }
+        if (typeof bookingJson?.pendingReason === "string") {
+          setBookingPendingReason(bookingJson.pendingReason);
         }
       }
 
@@ -1188,7 +1205,8 @@ function CheckoutContent({
       const paymentIntentStatus = confirmResult.paymentIntent?.status || "";
       if (paymentIntentStatus === "succeeded" || paymentIntentStatus === "processing") {
         persistPendingPaymentDraft(null);
-        setLocation(`/dashboard/events?bookingId=${encodeURIComponent(bookingId)}`);
+        const pendingReasonParam = bookingPendingReason ? `&pendingReason=${encodeURIComponent(bookingPendingReason)}` : "";
+        setLocation(`/dashboard/events?bookingId=${encodeURIComponent(bookingId)}${pendingReasonParam}`);
         return;
       }
 
@@ -1783,13 +1801,15 @@ function CheckoutContent({
                 <span className="font-medium">{formatUsdFromCents(baseSubtotal)}</span>
               </div>
 
-              {selectedAddonIds.map((id) => {
+              {selectedAddons.map(({ id, quantity: addonQty }) => {
                 const addon = data?.attachedAddons?.find((a: { id: string; title: string | null; priceCents: number | null }) => String(a.id) === id);
                 if (!addon?.priceCents) return null;
                 return (
                   <div key={id} className="flex items-center justify-between">
-                    <span className="text-sm text-muted-foreground">{addon.title ?? "Add-on"}</span>
-                    <span className="font-medium">{formatUsdFromCents(addon.priceCents)}</span>
+                    <span className="text-sm text-muted-foreground">
+                      {addon.title ?? "Add-on"}{addonQty > 1 ? ` ×${addonQty}` : ""}
+                    </span>
+                    <span className="font-medium">{formatUsdFromCents(addon.priceCents * addonQty)}</span>
                   </div>
                 );
               })}

@@ -5,7 +5,7 @@ import { apiRequest } from "@/lib/queryClient";
 import HeartBoardPopover from "@/components/HeartBoardPopover";
 import ListingCard from "@/components/ListingCard";
 import MasonryListingGrid from "@/components/MasonryListingGrid";
-import { ChevronLeft, Heart, MapPin, Shield, Star, CheckCircle, XCircle, Truck, Wrench } from "lucide-react";
+import { ChevronLeft, Heart, MapPin, Shield, Star, CheckCircle, XCircle, Truck, Wrench, Plus, Minus } from "lucide-react";
 import { useAuth0 } from "@auth0/auth0-react";
 import { format } from "date-fns";
 import {
@@ -191,9 +191,16 @@ export default function ListingDetailPage() {
  const [heartOpen, setHeartOpen] = useState(false);
  const [reportSent, setReportSent] = useState(false);
  const [selectedPackageId, setSelectedPackageId] = useState<string | null>(null);
- const [selectedAddonIds, setSelectedAddonIds] = useState<string[]>([]);
- const toggleAddon = (id: string) =>
-   setSelectedAddonIds((prev) => prev.includes(id) ? prev.filter((x) => x !== id) : [...prev, id]);
+ const [selectedAddons, setSelectedAddons] = useState<{ id: string; quantity: number }[]>([]);
+ const setAddonQty = (id: string, qty: number) =>
+   setSelectedAddons((prev) =>
+     qty <= 0
+       ? prev.filter((a) => a.id !== id)
+       : prev.some((a) => a.id === id)
+         ? prev.map((a) => (a.id === id ? { ...a, quantity: qty } : a))
+         : [...prev, { id, quantity: qty }]
+   );
+
  const { isAuthenticated } = useAuth0();
 
  const reportMutation = useMutation({
@@ -1093,20 +1100,21 @@ export default function ListingDetailPage() {
  if (startTime) params.set("startTime", startTime);
  if (endTime) params.set("endTime", endTime);
  if (selectedPackageId) params.set("packageId", selectedPackageId);
- if (selectedAddonIds.length > 0) params.set("addonIds", selectedAddonIds.join(","));
+ if (selectedAddons.length > 0) params.set("addons", selectedAddons.map((a) => `${a.id}:${a.quantity}`).join(","));
  setLocation(`/checkout/${listingId}?${params.toString()}`);
  }}
  />
  )}
 
  {/* Reactive price summary — shown when a package or add-on is selected */}
- {(selectedPackageId || selectedAddonIds.length > 0) && (() => {
+ {(selectedPackageId || selectedAddons.length > 0) && (() => {
  const selectedPkg = data.packages.find((p: { id: string; priceCents: number | null }) => p.id === selectedPackageId);
  const pkgPrice = selectedPkg?.priceCents != null ? selectedPkg.priceCents / 100 : (data.price ?? null);
  const baseAmountDollars = pkgPrice ?? data.price ?? 0;
- const addonTotalCents = selectedAddonIds
-   .map((id) => data.attachedAddons.find((a: { id: string; priceCents: number | null }) => String(a.id) === id)?.priceCents ?? 0)
-   .reduce((s: number, c: number) => s + c, 0);
+ const addonTotalCents = selectedAddons.reduce((sum, { id, quantity }) => {
+   const unitPrice = data.attachedAddons.find((a: { id: string; priceCents: number | null }) => String(a.id) === id)?.priceCents ?? 0;
+   return sum + unitPrice * quantity;
+ }, 0);
  const subtotalDollars = baseAmountDollars + addonTotalCents / 100;
  const serviceFeeEst = Math.round(subtotalDollars * 100 * 0.05) / 100;
  const depositDollars = data.securityDepositEnabled && (data.securityDepositCents ?? 0) > 0
@@ -1129,13 +1137,13 @@ export default function ListingDetailPage() {
  <span className="font-medium">{money(data.price)}</span>
  </div>
  )}
- {selectedAddonIds.map((id) => {
+ {selectedAddons.map(({ id, quantity }) => {
    const addon = data.attachedAddons.find((a: { id: string; title: string | null; priceCents: number | null }) => String(a.id) === id);
    if (!addon?.priceCents) return null;
    return (
      <div key={id} className="flex justify-between gap-2">
-       <span className="text-muted-foreground">{addon.title ?? "Add-on"}</span>
-       <span className="font-medium">{money(addon.priceCents / 100)}</span>
+       <span className="text-muted-foreground">{addon.title ?? "Add-on"}{quantity > 1 ? ` ×${quantity}` : ""}</span>
+       <span className="font-medium">{money(addon.priceCents * quantity / 100)}</span>
      </div>
    );
  })}
@@ -1173,17 +1181,43 @@ export default function ListingDetailPage() {
        cardMaxWidthPx={290}
        renderCard={(listing) => {
          const addonId = String((listing as any).id ?? "");
-         const isSelected = selectedAddonIds.includes(addonId);
+         const addonMaxQty: number = (listing as any).quantity ?? 99;
+         const currentQty = selectedAddons.find((a) => a.id === addonId)?.quantity ?? 0;
+         const isSelected = currentQty > 0;
          return (
-           <ListingCard
-             listing={listing}
-             titleSizeClassName="text-[1.518rem] md:text-[2rem]"
-             priceSizeClassName="text-[1.5rem] leading-none md:text-[2.25rem] md:leading-none"
-             titleFont="heading"
-             primaryActionLabel={isSelected ? "✓ Added" : "+ Add"}
-             onPrimaryAction={() => toggleAddon(addonId)}
-             primaryActionActive={isSelected}
-           />
+           <div>
+             <ListingCard
+               listing={listing}
+               titleSizeClassName="text-[1.518rem] md:text-[2rem]"
+               priceSizeClassName="text-[1.5rem] leading-none md:text-[2.25rem] md:leading-none"
+               titleFont="heading"
+               primaryActionLabel={isSelected ? "Remove" : "+ Add"}
+               onPrimaryAction={() => setAddonQty(addonId, isSelected ? 0 : 1)}
+               primaryActionActive={isSelected}
+             />
+             {isSelected && (
+               <div className="mt-2 flex items-center justify-center gap-3">
+                 <button
+                   type="button"
+                   onClick={() => setAddonQty(addonId, currentQty - 1)}
+                   className="flex h-7 w-7 items-center justify-center rounded-full border border-border bg-background text-foreground hover:bg-muted"
+                   aria-label="Decrease quantity"
+                 >
+                   <Minus className="h-3 w-3" />
+                 </button>
+                 <span className="min-w-[1.5rem] text-center text-sm font-medium">{currentQty}</span>
+                 <button
+                   type="button"
+                   onClick={() => setAddonQty(addonId, Math.min(currentQty + 1, addonMaxQty))}
+                   disabled={currentQty >= addonMaxQty}
+                   className="flex h-7 w-7 items-center justify-center rounded-full border border-border bg-background text-foreground hover:bg-muted disabled:opacity-40"
+                   aria-label="Increase quantity"
+                 >
+                   <Plus className="h-3 w-3" />
+                 </button>
+               </div>
+             )}
+           </div>
          );
        }}
      />
