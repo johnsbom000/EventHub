@@ -104,6 +104,10 @@ export default function CustomerDashboard() {
     const params = new URLSearchParams(searchString);
     return params.get("bookingId") ?? undefined;
   }, [searchString]);
+  const newBookingPendingReason = useMemo(() => {
+    const params = new URLSearchParams(searchString);
+    return params.get("pendingReason") ?? undefined;
+  }, [searchString]);
   const { isAuthenticated, isLoading: isAuthLoading, getAccessTokenSilently, loginWithRedirect, logout } = useAuth0();
   const [lastKnownVendorAccount] = useState<boolean>(() => {
     if (typeof window === "undefined") return false;
@@ -406,7 +410,7 @@ export default function CustomerDashboard() {
           <main className="flex-1 overflow-auto p-4 pb-20 lg:p-6 lg:pb-6">
             <div className="max-w-7xl mx-auto">
               {activeSection === "profile" && <CustomerProfile customer={customer} />}
-              {activeSection === "events" && <CustomerEvents customer={customer} newBookingId={newBookingId} />}
+              {activeSection === "events" && <CustomerEvents customer={customer} newBookingId={newBookingId} pendingReason={newBookingPendingReason} />}
               {activeSection === "messages" && <CustomerMessages customer={customer} initialBookingId={newBookingId} />}
               {activeSection === "notifications" && <CustomerNotifications />}
               {activeSection === "plan" && <CustomerPlanEvent />}

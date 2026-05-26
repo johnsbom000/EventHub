@@ -257,6 +257,7 @@ export const vendorAccounts = pgTable(
     googleConnectionStatus: text("google_connection_status").notNull().default("disconnected"),
     googleAccountEmail: varchar("google_account_email"),
     shopActive: boolean("shop_active").notNull().default(true),
+    shopSlug: text("shop_slug").notNull().default(""),
     ownerFirstName: text("owner_first_name"),
     ownerLastName: text("owner_last_name"),
     ownerPhone: text("owner_phone"),

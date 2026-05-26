@@ -747,7 +747,8 @@ export default function MyHub() {
   }, [persistedCoverImageUrl, persistedCoverPhotoPosition.x, persistedCoverPhotoPosition.y]);
 
   const vendorId = asTrimmedString(vendorMe?.id) || asTrimmedString((vendorProfile as any)?.accountId);
-  const publicShopPath = vendorId ? `/shop/${vendorId}` : "";
+  const shopSlug = asTrimmedString((vendorMe as any)?.shopSlug);
+  const publicShopPath = shopSlug ? `/shop/${shopSlug}` : vendorId ? `/shop/${vendorId}` : "";
   const publicShopUrl =
     typeof window !== "undefined" && publicShopPath ? `${window.location.origin}${publicShopPath}` : publicShopPath;
 

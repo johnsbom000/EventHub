@@ -191,6 +191,7 @@ import {
   hasPaymentAccessForChat,
   normalizeBookingChatContext,
   toConversationPayload,
+  deriveVendorSlug,
 } from "./lib/routeUtils";
 import {
   VENDOR_FEE_RATE,
@@ -3535,6 +3536,21 @@ function toPgTextArray(arr: string[]): string {
   return `{${arr.map(s => '"' + s.replace(/\\/g, '\\\\').replace(/"/g, '\\"') + '"').join(',')}}`;
 }
 
+async function allocateUniqueVendorSlug(name: string, excludeId?: string): Promise<string> {
+  const base = deriveVendorSlug(name);
+  let candidate = base || "vendor";
+  let suffix = 2;
+  while (true) {
+    const [existing] = await db
+      .select({ id: vendorAccounts.id })
+      .from(vendorAccounts)
+      .where(and(eq(vendorAccounts.shopSlug, candidate), isNull(vendorAccounts.deletedAt)))
+      .limit(1);
+    if (!existing || existing.id === excludeId) return candidate;
+    candidate = `${base}-${suffix++}`;
+  }
+}
+
 export async function registerRoutes(app: Express): Promise<Server> {
   // --- Listing photo uploads (local disk) ---
   const listingUploadsDir = path.join(process.cwd(), "server/uploads/listings");
@@ -4429,9 +4445,23 @@ app.post(
         return res.status(400).json({ error: "No updates provided" });
       }
 
+      const newBusinessName = updates.businessName.trim();
+
+      // Enforce unique business name (exclude this vendor's own row).
+      const [nameTaken] = await db
+        .select({ id: vendorAccounts.id })
+        .from(vendorAccounts)
+        .where(and(drizzleSql`lower(${vendorAccounts.businessName}) = lower(${newBusinessName})`, isNull(vendorAccounts.deletedAt), ne(vendorAccounts.id, vendorAuth.id)))
+        .limit(1);
+      if (nameTaken) {
+        return res.status(409).json({ error: "A vendor with this business name already exists.", code: "business_name_taken" });
+      }
+
+      const newSlug = await allocateUniqueVendorSlug(newBusinessName, vendorAuth.id);
+
       await db
         .update(vendorAccounts)
-        .set({ businessName: updates.businessName.trim() })
+        .set({ businessName: newBusinessName, shopSlug: newSlug })
         .where(eq(vendorAccounts.id, vendorAuth.id));
 
       const accounts = await db
@@ -4535,6 +4565,7 @@ app.post(
         hasActiveVendorProfile,
         needsNewVendorProfileOnboarding,
         shopActive: account.shopActive ?? true,
+        shopSlug: account.shopSlug || null,
         __marker: "vendor_me_route_hit",
       });
     } catch (error: any) {
@@ -6188,6 +6219,17 @@ app.post(
           account = healed;
           logger.info(`[onboarding] healed auth0Sub conflict for account ${existingByEmail.id} (email match)`);
         } else {
+          // Enforce unique business name across active vendors.
+          const [nameTaken] = await db
+            .select({ id: vendorAccounts.id })
+            .from(vendorAccounts)
+            .where(and(drizzleSql`lower(${vendorAccounts.businessName}) = lower(${normalizedProfileName})`, isNull(vendorAccounts.deletedAt)))
+            .limit(1);
+          if (nameTaken) {
+            return res.status(409).json({ error: "A vendor with this business name already exists.", code: "business_name_taken" });
+          }
+
+          const shopSlug = await allocateUniqueVendorSlug(normalizedProfileName);
           const [created] = await db
             .insert(vendorAccounts)
             .values({
@@ -6195,6 +6237,7 @@ app.post(
               auth0Sub,
               userId: vendorResolution.resolvedUserId || undefined,
               businessName: normalizedProfileName,
+              shopSlug,
               profileComplete: false,
             })
             .returning();
@@ -6202,10 +6245,24 @@ app.post(
         }
       } else {
         const currentBusinessName = asTrimmedString(account.businessName);
+        const nameIsChanging = !currentBusinessName;
+        if (nameIsChanging) {
+          // Enforce unique business name when setting for the first time.
+          const [nameTaken] = await db
+            .select({ id: vendorAccounts.id })
+            .from(vendorAccounts)
+            .where(and(drizzleSql`lower(${vendorAccounts.businessName}) = lower(${normalizedProfileName})`, isNull(vendorAccounts.deletedAt), ne(vendorAccounts.id, account.id)))
+            .limit(1);
+          if (nameTaken) {
+            return res.status(409).json({ error: "A vendor with this business name already exists.", code: "business_name_taken" });
+          }
+        }
+        const newSlug = nameIsChanging ? await allocateUniqueVendorSlug(normalizedProfileName, account.id) : undefined;
         const [updated] = await db
           .update(vendorAccounts)
           .set({
             businessName: currentBusinessName || normalizedProfileName,
+            ...(newSlug ? { shopSlug: newSlug } : {}),
           })
           .where(eq(vendorAccounts.id, account.id))
           .returning();
@@ -8602,12 +8659,13 @@ app.post(
           id: vendorAccounts.id,
           businessName: vendorAccounts.businessName,
           activeProfileId: vendorAccounts.activeProfileId,
+          shopSlug: vendorAccounts.shopSlug,
         })
         .from(vendorAccounts)
-        .where(and(eq(vendorAccounts.id, resolvedVendorAccountId), eq(vendorAccounts.active, true)))
+        .where(and(eq(vendorAccounts.id, resolvedVendorAccountId), eq(vendorAccounts.active, true), isNull(vendorAccounts.deletedAt)))
         .limit(1);
 
-      let account = accountRows[0];
+      let account = accountRows[0] as typeof accountRows[0] & { shopSlug: string } | undefined;
       if (!account) {
         const profileOwnerRows = await db
           .select({
@@ -8615,10 +8673,11 @@ app.post(
             profileId: vendorProfiles.id,
             accountBusinessName: vendorAccounts.businessName,
             accountActiveProfileId: vendorAccounts.activeProfileId,
+            accountShopSlug: vendorAccounts.shopSlug,
           })
           .from(vendorProfiles)
           .innerJoin(vendorAccounts, eq(vendorProfiles.accountId, vendorAccounts.id))
-          .where(and(eq(vendorProfiles.id, vendorIdParam), eq(vendorProfiles.active, true), eq(vendorAccounts.active, true)))
+          .where(and(eq(vendorProfiles.id, vendorIdParam), eq(vendorProfiles.active, true), eq(vendorAccounts.active, true), isNull(vendorAccounts.deletedAt)))
           .limit(1);
         const profileOwner = profileOwnerRows[0];
         if (profileOwner?.accountId) {
@@ -8628,7 +8687,25 @@ app.post(
             id: profileOwner.accountId,
             businessName: profileOwner.accountBusinessName,
             activeProfileId: profileOwner.accountActiveProfileId,
+            shopSlug: profileOwner.accountShopSlug,
           };
+        }
+      }
+      // Third path: resolve by shop_slug (slug-based URLs like /shop/my-flower-shop)
+      if (!account) {
+        const slugRows = await db
+          .select({
+            id: vendorAccounts.id,
+            businessName: vendorAccounts.businessName,
+            activeProfileId: vendorAccounts.activeProfileId,
+            shopSlug: vendorAccounts.shopSlug,
+          })
+          .from(vendorAccounts)
+          .where(and(eq(vendorAccounts.shopSlug, vendorIdParam), eq(vendorAccounts.active, true), isNull(vendorAccounts.deletedAt)))
+          .limit(1);
+        if (slugRows[0]) {
+          resolvedVendorAccountId = slugRows[0].id;
+          account = slugRows[0];
         }
       }
       if (!account) {
@@ -8890,6 +8967,7 @@ app.post(
           id: vendor.id,
           profileId: selectedProfile.id,
           businessName: vendor.businessName,
+          shopSlug: account.shopSlug || null,
           aboutBusiness: aboutBusiness || null,
           aboutOwner: aboutOwner || null,
           profileImageUrl: profileImageUrl || null,
@@ -10989,6 +11067,19 @@ app.post(
             }
 
             await Promise.allSettled(tasks);
+
+            // In-app notification: vendor confirmed → tell the customer
+            if (nextStatus === "confirmed" && info.customerId) {
+              storage.createNotification({
+                recipientId: info.customerId,
+                recipientType: "customer",
+                type: "booking_confirmed",
+                title: "Booking confirmed",
+                message: `Your booking for ${info.listingTitle || "the service"} on ${info.eventDate} has been confirmed.`,
+                link: `/dashboard/events`,
+                read: false,
+              }).catch(() => {});
+            }
 
             // In-app notification: vendor cancelled → tell the customer
             if (nextStatus === "cancelled" && info.customerId) {
@@ -13655,8 +13746,10 @@ app.post(
     eventId: z.string().optional(),
     // packageId: the package_item listing id selected within a package_container
     packageId: z.string().optional(),
-    // addOnIds: array of addon listing ids to include as line items
+    // addOnIds: legacy flat array of addon ids (each defaults to quantity=1)
     addOnIds: z.array(z.string()).max(20).optional(),
+    // addOns: preferred format with per-item quantities
+    addOns: z.array(z.object({ id: z.string(), quantity: z.number().int().min(1).max(99) })).max(20).optional(),
     eventDate: z.string(),
     eventStartTime: z.string().optional(),
     eventEndDate: z.string().optional(),
@@ -13748,8 +13841,14 @@ app.post(
           ? data.customerEventTitle.trim().slice(0, 160)
           : null;
 
-      // ── A-la-carte validation: must have either listingId or addOnIds ─────────
-      const isAlaCarte = !data.listingId && (data.addOnIds?.length ?? 0) > 0;
+      // Normalize add-on inputs: support legacy addOnIds (qty=1 each) and new addOns format
+      const normalizedAddOnInputs: { id: string; quantity: number }[] =
+        data.addOns && data.addOns.length > 0
+          ? data.addOns
+          : (data.addOnIds ?? []).map((id) => ({ id, quantity: 1 }));
+
+      // ── A-la-carte validation: must have either listingId or add-ons ──────────
+      const isAlaCarte = !data.listingId && normalizedAddOnInputs.length > 0;
       if (!data.listingId && !isAlaCarte) {
         return res.status(400).json({ error: "listingId or addOnIds is required" });
       }
@@ -13864,11 +13963,13 @@ app.post(
         title: string | null;
         priceCents: number | null;
         quantity: number;
+        requestedQuantity: number;
         accountId: string;
       }> = [];
 
-      if ((data.addOnIds?.length ?? 0) > 0) {
+      if (normalizedAddOnInputs.length > 0) {
         stage = "load-addons";
+        const addonInputIds = normalizedAddOnInputs.map((a) => a.id);
         const addonRows = await db
           .select({
             id: vendorListings.id,
@@ -13880,13 +13981,13 @@ app.post(
           .from(vendorListings)
           .where(
             and(
-              inArray(vendorListings.id, data.addOnIds!),
+              inArray(vendorListings.id, addonInputIds),
               eq(vendorListings.listingType, "addon"),
               eq(vendorListings.status, "active")
             )
           );
 
-        if (addonRows.length !== data.addOnIds!.length) {
+        if (addonRows.length !== normalizedAddOnInputs.length) {
           return res.status(400).json({ error: "One or more add-ons are not available", code: "addon_not_found" });
         }
 
@@ -13904,17 +14005,20 @@ app.post(
             .where(
               and(
                 eq(listingAddonLinks.parentListingId, data.listingId!),
-                inArray(listingAddonLinks.addonListingId, data.addOnIds!)
+                inArray(listingAddonLinks.addonListingId, addonInputIds)
               )
             );
           const linkedIds = new Set(linkRows.map((r) => r.addonListingId));
-          const unlinked = data.addOnIds!.filter((id) => !linkedIds.has(id));
+          const unlinked = addonInputIds.filter((id) => !linkedIds.has(id));
           if (unlinked.length > 0) {
             return res.status(400).json({ error: "One or more add-ons are not attached to this listing", code: "addon_not_linked" });
           }
         }
 
-        resolvedAddonRows = addonRows as typeof resolvedAddonRows;
+        resolvedAddonRows = addonRows.map((row) => {
+          const input = normalizedAddOnInputs.find((i) => i.id === row.id);
+          return { ...row, requestedQuantity: input?.quantity ?? 1 };
+        }) as typeof resolvedAddonRows;
       }
 
       stage = "load-vendor";
@@ -14112,7 +14216,7 @@ app.post(
 
       // Compute add-on subtotal
       const addonSubtotalCents = resolvedAddonRows.reduce((sum, addon) => {
-        return sum + (addon.priceCents ?? 0);
+        return sum + (addon.priceCents ?? 0) * addon.requestedQuantity;
       }, 0);
       stage = "validate-booking-time-range";
       // Derive event location timezone from coordinates so times are anchored to where
@@ -14340,10 +14444,9 @@ app.post(
       // regardless of category or instant-book setting.
       const isDeliveryCategory =
         listingRow?.category === "Rentals" || listingRow?.category === "Catering";
-      const bookingStatus = bookingOutsideServiceRadius
+      const idealBookingStatus = bookingOutsideServiceRadius
         ? "pending"
         : bookingLifecycle.initialStatus;
-      const bookingConfirmedAt = bookingStatus === "confirmed" ? new Date() : null;
       const bookingVendorProfileId = resolvedVendorProfileId ?? null;
       const customerNotes =
         typeof data.customerNotes === "string" && data.customerNotes.trim().length > 0
@@ -14356,6 +14459,9 @@ app.post(
 
       stage = "insert-booking";
       const bookingInsertResult = await db.transaction(async (tx) => {
+        let effectiveStatus: "pending" | "confirmed" = idealBookingStatus;
+        let pendingReason: string | null = null;
+
         if (listingRow) {
           await tx.execute(drizzleSql`select pg_advisory_xact_lock(1, hashtext(${listingRow.id}))`);
 
@@ -14406,6 +14512,68 @@ app.post(
             });
           }
         }
+
+        // Gap 2: a-la-carte add-on quantity enforcement with advisory locking.
+        // Sort IDs before locking to guarantee consistent acquisition order and prevent deadlocks.
+        if (
+          isAlaCarte &&
+          resolvedAddonRows.length > 0 &&
+          canonicalBookingTimeRange.bookingStartAt != null &&
+          canonicalBookingTimeRange.bookingEndAt != null
+        ) {
+          const sortedAddonIds = [...resolvedAddonRows.map((a) => a.id)].sort();
+          for (const addonId of sortedAddonIds) {
+            await tx.execute(drizzleSql`select pg_advisory_xact_lock(2, hashtext(${addonId}))`);
+          }
+          for (const addon of resolvedAddonRows) {
+            const addonReservedResult: any = await tx.execute(drizzleSql`
+              select coalesce(sum(coalesce(bi.quantity, 1)), 0)::int as reserved
+              from booking_items bi
+              join bookings b on b.id = bi.booking_id
+              where bi.listing_id = ${addon.id}
+                and b.status in ('pending', 'confirmed', 'completed')
+                and b.booking_start_at is not null
+                and b.booking_end_at is not null
+                and b.booking_start_at < ${canonicalBookingTimeRange.bookingEndAt}
+                and b.booking_end_at > ${canonicalBookingTimeRange.bookingStartAt}
+            `);
+            const reservedQty = extractRows<{ reserved?: number | null }>(addonReservedResult)[0]?.reserved ?? 0;
+            if (reservedQty + addon.requestedQuantity > addon.quantity) {
+              fail(409, `"${addon.title ?? "Add-on"}" is not available in that quantity for the requested time.`, {
+                code: "addon_time_conflict",
+                addonId: addon.id,
+                reservedUnits: reservedQty,
+                requestedQuantity: addon.requestedQuantity,
+                availableQuantity: addon.quantity,
+              });
+            }
+          }
+        }
+
+        // Gap 1: vendor-level conflict check — if the vendor already has any active
+        // booking (across any listing) overlapping this time window, downgrade to
+        // pending so the vendor can review before confirming, regardless of instant-book setting.
+        if (
+          canonicalBookingTimeRange.bookingStartAt != null &&
+          canonicalBookingTimeRange.bookingEndAt != null
+        ) {
+          const vendorConflictResult: any = await tx.execute(drizzleSql`
+            select id from bookings
+            where vendor_account_id = ${vendorAccount.id}
+              and status in ('pending', 'confirmed', 'completed')
+              and booking_start_at is not null
+              and booking_end_at is not null
+              and booking_start_at < ${canonicalBookingTimeRange.bookingEndAt}
+              and booking_end_at > ${canonicalBookingTimeRange.bookingStartAt}
+            limit 1
+          `);
+          if (extractRows<{ id: string }>(vendorConflictResult).length > 0) {
+            effectiveStatus = "pending";
+            pendingReason = "vendor_has_other_booking";
+          }
+        }
+
+        const effectiveConfirmedAt = effectiveStatus === "confirmed" ? new Date() : null;
 
         let txBookingEventId = resolvedBookingEventId;
         let txCustomerEvent = resolvedCustomerEvent;
@@ -14468,7 +14636,7 @@ app.post(
             listingId: isAlaCarte ? null : (listingRow?.id ?? null),
             eventId: txBookingEventId,
             packageId: data.packageId ?? null,
-            addOnIds: data.addOnIds ?? [],
+            addOnIds: normalizedAddOnInputs.map((a) => a.id),
             eventDate: data.eventDate,
             eventStartTime: data.eventStartTime ?? null,
             eventEndTime: data.eventEndTime ?? null,
@@ -14504,10 +14672,10 @@ app.post(
             depositAmount: enforcedDepositAmount,
             securityDepositCents: securityDepositCents > 0 ? securityDepositCents : undefined,
             finalPaymentStrategy: data.finalPaymentStrategy,
-            status: bookingStatus,
+            status: effectiveStatus,
             paymentStatus: "pending",
             payoutStatus: "not_ready",
-            confirmedAt: bookingConfirmedAt,
+            confirmedAt: effectiveConfirmedAt,
             cancellationPolicySnapshot: bookingCancellationPolicySnapshot as any,
             appliedDiscountId: appliedDiscountId ?? undefined,
             discountAmountCents: discountAmountCents > 0 ? discountAmountCents : undefined,
@@ -14612,6 +14780,7 @@ app.post(
         // Insert add-on booking items
         for (const addon of resolvedAddonRows) {
           const addonPriceCents = addon.priceCents ?? 0;
+          const addonTotalCents = addonPriceCents * addon.requestedQuantity;
           await tx.execute(drizzleSql`
             insert into booking_items (
               booking_id,
@@ -14627,9 +14796,9 @@ app.post(
               ${addon.id},
               ${"addon"},
               ${addon.title ?? "Add-on"},
-              ${1},
+              ${addon.requestedQuantity},
               ${addonPriceCents},
-              ${addonPriceCents},
+              ${addonTotalCents},
               ${"{}"}::jsonb
             )
           `);
@@ -14668,6 +14837,8 @@ app.post(
         return {
           booking,
           securityDepositCents,
+          effectiveStatus,
+          pendingReason,
         };
       });
 
@@ -14675,6 +14846,8 @@ app.post(
       if (!booking?.id) {
         return res.status(500).json({ error: "Failed to create booking record" });
       }
+      const bookingStatus = bookingInsertResult.effectiveStatus;
+      const pendingReason = bookingInsertResult.pendingReason ?? null;
 
       stage = "create-notifications";
       await Promise.allSettled([
@@ -14741,7 +14914,7 @@ app.post(
 
       const emailAddOns = resolvedAddonRows.map((a) => ({
         title: a.title ?? "Add-on",
-        priceCents: a.priceCents ?? 0,
+        priceCents: (a.priceCents ?? 0) * a.requestedQuantity,
       }));
       const emailPackageName = packageRow?.title ?? null;
       const emailPriceBreakdown = {
@@ -14798,6 +14971,7 @@ app.post(
 
       return res.status(201).json({
         ...booking,
+        pendingReason,
         securityDepositCents: bookingInsertResult.securityDepositCents,
         payoutReleaseMode: PAYOUT_RELEASE_MODE,
       });
