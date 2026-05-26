@@ -226,6 +226,7 @@ import {
   messagingRateLimiter,
   boardsRateLimiter,
   adminRateLimiter,
+  browseRateLimiter,
 } from "./lib/rateLimiters";
 
 /**proxy: {
@@ -4097,6 +4098,7 @@ export async function registerRoutes(app: Express): Promise<Server> {
             -- Fallback: 72 hours past the day after the event date
             (b.booking_end_at IS NULL AND (b.event_date::date + interval '1 day') < now() - interval '72 hours')
           )
+          AND b.status IN ('confirmed', 'completed')
           AND NOT EXISTS (
             SELECT 1 FROM dispute_cases dc
             WHERE dc.booking_id = b.id AND dc.status != 'resolved'
@@ -4186,6 +4188,14 @@ export async function registerRoutes(app: Express): Promise<Server> {
   }, 7 * 60 * 1000);
   secDepositRefundStartTimer.unref();
 
+  function validateImageMagicBytes(buf: Buffer): boolean {
+    if (!buf || buf.length < 12) return false;
+    const isJpeg = buf[0] === 0xff && buf[1] === 0xd8 && buf[2] === 0xff;
+    const isPng = buf[0] === 0x89 && buf[1] === 0x50 && buf[2] === 0x4e && buf[3] === 0x47;
+    const isWebp = buf[8] === 0x57 && buf[9] === 0x45 && buf[10] === 0x42 && buf[11] === 0x50;
+    return isJpeg || isPng || isWebp;
+  }
+
   const listingUpload = multer({
     storage: multer.memoryStorage(),
     limits: { fileSize: 10 * 1024 * 1024 }, // 10MB
@@ -4208,6 +4218,9 @@ app.post(
     const fileBuffer = req?.file?.buffer as Buffer | undefined;
     if (!fileBuffer) {
       return res.status(400).json({ error: "Only JPG, PNG, or WebP allowed (max 10MB)." });
+    }
+    if (!validateImageMagicBytes(fileBuffer)) {
+      return res.status(400).json({ error: "Invalid image file. Only JPEG, PNG, and WebP are allowed." });
     }
 
     let persisted;
@@ -4242,6 +4255,9 @@ app.post(
       const fileBuffer = req?.file?.buffer as Buffer | undefined;
       if (!fileBuffer) {
         return res.status(400).json({ error: "Only JPG, PNG, or WebP allowed (max 10MB)." });
+      }
+      if (!validateImageMagicBytes(fileBuffer)) {
+        return res.status(400).json({ error: "Invalid image file. Only JPEG, PNG, and WebP are allowed." });
       }
 
       let persisted;
@@ -9071,7 +9087,7 @@ app.post(
   //   sort              — "recommended" (default, newest first) | "price-asc" | "price-desc"
   //   limit             — max rows to return (default 100, max 500)
   //   offset            — rows to skip for pagination (default 0)
-  app.get("/api/listings/public", async (req, res) => {
+  app.get("/api/listings/public", browseRateLimiter, async (req, res) => {
     try {
       res.setHeader("Cache-Control", "no-store");
 
@@ -9354,7 +9370,7 @@ app.post(
 
     // Public Listing Detail (guest browsing) added 1/22/26
   // Returns one active listing by id. No auth.
-  app.get("/api/listings/public/:id", async (req, res) => {
+  app.get("/api/listings/public/:id", browseRateLimiter, async (req, res) => {
     try {
       res.setHeader("Cache-Control", "no-store");
 

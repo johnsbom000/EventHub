@@ -62,3 +62,9 @@ export const adminRateLimiter = createDbRateLimiter({
   label: "admin",
   maxPerMinute: 30,
 });
+
+// Public listing browse — throttles scrapers while allowing normal user browsing.
+export const browseRateLimiter = createDbRateLimiter({
+  label: "browse",
+  maxPerMinute: 60,
+});
