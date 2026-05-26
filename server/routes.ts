@@ -1569,7 +1569,8 @@ async function cancelUnansweredBookingRequests(): Promise<number> {
       va.email                                as vendor_email,
       coalesce(va.business_name, '')          as vendor_name,
       u.email                                 as customer_email,
-      coalesce(u.name, '')                    as customer_name
+      coalesce(u.name, '')                    as customer_name,
+      b.customer_id                           as customer_id
     from bookings b
     join vendor_accounts va on va.id = b.vendor_account_id
     join users u            on u.id  = b.customer_id
@@ -1588,6 +1589,7 @@ async function cancelUnansweredBookingRequests(): Promise<number> {
     vendor_name: string;
     customer_email: string;
     customer_name: string;
+    customer_id: string | null;
   };
 
   const candidates = extractRows<CandidateRow>(candidateRows).filter(
@@ -1696,6 +1698,17 @@ async function cancelUnansweredBookingRequests(): Promise<number> {
             })
           : Promise.resolve(),
         syncBookingToGoogleCalendarSafely(row.id, "cancelUnansweredBookingRequests google-sync"),
+        row.customer_id
+          ? storage.createNotification({
+              recipientId: row.customer_id,
+              recipientType: "customer",
+              type: "booking_cancelled",
+              title: "Booking expired — vendor didn't respond",
+              message: `Your booking for ${row.listing_title || "the service"} on ${row.event_date} was automatically cancelled because the vendor did not respond within ${BOOKING_VENDOR_RESPONSE_EXPIRY_DAYS} days. A full refund has been issued.`,
+              link: "/dashboard/events",
+              read: false,
+            }).catch(() => {})
+          : Promise.resolve(),
       ]).catch(() => {});
 
       cancelled++;
@@ -6937,7 +6950,7 @@ app.post(
           cancellationPolicyDays: vendorListings.cancellationPolicyDays,
         })
         .from(vendorListings)
-        .where(eq(vendorListings.id, listingId))
+        .where(and(eq(vendorListings.id, listingId), eq(vendorListings.status, "active")))
         .limit(1);
       if (!row) return res.status(404).json({ error: "Listing not found" });
 
