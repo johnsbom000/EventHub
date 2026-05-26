@@ -9890,6 +9890,24 @@ app.post(
         extractRows<{ count?: number | string | null }>(bookingHistoryResult)[0]?.count || 0
       );
 
+      const activeBookingCheckResult: any = await db.execute(drizzleSql`
+        select count(distinct b.id)::int as "count"
+        from bookings b
+        left join booking_items bi on bi.booking_id = b.id
+        where (b.listing_id = ${id} or (b.listing_id is null and bi.listing_id = ${id}))
+          and b.status in ('pending', 'confirmed')
+      `);
+      const activeBookingCount = Number(
+        extractRows<{ count?: number | string | null }>(activeBookingCheckResult)[0]?.count || 0
+      );
+      if (activeBookingCount > 0) {
+        return res.status(409).json({
+          error: "Cannot delete a listing with active bookings. Cancel or complete all pending and confirmed bookings first.",
+          code: "listing_has_active_bookings",
+          activeBookingCount,
+        });
+      }
+
       const [inactivatedListing] = await db
         .update(vendorListings)
         .set({ status: "deleted", updatedAt: new Date() })
@@ -14033,7 +14051,7 @@ app.post(
             date: events.date,
           })
           .from(events)
-          .where(eq(events.id, requestedCustomerEventId))
+          .where(and(eq(events.id, requestedCustomerEventId), eq(events.customerId, customerAuth.id)))
           .limit(1);
 
         if (eventRow?.id) {
@@ -14479,13 +14497,28 @@ app.post(
             discountId: appliedDiscountId,
             bookingId: booking.id,
           });
-          await tx
+          // Atomic cap guard: only increment if used_count < max_uses (or unlimited).
+          // If a concurrent request already hit the cap, this UPDATE returns 0 rows
+          // and fail() throws, rolling back the entire transaction.
+          const capGuardResult = await tx
             .update(vendorDiscounts)
             .set({
               usedCount: drizzleSql`${vendorDiscounts.usedCount} + 1`,
               updatedAt: new Date(),
             })
-            .where(eq(vendorDiscounts.id, appliedDiscountId));
+            .where(
+              and(
+                eq(vendorDiscounts.id, appliedDiscountId),
+                or(
+                  isNull(vendorDiscounts.maxUses),
+                  drizzleSql`${vendorDiscounts.usedCount} < ${vendorDiscounts.maxUses}`,
+                ),
+              ),
+            )
+            .returning({ id: vendorDiscounts.id });
+          if (capGuardResult.length === 0) {
+            fail(409, "Promo code has reached its usage limit", { code: "promo_cap_reached" });
+          }
           // Auto-deactivate if cap hit (re-read usedCount after increment)
           await tx
             .update(vendorDiscounts)
