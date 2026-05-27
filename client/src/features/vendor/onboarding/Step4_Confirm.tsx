@@ -33,6 +33,7 @@ interface Step4ConfirmProps {
   onComplete: (createListing: boolean, destination?: "dashboard" | "myHub") => void;
   isSubmitting?: boolean;
   submittingAction?: "createListing" | "myHub" | "dashboard" | null;
+  hasPendingReferral?: boolean;
 }
 
 type ConfirmField = {
@@ -51,6 +52,7 @@ export default function Step4_Confirm({
   onComplete,
   isSubmitting = false,
   submittingAction = null,
+  hasPendingReferral = false,
 }: Step4ConfirmProps) {
   const [agreedToTerms, setAgreedToTerms] = useState(false);
   const businessFields: ConfirmField[] = [
@@ -142,6 +144,9 @@ export default function Step4_Confirm({
       <div className="space-y-2">
         <OnboardingStepHeader currentStep={3} />
         <h1 className="text-[3rem] font-semibold">Confirm</h1>
+        {hasPendingReferral && (
+          <p className="text-sm text-muted-foreground">Joining via a referral — welcome!</p>
+        )}
       </div>
 
       <div className="vendor-onboarding-step-content">

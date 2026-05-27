@@ -1785,6 +1785,295 @@ function HealthSection({ isAdmin }: { isAdmin: boolean }) {
   );
 }
 
+// ─── Section: Marquee Vendors ─────────────────────────────────────────────────
+
+function MarqueeVendorSection({ isAdmin }: { isAdmin: boolean }) {
+  const qc = useQueryClient();
+  const [searchQuery, setSearchQuery] = useState("");
+  const [debouncedQuery, setDebouncedQuery] = useState("");
+  const [selectedVendor, setSelectedVendor] = useState<{ id: string; businessName: string; email: string } | null>(null);
+  const [showDropdown, setShowDropdown] = useState(false);
+  const [grantError, setGrantError] = useState("");
+
+  const [inviteEmails, setInviteEmails] = useState("");
+  const [inviteResults, setInviteResults] = useState<{ email: string; sent: boolean; skipped: boolean; reason?: string }[]>([]);
+
+  const inviteMutation = useMutation({
+    mutationFn: async (emails: string[]) => {
+      const res = await apiRequest("POST", "/api/admin/marquee-invite", { emails });
+      if (!res.ok) {
+        const body = await res.json().catch(() => ({}));
+        throw new Error(body.error ?? "Failed to send invitations");
+      }
+      return res.json() as Promise<{ results: { email: string; sent: boolean; skipped: boolean; reason?: string }[] }>;
+    },
+    onSuccess: (data) => {
+      setInviteResults(data.results);
+      setInviteEmails("");
+    },
+  });
+
+  useEffect(() => {
+    const t = setTimeout(() => setDebouncedQuery(searchQuery), 300);
+    return () => clearTimeout(t);
+  }, [searchQuery]);
+
+  const { data: stats } = useQuery<any>({
+    queryKey: ["/api/admin/marquee-vendors/stats"],
+    queryFn: async () => (await apiRequest("GET", "/api/admin/marquee-vendors/stats")).json(),
+    enabled: isAdmin,
+  });
+
+  const { data: list = [], isLoading } = useQuery<any[]>({
+    queryKey: ["/api/admin/marquee-vendors"],
+    queryFn: async () => {
+      const res = await apiRequest("GET", "/api/admin/marquee-vendors");
+      const data = await res.json();
+      return data.marqueeVendors ?? [];
+    },
+    enabled: isAdmin,
+  });
+
+  const { data: searchResults = [] } = useQuery<any[]>({
+    queryKey: ["/api/admin/vendors/search", debouncedQuery],
+    queryFn: async () => {
+      const res = await apiRequest("GET", `/api/admin/vendors/search?q=${encodeURIComponent(debouncedQuery)}`);
+      const data = await res.json();
+      return data.vendors ?? [];
+    },
+    enabled: isAdmin && debouncedQuery.length >= 2,
+  });
+
+  const grantMutation = useMutation({
+    mutationFn: async (vendorId: string) => {
+      const res = await apiRequest("POST", `/api/admin/marquee-vendors/${vendorId}/grant`);
+      if (!res.ok) {
+        const body = await res.json().catch(() => ({}));
+        throw new Error(body.error ?? "Failed to grant");
+      }
+      return res.json();
+    },
+    onSuccess: () => {
+      setSelectedVendor(null);
+      setSearchQuery("");
+      setDebouncedQuery("");
+      setGrantError("");
+      qc.invalidateQueries({ queryKey: ["/api/admin/marquee-vendors"] });
+      qc.invalidateQueries({ queryKey: ["/api/admin/marquee-vendors/stats"] });
+    },
+    onError: (err: any) => setGrantError(err.message),
+  });
+
+  const revokeMutation = useMutation({
+    mutationFn: async (vendorId: string) => {
+      const res = await apiRequest("POST", `/api/admin/marquee-vendors/${vendorId}/revoke`);
+      if (!res.ok) throw new Error("Failed to revoke");
+    },
+    onSuccess: () => {
+      qc.invalidateQueries({ queryKey: ["/api/admin/marquee-vendors"] });
+      qc.invalidateQueries({ queryKey: ["/api/admin/marquee-vendors/stats"] });
+    },
+  });
+
+  const spotsUsed = stats?.spotsUsed ?? 0;
+  const spotsRemaining = stats?.spotsRemaining ?? 20;
+
+  return (
+    <>
+      <PageHeading title="Marquee Vendors" description="Manage the 20-spot Marquee Vendor program" />
+
+      <div className="grid gap-4 grid-cols-2 md:grid-cols-3 mb-6">
+        <StatCard title="Spots Used" value={spotsUsed} sub="of 20 total" icon={<Star className="h-4 w-4 text-amber-500" />} />
+        <StatCard title="Spots Remaining" value={spotsRemaining} sub="Available" icon={<Star className="h-4 w-4 text-muted-foreground" />} />
+        <StatCard title="Holiday Bookings Used" value={stats?.totalHolidayBookingsUsed ?? 0} sub="Across all Marquee vendors" icon={<Calendar className="h-4 w-4 text-muted-foreground" />} />
+      </div>
+
+      <Card className="mb-6">
+        <CardHeader>
+          <CardTitle>Grant Marquee Status</CardTitle>
+          <CardDescription>Search for a vendor by business name or email, then grant Marquee status.</CardDescription>
+        </CardHeader>
+        <CardContent>
+          <div className="relative mb-3">
+            <input
+              type="text"
+              value={searchQuery}
+              onChange={(e) => {
+                setSearchQuery(e.target.value);
+                setSelectedVendor(null);
+                setGrantError("");
+                setShowDropdown(true);
+              }}
+              onFocus={() => setShowDropdown(true)}
+              placeholder="Search by business name or email…"
+              className="w-full rounded-md border border-border bg-background px-3 py-2 text-sm"
+            />
+            {showDropdown && debouncedQuery.length >= 2 && searchResults.length > 0 && !selectedVendor && (
+              <ul className="absolute z-10 mt-1 w-full rounded-md border border-border bg-white shadow-md max-h-56 overflow-y-auto">
+                {searchResults.map((v: any) => (
+                  <li key={v.id}>
+                    <button
+                      type="button"
+                      className="w-full text-left px-3 py-2 text-sm hover:bg-muted"
+                      onClick={() => {
+                        setSelectedVendor({ id: v.id, businessName: v.businessName, email: v.email });
+                        setSearchQuery(v.businessName);
+                        setShowDropdown(false);
+                      }}
+                    >
+                      <span className="font-medium">{v.businessName}</span>
+                      <span className="ml-2 text-muted-foreground text-xs">{v.email}</span>
+                      {v.isMarqueeVendor && (
+                        <span className="ml-2 text-[10px] bg-amber-100 text-amber-700 rounded px-1.5 py-0.5">Already Marquee</span>
+                      )}
+                    </button>
+                  </li>
+                ))}
+              </ul>
+            )}
+          </div>
+          {selectedVendor && (
+            <div className="flex items-center gap-3 rounded-md border border-amber-200 bg-amber-50 px-3 py-2 mb-3">
+              <Star className="h-4 w-4 text-amber-500 flex-shrink-0" />
+              <div className="flex-1 min-w-0">
+                <p className="text-sm font-medium truncate">{selectedVendor.businessName}</p>
+                <p className="text-xs text-muted-foreground truncate">{selectedVendor.email}</p>
+              </div>
+              <button
+                type="button"
+                onClick={() => { setSelectedVendor(null); setSearchQuery(""); }}
+                className="text-muted-foreground hover:text-foreground text-xs"
+              >
+                ✕
+              </button>
+            </div>
+          )}
+          <button
+            onClick={() => { if (selectedVendor) grantMutation.mutate(selectedVendor.id); }}
+            disabled={grantMutation.isPending || !selectedVendor}
+            className="rounded-md bg-amber-500 px-4 py-2 text-sm font-semibold text-white disabled:opacity-50"
+          >
+            {grantMutation.isPending ? "Granting…" : "Grant Marquee Status"}
+          </button>
+          {grantError && <p className="mt-2 text-sm text-destructive">{grantError}</p>}
+        </CardContent>
+      </Card>
+
+      <Card className="mb-6">
+        <CardHeader>
+          <CardTitle>Send Invitations</CardTitle>
+          <CardDescription>Enter one email address per line. Each recipient receives the Marquee Vendor invitation email.</CardDescription>
+        </CardHeader>
+        <CardContent>
+          <textarea
+            value={inviteEmails}
+            onChange={(e) => { setInviteEmails(e.target.value); setInviteResults([]); }}
+            placeholder={"vendor@example.com\nanother@example.com"}
+            rows={4}
+            className="w-full rounded-md border border-border bg-background px-3 py-2 text-sm font-mono resize-y mb-3"
+          />
+          <button
+            onClick={() => {
+              const emails = inviteEmails
+                .split(/[\n,]+/)
+                .map((e) => e.trim())
+                .filter((e) => e.length > 0);
+              if (emails.length > 0) inviteMutation.mutate(emails);
+            }}
+            disabled={inviteMutation.isPending || inviteEmails.trim().length === 0}
+            className="rounded-md bg-amber-500 px-4 py-2 text-sm font-semibold text-white disabled:opacity-50"
+          >
+            {inviteMutation.isPending ? "Sending…" : "Send Invitations"}
+          </button>
+          {inviteMutation.isError && (
+            <p className="mt-2 text-sm text-destructive">{(inviteMutation.error as Error).message}</p>
+          )}
+          {inviteResults.length > 0 && (
+            <div className="mt-4 space-y-1">
+              {inviteResults.map((r) => (
+                <div key={r.email} className="flex items-center gap-2 text-sm">
+                  {r.sent ? (
+                    <CheckCircle className="h-4 w-4 text-green-500 flex-shrink-0" />
+                  ) : (
+                    <XCircle className="h-4 w-4 text-destructive flex-shrink-0" />
+                  )}
+                  <span className="font-mono text-xs">{r.email}</span>
+                  {!r.sent && r.reason && (
+                    <span className="text-xs text-muted-foreground truncate">{r.reason}</span>
+                  )}
+                </div>
+              ))}
+            </div>
+          )}
+        </CardContent>
+      </Card>
+
+      <Card>
+        <CardHeader>
+          <CardTitle>Marquee Vendors</CardTitle>
+          <CardDescription>{spotsUsed} / 20 slots filled</CardDescription>
+        </CardHeader>
+        <CardContent>
+          {isLoading ? (
+            <p className="text-sm text-muted-foreground">Loading…</p>
+          ) : list.length === 0 ? (
+            <p className="text-sm text-muted-foreground">No Marquee Vendors yet.</p>
+          ) : (
+            <div className="overflow-x-auto">
+              <table className="w-full text-sm">
+                <thead>
+                  <tr className="border-b text-muted-foreground text-left">
+                    <th className="pb-2 pr-4">#</th>
+                    <th className="pb-2 pr-4">Business</th>
+                    <th className="pb-2 pr-4">Email</th>
+                    <th className="pb-2 pr-4">Holiday Bookings Used</th>
+                    <th className="pb-2 pr-4">Perks Active Since</th>
+                    <th className="pb-2 pr-4">Holiday Ends</th>
+                    <th className="pb-2 pr-4">Referral Code</th>
+                    <th className="pb-2"></th>
+                  </tr>
+                </thead>
+                <tbody>
+                  {list.map((v: any) => (
+                    <tr key={v.id} className="border-b last:border-0">
+                      <td className="py-2 pr-4 font-bold text-amber-500">#{v.marqueeVendorNumber}</td>
+                      <td className="py-2 pr-4">{v.businessName}</td>
+                      <td className="py-2 pr-4 text-muted-foreground">{v.email}</td>
+                      <td className="py-2 pr-4">
+                        {v.marqueeHolidayBookingsUsed} / {20 + (v.marqueeHolidayBonusBookings ?? 0)}
+                      </td>
+                      <td className="py-2 pr-4">
+                        {v.marqueeActivatedAt
+                          ? new Date(v.marqueeActivatedAt).toLocaleDateString()
+                          : <span className="text-muted-foreground italic">not yet</span>}
+                      </td>
+                      <td className="py-2 pr-4">
+                        {v.marqueeHolidayEndsAt
+                          ? new Date(v.marqueeHolidayEndsAt).toLocaleDateString()
+                          : <span className="text-muted-foreground italic">—</span>}
+                      </td>
+                      <td className="py-2 pr-4 font-mono text-xs">{v.referralCode ?? "—"}</td>
+                      <td className="py-2">
+                        <button
+                          onClick={() => { if (confirm(`Revoke Marquee status from ${v.businessName}?`)) revokeMutation.mutate(v.id); }}
+                          disabled={revokeMutation.isPending}
+                          className="rounded px-2 py-1 text-xs text-destructive border border-destructive/30 hover:bg-destructive/10 disabled:opacity-50"
+                        >
+                          Revoke
+                        </button>
+                      </td>
+                    </tr>
+                  ))}
+                </tbody>
+              </table>
+            </div>
+          )}
+        </CardContent>
+      </Card>
+    </>
+  );
+}
+
 // ─── Root: auth guard + section router ───────────────────────────────────────
 
 export default function AdminDashboard() {
@@ -1825,9 +2114,10 @@ export default function AdminDashboard() {
       {section === "users"      && <UsersSection       isAdmin={isAdmin} />}
       {section === "listings"   && <ListingsSection    isAdmin={isAdmin} />}
       {section === "traffic"    && <TrafficSection     isAdmin={isAdmin} />}
-      {section === "moderation" && <ModerationSection  isAdmin={isAdmin} />}
-      {section === "feedback"   && <FeedbackSection    isAdmin={isAdmin} />}
-      {section === "health"     && <HealthSection      isAdmin={isAdmin} />}
+      {section === "moderation" && <ModerationSection       isAdmin={isAdmin} />}
+      {section === "marquee"    && <MarqueeVendorSection   isAdmin={isAdmin} />}
+      {section === "feedback"   && <FeedbackSection         isAdmin={isAdmin} />}
+      {section === "health"     && <HealthSection           isAdmin={isAdmin} />}
     </AdminShell>
   );
 }

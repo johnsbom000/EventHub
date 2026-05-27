@@ -19,8 +19,11 @@ coverage/
 .idea/
 .DS_Store
 
-# local-only working files
-.claude/
+# local-only working files — track only team-shared config
+.claude/*
+!.claude/settings.json
+!.claude/hooks/
+!.claude/hooks/check-gstack.sh
 .firebase/
 docs/design-preview/
 

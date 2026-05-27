@@ -1,18 +1,12 @@
 export const DISPUTE_WINDOW_HOURS = 72;
 
-export type BookingDisputeLifecycleStatus =
-  | "filed"
-  | "vendor_responded"
-  | "resolved_refund"
-  | "resolved_payout";
-
 export type PayoutEligibilityInput = {
   bookingStatus: unknown;
   paymentStatus: unknown;
   payoutStatus: unknown;
   payoutBlockedReason: unknown;
   disputeStatus: unknown;
-  bookingDisputeStatus: unknown;
+  disputeCaseStatus: unknown;
   paidOutAt: unknown;
   payoutEligibleAt: unknown;
   bookingEndAt: unknown;
@@ -72,13 +66,9 @@ function toCanonicalPaymentStatus(value: unknown): string {
   return normalized;
 }
 
-function isActiveBookingDispute(status: unknown): boolean {
+function isActiveDisputeCase(status: unknown): boolean {
   const normalized = normalizePaymentStateValue(status);
-  return normalized === "filed" || normalized === "vendor_responded";
-}
-
-function isRefundResolvedBookingDispute(status: unknown): boolean {
-  return normalizePaymentStateValue(status) === "resolved_refund";
+  return normalized === "open" || normalized === "pending_review";
 }
 
 export function toDateOrNull(value: unknown): Date | null {
@@ -132,7 +122,7 @@ export function computePayoutEligibility(input: PayoutEligibilityInput, now = ne
   const refundedAmount = Math.max(0, parseIntegerValue(input.refundedAmount) ?? 0);
   const adjustedPayoutAmount = deriveAdjustedVendorPayoutAmount(input);
   const alreadyTransferred = Boolean(paidOutAt || asTrimmedString(input.stripeTransferId));
-  const bookingDisputeStatus = normalizePaymentStateValue(input.bookingDisputeStatus);
+  const disputeCaseStatus = normalizePaymentStateValue(input.disputeCaseStatus);
 
   const computedEligibleAt =
     explicitEligibleAt ??
@@ -143,22 +133,13 @@ export function computePayoutEligibility(input: PayoutEligibilityInput, now = ne
       paymentStatus === "disputed" ||
       disputeStatus === "needs_response" ||
       disputeStatus === "under_review" ||
-      isActiveBookingDispute(bookingDisputeStatus)
+      isActiveDisputeCase(disputeCaseStatus)
     ) {
       return {
         eligible: false,
         payoutStatus: "blocked",
         payoutEligibleAt: computedEligibleAt,
         payoutBlockedReason: "dispute_after_payout_manual_recovery",
-        adjustedPayoutAmount: 0,
-      };
-    }
-    if (isRefundResolvedBookingDispute(bookingDisputeStatus)) {
-      return {
-        eligible: false,
-        payoutStatus: "blocked",
-        payoutEligibleAt: computedEligibleAt,
-        payoutBlockedReason: "dispute_refund_after_payout_manual_recovery",
         adjustedPayoutAmount: 0,
       };
     }
@@ -210,23 +191,13 @@ export function computePayoutEligibility(input: PayoutEligibilityInput, now = ne
     };
   }
 
-  if (isActiveBookingDispute(bookingDisputeStatus)) {
+  if (isActiveDisputeCase(disputeCaseStatus)) {
     return {
       eligible: false,
       payoutStatus: "blocked",
       payoutEligibleAt: computedEligibleAt,
       payoutBlockedReason: "customer_dispute_open",
       adjustedPayoutAmount,
-    };
-  }
-
-  if (isRefundResolvedBookingDispute(bookingDisputeStatus)) {
-    return {
-      eligible: false,
-      payoutStatus: "cancelled",
-      payoutEligibleAt: computedEligibleAt,
-      payoutBlockedReason: "dispute_refund_approved",
-      adjustedPayoutAmount: 0,
     };
   }
 

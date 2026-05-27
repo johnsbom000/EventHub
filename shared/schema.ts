@@ -5,6 +5,7 @@ import {
   varchar,
   timestamp,
   integer,
+  serial,
   jsonb,
   boolean,
   doublePrecision,
@@ -37,14 +38,9 @@ export const paymentStatusEnum = pgEnum("payment_status", [
   "disputed",
 ]);
 export const paymentTypeEnum = pgEnum("payment_type", [
-  // Active values
   "booking",          // full booking total (base + add-ons + platform fee)
   "security_deposit", // fixed-amount hold; refunded 72h post-event if no damage claim
   "travel_fee",       // vendor-proposed travel/delivery fee for out-of-radius bookings
-  // Legacy values — still in DB for existing rows; new rows use 'booking' instead of 'deposit'
-  "deposit",
-  "final",
-  "installment",
 ]);
 export const listingStatusEnum = pgEnum("listing_status", ["draft", "pending", "active", "inactive", "deleted"]);
 export const payoutStatusEnum = pgEnum("payout_status", [
@@ -71,12 +67,7 @@ export const notificationTypeEnum = pgEnum("notification_type", [
   "travel_fee_accepted",
   "travel_fee_declined",
 ]);
-export const bookingDisputeStatusEnum = pgEnum("booking_dispute_status", [
-  "filed",
-  "vendor_responded",
-  "resolved_refund",
-  "resolved_payout",
-]);
+
 export const messageSenderTypeEnum = pgEnum("message_sender_type", ["customer", "vendor"]);
 export const notificationRecipientTypeEnum = pgEnum("notification_recipient_type", ["customer", "vendor"]);
 
@@ -263,6 +254,17 @@ export const vendorAccounts = pgTable(
     ownerPhone: text("owner_phone"),
     deletedAt: timestamp("deleted_at"),
     createdAt: timestamp("created_at").defaultNow(),
+    isMarqueeVendor: boolean("is_marquee_vendor").notNull().default(false),
+    marqueeVendorNumber: integer("marquee_vendor_number"),
+    marqueeHolidayBookingsUsed: integer("marquee_holiday_bookings_used").notNull().default(0),
+    marqueeHolidayBonusBookings: integer("marquee_holiday_bonus_bookings").notNull().default(0),
+    marqueeActivatedAt: timestamp("marquee_activated_at"),
+    marqueeHolidayEndsAt: timestamp("marquee_holiday_ends_at"),
+    marqueeRateEndsAt: timestamp("marquee_rate_ends_at"),
+    marqueeCustomerFeeEndsAt: timestamp("marquee_customer_fee_ends_at"),
+    marqueeVisibilityEndsAt: timestamp("marquee_visibility_ends_at"),
+    marqueeConsecutiveInactiveMonths: integer("marquee_consecutive_inactive_months").notNull().default(0),
+    referralCode: varchar("referral_code", { length: 20 }),
   },
   (table) => ({
     userIdActiveUniqueIdx: uniqueIndex("vendor_accounts_user_id_active_unique_idx")
@@ -273,6 +275,12 @@ export const vendorAccounts = pgTable(
       .where(
         sql`${table.auth0Sub} is not null and btrim(${table.auth0Sub}) <> '' and ${table.deletedAt} is null`
       ),
+    marqueeVendorNumberUniqueIdx: uniqueIndex("vendor_accounts_marquee_vendor_number_unique_idx")
+      .on(table.marqueeVendorNumber)
+      .where(sql`${table.marqueeVendorNumber} is not null`),
+    referralCodeUniqueIdx: uniqueIndex("vendor_accounts_referral_code_unique_idx")
+      .on(table.referralCode)
+      .where(sql`${table.referralCode} is not null`),
   })
 );
 
@@ -486,7 +494,7 @@ export const bookings = pgTable("bookings", {
   vendorMsgEmailLastSentAt: timestamp("vendor_msg_email_last_sent_at"),
   customerMsgEmailLastSentAt: timestamp("customer_msg_email_last_sent_at"),
   cancellationPolicySnapshot: jsonb("cancellation_policy_snapshot"),
-  appliedDiscountId: varchar("applied_discount_id"),
+  appliedDiscountId: varchar("applied_discount_id").references(() => vendorDiscounts.id, { onDelete: "set null" }),
   discountAmountCents: integer("discount_amount_cents"),
   createdAt: timestamp("created_at").defaultNow(),
   updatedAt: timestamp("updated_at").defaultNow(),
@@ -501,67 +509,6 @@ export const insertBookingSchema = createInsertSchema(bookings).omit({
 export type InsertBooking = z.infer<typeof insertBookingSchema>;
 export type Booking = typeof bookings.$inferSelect;
 
-// Booking disputes (customer-filed after event completion)
-export const bookingDisputes = pgTable(
-  "booking_disputes",
-  {
-    id: varchar("id").primaryKey().default(sql`gen_random_uuid()`),
-    bookingId: varchar("booking_id")
-      .notNull()
-      .references(() => bookings.id, { onDelete: "cascade" }),
-    customerId: varchar("customer_id")
-      .notNull()
-      .references(() => users.id, { onDelete: "cascade" }),
-    vendorAccountId: varchar("vendor_account_id")
-      .references(() => vendorAccounts.id, { onDelete: "set null" }),
-    reason: text("reason").notNull(),
-    details: text("details"),
-    // 'damage_claim' | 'travel_fee_cancellation' | 'not_as_advertised'
-    disputeType: text("dispute_type").notNull().default("damage_claim"),
-    status: bookingDisputeStatusEnum("status").notNull().default("filed"),
-    vendorResponse: text("vendor_response"),
-    adminDecision: text("admin_decision"),
-    adminNotes: text("admin_notes"),
-    filedAt: timestamp("filed_at").defaultNow().notNull(),
-    vendorRespondedAt: timestamp("vendor_responded_at"),
-    resolvedAt: timestamp("resolved_at"),
-    createdAt: timestamp("created_at").defaultNow().notNull(),
-    updatedAt: timestamp("updated_at").defaultNow().notNull(),
-  },
-  (table) => ({
-    bookingIdUnique: uniqueIndex("booking_disputes_booking_id_idx").on(table.bookingId),
-    statusIdx: index("booking_disputes_status_idx").on(table.status),
-    filedAtIdx: index("booking_disputes_filed_at_idx").on(table.filedAt),
-  })
-);
-
-export const insertBookingDisputeSchema = createInsertSchema(bookingDisputes).omit({
-  id: true,
-  filedAt: true,
-  createdAt: true,
-  updatedAt: true,
-});
-
-export type InsertBookingDispute = z.infer<typeof insertBookingDisputeSchema>;
-export type BookingDispute = typeof bookingDisputes.$inferSelect;
-
-// Admin notes on disputes — one row per note, chronological log
-export const disputeAdminNotes = pgTable(
-  "dispute_admin_notes",
-  {
-    id: varchar("id").primaryKey().default(sql`gen_random_uuid()`),
-    disputeId: varchar("dispute_id")
-      .notNull()
-      .references(() => bookingDisputes.id, { onDelete: "cascade" }),
-    content: text("content").notNull(),
-    createdAt: timestamp("created_at").defaultNow().notNull(),
-  },
-  (table) => ({
-    disputeIdIdx: index("dispute_admin_notes_dispute_id_idx").on(table.disputeId, table.createdAt),
-  })
-);
-
-export type DisputeAdminNote = typeof disputeAdminNotes.$inferSelect;
 
 export const bookingItems = pgTable(
   "booking_items",
@@ -818,10 +765,6 @@ export const webTraffic = pgTable("web_traffic", {
   timestamp: timestamp("timestamp").defaultNow().notNull(),
 });
 
-export const insertWebTrafficSchema = createInsertSchema(webTraffic).omit({
-  id: true,
-  timestamp: true,
-});
 
 // Listing-level traffic (replaces listing_views)
 export const listingTraffic = pgTable("listing_traffic", {
@@ -843,14 +786,7 @@ export const listingTraffic = pgTable("listing_traffic", {
   meta: jsonb("meta").default({}).notNull(),
 });
 
-export const insertListingTrafficSchema = createInsertSchema(listingTraffic).omit({
-  id: true,
-  occurredAt: true,
-});
-
-export type InsertWebTraffic = z.infer<typeof insertWebTrafficSchema>;
 export type WebTraffic = typeof webTraffic.$inferSelect;
-export type InsertListingTraffic = z.infer<typeof insertListingTrafficSchema>;
 export type ListingTraffic = typeof listingTraffic.$inferSelect;
 
 // Stripe webhook replay protection / audit
@@ -1359,6 +1295,7 @@ export const disputeCases = pgTable(
     resolution: text("resolution"),
     resolvedAt: timestamp("resolved_at", { withTimezone: true }),
     withheldAmountCents: integer("withheld_amount_cents"),
+    responseDeadlineAt: timestamp("response_deadline_at", { withTimezone: true }),
     createdAt: timestamp("created_at", { withTimezone: true }).notNull().defaultNow(),
     updatedAt: timestamp("updated_at", { withTimezone: true }).notNull().defaultNow(),
   },
@@ -1390,6 +1327,7 @@ export const disputeFilings = pgTable(
     description: text("description").notNull().default(""),
     attachmentUrls: text("attachment_urls").array().notNull().default(sql`'{}'`),
     claimAmountCents: integer("claim_amount_cents"),
+    isResponse: boolean("is_response").notNull().default(false),
     createdAt: timestamp("created_at", { withTimezone: true }).notNull().defaultNow(),
     updatedAt: timestamp("updated_at", { withTimezone: true }).notNull().defaultNow(),
   },
@@ -1403,3 +1341,33 @@ export type DisputeCase = typeof disputeCases.$inferSelect;
 export type InsertDisputeCase = typeof disputeCases.$inferInsert;
 export type DisputeFiling = typeof disputeFilings.$inferSelect;
 export type InsertDisputeFiling = typeof disputeFilings.$inferInsert;
+
+// Vendor Referrals — tracks when a founding vendor refers a new vendor to the platform
+export const vendorReferralStatusEnum = pgEnum("vendor_referral_status", [
+  "pending",
+  "completed",
+  "rewarded",
+]);
+
+export const vendorReferrals = pgTable(
+  "vendor_referrals",
+  {
+    id: serial("id").primaryKey(),
+    referrerVendorId: varchar("referrer_vendor_id")
+      .notNull()
+      .references(() => vendorAccounts.id),
+    referredVendorId: varchar("referred_vendor_id")
+      .notNull()
+      .references(() => vendorAccounts.id),
+    status: vendorReferralStatusEnum("status").notNull().default("pending"),
+    createdAt: timestamp("created_at").notNull().defaultNow(),
+    completedAt: timestamp("completed_at"),
+  },
+  (table) => ({
+    referrerIdx: index("vendor_referrals_referrer_idx").on(table.referrerVendorId),
+    referredIdx: index("vendor_referrals_referred_idx").on(table.referredVendorId),
+  })
+);
+
+export type VendorReferral = typeof vendorReferrals.$inferSelect;
+export type InsertVendorReferral = typeof vendorReferrals.$inferInsert;

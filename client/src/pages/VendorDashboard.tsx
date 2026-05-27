@@ -2,7 +2,7 @@ import { useTranslation } from "react-i18next";
 import React, { useEffect, useMemo, useState } from "react";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { useAuth0 } from "@auth0/auth0-react";
-import { useLocation } from "wouter";
+import { Link, useLocation } from "wouter";
 import VendorShell from "@/components/VendorShell";
 
 
@@ -33,7 +33,7 @@ import {
 import { cn } from "@/lib/utils";
 
 
-import { Calendar, DollarSign, Users, TrendingUp, Loader2 } from "lucide-react";
+import { Calendar, DollarSign, Users, TrendingUp, Loader2, Copy, Check } from "lucide-react";
 
 type VendorMe = {
  id?: string | null;
@@ -49,6 +49,15 @@ type VendorMe = {
  hasActiveVendorProfile?: boolean | null;
  needsNewVendorProfileOnboarding?: boolean | null;
  shopActive?: boolean | null;
+ isMarqueeVendor?: boolean | null;
+ marqueeVendorNumber?: number | null;
+ marqueeHolidayBookingsUsed?: number | null;
+ marqueeHolidayBonusBookings?: number | null;
+ marqueeActivatedAt?: string | null;
+ marqueeHolidayEndsAt?: string | null;
+ marqueeRateEndsAt?: string | null;
+ marqueeCustomerFeeEndsAt?: string | null;
+ referralCode?: string | null;
 };
 
 type VacationBlock = {
@@ -462,6 +471,7 @@ export default function VendorDashboard() {
  const [homeBaseLocationDraft, setHomeBaseLocationDraft] = useState<{ lat: number; lng: number } | null>(null);
  const [serviceRadiusMilesDraft, setServiceRadiusMilesDraft] = useState<number>(0);
  const [isStripeSetupLoading, setIsStripeSetupLoading] = useState(false);
+ const [referralLinkCopied, setReferralLinkCopied] = useState(false);
  const [isGoogleCalendarConnectLoading, setIsGoogleCalendarConnectLoading] = useState(false);
  const [selectedGoogleCalendarId, setSelectedGoogleCalendarId] = useState("");
  const [pendingGoogleCalendarSelection, setPendingGoogleCalendarSelection] =
@@ -1049,6 +1059,18 @@ export default function VendorDashboard() {
  },
  });
 
+ const handleCopyReferralLink = async () => {
+ if (!vendorAccount?.referralCode) return;
+ const link = `${window.location.origin}/vendor/onboarding?ref=${vendorAccount.referralCode}`;
+ try {
+  await navigator.clipboard.writeText(link);
+  setReferralLinkCopied(true);
+  setTimeout(() => setReferralLinkCopied(false), 2000);
+ } catch {
+  toast({ title: "Copy failed", description: "Copy the link manually.", variant: "destructive" });
+ }
+ };
+
  const handleCompletePaymentSetup = async () => {
  try {
  setIsStripeSetupLoading(true);
@@ -1368,6 +1390,46 @@ export default function VendorDashboard() {
  </div>
 
  <div className="space-y-8">
+ {vendorAccount?.isMarqueeVendor && (
+ <div className="rounded-xl border border-amber-300 bg-amber-50 p-6">
+   <div className="flex items-center gap-2 mb-4">
+     <span className="text-lg">★</span>
+     <h2 className="font-heading text-[20px] leading-none tracking-tight text-amber-800">
+       Marquee Vendor
+     </h2>
+   </div>
+   {vendorAccount.referralCode && (
+     <div className="space-y-2 text-sm text-amber-900">
+       <p className="font-semibold">Refer a vendor</p>
+       <p className="text-xs text-amber-800">
+         Share this link to earn bonus bookings when a new vendor joins through you.
+       </p>
+       <div className="flex items-center gap-2">
+         <code className="flex-1 rounded bg-amber-100 px-2 py-1 text-[11px] font-mono text-amber-900 break-all select-all">
+           {`${window.location.origin}/vendor/onboarding?ref=${vendorAccount.referralCode}`}
+         </code>
+         <Button
+           variant="outline"
+           size="sm"
+           onClick={handleCopyReferralLink}
+           className="shrink-0 border-amber-300 text-amber-800 hover:bg-amber-100"
+           aria-label="Copy referral link"
+         >
+           {referralLinkCopied
+             ? <Check className="h-4 w-4 text-green-600" />
+             : <Copy className="h-4 w-4" />}
+         </Button>
+       </div>
+     </div>
+   )}
+   <div className="mt-4 pt-4 border-t border-amber-200">
+     <Link href="/vendor/marquee" className="text-sm font-medium text-amber-800 hover:text-amber-900 underline underline-offset-2">
+       View your program details →
+     </Link>
+   </div>
+ </div>
+ )}
+
  {showStripeSetupCard ? (
  <div className="rounded-xl border border-[hsl(var(--secondary-accent)/0.45)] bg-[hsl(var(--secondary-accent)/0.12)] p-6">
  <h2 className="font-heading text-[20px] leading-none tracking-tight">{t("vendorDashboard.completeSetup")}</h2>

@@ -495,8 +495,6 @@
     "preferencesSubtitle": "Choose what alerts you want to receive",
     "prefNewBookings": "New Bookings",
     "prefNewBookingsDesc": "Get notified when customers book your services",
-    "prefReschedule": "Reschedule Requests",
-    "prefRescheduleDesc": "When customers request to change event dates",
     "prefCancellations": "Cancellations",
     "prefCancellationsDesc": "Alert when bookings are cancelled",
     "prefPayments": "Payment Updates",
@@ -845,6 +843,9 @@
     "forVendors": "For Vendors",
     "becomeVendor": "Become a Vendor",
     "vendorDashboard": "Vendor Dashboard",
+    "contactUs": "Contact Us",
+    "email": "Email",
+    "phone": "Phone",
     "copyright": "© {{year}} Event Hub. All rights reserved."
   },
   "card": {

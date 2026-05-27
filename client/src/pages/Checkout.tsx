@@ -902,6 +902,8 @@ function CheckoutContent({
     Boolean(pendingPaymentDraft?.bookingId) &&
     pendingPaymentDraft?.listingId === data?.id;
 
+  const isVenueListing = data?.category === "Venues";
+
   const canSubmit =
     (hasPendingPaymentToResume
       ? true
@@ -918,9 +920,11 @@ function CheckoutContent({
         ) &&
         (!isHourlyBooking || !hourlyTimeRangeError) &&
         (!shouldShowPerDayLogistics || !perDayTimeError) &&
-        Boolean(deliveryLocation) &&
-        (useMapPicker || Boolean(deliveryAddress)) &&
-        (!data?.deliveryIncluded || (deliveryCity && deliveryState && deliveryZip))) &&
+        (isVenueListing || (
+          Boolean(deliveryLocation) &&
+          (useMapPicker || Boolean(deliveryAddress)) &&
+          (!data?.deliveryIncluded || (deliveryCity && deliveryState && deliveryZip))
+        ))) &&
     stripeConfigured &&
     !stripeConfigError &&
     Boolean(stripe) &&
@@ -1302,7 +1306,8 @@ function CheckoutContent({
               )}
             </div>
 
-            {/* Event / delivery address — always shown. */}
+            {/* Event / delivery address — hidden for venue listings since the event takes place at the venue. */}
+            {!isVenueListing && <>
             <div className="space-y-2">
               <div className="flex items-center justify-between">
                 <Label htmlFor="delivery-line1">
@@ -1447,6 +1452,7 @@ function CheckoutContent({
                 <p className="text-xs text-red-600">State is required.</p>
               )}
             </div>
+            </>}
           </div>
         </section>
 
@@ -1859,11 +1865,8 @@ function CheckoutContent({
                 </div>
               ) : null}
 
-              <div className="border-t border-[rgba(74,106,125,0.22)] pt-4 flex items-end justify-between">
-                <div>
-                  <div className="text-xl font-semibold">{t("checkout.orderSummaryTotal")}</div>
-                  <div className="text-sm text-muted-foreground">{t("checkout.orderSummaryTaxesLater")}</div>
-                </div>
+              <div className="border-t border-[rgba(74,106,125,0.22)] pt-4 flex items-center justify-between">
+                <div className="text-xl font-semibold">{t("checkout.orderSummaryTotal")}</div>
                 <div className="text-3xl font-bold">{formatUsdFromCents(customerTotal)}</div>
               </div>
 

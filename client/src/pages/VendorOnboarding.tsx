@@ -80,6 +80,8 @@ export interface VendorOnboardingData {
  zipCode?: string;
  country?: string;
  } | null;
+
+ referralCode?: string;
 }
 
 const STEPS = SINGLE_VENDOR_MODE
@@ -129,6 +131,7 @@ function getStepMeta(stepLabel: string): {
 }
 
 const STORAGE_KEY = "vendorOnboarding:v1";
+const REFERRAL_STORAGE_KEY = "eventhub:pending-referral";
 const AUTH_LOGIN_REQUIRED_ERROR = "AUTH_LOGIN_REQUIRED";
 const AUTH_REQUIRED_MESSAGE_PATTERNS = [
  "login required",
@@ -254,6 +257,27 @@ export default function VendorOnboarding() {
  };
  }, []);
 
+ // Capture ?ref= param on mount, persist to localStorage, and strip from URL.
+ useEffect(() => {
+ const params = new URLSearchParams(window.location.search);
+ const refCode = params.get("ref");
+ if (refCode?.trim()) {
+  localStorage.setItem(REFERRAL_STORAGE_KEY, refCode.trim().toUpperCase());
+  params.delete("ref");
+  const newSearch = params.toString();
+  window.history.replaceState(null, "", window.location.pathname + (newSearch ? `?${newSearch}` : ""));
+ }
+ }, []);
+
+ // Seed formData with any pending referral code not yet in the draft.
+ useEffect(() => {
+ const pendingReferral = localStorage.getItem(REFERRAL_STORAGE_KEY);
+ if (pendingReferral && !formData.referralCode) {
+  setFormData((prev) => ({ ...prev, referralCode: pendingReferral }));
+ }
+ // eslint-disable-next-line react-hooks/exhaustive-deps
+ }, []);
+
  const [currentStep, setCurrentStep] = useState<number>(() => {
  try {
  const raw = localStorage.getItem(STORAGE_KEY);
@@ -279,6 +303,12 @@ export default function VendorOnboarding() {
 
  // Enforce vendorType in single vendor mode (even if older localStorage had something else)
  if (SINGLE_VENDOR_MODE) merged.vendorType = SINGLE_VENDOR_TYPE;
+
+ // Seed referral code from standalone key if not already in the draft
+ const pendingReferral = localStorage.getItem(REFERRAL_STORAGE_KEY);
+ if (pendingReferral && !merged.referralCode) {
+  merged.referralCode = pendingReferral;
+ }
 
  return merged;
  } catch {
@@ -449,6 +479,7 @@ export default function VendorOnboarding() {
  preserveDraftOnUnmountRef.current = false;
  await completeOnboardingMutation.mutateAsync(formData);
  localStorage.removeItem(STORAGE_KEY);
+ localStorage.removeItem(REFERRAL_STORAGE_KEY);
  if (createListing) {
  setLocation("/vendor/listings/new");
  } else {
@@ -571,6 +602,7 @@ export default function VendorOnboarding() {
  onComplete={handleComplete}
  isSubmitting={isFinalizingOnboarding}
  submittingAction={pendingFinalAction}
+ hasPendingReferral={!!formData.referralCode}
  />
  );
  default:
@@ -611,6 +643,7 @@ export default function VendorOnboarding() {
  onComplete={handleComplete}
  isSubmitting={isFinalizingOnboarding}
  submittingAction={pendingFinalAction}
+ hasPendingReferral={!!formData.referralCode}
  />
  );
  default:

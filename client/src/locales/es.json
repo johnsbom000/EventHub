@@ -494,8 +494,6 @@
     "preferencesSubtitle": "Elige qué alertas deseas recibir",
     "prefNewBookings": "Nuevas Reservas",
     "prefNewBookingsDesc": "Recibe notificaciones cuando los clientes reserven tus servicios",
-    "prefReschedule": "Solicitudes de Reprogramación",
-    "prefRescheduleDesc": "Cuando los clientes soliciten cambiar las fechas del evento",
     "prefCancellations": "Cancelaciones",
     "prefCancellationsDesc": "Alerta cuando se cancelen reservas",
     "prefPayments": "Actualizaciones de Pago",
@@ -844,6 +842,9 @@
     "forVendors": "Para Proveedores",
     "becomeVendor": "Conviértete en Proveedor",
     "vendorDashboard": "Panel de Proveedor",
+    "contactUs": "Contáctanos",
+    "email": "Correo",
+    "phone": "Teléfono",
     "copyright": "© {{year}} Event Hub. Todos los derechos reservados."
   },
   "card": {

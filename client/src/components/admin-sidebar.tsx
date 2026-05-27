@@ -1,6 +1,6 @@
 import {
   LayoutDashboard, TrendingUp, Calendar, AlertTriangle,
-  ArrowRightLeft, Users, LayoutGrid, Eye, Shield, LogOut, MessageSquarePlus, Activity,
+  ArrowRightLeft, Users, LayoutGrid, Eye, Shield, LogOut, MessageSquarePlus, Activity, Star,
 } from "lucide-react";
 import { useEffect } from "react";
 import { Link, useLocation } from "wouter";
@@ -25,6 +25,7 @@ const menuItems = [
   { title: "Listings",    url: "/admin/listings",   icon: LayoutGrid },
   { title: "Traffic",     url: "/admin/traffic",    icon: Eye },
   { title: "Moderation",  url: "/admin/moderation", icon: Shield },
+  { title: "Marquee",     url: "/admin/marquee",    icon: Star },
   { title: "Feedback",    url: "/admin/feedback",   icon: MessageSquarePlus },
   { title: "Health",      url: "/admin/health",     icon: Activity },
 ];
