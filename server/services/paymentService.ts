@@ -20,7 +20,7 @@ import {
   computePayoutEligibility,
   DISPUTE_WINDOW_HOURS,
 } from "../payoutEligibility";
-import { storage } from "../storage";
+import { createNotification } from "../lib/notificationHelpers";
 import { sendPayoutProcessedEmail } from "../email";
 
 
@@ -510,7 +510,7 @@ export async function processSinglePayoutCandidate(params: {
             transferId: string | null;
           }>(payoutRows)[0];
           if (pr?.vendorAccountId) {
-            await storage.createNotification({
+            await createNotification({
               recipientId: pr.vendorAccountId,
               recipientType: "vendor",
               type: "payout_processed",

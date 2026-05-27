@@ -96,7 +96,7 @@ import {
 import { registerGoogleRoutes } from "../routers/google";
 import { registerBoardRoutes } from "../routers/boards";
 import { registerCircumventionRoutes } from "../routers/circumvention";
-import { storage } from "../storage";
+import { createNotification } from "../lib/notificationHelpers";
 import crypto from "crypto";
 import {
   insertVendorAccountSchema,
@@ -588,7 +588,7 @@ export function registerBookingRoutes(app: Express): void {
           metadata: { action: "customer_cancelled", reason: reason ?? null },
         });
         if (booking.vendorAccountId) {
-          storage.createNotification({
+          createNotification({
             recipientId: booking.vendorAccountId,
             recipientType: "vendor",
             type: "booking_cancelled",
@@ -751,7 +751,7 @@ export function registerBookingRoutes(app: Express): void {
         metadata: { action: "customer_cancelled", reason: reason ?? null },
       });
       if (booking.vendorAccountId) {
-        storage.createNotification({
+        createNotification({
           recipientId: booking.vendorAccountId,
           recipientType: "vendor",
           type: "booking_cancelled",
@@ -1986,7 +1986,7 @@ export function registerBookingRoutes(app: Express): void {
 
       stage = "create-notifications";
       await Promise.allSettled([
-        storage.createNotification({
+        createNotification({
           recipientId: vendorAccount.id,
           recipientType: "vendor",
           type: "new_booking",
@@ -1998,7 +1998,7 @@ export function registerBookingRoutes(app: Express): void {
           link: `/vendor/bookings?bookingId=${encodeURIComponent(booking.id)}`,
           read: false,
         }),
-        storage.createNotification({
+        createNotification({
           recipientId: customerAuth.id,
           recipientType: "customer",
           type: "booking_confirmed",
@@ -2016,7 +2016,7 @@ export function registerBookingRoutes(app: Express): void {
       // an additional notification explaining what action is needed.
       if (booking.outsideServiceRadius) {
         const notifFeeLabel = isDeliveryCategory ? "delivery fee" : "travel fee";
-        await storage.createNotification({
+        await createNotification({
           recipientId: vendorAccount.id,
           recipientType: "vendor",
           type: "new_booking" as any,
@@ -2236,7 +2236,7 @@ export function registerBookingRoutes(app: Express): void {
         });
 
         if (booking.customerId) {
-          storage.createNotification({
+          createNotification({
             recipientId: booking.customerId,
             recipientType: "customer",
             type: "travel_fee_proposed" as any,
@@ -2537,7 +2537,7 @@ export function registerBookingRoutes(app: Express): void {
         });
 
         if (booking.vendorAccountId) {
-          storage.createNotification({
+          createNotification({
             recipientId: booking.vendorAccountId,
             recipientType: "vendor",
             type: "travel_fee_accepted" as any,
@@ -2647,7 +2647,7 @@ export function registerBookingRoutes(app: Express): void {
         });
 
         if (booking.vendorAccountId) {
-          storage.createNotification({
+          createNotification({
             recipientId: booking.vendorAccountId,
             recipientType: "vendor",
             type: "travel_fee_declined" as any,

@@ -1,6 +1,6 @@
 import { db } from "../db";
 import { eq, and, or, inArray, sql as drizzleSql } from "drizzle-orm";
-import { bookings, payments, vendorAccounts, users } from "@shared/schema";
+import { bookings, payments, vendorAccounts, users, vendorSuspensions, vendorProfiles } from "@shared/schema";
 import { logger } from "../lib/logger";
 import { appUrl } from "../lib/routeHelpers";
 import {
@@ -16,11 +16,19 @@ import {
   AUTO_PAYOUT_INTERVAL_MS,
 } from "../lib/constants";
 import { tryAcquireWorkerLock, releaseWorkerLock } from "../lib/workerLocks";
-import { storage } from "../storage";
-import { sendBookingCancelledEmail } from "../email";
+import { createNotification } from "../lib/notificationHelpers";
+import {
+  sendBookingCancelledEmail,
+  sendEventDayReminderEmail,
+  sendSuspensionLiftedEmail,
+  sendPendingRequestReminderEmail,
+} from "../email";
 import { deleteStreamBookingChannel, isChatExpiredForEventDate, isStreamChatConfigured } from "../streamChat";
-import { syncBookingToGoogleCalendarSafely } from "./googleSyncService";
+import { syncBookingToGoogleCalendarSafely, runGoogleBookingSyncVerificationForVendorAccount } from "./googleSyncService";
+import { renewExpiringGoogleCalendarWatchChannels } from "../google";
 import { processSinglePayoutCandidate } from "./paymentService";
+import { runReviewPromptJob } from "../jobs/reviewPromptJob";
+import { runStripeWebhookCleanupJob } from "../jobs/stripeWebhookCleanup";
 
 // Module-level lazy-init guards for DDL-side-effect tables
 let moderationTableReadyPromise: Promise<void> | null = null;
@@ -336,7 +344,7 @@ export async function cancelUnansweredBookingRequests(): Promise<number> {
           : Promise.resolve(),
         syncBookingToGoogleCalendarSafely(row.id, "cancelUnansweredBookingRequests google-sync"),
         row.customer_id
-          ? storage.createNotification({
+          ? createNotification({
               recipientId: row.customer_id,
               recipientType: "customer",
               type: "booking_cancelled",
@@ -615,4 +623,377 @@ export function startAutoPayoutWorker() {
   // Kick once on start, then begin the backoff-aware schedule.
   void runAutoPayoutTick();
   schedule();
+}
+
+export function startReviewPromptWorker() {
+  const INTERVAL_MS = 24 * 60 * 60 * 1000;
+  const serverUrl = appUrl();
+  const run = () => runReviewPromptJob({ serverUrl, logger: { log: logger.info.bind(logger), warn: logger.warn.bind(logger) } }).catch((err: any) => {
+    logger.warn("[review-prompt] worker error: %s", err?.message || err);
+  });
+  const startTimer = setTimeout(() => {
+    void run();
+    const t = setInterval(() => void run(), INTERVAL_MS);
+    t.unref?.();
+  }, 5 * 60 * 1000);
+  startTimer.unref?.();
+}
+
+export function startStripeWebhookCleanupWorker() {
+  const INTERVAL_MS = 24 * 60 * 60 * 1000;
+  const run = () => runStripeWebhookCleanupJob({ logger: { log: logger.info.bind(logger), warn: logger.warn.bind(logger) } }).catch((err: any) => {
+    logger.warn("[stripe-webhook-cleanup] worker error: %s", err?.message || err);
+  });
+  const startTimer = setTimeout(() => {
+    void run();
+    const t = setInterval(() => void run(), INTERVAL_MS);
+    t.unref?.();
+  }, 20 * 60 * 1000);
+  startTimer.unref?.();
+}
+
+export function startBookingExpiryWorker() {
+  let backoffMs = 5 * 60 * 1000;
+  const MAX_BACKOFF_MS = 60 * 60 * 1000;
+
+  const tick = async () => {
+    const lockAcquired = await tryAcquireWorkerLock("booking_expiry", 8 * 60 * 1000);
+    if (!lockAcquired) return;
+    try {
+      const expiredCount = await expireStalePendingBookings();
+      if (expiredCount > 0) logger.info(`[booking expiry] expired stale pending bookings: ${expiredCount}`);
+      const noResponseCount = await cancelUnansweredBookingRequests();
+      if (noResponseCount > 0) logger.info(`[booking expiry] auto-cancelled ${noResponseCount} unanswered booking request(s) after ${BOOKING_VENDOR_RESPONSE_EXPIRY_DAYS} days`);
+      backoffMs = 5 * 60 * 1000;
+    } catch (error: any) {
+      logger.warn("[booking expiry] cleanup failed:", error?.message || error);
+      backoffMs = Math.min(backoffMs * 2, MAX_BACKOFF_MS);
+    } finally {
+      await releaseWorkerLock("booking_expiry");
+    }
+  };
+
+  const schedule = () => {
+    const t = setTimeout(async () => { await tick(); schedule(); }, backoffMs);
+    t.unref?.();
+  };
+
+  void tick().then(() => schedule());
+}
+
+export function startChatCleanupWorker() {
+  if (!isStreamChatConfigured()) return;
+  const run = async () => {
+    try {
+      await cleanupExpiredStreamChannels();
+    } catch (error: any) {
+      logger.warn("Expired chat cleanup failed:", error?.message || error);
+    }
+  };
+  void run();
+  const t = setInterval(() => void run(), 6 * 60 * 60 * 1000);
+  t.unref?.();
+}
+
+export function startGoogleVerificationWorker() {
+  const rawInterval = Number(process.env.GOOGLE_SYNC_VERIFICATION_INTERVAL_MINUTES || 30);
+  const intervalMinutes =
+    Number.isFinite(rawInterval) && rawInterval > 0 ? Math.max(5, Math.round(rawInterval)) : 0;
+  if (intervalMinutes <= 0) return;
+
+  const run = async () => {
+    try {
+      const eligibleAccounts = await db
+        .select({ id: vendorAccounts.id, googleConnectionStatus: vendorAccounts.googleConnectionStatus, googleCalendarId: vendorAccounts.googleCalendarId })
+        .from(vendorAccounts)
+        .where(and(eq(vendorAccounts.googleConnectionStatus, "connected"), drizzleSql`nullif(trim(${vendorAccounts.googleCalendarId}), '') is not null`));
+
+      for (const account of eligibleAccounts) {
+        try {
+          const summary = await runGoogleBookingSyncVerificationForVendorAccount(account);
+          if (summary.googleCalendarReadStatus === "failed" || summary.issuesFound > 0) {
+            logger.warn("[google verification] vendor=%s checked=%d issues=%d unmatched=%s readStatus=%s",
+              summary.vendorAccountId || "unknown", summary.bookingsChecked, summary.issuesFound,
+              summary.unmatchedEventsCount == null ? "n/a" : String(summary.unmatchedEventsCount),
+              summary.googleCalendarReadStatus);
+          }
+        } catch (error: any) {
+          logger.warn("[google verification] vendor=%s failed: %s", asTrimmedString(account.id) || "unknown", error?.message || error);
+        }
+      }
+    } catch (error: any) {
+      logger.warn("[google verification] recurring run failed:", error?.message || error);
+    }
+  };
+
+  const t = setInterval(() => void run(), intervalMinutes * 60 * 1000);
+  t.unref?.();
+}
+
+export function startWatchChannelRenewalWorker() {
+  const run = async () => {
+    try {
+      const result = await renewExpiringGoogleCalendarWatchChannels();
+      if (result.renewed > 0 || result.failed > 0) {
+        logger.info("[watch channel renewal] renewed=%d failed=%d", result.renewed, result.failed);
+      }
+    } catch (error: any) {
+      logger.warn("[watch channel renewal] job failed:", error?.message || error);
+    }
+  };
+  const startTimer = setTimeout(() => {
+    void run();
+    const t = setInterval(() => void run(), 60 * 1000);
+    t.unref?.();
+  }, 15 * 1000);
+  startTimer.unref?.();
+}
+
+export function startEventDayReminderWorker() {
+  const INTERVAL_MS = 4 * 60 * 60 * 1000;
+  const run = async () => {
+    try {
+      const serverUrl = appUrl();
+      const windowStart = new Date(Date.now() + 20 * 60 * 60 * 1000);
+      const windowEnd   = new Date(Date.now() + 28 * 60 * 60 * 1000);
+      const windowStartDate = windowStart.toISOString().split("T")[0];
+      const windowEndDate   = windowEnd.toISOString().split("T")[0];
+
+      const rows: any = await db.execute(drizzleSql`
+        select
+          b.id                    as "bookingId",
+          b.event_date            as "eventDate",
+          b.event_start_time      as "eventTime",
+          b.event_location        as "eventLocation",
+          coalesce(b.listing_title_snapshot, '') as "listingTitle",
+          u.email                 as "customerEmail",
+          u.name                  as "customerName",
+          va.email                as "vendorEmail",
+          va.business_name        as "vendorName"
+        from bookings b
+        join users u              on u.id  = b.customer_id
+        join vendor_accounts va   on va.id = b.vendor_account_id
+        where b.event_day_reminder_sent = false
+          and b.status = 'confirmed'
+          and b.event_date >= ${windowStartDate}
+          and b.event_date <= ${windowEndDate}
+        limit 200
+      `);
+
+      const eligible = extractRows<{
+        bookingId: string; eventDate: string; eventTime: string | null;
+        eventLocation: string | null; listingTitle: string;
+        customerEmail: string; customerName: string; vendorEmail: string; vendorName: string;
+      }>(rows);
+
+      if (eligible.length === 0) return;
+      let sent = 0;
+      for (const row of eligible) {
+        try {
+          const eventTime = row.eventTime || "See booking details";
+          const tasks: Promise<any>[] = [];
+          if (row.customerEmail) {
+            tasks.push(sendEventDayReminderEmail(row.customerEmail, {
+              recipientName: row.customerName || "Customer", counterpartName: row.vendorName || "Vendor",
+              listingTitle: row.listingTitle || "Service", eventDate: row.eventDate, eventTime,
+              eventLocation: row.eventLocation ?? undefined, role: "customer", serverUrl,
+            }));
+          }
+          if (row.vendorEmail) {
+            tasks.push(sendEventDayReminderEmail(row.vendorEmail, {
+              recipientName: row.vendorName || "Vendor", counterpartName: row.customerName || "Customer",
+              listingTitle: row.listingTitle || "Service", eventDate: row.eventDate, eventTime,
+              eventLocation: row.eventLocation ?? undefined, role: "vendor", serverUrl,
+            }));
+          }
+          await Promise.allSettled(tasks);
+          await db.update(bookings).set({ eventDayReminderSent: true }).where(eq(bookings.id, row.bookingId));
+          sent++;
+        } catch (rowError: any) {
+          logger.warn("[event day reminder] failed for booking %s: %s", row.bookingId, rowError?.message || rowError);
+        }
+      }
+      if (sent > 0) logger.info("[event day reminder] sent %d reminder(s)", sent);
+    } catch (error: any) {
+      logger.warn("[event day reminder] job failed:", error?.message || error);
+    }
+  };
+  const startTimer = setTimeout(() => {
+    void run();
+    const t = setInterval(() => void run(), INTERVAL_MS);
+    t.unref?.();
+  }, 7 * 60 * 1000);
+  startTimer.unref?.();
+}
+
+export function startSuspensionLiftedWorker() {
+  const INTERVAL_MS = 24 * 60 * 60 * 1000;
+  const run = async () => {
+    try {
+      const serverUrl = appUrl();
+      const now = new Date();
+      const rows: any = await db.execute(drizzleSql`
+        select
+          vs.id               as "suspensionId",
+          va.email            as "vendorEmail",
+          va.business_name    as "businessName"
+        from vendor_suspensions vs
+        join vendor_accounts va on va.id = vs.vendor_account_id
+        where vs.lift_email_sent = false
+          and vs.ends_at <= ${now}
+          and va.email is not null
+        limit 100
+      `);
+      const expired = extractRows<{ suspensionId: string; vendorEmail: string; businessName: string }>(rows);
+      if (expired.length === 0) return;
+      let sent = 0;
+      for (const row of expired) {
+        try {
+          await sendSuspensionLiftedEmail(row.vendorEmail, {
+            recipientName: row.businessName || "Vendor",
+            businessName: row.businessName || "Your Business",
+            serverUrl,
+          });
+          await db.execute(drizzleSql`update vendor_suspensions set lift_email_sent = true where id = ${row.suspensionId}`);
+          sent++;
+        } catch (rowError: any) {
+          logger.warn("[suspension lifted] failed for %s: %s", row.suspensionId, rowError?.message || rowError);
+        }
+      }
+      if (sent > 0) logger.info("[suspension lifted] sent %d notification(s)", sent);
+    } catch (error: any) {
+      logger.warn("[suspension lifted] job failed:", error?.message || error);
+    }
+  };
+  const startTimer = setTimeout(() => {
+    void run();
+    const t = setInterval(() => void run(), INTERVAL_MS);
+    t.unref?.();
+  }, 15 * 60 * 1000);
+  startTimer.unref?.();
+}
+
+export function startPendingRequestReminderWorker() {
+  const INTERVAL_MS = 10 * 60 * 1000;
+  const run = async () => {
+    try {
+      const serverUrl = appUrl();
+      const now = new Date();
+      const cutoff = new Date(now.getTime() - 48 * 60 * 60 * 1000);
+      const rows: any = await db.execute(drizzleSql`
+        select
+          b.id                        as "bookingId",
+          b.event_date                as "eventDate",
+          b.total_amount              as "totalCents",
+          coalesce(b.listing_title_snapshot, '') as "listingTitle",
+          b.pending_reminder_6pm_sent  as "sent6pm",
+          b.pending_reminder_9am_sent  as "sent9am",
+          b.pending_reminder_24h_sent  as "sent24h",
+          b.created_at                as "createdAt",
+          va.email                    as "vendorEmail",
+          va.business_name            as "vendorName",
+          coalesce(vp.operating_timezone, 'UTC') as "vendorTimezone",
+          u.name                      as "customerName"
+        from bookings b
+        join vendor_accounts va   on va.id = b.vendor_account_id
+        left join vendor_profiles vp on vp.account_id = va.id and vp.active = true
+        join users u              on u.id  = b.customer_id
+        where b.status = 'pending'
+          and b.created_at >= ${cutoff}
+          and (
+            b.pending_reminder_6pm_sent = false
+            or b.pending_reminder_9am_sent = false
+            or b.pending_reminder_24h_sent = false
+          )
+          and va.email is not null
+        limit 200
+      `);
+      const candidates = extractRows<{
+        bookingId: string; eventDate: string; totalCents: number; listingTitle: string;
+        sent6pm: boolean; sent9am: boolean; sent24h: boolean; createdAt: string | Date;
+        vendorEmail: string; vendorName: string; vendorTimezone: string; customerName: string;
+      }>(rows);
+      if (candidates.length === 0) return;
+      let sent = 0;
+      for (const row of candidates) {
+        try {
+          const createdAt = new Date(row.createdAt);
+          const tz = row.vendorTimezone || "UTC";
+          const nowInVendorTz = new Intl.DateTimeFormat("en-US", { timeZone: tz, hour: "numeric", hour12: false }).format(now);
+          const vendorHour = parseInt(nowInVendorTz, 10);
+          const createdHourStr = new Intl.DateTimeFormat("en-US", { timeZone: tz, hour: "numeric", hour12: false }).format(createdAt);
+          const createdHour = parseInt(createdHourStr, 10);
+          const hoursSinceCreation = (now.getTime() - createdAt.getTime()) / (60 * 60 * 1000);
+          const isAfterMidnightOfCreation = now.toDateString() !== createdAt.toDateString();
+
+          let cadenceSent: "6pm" | "9am" | "24h" | null = null;
+          let columnToSet: Partial<typeof bookings.$inferInsert> = {};
+
+          if (!row.sent24h && hoursSinceCreation >= 24) {
+            cadenceSent = "24h"; columnToSet = { pendingReminder24hSent: true };
+          } else if (!row.sent9am && isAfterMidnightOfCreation && vendorHour >= 9 && vendorHour < 11) {
+            cadenceSent = "9am"; columnToSet = { pendingReminder9amSent: true };
+          } else if (!row.sent6pm && vendorHour >= 18 && vendorHour < 20 && createdHour < 18) {
+            cadenceSent = "6pm"; columnToSet = { pendingReminder6pmSent: true };
+          }
+
+          if (!cadenceSent) continue;
+
+          await sendPendingRequestReminderEmail(row.vendorEmail, {
+            recipientName: row.vendorName || "Vendor", customerName: row.customerName || "Customer",
+            listingTitle: row.listingTitle || "Service", eventDate: row.eventDate,
+            totalAmountCents: row.totalCents, cadence: cadenceSent, serverUrl,
+          });
+          await db.update(bookings).set(columnToSet as any).where(eq(bookings.id, row.bookingId));
+          sent++;
+        } catch (rowError: any) {
+          logger.warn("[pending reminder] failed for booking %s: %s", row.bookingId, rowError?.message || rowError);
+        }
+      }
+      if (sent > 0) logger.info("[pending reminder] sent %d reminder(s)", sent);
+    } catch (error: any) {
+      logger.warn("[pending reminder] job failed:", error?.message || error);
+    }
+  };
+  const startTimer = setTimeout(() => {
+    void run();
+    const t = setInterval(() => void run(), INTERVAL_MS);
+    t.unref?.();
+  }, 3 * 60 * 1000);
+  startTimer.unref?.();
+}
+
+export function startSecurityDepositRefundWorker() {
+  const INTERVAL_MS = 60 * 60 * 1000;
+  const startTimer = setTimeout(() => {
+    void runSecurityDepositRefundJob();
+    const t = setInterval(() => void runSecurityDepositRefundJob(), INTERVAL_MS);
+    t.unref?.();
+  }, 7 * 60 * 1000);
+  startTimer.unref?.();
+}
+
+export function startBookingCompletionWorker() {
+  const INTERVAL_MS = 4 * 60 * 60 * 1000;
+  const startTimer = setTimeout(() => {
+    void runBookingCompletionJob();
+    const t = setInterval(() => void runBookingCompletionJob(), INTERVAL_MS);
+    t.unref?.();
+  }, 10 * 60 * 1000);
+  startTimer.unref?.();
+}
+
+export function startAllBackgroundWorkers() {
+  startBookingExpiryWorker();
+  startChatCleanupWorker();
+  startGoogleVerificationWorker();
+  startWatchChannelRenewalWorker();
+  startReviewPromptWorker();
+  startEventDayReminderWorker();
+  startSuspensionLiftedWorker();
+  startPendingRequestReminderWorker();
+  startSecurityDepositRefundWorker();
+  startBookingCompletionWorker();
+  startAutoPayoutWorker();
+  startStripeWebhookCleanupWorker();
 }

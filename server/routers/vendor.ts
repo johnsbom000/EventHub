@@ -99,7 +99,7 @@ import { registerCircumventionRoutes } from "../routers/circumvention";
 import { registerBookingRoutes } from "../routers/bookings";
 import { registerPaymentRoutes } from "../routers/payments";
 import { registerMiscRoutes } from "../routers/misc";
-import { storage } from "../storage";
+import { createNotification, getNotificationsByRecipient, bulkMarkNotificationsRead, bulkArchiveNotifications, markNotificationAsRead } from "../lib/notificationHelpers";
 import crypto from "crypto";
 import {
   insertVendorAccountSchema,
@@ -4591,7 +4591,7 @@ export function registerVendorRoutes(app: Express): void {
 
             // In-app notification: vendor confirmed → tell the customer
             if (nextStatus === "confirmed" && info.customerId) {
-              storage.createNotification({
+              createNotification({
                 recipientId: info.customerId,
                 recipientType: "customer",
                 type: "booking_confirmed",
@@ -4604,7 +4604,7 @@ export function registerVendorRoutes(app: Express): void {
 
             // In-app notification: vendor cancelled → tell the customer
             if (nextStatus === "cancelled" && info.customerId) {
-              storage.createNotification({
+              createNotification({
                 recipientId: info.customerId,
                 recipientType: "customer",
                 type: "booking_cancelled",
@@ -5027,7 +5027,7 @@ export function registerVendorRoutes(app: Express): void {
         return res.json([]);
       }
 
-      const notifications = await storage.getNotificationsByRecipient(
+      const notifications = await getNotificationsByRecipient(
         account.id,
         "vendor"
       );
@@ -5043,7 +5043,7 @@ export function registerVendorRoutes(app: Express): void {
     try {
       const account = await getVendorAccountFromRequest(req);
       if (!account?.id) return res.json({ unreadCount: 0 });
-      const notifications = await storage.getNotificationsByRecipient(account.id, "vendor");
+      const notifications = await getNotificationsByRecipient(account.id, "vendor");
       const unreadCount = notifications.filter((n: any) => !n.read).length;
       res.json({ unreadCount });
     } catch (error: any) {
@@ -5066,7 +5066,7 @@ export function registerVendorRoutes(app: Express): void {
           return res.status(400).json({ error: "ids must be an array of strings" });
         }
 
-        const count = await storage.bulkMarkNotificationsRead(ids, account.id, "vendor");
+        const count = await bulkMarkNotificationsRead(ids, account.id, "vendor");
         res.json({ updated: count });
       } catch (error: any) {
         logRouteError("/api/vendor/notifications/bulk/read", error);
@@ -5089,7 +5089,7 @@ export function registerVendorRoutes(app: Express): void {
           return res.status(400).json({ error: "ids must be an array of strings" });
         }
 
-        const count = await storage.bulkArchiveNotifications(ids, account.id, "vendor");
+        const count = await bulkArchiveNotifications(ids, account.id, "vendor");
         res.json({ archived: count });
       } catch (error: any) {
         logRouteError("/api/vendor/notifications/bulk/archive", error);
@@ -5110,7 +5110,7 @@ export function registerVendorRoutes(app: Express): void {
           return res.status(403).json({ error: "Vendor account required" });
         }
 
-        const updated = await storage.markNotificationAsRead(id, account.id, "vendor");
+        const updated = await markNotificationAsRead(id, account.id, "vendor");
         if (!updated) {
           return res.status(404).json({ error: "Notification not found" });
         }

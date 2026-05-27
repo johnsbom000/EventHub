@@ -98,7 +98,7 @@ import { registerCircumventionRoutes } from "../routers/circumvention";
 import { registerBookingRoutes } from "../routers/bookings";
 import { registerPaymentRoutes } from "../routers/payments";
 import { registerMiscRoutes } from "../routers/misc";
-import { storage } from "../storage";
+import { createNotification, getNotificationsByRecipient, bulkMarkNotificationsRead, markNotificationAsRead } from "../lib/notificationHelpers";
 import crypto from "crypto";
 import {
   insertEventSchema,
@@ -1540,7 +1540,7 @@ export function registerCustomerRoutes(app: Express): void {
             .where(eq(users.id, customerAuth.id))
             .limit(1);
           const stars = "★".repeat(data.rating) + "☆".repeat(5 - data.rating);
-          await storage.createNotification({
+          await createNotification({
             recipientId: reviewResult.vendorAccountId,
             recipientType: "vendor",
             type: "review_received",
@@ -1598,7 +1598,7 @@ export function registerCustomerRoutes(app: Express): void {
     try {
       const customerAuth = await resolveCustomerAuthFromRequest(req, { createIfMissing: false });
       if (!customerAuth?.id) return res.json([]);
-      const notifs = await storage.getNotificationsByRecipient(customerAuth.id, "customer");
+      const notifs = await getNotificationsByRecipient(customerAuth.id, "customer");
       res.json(notifs);
     } catch (err: any) {
       logRouteError("/api/customer/notifications", err);
@@ -1610,7 +1610,7 @@ export function registerCustomerRoutes(app: Express): void {
     try {
       const customerAuth = await resolveCustomerAuthFromRequest(req, { createIfMissing: false });
       if (!customerAuth?.id) return res.json({ unreadCount: 0 });
-      const notifs = await storage.getNotificationsByRecipient(customerAuth.id, "customer");
+      const notifs = await getNotificationsByRecipient(customerAuth.id, "customer");
       const unreadCount = notifs.filter((n: any) => !n.read).length;
       res.json({ unreadCount });
     } catch (err: any) {
@@ -1627,7 +1627,7 @@ export function registerCustomerRoutes(app: Express): void {
       if (!Array.isArray(ids) || ids.some((id) => typeof id !== "string")) {
         return res.status(400).json({ error: "ids must be an array of strings" });
       }
-      const updated = await storage.bulkMarkNotificationsRead(ids, customerAuth.id, "customer");
+      const updated = await bulkMarkNotificationsRead(ids, customerAuth.id, "customer");
       res.json({ updated });
     } catch (err: any) {
       logRouteError("/api/customer/notifications/bulk/read", err);
@@ -1639,7 +1639,7 @@ export function registerCustomerRoutes(app: Express): void {
     try {
       const customerAuth = await resolveCustomerAuthFromRequest(req, { createIfMissing: false });
       if (!customerAuth?.id) return res.status(401).json({ error: "Authentication required" });
-      const updated = await storage.markNotificationAsRead(req.params.id, customerAuth.id, "customer");
+      const updated = await markNotificationAsRead(req.params.id, customerAuth.id, "customer");
       if (!updated) return res.status(404).json({ error: "Notification not found" });
       res.json({ success: true });
     } catch (err: any) {

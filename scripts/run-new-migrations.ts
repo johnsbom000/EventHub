@@ -12,6 +12,7 @@ const newMigrations = [
   '../migrations/0079_dispute_cases_withheld_amount.ts',
   '../migrations/0095_remove_legacy_payment_dispute_tables.ts',
   '../migrations/0096_payment_pi_type_unique.ts',
+  '../migrations/0098_chat_moderation_flags.ts',
 ];
 
 async function run() {

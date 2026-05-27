@@ -97,7 +97,7 @@ import {
 import { registerGoogleRoutes } from "../routers/google";
 import { registerBoardRoutes } from "../routers/boards";
 import { registerCircumventionRoutes } from "../routers/circumvention";
-import { storage } from "../storage";
+import { createNotification } from "../lib/notificationHelpers";
 import crypto from "crypto";
 import {
   insertVendorAccountSchema,
@@ -838,7 +838,7 @@ export function registerPaymentRoutes(app: Express): void {
                 `);
                 const pr = extractRows<{ vendorAccountId: string; eventDate: string; listingTitle: string }>(paymentRows)[0];
                 if (!pr?.vendorAccountId) return;
-                await storage.createNotification({
+                await createNotification({
                   recipientId: pr.vendorAccountId,
                   recipientType: "vendor",
                   type: "payment_received",
