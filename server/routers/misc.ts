@@ -231,6 +231,7 @@ import {
   DISPUTE_WINDOW_HOURS,
 } from "../payoutEligibility";
 import { decryptToken, encryptToken } from "../lib/tokenEncryption";
+import { logEvent } from "../lib/events";
 import { createDbRateLimiter } from "../lib/dbRateLimiter";
 import { timezoneFromCoords } from "../lib/timezoneFromCoords";
 import { tryAcquireWorkerLock, releaseWorkerLock } from "../lib/workerLocks";
@@ -1630,6 +1631,58 @@ app.post(
       res.json({ success: true });
     } catch (error: any) {
       res.json({ success: false });
+    }
+  });
+
+  // ── Client-side event tracking ────────────────────────────────────────────
+  // Receives structured analytics events from the frontend (vendor onboarding,
+  // search interactions, vendor profile views, etc.). Fire-and-forget on the
+  // server side — never blocks the response path.
+
+  app.post("/api/events", trackRateLimiter, async (req: any, res: any) => {
+    try {
+      const { name, properties, sessionId } = req.body;
+
+      if (typeof name !== "string" || !name) {
+        return res.status(400).json({ error: "Missing event name" });
+      }
+
+      let actorId: string | null = null;
+      let actorType: "vendor" | "customer" | "system" = "system";
+
+      const authHeader = req.headers.authorization;
+      if (authHeader && typeof authHeader === "string" && authHeader.startsWith("Bearer ")) {
+        const token = authHeader.substring(7);
+        try {
+          const auth0 = await verifyAuth0Token(token);
+          const email = typeof auth0?.email === "string" ? auth0.email.trim().toLowerCase() : "";
+          if (email) {
+            const [user] = await db
+              .select({ id: users.id, role: users.role })
+              .from(users)
+              .where(drizzleSql`lower(${users.email}) = ${email}`)
+              .limit(1);
+            if (user?.id) {
+              actorId = user.id;
+              actorType = user.role === "vendor" ? "vendor" : "customer";
+            }
+          }
+        } catch {
+          // Ignore auth failures; analytics ingestion is best-effort.
+        }
+      }
+
+      logEvent(
+        name,
+        actorType,
+        actorId,
+        typeof properties === "object" && properties !== null ? properties : {},
+        typeof sessionId === "string" ? sessionId : null
+      );
+
+      res.status(204).end();
+    } catch {
+      res.status(204).end();
     }
   });
 

@@ -1,4 +1,5 @@
 import MasonryListingGrid from "@/components/MasonryListingGrid";
+import { trackEvent } from "@/lib/analytics";
 import ListingCard from "@/components/ListingCard";
 import type { ListingPublic } from "@/types/listing";
 import { useState, useEffect, useMemo, useRef } from "react";
@@ -319,6 +320,19 @@ export default function BrowseVendors() {
 
  const publicListings: ListingPublic[] = listingPage?.listings ?? [];
  const serverTotal: number = listingPage?.total ?? 0;
+
+ useEffect(() => {
+ if (!listingPage) return;
+ trackEvent("search_performed", {
+  query: searchQuery || null,
+  location: searchLocationLabel || null,
+  category: selectedCategory || null,
+  subcategories: selectedSubcategories.length > 0 ? selectedSubcategories : null,
+  sort: sortBy,
+  results_count: serverTotal,
+ });
+ // eslint-disable-next-line react-hooks/exhaustive-deps
+ }, [listingPage]);
 
  const { data: availableSubcategories = {} } = useQuery<AvailableSubcategories>({
  queryKey: ["/api/listings/available-subcategories"],

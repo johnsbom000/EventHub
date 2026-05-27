@@ -232,6 +232,7 @@ import {
   DISPUTE_WINDOW_HOURS,
 } from "../payoutEligibility";
 import { decryptToken, encryptToken } from "../lib/tokenEncryption";
+import { logEvent } from "../lib/events";
 import { createDbRateLimiter } from "../lib/dbRateLimiter";
 import { timezoneFromCoords } from "../lib/timezoneFromCoords";
 import { tryAcquireWorkerLock, releaseWorkerLock } from "../lib/workerLocks";
@@ -812,6 +813,13 @@ export function registerPaymentRoutes(app: Express): void {
               await markBookingAsPaymentFailedInTx(tx, payment.bookingId, "stripe_payment_failed");
             }
           });
+
+          if (eventType === "payment_intent.succeeded" && fallbackPaymentType === "booking" && fallbackBookingId) {
+            logEvent("booking_paid", "system", null, {
+              booking_id: fallbackBookingId,
+              payment_intent_id: paymentIntentId,
+            });
+          }
 
           // Notify vendor of payment received (booking payments only, fire-and-forget)
           if (eventType === "payment_intent.succeeded" && fallbackPaymentType === "booking" && fallbackBookingId) {

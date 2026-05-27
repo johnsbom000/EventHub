@@ -15,6 +15,7 @@ import type { ListingPublic } from "@/types/listing";
 import { getFreshAccessToken } from "@/lib/authToken";
 import { resolveAssetUrl } from "@/lib/runtimeUrls";
 import { normalizeHobbyList } from "@shared/hobby-tags";
+import { trackEvent } from "@/lib/analytics";
 
 type VendorReview = {
  id: string;
@@ -246,6 +247,17 @@ export default function VendorHub() {
  const [, shopParams] = useRoute("/shop/:vendorId");
  const [, legacyParams] = useRoute("/vendor/hub/:vendorId");
  const vendorId = shopParams?.vendorId || legacyParams?.vendorId;
+
+ useEffect(() => {
+ if (vendorId) {
+  trackEvent("vendor_profile_viewed", {
+   vendor_id: vendorId,
+   source: document.referrer || null,
+  });
+ }
+ // eslint-disable-next-line react-hooks/exhaustive-deps
+ }, [vendorId]);
+
  const [normalizedProfileImageUrl, setNormalizedProfileImageUrl] = useState("");
  const [normalizedCoverImageUrl, setNormalizedCoverImageUrl] = useState("");
  const [coverImageLoadFailed, setCoverImageLoadFailed] = useState(false);

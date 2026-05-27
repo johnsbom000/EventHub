@@ -232,6 +232,7 @@ import {
   DISPUTE_WINDOW_HOURS,
 } from "../payoutEligibility";
 import { decryptToken, encryptToken } from "../lib/tokenEncryption";
+import { logEvent } from "../lib/events";
 import { createDbRateLimiter } from "../lib/dbRateLimiter";
 import { timezoneFromCoords } from "../lib/timezoneFromCoords";
 import { tryAcquireWorkerLock, releaseWorkerLock } from "../lib/workerLocks";
@@ -2100,6 +2101,13 @@ export function registerBookingRoutes(app: Express): void {
         );
       }
       await Promise.allSettled(emailTasks);
+
+      logEvent(
+        bookingStatus === "confirmed" ? "booking_confirmed" : "booking_request_created",
+        "customer",
+        customerAuth.id,
+        { booking_id: booking.id, listing_id: (booking as any).listingId ?? null, vendor_id: (booking as any).vendorAccountId ?? null, status: bookingStatus }
+      );
 
       await syncBookingToGoogleCalendarSafely(booking.id, "/api/bookings google-sync");
 

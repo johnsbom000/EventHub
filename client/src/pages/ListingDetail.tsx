@@ -18,6 +18,7 @@ import { resolveAssetUrl } from "@/lib/runtimeUrls";
 import { useTranslation } from "react-i18next";
 import { useLanguage } from "@/context/LanguageContext";
 import { TimeInput } from "@/components/ui/TimeInput";
+import { trackEvent } from "@/lib/analytics";
 
 type RouteParams = { id: string };
 const LISTING_DETAIL_GALLERY_HEIGHT_CLASS = "h-[60vh] min-h-[320px] max-h-[520px]";
@@ -1436,6 +1437,7 @@ function ReservationCard({
  return;
  }
 
+ trackEvent("contact_form_opened", { vendor_id: vendorId, listing_id: listingId });
  setIsRouting(true);
  try {
  onStartCheckout({

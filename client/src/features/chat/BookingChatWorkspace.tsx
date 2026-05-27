@@ -8,6 +8,7 @@ import { CardElement, Elements, useElements, useStripe } from "@stripe/react-str
 import { loadStripe } from "@stripe/stripe-js";
 
 import { apiRequest } from "@/lib/queryClient";
+import { trackEvent } from "@/lib/analytics";
 import { cn } from "@/lib/utils";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
@@ -741,6 +742,10 @@ export function BookingChatWorkspace({ role, initialBookingId }: { role: Role; i
       if (!safeText && !hasAttachments) return;
 
       await activeChannel?.sendMessage({ ...message, text: safeText }, sendOptions);
+      trackEvent("contact_message_sent", {
+        booking_id: selectedConversation?.bookingId ?? null,
+        role,
+      });
     },
     [activeChannel, circumventionFlagMutation, moderationFlagMutation, profanityFilter, role, selectedConversation?.bookingId, t, toast]
   );

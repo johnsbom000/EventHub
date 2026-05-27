@@ -15,6 +15,7 @@ import {
  moveCoverToFront,
 } from "@/lib/listingPhotos";
 import { getListingDisplayPrice, getListingDisplayPricingUnit } from "@/lib/listingPrice";
+import { trackEvent } from "@/lib/analytics";
 import { useTranslation } from "react-i18next";
 
 function ShareSquareIcon() {
@@ -143,6 +144,7 @@ export default function ListingCard({
 
  const handleOpenListing = () => {
  if (!resolvedCardNavigationPath) return;
+ trackEvent("vendor_card_clicked", { vendor_id: listing.vendorId ?? null, listing_id: listing.id });
  setLocation(resolvedCardNavigationPath);
  };
 

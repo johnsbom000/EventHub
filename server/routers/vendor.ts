@@ -234,6 +234,7 @@ import {
   DISPUTE_WINDOW_HOURS,
 } from "../payoutEligibility";
 import { decryptToken, encryptToken } from "../lib/tokenEncryption";
+import { logEvent } from "../lib/events";
 import { createDbRateLimiter } from "../lib/dbRateLimiter";
 import { timezoneFromCoords } from "../lib/timezoneFromCoords";
 import { tryAcquireWorkerLock, releaseWorkerLock } from "../lib/workerLocks";
@@ -1338,6 +1339,11 @@ export function registerVendorRoutes(app: Express): void {
         })();
       }
 
+      logEvent("vendor_signup_completed", "vendor", account.id, {
+        is_new: isFirstTimeOnboarding,
+        is_upgrade: isUpgrade,
+      });
+
       return res.json({
         vendorAccountId: account.id,
         profileId: profile.id,
@@ -2441,6 +2447,19 @@ export function registerVendorRoutes(app: Express): void {
             logger.warn("[marquee referral reward] failed:", err?.message || err);
           }
         })();
+      }
+
+      if (updated?.status === "active" && existing[0]?.status !== "active") {
+        const [{ activeCount }] = await db
+          .select({ activeCount: drizzleSql<number>`count(*)::int` })
+          .from(vendorListings)
+          .where(and(eq(vendorListings.accountId, vendorAuth.id), eq(vendorListings.status, "active")));
+        if (activeCount === 1) {
+          logEvent("vendor_first_listing_published", "vendor", vendorAuth.id, {
+            listing_id: id,
+            category: (updated as any)?.category ?? null,
+          });
+        }
       }
 
       return res.json(finalListing);

@@ -226,6 +226,19 @@ export const insertEventSchema = createInsertSchema(events)
 export type InsertEvent = z.infer<typeof insertEventSchema>;
 export type Event = typeof events.$inferSelect;
 
+// Analytics event log (structured funnel tracking)
+export const eventLog = pgTable("event_log", {
+  id: varchar("id").primaryKey().default(sql`gen_random_uuid()`),
+  eventName: text("event_name").notNull(),
+  actorType: text("actor_type").notNull(), // 'vendor' | 'customer' | 'system'
+  actorId: varchar("actor_id"),
+  sessionId: text("session_id"),
+  properties: jsonb("properties").notNull().default(sql`'{}'::jsonb`),
+  createdAt: timestamp("created_at", { withTimezone: true }).notNull().defaultNow(),
+});
+
+export type EventLogEntry = typeof eventLog.$inferSelect;
+
 // Vendor Accounts (authentication only)
 export const vendorAccounts = pgTable(
   "vendor_accounts",

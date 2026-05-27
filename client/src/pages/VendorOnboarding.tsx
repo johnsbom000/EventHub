@@ -12,6 +12,7 @@ import { useAuth0 } from "@auth0/auth0-react";
 import { cn } from "@/lib/utils";
 import { getFreshAccessToken } from "@/lib/authToken";
 import { loginWithPopupFirst } from "@/lib/auth0Login";
+import { trackEvent, trackEventBeacon } from "@/lib/analytics";
 
 // Step components (Prop/Decor-only flow)
 import Step2_BusinessDetails from "@/features/vendor/onboarding/Step2_BusinessDetails";
@@ -366,6 +367,19 @@ export default function VendorOnboarding() {
  return () => clearTimeout(t);
  }, [currentStep, formData, completedStepIds]);
 
+ useEffect(() => {
+ trackEvent("vendor_onboarding_step_viewed", { step: currentStep });
+ }, [currentStep]);
+
+ useEffect(() => {
+ const handleBeforeUnload = () => {
+  trackEventBeacon("vendor_onboarding_abandoned", { step: currentStep });
+ };
+ window.addEventListener("beforeunload", handleBeforeUnload);
+ return () => window.removeEventListener("beforeunload", handleBeforeUnload);
+ // eslint-disable-next-line react-hooks/exhaustive-deps
+ }, [currentStep]);
+
  const isAddressVerified =
  !!formData.homeBaseLocation &&
  Number.isFinite(formData.homeBaseLocation.lat) &&
@@ -406,6 +420,7 @@ export default function VendorOnboarding() {
  const markStepComplete = (stepId: number) => {
  if (stepId < 1 || stepId >= STEPS.length) return;
  setCompletedStepIds((prev) => (prev.includes(stepId) ? prev : [...prev, stepId].sort((a, b) => a - b)));
+ trackEvent("vendor_onboarding_step_completed", { step: stepId });
  };
 
  const handleNext = () => {
@@ -498,6 +513,7 @@ export default function VendorOnboarding() {
  ? `${window.location.pathname}${window.location.search}${window.location.hash}`
  : "/vendor/onboarding";
 
+ trackEvent("vendor_signup_started", { step: currentStep });
  const loginResult = await loginWithPopupFirst({
  loginWithPopup,
  loginWithRedirect,
