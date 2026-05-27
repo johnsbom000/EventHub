@@ -1,0 +1,1636 @@
+import type { Express } from "express";
+import { createServer, type Server } from "http";
+import { logger } from "../lib/logger";
+import {
+  safeGoogleErrorMessage,
+  logRouteError,
+  respondWithInternalServerError,
+  appUrl,
+  formatCentsAsDollars,
+  toPgTextArray,
+} from "../lib/routeHelpers";
+import {
+  detectUploadedImageFormat,
+  decodeImageDataUrlToBuffer,
+  persistUploadedImage,
+} from "../lib/imageUpload";
+import {
+  assertCanonicalBookingSchemaReady,
+  ensureModerationTable,
+  ensureStripeWebhookTable,
+  expireStalePendingBookings,
+  cancelUnansweredBookingRequests,
+  cleanupExpiredStreamChannels,
+  runAutoPayoutTick,
+  runAutoPayoutTickWithResult,
+  startAutoPayoutWorker,
+} from "../services/backgroundJobs";
+import {
+  type VendorProfileContext,
+  isGenericProfileName,
+  getProfileDisplayName,
+  bookingRowMatchesActiveProfile,
+  listVendorProfilesForAccount,
+  normalizeProfileNamesForAccount,
+  getVendorAccountFromRequest,
+  requireVendorAccountAuth0,
+  requireVendorAuth0,
+  resolveActiveVendorProfile,
+} from "../services/vendorAuth";
+import {
+  requireCustomerAnyAuth,
+  isMachineGeneratedCustomerName,
+  isSyntheticAuth0LocalEmail,
+  normalizeIdentityEmailCandidate,
+  resolveCanonicalIdentityEmail,
+  safelyBackfillCustomerEmail,
+  toHumanNameFromEmail,
+  resolvePreferredCustomerName,
+  resolveVendorBusinessNameForIdentity,
+  resolveCustomerAuthFromRequest,
+} from "../services/customerAuth";
+import {
+  ensureBookingDisputesTable,
+  ensureStripeCustomer,
+  recomputeBookingPaymentStatusInTx,
+  markBookingAsPaymentFailedInTx,
+  type LockedPaymentPayoutContext,
+  loadPaymentPayoutContextForUpdateInTx,
+  getBookingDisputeStatusInTx,
+  refreshPaymentPayoutStateInTx,
+  processSinglePayoutCandidate,
+  ensurePaymentRecordForIntentInTx,
+  initializeBookingPayment,
+} from "../services/paymentService";
+import {
+  type VendorListingMatchContext,
+  type GoogleEventMappingContext,
+  createGoogleOauthState,
+  parseGoogleOauthState,
+  syncBookingToGoogleCalendarSafely,
+  syncExistingBookingsToSelectedGoogleCalendar,
+  computeCanonicalBookingTimeRange,
+  doTimeRangesOverlap,
+  getComparableGoogleEventRange,
+  findOverlappingEventHubBookingsForListing,
+  escapeRegExp,
+  extractGoogleMetadataValueFromDescription,
+  normalizeComparableListingTitle,
+  loadVendorListingMatchContext,
+  loadGoogleEventMappingContext,
+  matchGoogleCalendarEventToListing,
+  findOverlappingGoogleCalendarEventForListing,
+  listGoogleSyncReconciliationCandidatesForVendorAccount,
+  listSyncableExistingBookingIdsForVendorAccount,
+  buildGoogleBookingReconciliationForVendorAccount,
+  runGoogleBookingSyncVerificationForVendorAccount,
+} from "../services/googleSyncService";
+import {
+  getBookingChatContextById,
+  listCustomerBookingChatContexts,
+  listVendorBookingChatContexts,
+} from "../services/chatService";
+import {
+  deactivateActiveListingsViolatingPublishGate,
+  checkListingAvailabilityForBookingRequest,
+  sendCancellationEmailsAsync,
+} from "../services/bookingService";
+import { registerGoogleRoutes } from "../routers/google";
+import { registerBoardRoutes } from "../routers/boards";
+import { registerCircumventionRoutes } from "../routers/circumvention";
+import { storage } from "../storage";
+import crypto from "crypto";
+import {
+  insertEventSchema,
+  insertVendorAccountSchema,
+  vendorProfiles,
+  vendorAccounts,
+  vendorListings,
+  googleCalendarEventMappings,
+  listingTraffic,
+  users,
+  webTraffic,
+  bookings,
+  events,
+  payments,
+  bookingDisputes,
+  disputeAdminNotes,
+  rentalTypes,
+  stripeWebhookEvents,
+  vendorVacationBlocks,
+  googleCalendarVacationMappings,
+  planningBoards,
+  boardSavedListings,
+  circumventionFlags,
+  circumventionWarnings,
+  vendorSuspensions,
+  feedbackSubmissions,
+  vendorDiscounts,
+  discountListings,
+  discountRedemptions,
+  notifications,
+  listingTranslations,
+  listingAddonLinks,
+  bookingItems,
+  travelFeeProposals,
+  type TravelFeeProposal,
+  listingReviews,
+  reviewReplies,
+  vendorReferrals,
+} from "@shared/schema";
+import {
+  requireDualAuthAuth0,
+  requireAdminAuth,
+  resolveVendorAccountForAuth0Identity,
+} from "../auth";
+import { requireAuth0, verifyAuth0Token } from "../auth0"; // ✅ Auth0 middleware
+import { z } from "zod";
+import { db } from "../db";
+import { eq, and, or, ne, not, isNull, inArray, sql as drizzleSql, count, sum, gte, lte, desc, asc } from "drizzle-orm";
+import multer from "multer";
+import { promises as fs } from "fs";
+import path from "path";
+import {
+  sendBookingRequestedEmail,
+  sendBookingConfirmedEmail,
+  sendBookingCancelledEmail,
+  sendNewMessageEmail,
+  sendReviewPromptEmail,
+  sendCircumventionWarningEmail,
+  sendAccountSuspendedEmail,
+  sendNewReviewReceivedEmail,
+  sendPaymentReceiptEmail,
+  sendPayoutProcessedEmail,
+  sendListingTakenDownEmail,
+  sendVendorWelcomeEmail,
+  sendEventDayReminderEmail,
+  sendPendingRequestReminderEmail,
+  sendSuspensionLiftedEmail,
+  sendDisputeFiledEmail,
+  sendDisputeVendorRespondedEmail,
+  sendDisputeResolvedEmail,
+  sendDisputeResponseEmail,
+  sendTravelFeeProposedEmail,
+  sendTravelFeeRespondedEmail,
+  sendMarqueeInviteEmail,
+} from "../email";
+import { calculateRefund } from "../lib/calculateRefund";
+import {
+  CancellationPolicy,
+  policyFromListingWizard,
+} from "../lib/cancellationPolicyPresets";
+import { checkContent, blockReasonSummary } from "../../shared/circumvention-detection";
+import { translateListingAsync, getListingTranslation, ensureListingTranslation, resolveRequestLanguage } from "../translationService";
+import {
+  uploadBufferToObjectStorage,
+  makeObjectKey,
+  resolveStoredUploadPath,
+  isObjectStorageConfigured,
+  type UploadFolder,
+} from "../lib/objectStorage";
+import {
+  computeChatRetentionExpiry,
+  deleteStreamBookingChannel,
+  ensureStreamBookingChannel,
+  getAverageVendorResponseMinutesForBookings,
+  getStreamUnreadCountsForBookings,
+  getStreamApiKey,
+  isChatExpiredForEventDate,
+  isChatWindowClosedForEventDate,
+  isStreamChatConfigured,
+  sendBookingSystemMessage,
+  toStreamUserId,
+} from "../streamChat";
+import {
+  GoogleCalendarConnectionError,
+  createGoogleCalendarForVendorAccount,
+  createGoogleVacationBlockEvent,
+  createVendorNotification,
+  deleteGoogleCalendarEvent,
+  createGoogleCalendarWatchChannel,
+  getGoogleCalendarEvent,
+  listGoogleCalendarsForVendorAccount,
+  listSelectedGoogleCalendarEventsForVendorAccount,
+  renewExpiringGoogleCalendarWatchChannels,
+  stopAllGoogleCalendarWatchChannelsForVendor,
+  stopGoogleCalendarWatchChannel,
+  syncEventHubBookingToGoogleCalendar,
+  fetchGoogleAccountEmail,
+} from "../google";
+import {
+  handleGoogleCalendarWebhook,
+  processGoogleWebhookForChannel,
+} from "../googleWebhookHandler";
+import {
+  addDaysToIsoDate,
+  normalizeIanaTimeZone,
+  parseIsoDateValue,
+  parseTimeValueToMinutes,
+  zonedDateStartToUtc,
+  zonedDateTimeToUtc,
+} from "../timezone";
+import { serializeHobbyList } from "@shared/hobby-tags";
+import {
+  computePayoutEligibility,
+  deriveDisputeWindowCloseAt,
+  isDisputeWindowOpen,
+  DISPUTE_WINDOW_HOURS,
+} from "../payoutEligibility";
+import { decryptToken, encryptToken } from "../lib/tokenEncryption";
+import { createDbRateLimiter } from "../lib/dbRateLimiter";
+import { timezoneFromCoords } from "../lib/timezoneFromCoords";
+import { tryAcquireWorkerLock, releaseWorkerLock } from "../lib/workerLocks";
+import {
+  extractRows,
+  toOptionalNumber,
+  asTrimmedString,
+  parseBooleanInput,
+  parseMoneyToCents,
+  parseLatLngValue,
+  parseIntegerValue,
+  normalizePaymentStateValue,
+  toCanonicalPaymentStatus,
+  isPaymentSucceededStatus,
+  isPaymentRefundedOrPartiallyRefundedStatus,
+  isPaymentCollectedStatus,
+  shouldCountBookingAsInventoryReserved,
+  deriveBookingPaymentStatusFromScheduleStatuses,
+  estimateStripeProcessingFeeCents,
+  normalizeTitleCaseText,
+  normalizeProfileNameText,
+  clampDescriptionText,
+  toUniqueTrimmedStringList,
+  normalizeTagEntry,
+  normalizeTagsByPropType,
+  clampListingDescriptions,
+  normalizeListingTitleCandidate,
+  normalizeListingCategory,
+  isInstantBookingCategory,
+  normalizeListingSubcategory,
+  normalizeListingSubcategoryDetail,
+  normalizeListingClassification,
+  resolveBookingLifecycleMode,
+  getListingPhotoCount,
+  hasMinimumListingPhotos,
+  toCanonicalTagList,
+  extractListingBasePriceCents,
+  hasValidListingPrice,
+  getListingPricingUnit,
+  getListingMinimumHours,
+  getListingAvailableQuantity,
+  getListingLogisticsFeeSummaryCents,
+  parseAddressLabel,
+  haversineDistanceMiles,
+  isEventOutsideServiceRadius,
+  resolveCanonicalListingCategory,
+  isListingPubliclyCompliant,
+  mirrorListingQuantityIntoListingData,
+  buildCanonicalListingColumns,
+  type BookingChatContext,
+  hasPaymentAccessForChat,
+  normalizeBookingChatContext,
+  toConversationPayload,
+  deriveVendorSlug,
+} from "../lib/routeUtils";
+import {
+  VENDOR_FEE_RATE,
+  CUSTOMER_FEE_RATE,
+  MARQUEE_VENDOR_MAX_SPOTS,
+  MARQUEE_HOLIDAY_BOOKING_COUNT,
+  MARQUEE_HOLIDAY_DAYS,
+  MARQUEE_REFERRAL_BONUS_BOOKINGS,
+  MARQUEE_VENDOR_FEE_RATE,
+  MARQUEE_RATE_MONTHS,
+  MARQUEE_CUSTOMER_FEE_RATE,
+  MARQUEE_CUSTOMER_FEE_MONTHS,
+  MARQUEE_VISIBILITY_MONTHS,
+  STRIPE_FEE_ESTIMATE_PERCENT,
+  STRIPE_FEE_ESTIMATE_FIXED_CENTS,
+  VENDOR_ABSORBS_STRIPE_FEES,
+  PAYOUT_RELEASE_MODE,
+  AUTO_PAYOUT_INTERVAL_MS,
+  BOOKING_PENDING_EXPIRY_MINUTES,
+  BOOKING_PENDING_EXPIRY_REASON,
+  BOOKING_VENDOR_RESPONSE_EXPIRY_DAYS,
+  BOOKING_VENDOR_NO_RESPONSE_REASON,
+  MIN_LISTING_PHOTO_COUNT,
+  LISTING_DESCRIPTION_MAX_CHARS,
+  LISTING_SUBCATEGORY_MAX_CHARS,
+  LISTING_SUBCATEGORY_DETAIL_MAX_CHARS,
+  LISTING_CATEGORY_VALUES,
+  type ListingCategoryValue,
+  GOOGLE_OAUTH_STATE_TTL_MS,
+  CHAT_POLICY_WARNING,
+  SAFE_GOOGLE_ERROR_MESSAGES,
+} from "../lib/constants";
+import {
+  paymentRateLimiter,
+  uploadRateLimiter,
+  bookingRateLimiter,
+  eventsRateLimiter,
+  trackRateLimiter,
+  onboardingRateLimiter,
+  mutationRateLimiter,
+  socialRateLimiter,
+  messagingRateLimiter,
+  boardsRateLimiter,
+  adminRateLimiter,
+  browseRateLimiter,
+} from "../lib/rateLimiters";
+
+const STRIPE_WEBHOOK_SECRET = (process.env.STRIPE_WEBHOOK_SECRET || "").trim();
+if (!STRIPE_WEBHOOK_SECRET) {
+  throw new Error("STRIPE_WEBHOOK_SECRET env var is required but not set.");
+}
+
+export function registerPaymentRoutes(app: Express): void {
+
+
+  // ─────────────────────────────────────────────────────────────────────────────
+  // POST /api/bookings/:bookingId/initialize-payment
+  // Creates (or retrieves) the Stripe PaymentIntent for a booking's total charge.
+  // Returns a clientSecret the client uses to confirm payment with Stripe.js.
+  // ─────────────────────────────────────────────────────────────────────────────
+
+  app.post(
+    "/api/bookings/:bookingId/initialize-payment",
+    paymentRateLimiter,
+    requireCustomerAnyAuth,
+    async (req, res) => {
+      try {
+        const { bookingId } = req.params;
+        const customerAuth = await resolveCustomerAuthFromRequest(req, { createIfMissing: false });
+        if (!customerAuth?.id) {
+          return res.status(401).json({ error: "Customer authentication required" });
+        }
+        const customerEmail = asTrimmedString(customerAuth.email) || "";
+        const initialized = await initializeBookingPayment({
+          bookingId,
+          customerId: customerAuth.id,
+          customerEmail,
+        });
+        return res.json({
+          bookingId: initialized.booking.id,
+          clientSecret: initialized.clientSecret,
+          paymentIntentId: initialized.paymentIntentId,
+          payoutReleaseMode: PAYOUT_RELEASE_MODE,
+        });
+      } catch (error: any) {
+        const message = String(error?.message || "");
+        if (
+          message.includes("already been completed") ||
+          message.includes("already been refunded") ||
+          message.includes("currently disputed") ||
+          message.includes("no longer payable")
+        ) {
+          return res.status(409).json({ error: message });
+        }
+        if (message.includes("Booking not found")) {
+          return res.status(404).json({ error: "Booking not found" });
+        }
+        if (message.includes("do not have access")) {
+          return res.status(403).json({ error: "You do not have access to this booking" });
+        }
+        if (message.includes("Vendor payment processing not set up")) {
+          return res.status(400).json({ error: "Vendor payment processing not set up" });
+        }
+        return res.status(500).json({ error: "Unable to initialize payment" });
+      }
+    }
+  );
+
+  // ---------------------------------------------------------------------------
+  // Hosted Checkout Session — marketplace destination charge
+  // ---------------------------------------------------------------------------
+  // Creates a Stripe-hosted checkout page for a direct listing purchase.
+  // The payment flows through the platform account and the net amount is
+  // automatically transferred to the vendor via a destination charge.
+  //
+  // Usage: POST /api/checkout/session  { listingId: "..." }
+  // Returns: { url: "https://checkout.stripe.com/..." }
+  //
+  // After the customer pays, Stripe fires checkout.session.completed to
+  // /api/stripe/webhook and the session metadata links it back to the listing.
+
+  const checkoutSessionSchema = z.object({
+    listingId: z.string().min(1),
+  });
+
+  app.post("/api/checkout/session", mutationRateLimiter, requireCustomerAnyAuth, async (req, res) => {
+    // Direct-checkout flow is not production-ready: payments.bookingId is NOT NULL so no
+    // payment record can be created, and the payout worker has no path to pay the vendor.
+    // Remove this gate when the direct-purchase booking flow is implemented.
+    return res.status(501).json({
+      error: "Direct checkout is not yet available.",
+      code: "direct_checkout_not_implemented",
+    });
+
+    try {
+      const { listingId } = checkoutSessionSchema.parse(req.body);
+
+      // ── 1. Resolve the listing ──────────────────────────────────────────
+      const [listing] = await db
+        .select({
+          id: vendorListings.id,
+          title: vendorListings.title,
+          priceCents: vendorListings.priceCents,
+          status: vendorListings.status,
+          accountId: vendorListings.accountId,
+        })
+        .from(vendorListings)
+        .where(eq(vendorListings.id, listingId))
+        .limit(1);
+
+      if (!listing) {
+        return res.status(404).json({ error: "Listing not found" });
+      }
+      if (listing.status !== "active") {
+        return res.status(400).json({ error: "This listing is not available for purchase" });
+      }
+      if (!listing.priceCents || listing.priceCents <= 0) {
+        return res.status(400).json({ error: "Listing does not have a valid price" });
+      }
+
+      // ── 2. Resolve the vendor's connected Stripe account ───────────────
+      const [vendor] = await db
+        .select({
+          stripeConnectId: vendorAccounts.stripeConnectId,
+          stripeOnboardingComplete: vendorAccounts.stripeOnboardingComplete,
+        })
+        .from(vendorAccounts)
+        .where(eq(vendorAccounts.id, listing.accountId))
+        .limit(1);
+
+      if (!vendor?.stripeConnectId || !vendor.stripeOnboardingComplete) {
+        return res.status(400).json({ error: "Vendor payment processing is not set up" });
+      }
+
+      // ── 3. Calculate fees ───────────────────────────────────────────────
+      // application_fee_amount: the cut the platform retains from this charge.
+      // The vendor receives: listingPrice − applicationFee − Stripe processing fee.
+      const applicationFeeAmountCents = Math.round(listing.priceCents * VENDOR_FEE_RATE);
+
+      // ── 4. Build redirect URLs ──────────────────────────────────────────
+      const appBaseUrl = (process.env.APP_URL || "http://localhost:5173").trim().replace(/\/+$/, "");
+
+      // {CHECKOUT_SESSION_ID} is a Stripe template literal — it is replaced by
+      // the real session ID at redirect time, allowing the success page to verify
+      // the payment via GET /api/checkout/session/:sessionId.
+      const successUrl = `${appBaseUrl}/checkout/success?session_id={CHECKOUT_SESSION_ID}`;
+      const cancelUrl = `${appBaseUrl}/checkout/cancel`;
+
+      // ── 5. Create the Stripe Checkout Session ──────────────────────────
+      const { createCheckoutSession } = await import("../stripe");
+
+      const session = await createCheckoutSession({
+        listingName: listing.title || "EventHub Service",
+        amountCents: listing.priceCents,
+        currency: "usd",
+        applicationFeeAmountCents,
+        vendorStripeAccountId: vendor.stripeConnectId,
+        successUrl,
+        cancelUrl,
+        // Store IDs in metadata so the checkout.session.completed webhook
+        // can reconcile this payment with the listing and vendor in our DB.
+        metadata: {
+          listingId: listing.id,
+          vendorAccountId: listing.accountId,
+          vendorStripeAccountId: vendor.stripeConnectId,
+          applicationFeeAmountCents: applicationFeeAmountCents.toString(),
+        },
+      });
+
+      // Return the hosted checkout URL — the client should redirect to this.
+      return res.json({ url: session.url, sessionId: session.id });
+    } catch (error: any) {
+      return respondWithInternalServerError(req, res, error);
+    }
+  });
+
+  // GET /api/checkout/session/:sessionId — verify a completed checkout session.
+  // Called by the success page to confirm payment before showing confirmation UI.
+  app.get("/api/checkout/session/:sessionId", requireCustomerAnyAuth, async (req, res) => {
+    try {
+      const sessionId = asTrimmedString(req.params.sessionId);
+      if (!sessionId) {
+        return res.status(400).json({ error: "Missing session ID" });
+      }
+
+      const { stripeClient } = await import("../stripe");
+
+      // Retrieve the session and expand the payment_intent so we can expose
+      // payment status without requiring a separate API call from the client.
+      const session = await stripeClient.checkout.sessions.retrieve(sessionId, {
+        expand: ["payment_intent"],
+      });
+
+      return res.json({
+        sessionId: session.id,
+        paymentStatus: session.payment_status,   // "paid" | "unpaid" | "no_payment_required"
+        status: session.status,                   // "open" | "complete" | "expired"
+        amountTotal: session.amount_total,
+        currency: session.currency,
+        metadata: session.metadata,
+      });
+    } catch (error: any) {
+      return respondWithInternalServerError(req, res, error);
+    }
+  });
+
+  app.post("/api/stripe/webhook", async (req, res) => {
+    try {
+      await ensureStripeWebhookTable();
+
+      const signatureHeader = req.headers["stripe-signature"];
+      const signature = Array.isArray(signatureHeader) ? signatureHeader[0] : signatureHeader;
+      if (!signature) {
+        return res.status(400).json({ error: "Missing Stripe signature" });
+      }
+
+      const webhookSecret = STRIPE_WEBHOOK_SECRET;
+
+      if (!(req.rawBody instanceof Buffer)) {
+        return res.status(400).json({ error: "Missing raw request body — ensure express.json verify middleware is active" });
+      }
+      const rawBody = req.rawBody;
+      const { stripe } = await import("../stripe");
+
+      let event: any;
+      try {
+        event = stripe.webhooks.constructEvent(rawBody, signature, webhookSecret);
+      } catch {
+        return res.status(400).json({ error: "Invalid Stripe signature" });
+      }
+
+      if (process.env.NODE_ENV === "production" && !event.livemode) {
+        return res.status(400).json({ error: "Test-mode events rejected in production" });
+      }
+
+      const insertedRows = await db
+        .insert(stripeWebhookEvents)
+        .values({
+          eventId: event.id,
+          eventType: event.type,
+          livemode: Boolean(event.livemode),
+          payload: event,
+        })
+        .onConflictDoNothing({ target: stripeWebhookEvents.eventId })
+        .returning({ id: stripeWebhookEvents.id });
+
+      if (insertedRows.length === 0) {
+        return res.json({ received: true, duplicate: true });
+      }
+
+      const eventType = asTrimmedString(event?.type);
+      if (
+        eventType === "payment_intent.succeeded" ||
+        eventType === "payment_intent.payment_failed"
+      ) {
+        const paymentIntent = event?.data?.object ?? {};
+        const paymentIntentId = asTrimmedString(paymentIntent?.id);
+        if (paymentIntentId) {
+          const metadata = paymentIntent?.metadata && typeof paymentIntent.metadata === "object"
+            ? paymentIntent.metadata
+            : {};
+          const fallbackBookingId = asTrimmedString((metadata as any)?.bookingId);
+          const fallbackPaymentType = asTrimmedString((metadata as any)?.paymentType);
+          const fallbackAmount = parseIntegerValue(paymentIntent?.amount);
+          const fallbackTotalAmount =
+            parseIntegerValue((metadata as any)?.totalAmount) ??
+            fallbackAmount;
+          const fallbackPlatformFeeAmount = parseIntegerValue((metadata as any)?.platformFee);
+          const fallbackVendorGrossAmount = parseIntegerValue((metadata as any)?.vendorGross);
+          const fallbackVendorNetPayoutAmount =
+            parseIntegerValue((metadata as any)?.vendorNetPayout) ??
+            parseIntegerValue((metadata as any)?.vendorPayout);
+          const fallbackStripeProcessingFeeEstimate = parseIntegerValue(
+            (metadata as any)?.stripeProcessingFeeEstimate
+          );
+          const fallbackStripeConnectedAccountId =
+            asTrimmedString((metadata as any)?.stripeConnectedAccountId) ||
+            asTrimmedString((metadata as any)?.vendorStripeAccountId) ||
+            null;
+
+          let latestChargeId = "";
+          let actualStripeFeeAmount: number | null = null;
+          if (eventType === "payment_intent.succeeded") {
+            latestChargeId =
+              typeof paymentIntent?.latest_charge === "string"
+                ? paymentIntent.latest_charge.trim()
+                : asTrimmedString(paymentIntent?.latest_charge?.id);
+            if (latestChargeId) {
+              try {
+                const charge = await stripe.charges.retrieve(latestChargeId, {
+                  expand: ["balance_transaction"],
+                });
+                if (
+                  charge.balance_transaction &&
+                  typeof charge.balance_transaction !== "string" &&
+                  Number.isFinite((charge.balance_transaction as any).fee)
+                ) {
+                  actualStripeFeeAmount = Math.max(
+                    0,
+                    Math.round((charge.balance_transaction as any).fee)
+                  );
+                }
+              } catch {
+                // Non-fatal; payout calculations can fall back to estimates.
+              }
+            }
+          }
+
+          await db.transaction(async (tx) => {
+            const payment = await ensurePaymentRecordForIntentInTx(tx, {
+              paymentIntentId,
+              fallbackBookingId,
+              fallbackPaymentType,
+              fallbackAmount,
+              fallbackTotalAmount,
+              fallbackPlatformFeeAmount,
+              fallbackVendorGrossAmount,
+              fallbackVendorNetPayoutAmount,
+              fallbackStripeProcessingFeeEstimate,
+              fallbackStripeConnectedAccountId,
+            });
+            if (!payment?.id || !payment.bookingId) return;
+
+            const now = new Date();
+            const [bookingRow] = await tx
+              .select({
+                id: bookings.id,
+                status: bookings.status,
+                cancellationReason: bookings.cancellationReason,
+                bookingEndAt: bookings.bookingEndAt,
+                totalAmount: bookings.totalAmount,
+                platformFee: bookings.platformFee,
+                subtotalAmountCents: bookings.subtotalAmountCents,
+                vendorPayout: bookings.vendorPayout,
+                instantBookSnapshot: bookings.instantBookSnapshot,
+                outsideServiceRadius: bookings.outsideServiceRadius,
+              })
+              .from(bookings)
+              .where(eq(bookings.id, payment.bookingId))
+              .limit(1);
+            if (!bookingRow?.id) return;
+            const bookingDisputeStatus = await getBookingDisputeStatusInTx(tx, payment.bookingId);
+
+            const payoutEligibility = computePayoutEligibility({
+              bookingStatus: bookingRow.status,
+              paymentStatus: eventType === "payment_intent.payment_failed" ? "failed" : "succeeded",
+              payoutStatus: payment.payoutStatus,
+              payoutBlockedReason: payment.payoutBlockedReason,
+              disputeStatus: payment.disputeStatus,
+              bookingDisputeStatus,
+              paidOutAt: payment.paidOutAt,
+              payoutEligibleAt: payment.payoutEligibleAt,
+              bookingEndAt: bookingRow.bookingEndAt,
+              totalAmount: payment.totalAmount ?? parseIntegerValue(bookingRow.totalAmount) ?? payment.amount,
+              refundedAmount: payment.refundAmount,
+              vendorNetPayoutAmount: payment.vendorNetPayoutAmount,
+              actualStripeFeeAmount: actualStripeFeeAmount ?? payment.actualStripeFeeAmount,
+              stripeConnectedAccountId:
+                payment.stripeConnectedAccountId ?? fallbackStripeConnectedAccountId,
+              stripeChargeId: payment.stripeChargeId ?? latestChargeId,
+              stripeTransferId: payment.stripeTransferId,
+              vendorAbsorbsStripeFees: VENDOR_ABSORBS_STRIPE_FEES,
+            }, now);
+
+            if (eventType === "payment_intent.succeeded") {
+              if (isPaymentSucceededStatus(payment.status)) return;
+
+              await tx
+                .update(payments)
+                .set({
+                  status: "succeeded",
+                  paidAt: now,
+                  stripeChargeId: latestChargeId || payment.stripeChargeId || null,
+                  actualStripeFeeAmount:
+                    actualStripeFeeAmount ??
+                    parseIntegerValue(payment.actualStripeFeeAmount) ??
+                    parseIntegerValue(fallbackStripeProcessingFeeEstimate),
+                  totalAmount:
+                    parseIntegerValue(payment.totalAmount) ??
+                    parseIntegerValue(bookingRow.totalAmount) ??
+                    parseIntegerValue(payment.amount) ??
+                    null,
+                  platformFeeAmount:
+                    parseIntegerValue(payment.platformFeeAmount) ??
+                    parseIntegerValue(bookingRow.platformFee) ??
+                    null,
+                  vendorGrossAmount:
+                    parseIntegerValue(payment.vendorGrossAmount) ??
+                    parseIntegerValue(bookingRow.subtotalAmountCents),
+                  vendorNetPayoutAmount:
+                    parseIntegerValue(payment.vendorNetPayoutAmount) ??
+                    parseIntegerValue(bookingRow.vendorPayout) ??
+                    null,
+                  stripeProcessingFeeEstimate:
+                    parseIntegerValue(payment.stripeProcessingFeeEstimate) ??
+                    parseIntegerValue(fallbackStripeProcessingFeeEstimate),
+                  stripeConnectedAccountId:
+                    payment.stripeConnectedAccountId ?? fallbackStripeConnectedAccountId,
+                  payoutStatus: payoutEligibility.payoutStatus,
+                  payoutEligibleAt: payoutEligibility.payoutEligibleAt,
+                  payoutBlockedReason: payoutEligibility.payoutBlockedReason,
+                  payoutAdjustedAmount: payoutEligibility.adjustedPayoutAmount,
+                  disputeStatus: null,
+                })
+                .where(eq(payments.id, payment.id));
+
+              // Mark the security deposit row (same PaymentIntent, separate row) as
+              // succeeded so the auto-refund job and cancellation logic can find it.
+              await tx
+                .update(payments)
+                .set({
+                  status: "succeeded",
+                  paidAt: now,
+                  stripeChargeId: latestChargeId || null,
+                })
+                .where(
+                  and(
+                    eq(payments.stripePaymentIntentId, paymentIntentId),
+                    eq(payments.paymentType, "security_deposit")
+                  )
+                );
+
+              const nextBookingPaymentStatus = await recomputeBookingPaymentStatusInTx(
+                tx,
+                payment.bookingId
+              );
+              const bookingStatus = normalizePaymentStateValue(bookingRow.status);
+              if (
+                bookingStatus === "cancelled" ||
+                bookingStatus === "expired" ||
+                bookingStatus === "failed"
+              ) {
+                await tx
+                  .update(bookings)
+                  .set({
+                    cancellationReason:
+                      bookingRow.cancellationReason ||
+                      `payment_succeeded_after_${bookingStatus || "closure"}`,
+                    paymentStatus: nextBookingPaymentStatus as any,
+                    updatedAt: now,
+                  })
+                  .where(eq(bookings.id, bookingRow.id));
+              } else {
+                // Request-to-book listings (instantBookSnapshot = false) must stay
+                // "pending" after payment — the vendor needs to explicitly accept.
+                // Instant-book listings outside the service radius also stay
+                // "pending" because the vendor must confirm the out-of-area booking.
+                // Only instant-book listings within the service radius are auto-confirmed.
+                const isInstantBook = bookingRow.instantBookSnapshot !== false;
+                const requiresVendorConfirmation = !isInstantBook || bookingRow.outsideServiceRadius === true;
+                await tx
+                  .update(bookings)
+                  .set({
+                    ...(!requiresVendorConfirmation
+                      ? { status: "confirmed" as const, confirmedAt: now }
+                      : {}),
+                    paymentStatus: nextBookingPaymentStatus as any,
+                    updatedAt: now,
+                  })
+                  .where(eq(bookings.id, bookingRow.id));
+              }
+              return;
+            }
+
+            if (isPaymentSucceededStatus(payment.status) || isPaymentRefundedOrPartiallyRefundedStatus(payment.status)) {
+              return;
+            }
+
+            await tx
+              .update(payments)
+              .set({
+                status: "failed",
+                payoutStatus: "cancelled",
+                payoutBlockedReason: "payment_failed",
+                payoutAdjustedAmount: 0,
+              })
+              .where(eq(payments.id, payment.id));
+
+            const nextBookingPaymentStatus = await recomputeBookingPaymentStatusInTx(
+              tx,
+              payment.bookingId
+            );
+            if (nextBookingPaymentStatus === "failed") {
+              await markBookingAsPaymentFailedInTx(tx, payment.bookingId, "stripe_payment_failed");
+            }
+          });
+
+          // Notify vendor of payment received (booking payments only, fire-and-forget)
+          if (eventType === "payment_intent.succeeded" && fallbackPaymentType === "booking" && fallbackBookingId) {
+            void (async () => {
+              try {
+                const paymentRows: any = await db.execute(drizzleSql`
+                  select
+                    b.vendor_account_id as "vendorAccountId",
+                    b.event_date        as "eventDate",
+                    coalesce(b.listing_title_snapshot, '') as "listingTitle"
+                  from payments p
+                  join bookings b on b.id = p.booking_id
+                  where p.stripe_payment_intent_id = ${paymentIntentId}
+                    and p.payment_type = 'booking'
+                  limit 1
+                `);
+                const pr = extractRows<{ vendorAccountId: string; eventDate: string; listingTitle: string }>(paymentRows)[0];
+                if (!pr?.vendorAccountId) return;
+                await storage.createNotification({
+                  recipientId: pr.vendorAccountId,
+                  recipientType: "vendor",
+                  type: "payment_received",
+                  title: "Payment received",
+                  message: `Payment for ${pr.listingTitle || "your service"} on ${pr.eventDate} has been received.`,
+                  link: `/vendor/bookings?bookingId=${encodeURIComponent(fallbackBookingId)}`,
+                  read: false,
+                });
+              } catch {}
+            })();
+          }
+
+          // Fire-and-forget: send payment receipt to customer + booking confirmed to vendor
+          if (eventType === "payment_intent.succeeded") {
+            void (async () => {
+              try {
+                const serverUrl = appUrl();
+                const receiptRows: any = await db.execute(drizzleSql`
+                  select
+                    u.email          as "customerEmail",
+                    u.name           as "customerName",
+                    va.email         as "vendorEmail",
+                    va.business_name as "vendorName",
+                    b.event_date     as "eventDate",
+                    b.listing_title_snapshot as "listingTitle",
+                    b.subtotal_amount_cents   as "subtotalCents",
+                    b.customer_fee_amount_cents as "feeCents",
+                    (b.total_amount - coalesce(b.security_deposit_cents, 0)) as "totalCents",
+                    p.stripe_payment_intent_id as "paymentIntentId"
+                  from payments p
+                  join bookings b on b.id = p.booking_id
+                  join users u on u.id = b.customer_id
+                  join vendor_accounts va on va.id = b.vendor_account_id
+                  where p.stripe_payment_intent_id = ${paymentIntentId}
+                  limit 1
+                `);
+                const receipt = extractRows<{
+                  customerEmail: string;
+                  customerName: string;
+                  vendorEmail: string | null;
+                  vendorName: string;
+                  eventDate: string;
+                  listingTitle: string | null;
+                  subtotalCents: number | null;
+                  feeCents: number | null;
+                  totalCents: number;
+                  paymentIntentId: string;
+                }>(receiptRows)[0];
+                const receiptAddonRows: any = fallbackBookingId ? await db.execute(drizzleSql`
+                  SELECT title, unit_price_cents, total_price_cents
+                  FROM booking_items
+                  WHERE booking_id = ${fallbackBookingId} AND item_type = 'addon'
+                  ORDER BY created_at ASC
+                `) : { rows: [] };
+                const receiptAddOns = (receiptAddonRows.rows as any[]).map((r: any) => ({
+                  title: String(r.title ?? "Add-on"),
+                  priceCents: Number(r.total_price_cents ?? r.unit_price_cents ?? 0),
+                }));
+
+                const emailTasks: Promise<any>[] = [];
+                if (receipt?.customerEmail) {
+                  emailTasks.push(
+                    sendPaymentReceiptEmail(receipt.customerEmail, {
+                      recipientName: receipt.customerName || "Customer",
+                      vendorName: receipt.vendorName || "Vendor",
+                      listingTitle: receipt.listingTitle || "Service",
+                      eventDate: receipt.eventDate,
+                      subtotalCents: receipt.subtotalCents ?? receipt.totalCents,
+                      platformFeeCents: receipt.feeCents ?? 0,
+                      totalCents: receipt.totalCents,
+                      paymentIntentId: receipt.paymentIntentId,
+                      addOns: receiptAddOns,
+                      serverUrl,
+                    })
+                  );
+                }
+                if (receipt?.vendorEmail) {
+                  emailTasks.push(
+                    sendBookingConfirmedEmail(receipt.vendorEmail, {
+                      recipientName: receipt.vendorName || "Vendor",
+                      counterpartName: receipt.customerName || "Customer",
+                      eventDate: receipt.eventDate,
+                      listingTitle: receipt.listingTitle || "Service",
+                      totalAmountCents: receipt.totalCents,
+                      addOns: receiptAddOns,
+                      role: "vendor",
+                      serverUrl,
+                    })
+                  );
+                }
+                await Promise.allSettled(emailTasks);
+              } catch (emailError: any) {
+                logger.warn("[payment email] failed:", emailError?.message || emailError);
+              }
+            })();
+
+            // Fire-and-forget: eagerly create the Stream Chat channel so the vendor
+            // can message the customer immediately after payment without waiting for
+            // the lazy bootstrap triggered on first chat open.
+            if (isStreamChatConfigured() && fallbackBookingId) {
+              void (async () => {
+                try {
+                  const chatCtx = await getBookingChatContextById(fallbackBookingId);
+                  if (chatCtx?.customerId && chatCtx?.vendorAccountId && chatCtx?.eventDate) {
+                    await ensureStreamBookingChannel({
+                      bookingId: chatCtx.bookingId,
+                      eventDate: chatCtx.eventDate,
+                      eventTitle: chatCtx.eventTitle,
+                      customerId: chatCtx.customerId,
+                      customerName: chatCtx.customerName,
+                      customerEmail: chatCtx.customerEmail,
+                      vendorAccountId: chatCtx.vendorAccountId,
+                      vendorName: chatCtx.vendorName,
+                      vendorEmail: chatCtx.vendorEmail,
+                    });
+                  }
+                } catch (streamErr: any) {
+                  logger.warn("[stream-chat] Failed to eagerly create booking channel:", streamErr?.message);
+                }
+              })();
+            }
+          }
+        }
+      } else if (eventType === "charge.dispute.created" || eventType === "charge.dispute.closed") {
+        const dispute = event?.data?.object ?? {};
+        const paymentIntentId =
+          typeof dispute?.payment_intent === "string" ? dispute.payment_intent.trim() : "";
+        const chargeId =
+          typeof dispute?.charge === "string" ? dispute.charge.trim() : "";
+        const disputeStatus = asTrimmedString(dispute?.status).toLowerCase() || "needs_response";
+
+        await db.transaction(async (tx) => {
+          let payment: any = null;
+          if (paymentIntentId) {
+            payment = await ensurePaymentRecordForIntentInTx(tx, {
+              paymentIntentId,
+            });
+          } else if (chargeId) {
+            const [byCharge] = await tx
+              .select({
+                id: payments.id,
+                bookingId: payments.bookingId,
+                status: payments.status,
+                payoutStatus: payments.payoutStatus,
+                payoutBlockedReason: payments.payoutBlockedReason,
+                payoutAdjustedAmount: payments.payoutAdjustedAmount,
+                disputeStatus: payments.disputeStatus,
+                paidOutAt: payments.paidOutAt,
+                payoutEligibleAt: payments.payoutEligibleAt,
+                totalAmount: payments.totalAmount,
+                amount: payments.amount,
+                refundAmount: payments.refundAmount,
+                vendorNetPayoutAmount: payments.vendorNetPayoutAmount,
+                actualStripeFeeAmount: payments.actualStripeFeeAmount,
+                stripeConnectedAccountId: payments.stripeConnectedAccountId,
+                stripeChargeId: payments.stripeChargeId,
+                stripeTransferId: payments.stripeTransferId,
+              })
+              .from(payments)
+              .where(eq(payments.stripeChargeId, chargeId))
+              .limit(1);
+            payment = byCharge ?? null;
+          }
+          if (!payment?.id || !payment.bookingId) return;
+
+          const now = new Date();
+          const [bookingRow] = await tx
+            .select({
+              id: bookings.id,
+              status: bookings.status,
+              bookingEndAt: bookings.bookingEndAt,
+            })
+            .from(bookings)
+            .where(eq(bookings.id, payment.bookingId))
+            .limit(1);
+          if (!bookingRow?.id) return;
+
+          if (eventType === "charge.dispute.created") {
+            await tx
+              .update(payments)
+              .set({
+                status: "disputed",
+                disputeStatus,
+                stripeChargeId: (payment.stripeChargeId ?? chargeId) || null,
+                payoutStatus: "blocked",
+                payoutBlockedReason: "active_dispute",
+                payoutAdjustedAmount: parseIntegerValue(payment.payoutAdjustedAmount) ?? null,
+              })
+              .where(eq(payments.id, payment.id));
+
+            await recomputeBookingPaymentStatusInTx(tx, payment.bookingId);
+            return;
+          }
+
+          const disputeClosedAsWon =
+            disputeStatus === "won" || disputeStatus === "warning_closed";
+          if (!disputeClosedAsWon) {
+            await tx
+              .update(payments)
+              .set({
+                disputeStatus,
+                payoutStatus: "cancelled",
+                payoutBlockedReason: "dispute_lost",
+                payoutAdjustedAmount: 0,
+              })
+              .where(eq(payments.id, payment.id));
+            return;
+          }
+
+          const refundedAmount = Math.max(0, parseIntegerValue(payment.refundAmount) ?? 0);
+          const totalAmount = Math.max(
+            0,
+            parseIntegerValue(payment.totalAmount) ??
+              parseIntegerValue(payment.amount) ??
+              0
+          );
+          const nextPaymentStatus =
+            refundedAmount >= totalAmount && totalAmount > 0
+              ? "refunded"
+              : refundedAmount > 0
+                ? "partially_refunded"
+                : "succeeded";
+          const bookingDisputeStatus = await getBookingDisputeStatusInTx(tx, payment.bookingId);
+          const payoutEligibility = computePayoutEligibility({
+            bookingStatus: bookingRow.status,
+            paymentStatus: nextPaymentStatus,
+            payoutStatus: payment.payoutStatus,
+            payoutBlockedReason: null,
+            disputeStatus,
+            bookingDisputeStatus,
+            paidOutAt: payment.paidOutAt,
+            payoutEligibleAt: payment.payoutEligibleAt,
+            bookingEndAt: bookingRow.bookingEndAt,
+            totalAmount,
+            refundedAmount,
+            vendorNetPayoutAmount: payment.vendorNetPayoutAmount,
+            actualStripeFeeAmount: payment.actualStripeFeeAmount,
+            stripeConnectedAccountId: payment.stripeConnectedAccountId,
+            stripeChargeId: payment.stripeChargeId ?? chargeId,
+            stripeTransferId: payment.stripeTransferId,
+            vendorAbsorbsStripeFees: VENDOR_ABSORBS_STRIPE_FEES,
+          }, now);
+
+          await tx
+            .update(payments)
+            .set({
+              status: nextPaymentStatus as any,
+              disputeStatus,
+              payoutStatus: payoutEligibility.payoutStatus,
+              payoutEligibleAt: payoutEligibility.payoutEligibleAt,
+              payoutBlockedReason: payoutEligibility.payoutBlockedReason,
+              payoutAdjustedAmount: payoutEligibility.adjustedPayoutAmount,
+            })
+            .where(eq(payments.id, payment.id));
+          const nextBookingPaymentStatus = await recomputeBookingPaymentStatusInTx(
+            tx,
+            payment.bookingId
+          );
+          await tx
+            .update(bookings)
+            .set({
+              paymentStatus: nextBookingPaymentStatus as any,
+              updatedAt: now,
+            })
+            .where(eq(bookings.id, payment.bookingId));
+        });
+      } else if (eventType === "charge.refunded") {
+        const charge = event?.data?.object ?? {};
+        const paymentIntentId =
+          typeof charge?.payment_intent === "string" ? charge.payment_intent.trim() : "";
+        const chargeId = typeof charge?.id === "string" ? charge.id.trim() : "";
+        if (paymentIntentId) {
+          const amountRefunded = parseIntegerValue(charge?.amount_refunded) ?? 0;
+          await db.transaction(async (tx) => {
+            const payment = await ensurePaymentRecordForIntentInTx(tx, {
+              paymentIntentId,
+            });
+            if (!payment?.id || !payment.bookingId) return;
+
+            const totalAmount = Math.max(
+              0,
+              parseIntegerValue(payment.totalAmount) ??
+                parseIntegerValue(payment.amount) ??
+                0
+            );
+            const fullRefund = amountRefunded >= totalAmount && totalAmount > 0;
+            const nextStatus = fullRefund ? "refunded" : "partially_refunded";
+            const now = new Date();
+
+            const [bookingRow] = await tx
+              .select({
+                id: bookings.id,
+                status: bookings.status,
+                bookingEndAt: bookings.bookingEndAt,
+              })
+              .from(bookings)
+              .where(eq(bookings.id, payment.bookingId))
+              .limit(1);
+            if (!bookingRow?.id) return;
+            const bookingDisputeStatus = await getBookingDisputeStatusInTx(tx, payment.bookingId);
+
+            const payoutEligibility = computePayoutEligibility({
+              bookingStatus: bookingRow.status,
+              paymentStatus: nextStatus,
+              payoutStatus: payment.payoutStatus,
+              payoutBlockedReason:
+                asTrimmedString(payment.stripeTransferId) && !fullRefund
+                  ? "refund_after_payout_manual_recovery"
+                  : null,
+              disputeStatus: payment.disputeStatus,
+              bookingDisputeStatus,
+              paidOutAt: payment.paidOutAt,
+              payoutEligibleAt: payment.payoutEligibleAt,
+              bookingEndAt: bookingRow.bookingEndAt,
+              totalAmount,
+              refundedAmount: amountRefunded,
+              vendorNetPayoutAmount: payment.vendorNetPayoutAmount,
+              actualStripeFeeAmount: payment.actualStripeFeeAmount,
+              stripeConnectedAccountId: payment.stripeConnectedAccountId,
+              stripeChargeId: payment.stripeChargeId ?? chargeId,
+              stripeTransferId: payment.stripeTransferId,
+              vendorAbsorbsStripeFees: VENDOR_ABSORBS_STRIPE_FEES,
+            }, now);
+
+            await tx
+              .update(payments)
+              .set({
+                status: nextStatus as any,
+                stripeChargeId: (payment.stripeChargeId ?? chargeId) || null,
+                refundAmount: amountRefunded > 0 ? amountRefunded : parseIntegerValue(payment.amount),
+                refundReason: "stripe_charge_refunded",
+                refundedAt: now,
+                payoutStatus: payoutEligibility.payoutStatus,
+                payoutEligibleAt: payoutEligibility.payoutEligibleAt,
+                payoutBlockedReason: payoutEligibility.payoutBlockedReason,
+                payoutAdjustedAmount: payoutEligibility.adjustedPayoutAmount,
+              })
+              .where(eq(payments.id, payment.id));
+
+            const nextBookingPaymentStatus = await recomputeBookingPaymentStatusInTx(
+              tx,
+              payment.bookingId
+            );
+            if (
+              fullRefund &&
+              nextBookingPaymentStatus === "refunded" &&
+              !asTrimmedString(payment.stripeTransferId)
+            ) {
+              await tx.execute(drizzleSql`
+                update bookings
+                set
+                  status = case
+                    when status in ('pending', 'confirmed', 'failed', 'expired') then 'cancelled'
+                    else status
+                  end,
+                  cancellation_reason = coalesce(nullif(trim(cancellation_reason), ''), 'payment_refunded'),
+                  cancelled_at = coalesce(cancelled_at, ${now}),
+                  updated_at = ${now}
+                where id = ${payment.bookingId}
+              `);
+            } else {
+              await tx
+                .update(bookings)
+                .set({
+                  paymentStatus: nextBookingPaymentStatus as any,
+                  updatedAt: now,
+                })
+                .where(eq(bookings.id, payment.bookingId));
+            }
+          });
+        }
+      }
+
+      // ── checkout.session.completed ──────────────────────────────────────────
+      // Fired when a customer completes payment on a Stripe-hosted checkout page.
+      // Created by POST /api/checkout/session for direct marketplace purchases
+      // (no booking required — vendor receives funds via the destination charge).
+      //
+      // The session is already stored verbatim in stripe_webhook_events above,
+      // so the full payment record is always preserved for reconciliation.
+      //
+      // The session.metadata carries listingId, vendorAccountId, and
+      // applicationFeeAmountCents so future reporting queries can join on them.
+      // No insert into the `payments` table here because that table requires a
+      // bookingId (direct checkout purchases have no associated booking in MVP).
+      // Extend this handler when a direct-purchase booking flow is added.
+      if (eventType === "checkout.session.completed") {
+        const session = event?.data?.object ?? {};
+        const paymentStatus = asTrimmedString(session?.payment_status);
+        const sessionId = asTrimmedString(session?.id);
+        const sessionMeta = session?.metadata && typeof session.metadata === "object"
+          ? session.metadata as Record<string, string>
+          : {};
+
+        const listingId = asTrimmedString(sessionMeta?.listingId);
+        const vendorStripeAccountId = asTrimmedString(sessionMeta?.vendorStripeAccountId);
+        const amountTotal = parseIntegerValue(session?.amount_total);
+
+        if (paymentStatus === "paid") {
+          // Log a structured record to aid reconciliation and vendor payout tracking.
+          // In a future iteration: create a booking/order record here and trigger
+          // the vendor payout eligibility check (same as payment_intent.succeeded).
+          logger.info(
+            `[webhook] checkout.session.completed — session=${sessionId}` +
+            ` listing=${listingId} vendor=${vendorStripeAccountId}` +
+            ` amount=${amountTotal} status=paid`
+          );
+        }
+      }
+
+      return res.json({ received: true });
+    } catch {
+      return res.status(500).json({ error: "Webhook processing failed" });
+    }
+  });
+
+  const processPayoutsSchema = z.object({
+    bookingIds: z.array(z.string().min(1)).max(200).optional(),
+    paymentIds: z.array(z.string().min(1)).max(200).optional(),
+    limit: z.number().int().min(1).max(200).optional(),
+    dryRun: z.boolean().optional(),
+  });
+
+  app.post("/api/admin/payouts/process", adminRateLimiter, requireAdminAuth, async (req, res) => {
+    try {
+      const payload = processPayoutsSchema.parse(req.body ?? {});
+      const dryRun = payload.dryRun === true;
+      const limit = payload.limit ?? 50;
+      const bookingIds = Array.from(
+        new Set((payload.bookingIds ?? []).map((id) => asTrimmedString(id)).filter(Boolean))
+      );
+      const paymentIds = Array.from(
+        new Set((payload.paymentIds ?? []).map((id) => asTrimmedString(id)).filter(Boolean))
+      );
+
+      const whereClauses: any[] = [eq(payments.paymentType, "deposit")];
+      if (bookingIds.length > 0) {
+        whereClauses.push(inArray(payments.bookingId, bookingIds));
+      }
+      if (paymentIds.length > 0) {
+        whereClauses.push(inArray(payments.id, paymentIds));
+      }
+      if (bookingIds.length === 0 && paymentIds.length === 0) {
+        whereClauses.push(isNull(payments.stripeTransferId));
+        whereClauses.push(
+          drizzleSql`${payments.payoutStatus} in ('not_ready', 'eligible', 'scheduled', 'blocked')`
+        );
+      }
+
+      const payoutCandidates = await db
+        .select({
+          paymentId: payments.id,
+          bookingId: payments.bookingId,
+        })
+        .from(payments)
+        .where(and(...whereClauses))
+        .orderBy(asc(payments.payoutEligibleAt), asc(payments.createdAt))
+        .limit(limit);
+
+      const results: Array<{
+        paymentId: string;
+        bookingId: string;
+        outcome: "paid" | "eligible" | "skipped" | "blocked" | "duplicate";
+        reason: string | null;
+        payoutAmount: number;
+        transferId: string | null;
+      }> = [];
+
+      const { transferToVendor } = await import("../stripe");
+
+      for (const candidate of payoutCandidates) {
+        const paymentId = asTrimmedString(candidate.paymentId);
+        const bookingId = asTrimmedString(candidate.bookingId);
+        if (!paymentId || !bookingId) continue;
+
+        const now = new Date();
+        const refreshed = await db.transaction(async (tx) =>
+          refreshPaymentPayoutStateInTx(tx, paymentId, now)
+        );
+
+        if (!refreshed?.paymentContext) {
+          results.push({
+            paymentId,
+            bookingId,
+            outcome: "skipped",
+            reason: "payment_not_found",
+            payoutAmount: 0,
+            transferId: null,
+          });
+          continue;
+        }
+
+        const eligibility = refreshed.payoutEligibility;
+        const payoutAmount = Math.max(0, Math.round(eligibility.adjustedPayoutAmount || 0));
+
+        if (!eligibility.eligible) {
+          results.push({
+            paymentId,
+            bookingId,
+            outcome: eligibility.payoutStatus === "blocked" ? "blocked" : "skipped",
+            reason: eligibility.payoutBlockedReason || "not_eligible",
+            payoutAmount,
+            transferId: null,
+          });
+          continue;
+        }
+
+        if (dryRun) {
+          results.push({
+            paymentId,
+            bookingId,
+            outcome: "eligible",
+            reason: null,
+            payoutAmount,
+            transferId: null,
+          });
+          continue;
+        }
+
+        const connectedAccountId = asTrimmedString(
+          refreshed.paymentContext.stripeConnectedAccountId
+        );
+        const chargeId = asTrimmedString(refreshed.paymentContext.stripeChargeId);
+
+        if (!connectedAccountId || !chargeId || payoutAmount <= 0) {
+          await db
+            .update(payments)
+            .set({
+              payoutStatus: "blocked",
+              payoutBlockedReason: "missing_transfer_requirements",
+              payoutAdjustedAmount: payoutAmount,
+            })
+            .where(eq(payments.id, paymentId));
+          results.push({
+            paymentId,
+            bookingId,
+            outcome: "blocked",
+            reason: "missing_transfer_requirements",
+            payoutAmount,
+            transferId: null,
+          });
+          continue;
+        }
+
+        try {
+          const transfer = await transferToVendor({
+            amount: payoutAmount,
+            vendorStripeAccountId: connectedAccountId,
+            description: `EventHub payout for booking ${bookingId}`,
+            sourceTransaction: chargeId,
+            transferGroup: `booking_${bookingId}`,
+            metadata: {
+              bookingId,
+              paymentId,
+              payoutAmount: String(payoutAmount),
+              sourceChargeId: chargeId,
+            },
+            idempotencyKey: `eventhub-payout:${paymentId}:${payoutAmount}`,
+          });
+
+          const persisted = await db.transaction(async (tx) => {
+            const locked = await loadPaymentPayoutContextForUpdateInTx(tx, paymentId);
+            if (!locked?.paymentId || !locked.bookingId) {
+              return {
+                outcome: "skipped" as const,
+                reason: "payment_not_found",
+                transferId: null as string | null,
+              };
+            }
+
+            const existingTransferId = asTrimmedString(locked.stripeTransferId);
+            if (existingTransferId) {
+              return {
+                outcome: "duplicate" as const,
+                reason: "already_paid",
+                transferId: existingTransferId,
+              };
+            }
+
+            const nowLocked = new Date();
+            const eligibilityLocked = computePayoutEligibility(
+              {
+                bookingStatus: locked.bookingStatus,
+                paymentStatus: locked.paymentStatus,
+                payoutStatus: locked.payoutStatus,
+                payoutBlockedReason: locked.payoutBlockedReason,
+                disputeStatus: locked.disputeStatus,
+                bookingDisputeStatus: locked.bookingDisputeStatus,
+                paidOutAt: locked.paidOutAt,
+                payoutEligibleAt: locked.payoutEligibleAt,
+                bookingEndAt: locked.bookingEndAt,
+                totalAmount:
+                  parseIntegerValue(locked.totalAmount) ??
+                  parseIntegerValue(locked.amount) ??
+                  0,
+                refundedAmount: parseIntegerValue(locked.refundAmount) ?? 0,
+                vendorNetPayoutAmount: parseIntegerValue(locked.vendorNetPayoutAmount) ?? 0,
+                actualStripeFeeAmount: locked.actualStripeFeeAmount,
+                stripeConnectedAccountId: locked.stripeConnectedAccountId,
+                stripeChargeId: locked.stripeChargeId,
+                stripeTransferId: locked.stripeTransferId,
+                vendorAbsorbsStripeFees: VENDOR_ABSORBS_STRIPE_FEES,
+              },
+              nowLocked
+            );
+
+            if (!eligibilityLocked.eligible) {
+              await tx
+                .update(payments)
+                .set({
+                  payoutStatus: eligibilityLocked.payoutStatus,
+                  payoutEligibleAt: eligibilityLocked.payoutEligibleAt,
+                  payoutBlockedReason: eligibilityLocked.payoutBlockedReason,
+                  payoutAdjustedAmount: eligibilityLocked.adjustedPayoutAmount,
+                })
+                .where(eq(payments.id, paymentId));
+              return {
+                outcome: eligibilityLocked.payoutStatus === "blocked" ? "blocked" : "skipped",
+                reason: eligibilityLocked.payoutBlockedReason || "not_eligible",
+                transferId: null as string | null,
+              };
+            }
+
+            await tx
+              .update(payments)
+              .set({
+                stripeTransferId: transfer.id,
+                payoutStatus: "paid",
+                payoutScheduledAt: nowLocked,
+                paidOutAt: nowLocked,
+                payoutBlockedReason: null,
+                payoutAdjustedAmount: payoutAmount,
+              })
+              .where(eq(payments.id, paymentId));
+
+            return {
+              outcome: "paid" as const,
+              reason: null as string | null,
+              transferId: transfer.id,
+            };
+          });
+
+          results.push({
+            paymentId,
+            bookingId,
+            outcome: persisted.outcome as "paid" | "eligible" | "blocked" | "skipped" | "duplicate",
+            reason: persisted.reason,
+            payoutAmount,
+            transferId: persisted.transferId,
+          });
+        } catch (error: any) {
+          logger.error("[admin payout] transfer error:", error?.message || error);
+          await db
+            .update(payments)
+            .set({
+              payoutStatus: "blocked",
+              payoutBlockedReason: "transfer_failed",
+              payoutAdjustedAmount: payoutAmount,
+            })
+            .where(eq(payments.id, paymentId));
+          results.push({
+            paymentId,
+            bookingId,
+            outcome: "blocked",
+            reason: "transfer_failed",
+            payoutAmount,
+            transferId: null,
+          });
+        }
+      }
+
+      const summary = {
+        checked: results.length,
+        paid: results.filter((row) => row.outcome === "paid").length,
+        eligible: results.filter((row) => row.outcome === "eligible").length,
+        blocked: results.filter((row) => row.outcome === "blocked").length,
+        skipped: results.filter((row) => row.outcome === "skipped").length,
+        duplicate: results.filter((row) => row.outcome === "duplicate").length,
+      };
+
+      return res.json({
+        dryRun,
+        limit,
+        candidates: payoutCandidates.length,
+        summary,
+        results,
+      });
+    } catch (error: any) {
+      if (error?.name === "ZodError") {
+        return res.status(400).json({ error: "Invalid payout processing payload" });
+      }
+      return res.status(500).json({ error: "Unable to process payouts" });
+    }
+
+  });
+
+  // ── Payout records ────────────────────────────────────────────────────────
+  app.get("/api/admin/payouts", adminRateLimiter, requireAdminAuth, async (req, res) => {
+    try {
+      const rows = await db.execute(drizzleSql`
+        SELECT
+          p.id,
+          p.booking_id,
+          p.stripe_transfer_id,
+          p.stripe_charge_id,
+          p.stripe_connected_account_id,
+          p.payout_status,
+          p.payout_adjusted_amount,
+          p.vendor_net_payout_amount,
+          p.platform_fee_amount,
+          p.total_amount,
+          p.actual_stripe_fee_amount,
+          p.payout_eligible_at,
+          p.paid_out_at,
+          p.payout_blocked_reason,
+          p.payment_type,
+          p.status         AS payment_status,
+          p.created_at,
+          b.event_date,
+          b.listing_title_snapshot,
+          b.status         AS booking_status,
+          va.business_name AS vendor_business_name,
+          va.email         AS vendor_email,
+          u.name           AS customer_name,
+          u.email          AS customer_email
+        FROM payments p
+        JOIN bookings b ON b.id = p.booking_id
+        LEFT JOIN vendor_accounts va ON va.id = p.vendor_account_id
+        LEFT JOIN users u ON u.id = p.customer_id
+        WHERE p.payment_type = 'deposit'
+        ORDER BY p.created_at DESC
+        LIMIT 200
+      `);
+
+      const summary = await db.execute(drizzleSql`
+        SELECT
+          payout_status,
+          COUNT(*)::int                       AS count,
+          COALESCE(SUM(payout_adjusted_amount), 0)::bigint AS total_cents
+        FROM payments
+        WHERE payment_type = 'deposit'
+        GROUP BY payout_status
+      `);
+
+      return res.json({
+        records: extractRows<any>(rows).map((r) => ({
+          id: String(r.id ?? ""),
+          bookingId: String(r.booking_id ?? ""),
+          stripeTransferId: r.stripe_transfer_id ? String(r.stripe_transfer_id) : null,
+          stripeChargeId: r.stripe_charge_id ? String(r.stripe_charge_id) : null,
+          stripeConnectedAccountId: r.stripe_connected_account_id ? String(r.stripe_connected_account_id) : null,
+          payoutStatus: String(r.payout_status ?? ""),
+          payoutAdjustedAmount: r.payout_adjusted_amount != null ? Number(r.payout_adjusted_amount) : null,
+          vendorNetPayoutAmount: r.vendor_net_payout_amount != null ? Number(r.vendor_net_payout_amount) : null,
+          platformFeeAmount: r.platform_fee_amount != null ? Number(r.platform_fee_amount) : null,
+          totalAmount: r.total_amount != null ? Number(r.total_amount) : null,
+          actualStripeFeeAmount: r.actual_stripe_fee_amount != null ? Number(r.actual_stripe_fee_amount) : null,
+          payoutEligibleAt: r.payout_eligible_at ?? null,
+          paidOutAt: r.paid_out_at ?? null,
+          payoutBlockedReason: r.payout_blocked_reason ? String(r.payout_blocked_reason) : null,
+          eventDate: r.event_date ? String(r.event_date) : null,
+          listingTitle: r.listing_title_snapshot ? String(r.listing_title_snapshot) : null,
+          bookingStatus: String(r.booking_status ?? ""),
+          paymentStatus: String(r.payment_status ?? ""),
+          vendorBusinessName: r.vendor_business_name ? String(r.vendor_business_name) : null,
+          vendorEmail: r.vendor_email ? String(r.vendor_email) : null,
+          customerName: r.customer_name ? String(r.customer_name) : null,
+          customerEmail: r.customer_email ? String(r.customer_email) : null,
+          createdAt: r.created_at ?? null,
+        })),
+        summary: extractRows<any>(summary).map((r) => ({
+          payoutStatus: String(r.payout_status ?? ""),
+          count: Number(r.count ?? 0),
+          totalCents: Number(r.total_cents ?? 0),
+        })),
+      });
+    } catch (error: any) {
+      return respondWithInternalServerError(req, res, error);
+    }
+  });
+
+  // ── Stripe platform balance ───────────────────────────────────────────────
+  app.get("/api/admin/stripe/balance", adminRateLimiter, requireAdminAuth, async (req, res) => {
+    try {
+      const { stripe } = await import("../stripe");
+      const balance = await stripe.balance.retrieve();
+      const usdAvailable = balance.available.find((b) => b.currency === "usd");
+      const usdPending = balance.pending.find((b) => b.currency === "usd");
+      return res.json({
+        availableCents: usdAvailable?.amount ?? 0,
+        pendingCents: usdPending?.amount ?? 0,
+        currency: "usd",
+      });
+    } catch (error: any) {
+      return res.status(500).json({ error: "Unable to fetch Stripe balance" });
+    }
+  });
+}

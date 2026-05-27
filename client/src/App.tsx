@@ -41,6 +41,7 @@ import Terms from "@/pages/Terms";
 import { deriveVendorDetection, type VendorMeState } from "@/lib/vendorState";
 import { useToast } from "@/hooks/use-toast";
 import Privacy from "@/pages/Privacy";
+import MarqueeVendorProgram from "@/pages/MarqueeVendorProgram";
 
 // Handles the post-sign-in redirect for normal logins (not "Become a Vendor").
 // AuthModal routes here via appState.returnTo so this mounts fresh after
@@ -203,6 +204,9 @@ function Router() {
         <Route path="/vendor/shop" component={MyHub} />
         <Route path="/vendor/my-hub" component={MyHub} />
         <Route path="/my-hub" component={MyHub} />
+
+        {/* Program pages */}
+        <Route path="/vendor/marquee" component={MarqueeVendorProgram} />
 
         {/* Legal */}
         <Route path="/terms" component={Terms} />

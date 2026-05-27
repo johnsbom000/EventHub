@@ -5,6 +5,7 @@ import {
   varchar,
   timestamp,
   integer,
+  serial,
   jsonb,
   boolean,
   doublePrecision,
@@ -263,6 +264,17 @@ export const vendorAccounts = pgTable(
     ownerPhone: text("owner_phone"),
     deletedAt: timestamp("deleted_at"),
     createdAt: timestamp("created_at").defaultNow(),
+    isMarqueeVendor: boolean("is_marquee_vendor").notNull().default(false),
+    marqueeVendorNumber: integer("marquee_vendor_number"),
+    marqueeHolidayBookingsUsed: integer("marquee_holiday_bookings_used").notNull().default(0),
+    marqueeHolidayBonusBookings: integer("marquee_holiday_bonus_bookings").notNull().default(0),
+    marqueeActivatedAt: timestamp("marquee_activated_at"),
+    marqueeHolidayEndsAt: timestamp("marquee_holiday_ends_at"),
+    marqueeRateEndsAt: timestamp("marquee_rate_ends_at"),
+    marqueeCustomerFeeEndsAt: timestamp("marquee_customer_fee_ends_at"),
+    marqueeVisibilityEndsAt: timestamp("marquee_visibility_ends_at"),
+    marqueeConsecutiveInactiveMonths: integer("marquee_consecutive_inactive_months").notNull().default(0),
+    referralCode: varchar("referral_code", { length: 20 }),
   },
   (table) => ({
     userIdActiveUniqueIdx: uniqueIndex("vendor_accounts_user_id_active_unique_idx")
@@ -273,6 +285,12 @@ export const vendorAccounts = pgTable(
       .where(
         sql`${table.auth0Sub} is not null and btrim(${table.auth0Sub}) <> '' and ${table.deletedAt} is null`
       ),
+    marqueeVendorNumberUniqueIdx: uniqueIndex("vendor_accounts_marquee_vendor_number_unique_idx")
+      .on(table.marqueeVendorNumber)
+      .where(sql`${table.marqueeVendorNumber} is not null`),
+    referralCodeUniqueIdx: uniqueIndex("vendor_accounts_referral_code_unique_idx")
+      .on(table.referralCode)
+      .where(sql`${table.referralCode} is not null`),
   })
 );
 
@@ -486,7 +504,7 @@ export const bookings = pgTable("bookings", {
   vendorMsgEmailLastSentAt: timestamp("vendor_msg_email_last_sent_at"),
   customerMsgEmailLastSentAt: timestamp("customer_msg_email_last_sent_at"),
   cancellationPolicySnapshot: jsonb("cancellation_policy_snapshot"),
-  appliedDiscountId: varchar("applied_discount_id"),
+  appliedDiscountId: varchar("applied_discount_id").references(() => vendorDiscounts.id, { onDelete: "set null" }),
   discountAmountCents: integer("discount_amount_cents"),
   createdAt: timestamp("created_at").defaultNow(),
   updatedAt: timestamp("updated_at").defaultNow(),
@@ -1403,3 +1421,33 @@ export type DisputeCase = typeof disputeCases.$inferSelect;
 export type InsertDisputeCase = typeof disputeCases.$inferInsert;
 export type DisputeFiling = typeof disputeFilings.$inferSelect;
 export type InsertDisputeFiling = typeof disputeFilings.$inferInsert;
+
+// Vendor Referrals — tracks when a founding vendor refers a new vendor to the platform
+export const vendorReferralStatusEnum = pgEnum("vendor_referral_status", [
+  "pending",
+  "completed",
+  "rewarded",
+]);
+
+export const vendorReferrals = pgTable(
+  "vendor_referrals",
+  {
+    id: serial("id").primaryKey(),
+    referrerVendorId: varchar("referrer_vendor_id")
+      .notNull()
+      .references(() => vendorAccounts.id),
+    referredVendorId: varchar("referred_vendor_id")
+      .notNull()
+      .references(() => vendorAccounts.id),
+    status: vendorReferralStatusEnum("status").notNull().default("pending"),
+    createdAt: timestamp("created_at").notNull().defaultNow(),
+    completedAt: timestamp("completed_at"),
+  },
+  (table) => ({
+    referrerIdx: index("vendor_referrals_referrer_idx").on(table.referrerVendorId),
+    referredIdx: index("vendor_referrals_referred_idx").on(table.referredVendorId),
+  })
+);
+
+export type VendorReferral = typeof vendorReferrals.$inferSelect;
+export type InsertVendorReferral = typeof vendorReferrals.$inferInsert;

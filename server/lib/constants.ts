@@ -3,6 +3,18 @@
 export const VENDOR_FEE_RATE = parseFloat(process.env.VENDOR_FEE_RATE || "0.08");
 export const CUSTOMER_FEE_RATE = parseFloat(process.env.CUSTOMER_FEE_RATE || "0.05");
 
+// ─── Marquee Vendor program ───────────────────────────────────────────────────
+export const MARQUEE_VENDOR_MAX_SPOTS = 20;
+export const MARQUEE_HOLIDAY_BOOKING_COUNT = 20;   // fee holiday ends at N bookings…
+export const MARQUEE_HOLIDAY_DAYS = 30;             // …OR 30 days, whichever comes LAST
+export const MARQUEE_REFERRAL_BONUS_BOOKINGS = 5;  // each successful referral adds 5 bonus bookings
+export const MARQUEE_REFERRAL_BONUS_FEE_RATE = 0.04; // 4% on those bonus bookings (half the normal 8%)
+export const MARQUEE_VENDOR_FEE_RATE = 0.06;       // 6% for 24 months after holiday
+export const MARQUEE_RATE_MONTHS = 24;
+export const MARQUEE_CUSTOMER_FEE_RATE = 0.025;    // 2.5% customer fee for first 12 months
+export const MARQUEE_CUSTOMER_FEE_MONTHS = 12;
+export const MARQUEE_VISIBILITY_MONTHS = 12;        // search boost for first 12 months
+
 if (!Number.isFinite(VENDOR_FEE_RATE) || VENDOR_FEE_RATE <= 0 || VENDOR_FEE_RATE >= 1) {
   throw new Error(
     `Invalid VENDOR_FEE_RATE env var: "${process.env.VENDOR_FEE_RATE}". Must be a number between 0 (exclusive) and 1 (exclusive), e.g. "0.08" for 8%.`
