@@ -31,3 +31,55 @@
 **Trigger:** `/security` or natural language like "audit security", "check for vulnerabilities", "is this safe", "review auth", "check for injection", "payment bypass risk", "run a security audit"
 **Description:** Audits the codebase for vulnerabilities across auth, authorization, data exposure, input validation, API abuse, payment safety, and database security. Reads actual source code — does not speculate. Produces structured findings (Attack Scenario → Severity → Exploitation Path → Recommended Fix → Priority) grouped Critical → High → Medium → Low.
 **Output:** Structured security report with confirmed-safe summary
+
+## gstack
+
+Use the `/browse` skill from gstack for all web browsing. Never use `mcp__claude-in-chrome__*` tools directly.
+
+Available gstack skills: `/office-hours`, `/plan-ceo-review`, `/plan-eng-review`, `/plan-design-review`, `/design-consultation`, `/design-shotgun`, `/design-html`, `/review`, `/ship`, `/land-and-deploy`, `/canary`, `/benchmark`, `/browse`, `/connect-chrome`, `/qa`, `/qa-only`, `/design-review`, `/setup-browser-cookies`, `/setup-deploy`, `/setup-gbrain`, `/retro`, `/investigate`, `/document-release`, `/document-generate`, `/codex`, `/cso`, `/autoplan`, `/plan-devex-review`, `/devex-review`, `/careful`, `/freeze`, `/guard`, `/unfreeze`, `/gstack-upgrade`, `/learn`
+
+## Stack
+
+- TypeScript monorepo, React + Vite (frontend), Express + Node (backend)
+- PostgreSQL + Drizzle ORM (on Neon)
+- Auth0 for auth, Stripe Connect (separate charges & transfers model) for payments
+- Mapbox for location, Railway for deploy, AWS S3 for file storage
+- Stream Chat for in-app messaging
+- Design system: Playfair Display + DM Sans, modern pastel/glam aesthetic
+- UI: Radix UI primitives + Tailwind CSS + shadcn-style components
+- i18n: react-i18next with en/es/pt locales
+
+## Conventions
+
+- Use Drizzle ORM exclusively — never raw SQL
+- All money handling goes through Stripe Connect; never touch balances directly
+- Migrations live in `migrations/NNNN_name.ts` — always check the highest existing number before creating a new one (collisions have happened at 0030, 0032, 0035, 0042, 0048, 0082)
+- All migrations must be idempotent (migration 0091 had to be fixed post-merge for this)
+- Server lives in `server/`, frontend in `client/src/`, shared types in `shared/`
+- Events instrumentation will flow through `server/lib/events.ts` (not yet wired)
+
+## Running locally
+
+```bash
+npm run dev          # starts both Express server + Vite client concurrently
+npm run dev:server   # Express server only (tsx watch, reads .env)
+npm run dev:client   # Vite frontend only
+npm run migrate      # run pending migrations against Neon
+npm run typecheck    # TypeScript check (no emit)
+npm run build        # production build (Vite + esbuild for server + all migrations)
+npm start            # serve production build
+```
+
+Requires a `.env` file with Neon DB URL, Auth0, Stripe, Mapbox, and S3 credentials.
+
+## Gotchas
+
+- **Migration numbering collisions**: several migration numbers were used twice in the same batch (0030, 0032, 0035, 0042, 0048, 0082). Always `ls migrations/` before picking the next number.
+- **react-leaflet was removed** (commit 51dced9) because it caused Railway build failures — do not re-add it. Use Mapbox GL JS directly.
+- **Double-booking prevention** is enforced at the DB level (migration 0094 indexes). Don't bypass booking conflict checks in the server.
+- **Security deposit refund trigger** (post-dispute-window auto-refund) has schema in place (migration 0068) but the background job trigger has NOT been built yet.
+- **Google tokens are encrypted** at rest (migration 0093) — don't log or expose them.
+- **Vendor slugs are unique** (migration 0088 + unique constraint). Slug generation must handle collisions gracefully.
+- **Stripe Connect** uses the separate charges & transfers model (not direct charges). Payout eligibility logic lives in `server/payoutEligibility.ts`.
+- **Founding/Marquee vendor programs** are live (migrations 0089, 0090). Fee tiers differ from standard vendors — check before any payment flow changes.
+- The build script in `package.json` explicitly lists every migration file — add new ones to the `esbuild` array or they won't ship to production.
