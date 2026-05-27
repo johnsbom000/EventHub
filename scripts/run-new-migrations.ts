@@ -10,6 +10,8 @@ const newMigrations = [
   '../migrations/0077_drop_payment_schedules.ts',
   '../migrations/0078_dispute_cases.ts',
   '../migrations/0079_dispute_cases_withheld_amount.ts',
+  '../migrations/0095_remove_legacy_payment_dispute_tables.ts',
+  '../migrations/0096_payment_pi_type_unique.ts',
 ];
 
 async function run() {

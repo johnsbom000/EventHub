@@ -24,6 +24,8 @@ import {
   runAutoPayoutTick,
   runAutoPayoutTickWithResult,
   startAutoPayoutWorker,
+  runSecurityDepositRefundJob,
+  runBookingCompletionJob,
 } from "./services/backgroundJobs";
 import {
   type VendorProfileContext,
@@ -50,13 +52,12 @@ import {
   resolveCustomerAuthFromRequest,
 } from "./services/customerAuth";
 import {
-  ensureBookingDisputesTable,
   ensureStripeCustomer,
   recomputeBookingPaymentStatusInTx,
   markBookingAsPaymentFailedInTx,
   type LockedPaymentPayoutContext,
   loadPaymentPayoutContextForUpdateInTx,
-  getBookingDisputeStatusInTx,
+  getDisputeCaseStatusInTx,
   refreshPaymentPayoutStateInTx,
   processSinglePayoutCandidate,
   ensurePaymentRecordForIntentInTx,
@@ -104,10 +105,8 @@ import { registerMiscRoutes } from "./routers/misc";
 import { registerCustomerRoutes } from "./routers/customer";
 import { registerVendorRoutes } from "./routers/vendor";
 import { registerAdminRoutes } from "./routers/admin";
-import { storage } from "./storage";
 import crypto from "crypto";
 import {
-  insertEventSchema,
   insertVendorAccountSchema,
   vendorProfiles,
   vendorAccounts,
@@ -117,10 +116,7 @@ import {
   users,
   webTraffic,
   bookings,
-  events,
   payments,
-  bookingDisputes,
-  disputeAdminNotes,
   rentalTypes,
   stripeWebhookEvents,
   vendorVacationBlocks,
@@ -873,135 +869,8 @@ export async function registerRoutes(app: Express): Promise<Server> {
   }, 3 * 60 * 1000);
   pendingReminderStartTimer.unref();
 
-  // ── Security deposit auto-refund job ─────────────────────────────────────
-  // After an event ends and the 72-hour dispute window expires, automatically
-  // refund the security deposit to the customer if no damage-claim dispute case
-  // is open for that booking.
-  //
-  // Eligibility criteria (all must be true):
-  //   1. Booking has security_deposit_cents > 0
-  //   2. security_deposit_refunded_at IS NULL (not yet refunded)
-  //   3. booking_end_at + 72h has passed (falls back to event_date + 4 days)
-  //   4. No unresolved dispute_cases row exists for the booking (open OR pending_review)
-  //   5. A succeeded security_deposit (or legacy deposit) payment row exists
-  //
-  // Runs every hour; uses a distributed lock to prevent double-refunds across
-  // multiple server instances.
-  const SECURITY_DEPOSIT_REFUND_INTERVAL_MS = 60 * 60 * 1000; // 1 hour
-
-  const runSecurityDepositRefundJob = async () => {
-    const lockAcquired = await tryAcquireWorkerLock("security_deposit_refund", 70 * 60 * 1000);
-    if (!lockAcquired) {
-      logger.info("[security-deposit-refund] lock held by another instance — skipping");
-      return;
-    }
-    try {
-      // Find eligible security deposit payments.
-      // booking_end_at is the authoritative end time; fall back to event_date + 1 day
-      // when it's absent (e.g. per-day bookings without an explicit end time).
-      const eligible: any = await db.execute(drizzleSql`
-        SELECT
-          p.id                       AS payment_id,
-          p.stripe_payment_intent_id AS stripe_pi_id,
-          p.amount                   AS deposit_cents,
-          b.id                       AS booking_id,
-          b.listing_title_snapshot   AS listing_title
-        FROM payments p
-        JOIN bookings b ON b.id = p.booking_id
-        WHERE p.payment_type = 'security_deposit'
-          AND p.status = 'succeeded'
-          AND b.security_deposit_cents > 0
-          AND b.security_deposit_refunded_at IS NULL
-          AND (
-            -- 72 hours past booking_end_at (preferred)
-            (b.booking_end_at IS NOT NULL AND b.booking_end_at < now() - interval '72 hours')
-            OR
-            -- Fallback: 72 hours past the day after the event date
-            (b.booking_end_at IS NULL AND (b.event_date::date + interval '1 day') < now() - interval '72 hours')
-          )
-          AND b.status IN ('confirmed', 'completed')
-          AND NOT EXISTS (
-            SELECT 1 FROM dispute_cases dc
-            WHERE dc.booking_id = b.id AND dc.status != 'resolved'
-          )
-        LIMIT 50
-      `);
-
-      const rows = extractRows<{
-        payment_id: string;
-        stripe_pi_id: string | null;
-        deposit_cents: number;
-        booking_id: string;
-        listing_title: string | null;
-      }>(eligible);
-
-      if (rows.length === 0) return;
-
-      logger.info("[security-deposit-refund] %d eligible deposit(s) to refund", rows.length);
-      const { refundBookingPayment } = await import("./stripe");
-      const now = new Date();
-      let refunded = 0;
-
-      for (const row of rows) {
-        if (!row.stripe_pi_id) {
-          logger.warn("[security-deposit-refund] payment %s has no stripe_pi_id — skipping", row.payment_id);
-          continue;
-        }
-        try {
-          await refundBookingPayment({
-            paymentIntentId: row.stripe_pi_id,
-            reason: "requested_by_customer",
-            idempotencyKey: `auto-deposit-refund:${row.payment_id}`,
-          });
-
-          await db.transaction(async (tx) => {
-            await tx
-              .update(payments)
-              .set({
-                status: "refunded",
-                refundAmount: row.deposit_cents,
-                refundReason: "auto_deposit_refund_72h",
-                refundedAt: now,
-                payoutStatus: "cancelled",
-                payoutEligibleAt: null,
-                payoutBlockedReason: "auto_refunded_no_dispute",
-                payoutAdjustedAmount: 0,
-              })
-              .where(eq(payments.id, row.payment_id));
-
-            await tx
-              .update(bookings)
-              .set({ securityDepositRefundedAt: now, updatedAt: now })
-              .where(eq(bookings.id, row.booking_id));
-          });
-
-          refunded++;
-          logger.info(
-            "[security-deposit-refund] refunded booking=%s amount=%d cents",
-            row.booking_id,
-            row.deposit_cents
-          );
-        } catch (rowErr: any) {
-          logger.warn(
-            "[security-deposit-refund] failed for payment=%s booking=%s: %s",
-            row.payment_id,
-            row.booking_id,
-            rowErr?.message || rowErr
-          );
-        }
-      }
-
-      if (refunded > 0) {
-        logger.info("[security-deposit-refund] auto-refunded %d security deposit(s)", refunded);
-      }
-    } catch (err: any) {
-      logger.warn("[security-deposit-refund] job failed: %s", err?.message || err);
-    } finally {
-      await releaseWorkerLock("security_deposit_refund");
-    }
-  };
-
-  // Stagger 7 min after startup, then every hour.
+  // Security deposit auto-refund — runs every hour (staggered 7 min after startup).
+  const SECURITY_DEPOSIT_REFUND_INTERVAL_MS = 60 * 60 * 1000;
   const secDepositRefundStartTimer = setTimeout(() => {
     void runSecurityDepositRefundJob();
     const secDepositRefundTimer = setInterval(() => void runSecurityDepositRefundJob(), SECURITY_DEPOSIT_REFUND_INTERVAL_MS);
@@ -1009,49 +878,8 @@ export async function registerRoutes(app: Express): Promise<Server> {
   }, 7 * 60 * 1000);
   secDepositRefundStartTimer.unref();
 
-  // ---------------------------------------------------------------------------
-  // Booking auto-completion job
-  // Transitions confirmed bookings to completed once the event has passed.
-  // Required so customers can submit reviews (review endpoint requires
-  // status = 'completed') and so the vendor dashboard reflects reality.
-  // ---------------------------------------------------------------------------
-  const BOOKING_COMPLETION_INTERVAL_MS = 4 * 60 * 60 * 1000; // every 4 hours
-
-  const runBookingCompletionJob = async () => {
-    const lockAcquired = await tryAcquireWorkerLock("booking_auto_complete", 5 * 60 * 60 * 1000);
-    if (!lockAcquired) {
-      logger.info("[booking-completion] lock held by another instance — skipping");
-      return;
-    }
-    try {
-      const now = new Date();
-      const result: any = await db.execute(drizzleSql`
-        UPDATE bookings
-        SET
-          status       = 'completed',
-          completed_at = ${now},
-          updated_at   = ${now}
-        WHERE status = 'confirmed'
-          AND (
-            -- Use booking_end_at when set, with a 2-hour grace window
-            (booking_end_at IS NOT NULL AND booking_end_at < now() - interval '2 hours')
-            OR
-            -- Fallback: event_date with no explicit end time — complete the day after
-            (booking_end_at IS NULL AND event_date::date < current_date)
-          )
-      `);
-      const rowCount = result?.rowCount ?? result?.rows?.length ?? 0;
-      if (rowCount > 0) {
-        logger.info("[booking-completion] auto-completed %d booking(s)", rowCount);
-      }
-    } catch (err: any) {
-      logger.warn("[booking-completion] job failed: %s", err?.message || err);
-    } finally {
-      await releaseWorkerLock("booking_auto_complete");
-    }
-  };
-
-  // Stagger 10 min after startup, then every 4 hours.
+  // Booking auto-completion — runs every 4 hours (staggered 10 min after startup).
+  const BOOKING_COMPLETION_INTERVAL_MS = 4 * 60 * 60 * 1000;
   const bookingCompletionStartTimer = setTimeout(() => {
     void runBookingCompletionJob();
     const bookingCompletionTimer = setInterval(() => void runBookingCompletionJob(), BOOKING_COMPLETION_INTERVAL_MS);
@@ -1070,7 +898,6 @@ export async function registerRoutes(app: Express): Promise<Server> {
 
 
 
-  await ensureBookingDisputesTable();
   startAutoPayoutWorker();
 
   registerBookingRoutes(app);

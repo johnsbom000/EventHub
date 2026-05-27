@@ -1,5 +1,4 @@
 import type { Express } from "express";
-import { createServer, type Server } from "http";
 import { logger } from "../lib/logger";
 import {
   safeGoogleErrorMessage,
@@ -50,13 +49,11 @@ import {
   resolveCustomerAuthFromRequest,
 } from "../services/customerAuth";
 import {
-  ensureBookingDisputesTable,
   ensureStripeCustomer,
   recomputeBookingPaymentStatusInTx,
   markBookingAsPaymentFailedInTx,
   type LockedPaymentPayoutContext,
   loadPaymentPayoutContextForUpdateInTx,
-  getBookingDisputeStatusInTx,
   refreshPaymentPayoutStateInTx,
   processSinglePayoutCandidate,
   ensurePaymentRecordForIntentInTx,
@@ -116,8 +113,6 @@ import {
   bookings,
   events,
   payments,
-  bookingDisputes,
-  disputeAdminNotes,
   rentalTypes,
   stripeWebhookEvents,
   vendorVacationBlocks,
@@ -1590,176 +1585,12 @@ export function registerCustomerRoutes(app: Express): void {
     }
   });
 
-  app.post("/api/customer/bookings/:id/dispute", socialRateLimiter, requireCustomerAnyAuth, async (req, res) => {
-    try {
-      await ensureBookingDisputesTable();
+  // Legacy endpoint removed — use POST /api/customer/disputes instead.
 
-      const customerAuth = await resolveCustomerAuthFromRequest(req, { createIfMissing: true });
-      if (!customerAuth?.id) {
-        return res.status(401).json({ error: "Customer authentication required" });
-      }
-
-      const bookingId = asTrimmedString(req.params?.id);
-      if (!bookingId) {
-        return res.status(400).json({ error: "Booking id is required" });
-      }
-
-      const payload = z
-        .object({
-          reason: z.enum([
-            "item_not_as_described",
-            "late_or_no_show",
-            "damaged_or_missing",
-            "other",
-          ]),
-          details: z.string().trim().min(8).max(2000),
-        })
-        .parse(req.body ?? {});
-
-      const bookingRows: any = await db.execute(drizzleSql`
-        select
-          b.id as "bookingId",
-          b.customer_id as "customerId",
-          b.booking_end_at as "bookingEndAt",
-          b.event_date as "eventDate",
-          coalesce(b.vendor_account_id, listing_owner.account_id) as "vendorAccountId",
-          coalesce(b.listing_title_snapshot, listing_owner.title) as "listingTitle",
-          cust.email as "customerEmail",
-          cust.name as "customerName",
-          va.email as "vendorEmail",
-          va.business_name as "vendorBusinessName"
-        from bookings b
-        left join vendor_listings listing_owner on listing_owner.id = b.listing_id
-        left join customers cust on cust.id = b.customer_id
-        left join vendor_accounts va on va.id = coalesce(b.vendor_account_id, listing_owner.account_id)
-        where b.id = ${bookingId}
-        limit 1
-      `);
-      const booking = extractRows<{
-        bookingId?: string | null;
-        customerId?: string | null;
-        bookingEndAt?: Date | string | null;
-        eventDate?: string | null;
-        vendorAccountId?: string | null;
-        listingTitle?: string | null;
-        customerEmail?: string | null;
-        customerName?: string | null;
-        vendorEmail?: string | null;
-        vendorBusinessName?: string | null;
-      }>(bookingRows)[0];
-
-      if (!booking?.bookingId || booking.customerId !== customerAuth.id) {
-        return res.status(404).json({ error: "Booking not found for this customer" });
-      }
-
-      const bookingEndAt =
-        booking.bookingEndAt instanceof Date
-          ? booking.bookingEndAt
-          : booking.bookingEndAt
-            ? new Date(booking.bookingEndAt)
-            : null;
-      if (!(bookingEndAt instanceof Date) || Number.isNaN(bookingEndAt.getTime())) {
-        return res.status(400).json({ error: "Booking does not have a valid event completion time" });
-      }
-
-      const now = new Date();
-      if (now < bookingEndAt) {
-        return res.status(400).json({ error: "Disputes can only be filed after the event has ended" });
-      }
-
-      const disputeWindowCloseAt = deriveDisputeWindowCloseAt(bookingEndAt);
-      if (!disputeWindowCloseAt || !isDisputeWindowOpen(bookingEndAt, now)) {
-        return res.status(400).json({
-          error: `Dispute window closed. Disputes are only allowed within ${DISPUTE_WINDOW_HOURS} hours after event completion.`,
-        });
-      }
-
-      const existingRows = await db
-        .select({
-          id: bookingDisputes.id,
-        })
-        .from(bookingDisputes)
-        .where(eq(bookingDisputes.bookingId, bookingId))
-        .limit(1);
-      if (existingRows[0]?.id) {
-        return res.status(409).json({ error: "A dispute already exists for this booking" });
-      }
-
-      const [createdDispute] = await db
-        .insert(bookingDisputes)
-        .values({
-          bookingId,
-          customerId: customerAuth.id,
-          vendorAccountId: asTrimmedString(booking.vendorAccountId) || null,
-          reason: payload.reason,
-          details: payload.details,
-          status: "filed",
-          filedAt: now,
-          createdAt: now,
-          updatedAt: now,
-        })
-        .returning();
-
-      await db
-        .update(payments)
-        .set({
-          payoutStatus: "blocked",
-          payoutBlockedReason: "customer_dispute_open",
-        })
-        .where(eq(payments.bookingId, bookingId));
-
-      // Fire-and-forget emails — do not await; never block the 201 response
-      const serverUrl = appUrl();
-      const disputeEventDate = asTrimmedString(booking.eventDate) || "N/A";
-      const disputeListingTitle = asTrimmedString(booking.listingTitle) || "Your booking";
-      const disputeFiledAtStr = createdDispute.filedAt
-        ? new Date(createdDispute.filedAt).toLocaleDateString("en-US", { month: "long", day: "numeric", year: "numeric" })
-        : new Date().toLocaleDateString("en-US", { month: "long", day: "numeric", year: "numeric" });
-
-      if (booking.customerEmail) {
-        sendDisputeFiledEmail(booking.customerEmail, {
-          role: "customer",
-          recipientName: asTrimmedString(booking.customerName) || "Customer",
-          counterpartName: asTrimmedString(booking.vendorBusinessName) || "Vendor",
-          listingTitle: disputeListingTitle,
-          eventDate: disputeEventDate,
-          reason: payload.reason,
-          details: payload.details,
-          filedAt: disputeFiledAtStr,
-          serverUrl,
-        }).catch(() => {});
-      }
-
-      if (booking.vendorEmail) {
-        sendDisputeFiledEmail(booking.vendorEmail, {
-          role: "vendor",
-          recipientName: asTrimmedString(booking.vendorBusinessName) || "Vendor",
-          counterpartName: asTrimmedString(booking.customerName) || "Customer",
-          listingTitle: disputeListingTitle,
-          eventDate: disputeEventDate,
-          reason: payload.reason,
-          details: payload.details,
-          filedAt: disputeFiledAtStr,
-          serverUrl,
-        }).catch(() => {});
-      }
-
-      return res.status(201).json({
-        disputeId: createdDispute.id,
-        bookingId,
-        status: createdDispute.status,
-        reason: createdDispute.reason,
-        details: createdDispute.details,
-        filedAt: createdDispute.filedAt,
-        disputeWindowCloseAt,
-      });
-    } catch (error: any) {
-      if (error?.name === "ZodError") {
-        return res.status(400).json({ error: "Validation failed", details: error.errors });
-      }
-      return res.status(500).json({ error: "Unable to file dispute" });
-    }
+  app.post("/_removed/api/customer/bookings/:id/dispute", socialRateLimiter, requireCustomerAnyAuth, async (req, res) => {
+    return res.status(410).json({ error: "This endpoint has been removed. Use POST /api/customer/disputes." });
   });
+
 
   // ── Customer Notifications ─────────────────────────────────────────────────
 
@@ -1978,6 +1809,11 @@ export function registerCustomerRoutes(app: Express): void {
         )
         RETURNING *
       `);
+
+      await db
+        .update(payments)
+        .set({ payoutStatus: "blocked", payoutBlockedReason: "customer_dispute_open" })
+        .where(eq(payments.bookingId, payload.bookingId));
 
       return res.status(201).json({ caseId, filing: (filing.rows[0] as any) });
     } catch (err: any) {

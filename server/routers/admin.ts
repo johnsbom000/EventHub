@@ -1,5 +1,4 @@
 import type { Express } from "express";
-import { createServer, type Server } from "http";
 import { logger } from "../lib/logger";
 import {
   safeGoogleErrorMessage,
@@ -24,6 +23,8 @@ import {
   runAutoPayoutTick,
   runAutoPayoutTickWithResult,
   startAutoPayoutWorker,
+  runBookingCompletionJob,
+  runSecurityDepositRefundJob,
 } from "../services/backgroundJobs";
 import {
   type VendorProfileContext,
@@ -50,13 +51,11 @@ import {
   resolveCustomerAuthFromRequest,
 } from "../services/customerAuth";
 import {
-  ensureBookingDisputesTable,
   ensureStripeCustomer,
   recomputeBookingPaymentStatusInTx,
   markBookingAsPaymentFailedInTx,
   type LockedPaymentPayoutContext,
   loadPaymentPayoutContextForUpdateInTx,
-  getBookingDisputeStatusInTx,
   refreshPaymentPayoutStateInTx,
   processSinglePayoutCandidate,
   ensurePaymentRecordForIntentInTx,
@@ -101,10 +100,8 @@ import { registerCircumventionRoutes } from "../routers/circumvention";
 import { registerBookingRoutes } from "../routers/bookings";
 import { registerPaymentRoutes } from "../routers/payments";
 import { registerMiscRoutes } from "../routers/misc";
-import { storage } from "../storage";
 import crypto from "crypto";
 import {
-  insertEventSchema,
   insertVendorAccountSchema,
   vendorProfiles,
   vendorAccounts,
@@ -114,10 +111,7 @@ import {
   users,
   webTraffic,
   bookings,
-  events,
   payments,
-  bookingDisputes,
-  disputeAdminNotes,
   rentalTypes,
   stripeWebhookEvents,
   vendorVacationBlocks,
@@ -481,23 +475,19 @@ export function registerAdminRoutes(app: Express): void {
 
   app.post("/api/admin/disputes/:id/resolve", adminRateLimiter, requireAdminAuth, async (req, res) => {
     try {
-      await ensureBookingDisputesTable();
-
-      // :id is now a dispute_cases.id; fall back to legacy booking_disputes.id lookup
       const caseId = asTrimmedString(req.params?.id);
       if (!caseId) {
         return res.status(400).json({ error: "Case id is required" });
       }
 
-      // Resolve to a booking_id via dispute_cases first, then legacy table
       let resolvedBookingId: string | null = null;
       const caseRow = await db.execute(drizzleSql`SELECT booking_id FROM dispute_cases WHERE id = ${caseId} LIMIT 1`);
       if (caseRow.rows[0]) {
         resolvedBookingId = String((caseRow.rows[0] as any).booking_id);
       }
-
-      // Legacy fallback: treat id as booking_disputes.id
-      const disputeId = caseId;
+      if (!resolvedBookingId) {
+        return res.status(404).json({ error: "Dispute case not found" });
+      }
 
       const payload = z
         .object({
@@ -527,7 +517,7 @@ export function registerAdminRoutes(app: Express): void {
         LEFT JOIN users cust ON cust.id = b.customer_id
         LEFT JOIN vendor_accounts va ON va.id = coalesce(b.vendor_account_id, listing_owner.account_id)
         LEFT JOIN dispute_cases dc ON dc.booking_id = b.id
-        WHERE b.id = ${resolvedBookingId ?? disputeId}
+        WHERE b.id = ${resolvedBookingId}
         LIMIT 1
       `);
       const bookingContext = extractRows<{
@@ -550,16 +540,13 @@ export function registerAdminRoutes(app: Express): void {
         return res.status(409).json({ error: "Case already resolved" });
       }
 
-      const resolvedDisputeId = disputeId;
       resolvedBookingId = bookingContext.bookingId as string;
-      const activeCaseId = bookingContext.caseId as string | null;
-      const dispute = { ...bookingContext, id: resolvedDisputeId };
+      const activeCaseId = (bookingContext.caseId ?? caseId) as string;
+      const dispute = { ...bookingContext };
 
       const now = new Date();
 
       if (payload.decision === "refund") {
-        // Find the security deposit payment — check both new type ('security_deposit')
-        // and legacy type ('deposit') for backward compatibility with old bookings.
         const depositPaymentRows = await db
           .select({
             id: payments.id,
@@ -572,7 +559,7 @@ export function registerAdminRoutes(app: Express): void {
           .where(
             and(
               eq(payments.bookingId, resolvedBookingId),
-              inArray(payments.paymentType, ["security_deposit", "deposit"])
+              eq(payments.paymentType, "security_deposit")
             )
           )
           .orderBy(desc(payments.createdAt))
@@ -629,7 +616,7 @@ export function registerAdminRoutes(app: Express): void {
               paymentIntentId: depositPayment.stripePaymentIntentId,
               amount: depositRefundCents < depositAmt ? depositRefundCents : undefined,
               reason: "requested_by_customer",
-              idempotencyKey: `admin-dispute-refund:${resolvedDisputeId}:${depositPayment.id}`,
+              idempotencyKey: `admin-dispute-refund:${caseId}:${depositPayment.id}`,
             })
           : null;
 
@@ -639,7 +626,7 @@ export function registerAdminRoutes(app: Express): void {
               paymentIntentId: bookingPayment.stripePaymentIntentId,
               amount: bookingRefundCents < (bookingPayment.amount ?? 0) ? bookingRefundCents : undefined,
               reason: "requested_by_customer",
-              idempotencyKey: `admin-dispute-refund-booking:${resolvedDisputeId}:${bookingPayment.id}`,
+              idempotencyKey: `admin-dispute-refund-booking:${caseId}:${bookingPayment.id}`,
             })
           : null;
 
@@ -698,33 +685,19 @@ export function registerAdminRoutes(app: Express): void {
             })
             .where(eq(bookings.id, resolvedBookingId));
 
-          await tx
-            .update(bookingDisputes)
-            .set({
-              status: "resolved_refund",
-              adminDecision: withheld > 0 ? "partial_refund" : "refund",
-              adminNotes: payload.adminNotes ?? null,
-              resolvedAt: now,
-              updatedAt: now,
-            })
-            .where(eq(bookingDisputes.id, resolvedDisputeId));
-
-          // Update dispute_cases
-          if (activeCaseId) {
-            await tx.execute(drizzleSql`
-              UPDATE dispute_cases
-              SET status = 'resolved',
-                  resolution = ${resolutionNote},
-                  withheld_amount_cents = ${withheld > 0 ? withheld : null},
-                  resolved_at = ${now},
-                  updated_at = ${now}
-              WHERE id = ${activeCaseId}
-            `);
-            await tx.execute(drizzleSql`
-              INSERT INTO dispute_filings (case_id, booking_id, filed_by, dispute_type, description, attachment_urls, created_at, updated_at)
-              VALUES (${activeCaseId}, ${resolvedBookingId}, 'admin', 'admin_note', ${resolutionNote}, '{}', ${now}, ${now})
-            `);
-          }
+          await tx.execute(drizzleSql`
+            UPDATE dispute_cases
+            SET status = 'resolved',
+                resolution = ${resolutionNote},
+                withheld_amount_cents = ${withheld > 0 ? withheld : null},
+                resolved_at = ${now},
+                updated_at = ${now}
+            WHERE id = ${activeCaseId}
+          `);
+          await tx.execute(drizzleSql`
+            INSERT INTO dispute_filings (case_id, booking_id, filed_by, dispute_type, description, attachment_urls, created_at, updated_at)
+            VALUES (${activeCaseId}, ${resolvedBookingId}, 'admin', 'admin_note', ${resolutionNote}, '{}', ${now}, ${now})
+          `);
         });
 
         // If withheld > 0, trigger vendor payout for the withheld portion immediately.
@@ -767,7 +740,7 @@ export function registerAdminRoutes(app: Express): void {
         }
 
         return res.json({
-          disputeId: resolvedDisputeId,
+          disputeId: caseId,
           bookingId: resolvedBookingId,
           decision: "refund",
           depositRefund,
@@ -778,17 +751,6 @@ export function registerAdminRoutes(app: Express): void {
 
       await db.transaction(async (tx) => {
         await tx
-          .update(bookingDisputes)
-          .set({
-            status: "resolved_payout",
-            adminDecision: "payout",
-            adminNotes: payload.adminNotes ?? null,
-            resolvedAt: now,
-            updatedAt: now,
-          })
-          .where(eq(bookingDisputes.id, resolvedDisputeId));
-
-        await tx
           .update(payments)
           .set({
             payoutStatus: "eligible",
@@ -798,28 +760,24 @@ export function registerAdminRoutes(app: Express): void {
           .where(
             and(
               eq(payments.bookingId, resolvedBookingId),
-              inArray(payments.paymentType, ["security_deposit", "deposit"])
+              eq(payments.paymentType, "security_deposit")
             )
           );
 
-        // Update dispute_cases
-        if (activeCaseId) {
-          const withheldForCase = null; // payout path: vendor receives full deposit, nothing withheld
+        await tx.execute(drizzleSql`
+          UPDATE dispute_cases
+          SET status = 'resolved',
+              resolution = ${payload.adminNotes ?? "Payout approved to vendor"},
+              withheld_amount_cents = ${null},
+              resolved_at = ${now},
+              updated_at = ${now}
+          WHERE id = ${activeCaseId}
+        `);
+        if (payload.adminNotes) {
           await tx.execute(drizzleSql`
-            UPDATE dispute_cases
-            SET status = 'resolved',
-                resolution = ${payload.adminNotes ?? "Payout approved to vendor"},
-                withheld_amount_cents = ${withheldForCase},
-                resolved_at = ${now},
-                updated_at = ${now}
-            WHERE id = ${activeCaseId}
+            INSERT INTO dispute_filings (case_id, booking_id, filed_by, dispute_type, description, attachment_urls, created_at, updated_at)
+            VALUES (${activeCaseId}, ${resolvedBookingId}, 'admin', 'admin_note', ${payload.adminNotes}, '{}', ${now}, ${now})
           `);
-          if (payload.adminNotes) {
-            await tx.execute(drizzleSql`
-              INSERT INTO dispute_filings (case_id, booking_id, filed_by, dispute_type, description, attachment_urls, created_at, updated_at)
-              VALUES (${activeCaseId}, ${resolvedBookingId}, 'admin', 'admin_note', ${payload.adminNotes}, '{}', ${now}, ${now})
-            `);
-          }
         }
       });
 
@@ -832,7 +790,7 @@ export function registerAdminRoutes(app: Express): void {
         .where(
           and(
             eq(payments.bookingId, resolvedBookingId),
-            inArray(payments.paymentType, ["security_deposit", "deposit"])
+            eq(payments.paymentType, "security_deposit")
           )
         )
         .orderBy(desc(payments.createdAt))
@@ -875,7 +833,7 @@ export function registerAdminRoutes(app: Express): void {
       }
 
       return res.json({
-        disputeId: resolvedDisputeId,
+        disputeId: caseId,
         bookingId: resolvedBookingId,
         decision: "payout",
         payoutResult,
@@ -1191,8 +1149,8 @@ export function registerAdminRoutes(app: Express): void {
       `);
       const disputeCount = await db.execute(drizzleSql`
         SELECT COUNT(*)::int AS count
-        FROM booking_disputes
-        WHERE status NOT IN ('resolved_refund', 'resolved_payout')
+        FROM dispute_cases
+        WHERE status != 'resolved'
       `);
       const avgRows = await db.execute(drizzleSql`
         SELECT
@@ -1726,6 +1684,26 @@ export function registerAdminRoutes(app: Express): void {
       return res.json({ success: true });
     } catch (err: any) {
       return respondWithInternalServerError(req, res, err);
+    }
+  });
+
+  // POST /api/admin/jobs/run-completion — manually fire the booking auto-completion job
+  app.post("/api/admin/jobs/run-completion", adminRateLimiter, requireAdminAuth, async (_req: any, res: any) => {
+    try {
+      const completed = await runBookingCompletionJob();
+      return res.json({ completed });
+    } catch (err: any) {
+      return respondWithInternalServerError(_req, res, err);
+    }
+  });
+
+  // POST /api/admin/jobs/run-deposit-refund — manually fire the security deposit auto-refund job
+  app.post("/api/admin/jobs/run-deposit-refund", adminRateLimiter, requireAdminAuth, async (_req: any, res: any) => {
+    try {
+      const refunded = await runSecurityDepositRefundJob();
+      return res.json({ refunded });
+    } catch (err: any) {
+      return respondWithInternalServerError(_req, res, err);
     }
   });
 

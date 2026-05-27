@@ -1,6 +1,6 @@
 import { db } from "../db";
 import { eq, and, or, isNull, inArray, sql as drizzleSql } from "drizzle-orm";
-import { bookings, payments, users, vendorAccounts, bookingDisputes } from "@shared/schema";
+import { bookings, payments, users, vendorAccounts, disputeCases } from "@shared/schema";
 import { logger } from "../lib/logger";
 import { appUrl } from "../lib/routeHelpers";
 import {
@@ -23,64 +23,6 @@ import {
 import { storage } from "../storage";
 import { sendPayoutProcessedEmail } from "../email";
 
-// Module-level lazy-init guard for booking_disputes DDL
-let bookingDisputesTableReadyPromise: Promise<void> | null = null;
-
-export async function ensureBookingDisputesTable() {
-  if (!bookingDisputesTableReadyPromise) {
-    bookingDisputesTableReadyPromise = (async () => {
-      await db.execute(drizzleSql`
-        do $$
-        begin
-          create type booking_dispute_status as enum (
-            'filed',
-            'vendor_responded',
-            'resolved_refund',
-            'resolved_payout'
-          );
-        exception
-          when duplicate_object then null;
-        end $$;
-      `);
-      await db.execute(drizzleSql`
-        create table if not exists booking_disputes (
-          id varchar primary key default gen_random_uuid(),
-          booking_id varchar not null references bookings(id) on delete cascade,
-          customer_id varchar not null references users(id) on delete cascade,
-          vendor_account_id varchar references vendor_accounts(id) on delete set null,
-          reason text not null,
-          details text,
-          status booking_dispute_status not null default 'filed',
-          vendor_response text,
-          admin_decision text,
-          admin_notes text,
-          filed_at timestamptz not null default now(),
-          vendor_responded_at timestamptz,
-          resolved_at timestamptz,
-          created_at timestamptz not null default now(),
-          updated_at timestamptz not null default now()
-        )
-      `);
-      await db.execute(drizzleSql`
-        create unique index if not exists booking_disputes_booking_id_idx
-        on booking_disputes (booking_id)
-      `);
-      await db.execute(drizzleSql`
-        create index if not exists booking_disputes_status_idx
-        on booking_disputes (status)
-      `);
-      await db.execute(drizzleSql`
-        create index if not exists booking_disputes_filed_at_idx
-        on booking_disputes (filed_at desc)
-      `);
-    })().catch((error) => {
-      bookingDisputesTableReadyPromise = null;
-      throw error;
-    });
-  }
-
-  await bookingDisputesTableReadyPromise;
-}
 
 /**
  * Returns the Stripe Customer ID (cus_...) for a user, creating one if needed.
@@ -132,8 +74,7 @@ export async function recomputeBookingPaymentStatusInTx(tx: any, bookingId: stri
   const depositPaidAt =
     bookingPaymentRows.find(
       (row: { paymentType?: string | null; status?: string | null; paidAt?: Date | null }) =>
-        (normalizePaymentStateValue(row.paymentType) === "deposit" ||
-          normalizePaymentStateValue(row.paymentType) === "booking") &&
+        normalizePaymentStateValue(row.paymentType) === "booking" &&
         isPaymentSucceededStatus(row.status) &&
         row.paidAt instanceof Date
     )?.paidAt ?? null;
@@ -178,7 +119,7 @@ export type LockedPaymentPayoutContext = {
   payoutStatus: string | null;
   payoutBlockedReason: string | null;
   disputeStatus: string | null;
-  bookingDisputeStatus: string | null;
+  disputeCaseStatus: string | null;
   paidOutAt: Date | null;
   payoutEligibleAt: Date | null;
   totalAmount: number | null;
@@ -196,7 +137,6 @@ export async function loadPaymentPayoutContextForUpdateInTx(
   tx: any,
   paymentId: string
 ): Promise<LockedPaymentPayoutContext | null> {
-  await ensureBookingDisputesTable();
   const rows: any = await tx.execute(drizzleSql`
     select
       p.id as "paymentId",
@@ -207,7 +147,7 @@ export async function loadPaymentPayoutContextForUpdateInTx(
       p.payout_status as "payoutStatus",
       p.payout_blocked_reason as "payoutBlockedReason",
       p.dispute_status as "disputeStatus",
-      bd.status as "bookingDisputeStatus",
+      dc.status as "disputeCaseStatus",
       p.paid_out_at as "paidOutAt",
       p.payout_eligible_at as "payoutEligibleAt",
       p.total_amount as "totalAmount",
@@ -221,7 +161,7 @@ export async function loadPaymentPayoutContextForUpdateInTx(
       p.payout_adjusted_amount as "payoutAdjustedAmount"
     from payments p
     inner join bookings b on b.id = p.booking_id
-    left join booking_disputes bd on bd.booking_id = b.id
+    left join dispute_cases dc on dc.booking_id = b.id
     where p.id = ${paymentId}
     for update
   `);
@@ -229,14 +169,13 @@ export async function loadPaymentPayoutContextForUpdateInTx(
   return row?.paymentId ? row : null;
 }
 
-export async function getBookingDisputeStatusInTx(tx: any, bookingId: string): Promise<string | null> {
-  await ensureBookingDisputesTable();
+export async function getDisputeCaseStatusInTx(tx: any, bookingId: string): Promise<string | null> {
   const rows = await tx
     .select({
-      status: bookingDisputes.status,
+      status: disputeCases.status,
     })
-    .from(bookingDisputes)
-    .where(eq(bookingDisputes.bookingId, bookingId))
+    .from(disputeCases)
+    .where(eq(disputeCases.bookingId, bookingId))
     .limit(1);
   const status = rows[0]?.status;
   return typeof status === "string" ? status : null;
@@ -257,7 +196,7 @@ export async function refreshPaymentPayoutStateInTx(
       payoutStatus: paymentContext.payoutStatus,
       payoutBlockedReason: paymentContext.payoutBlockedReason,
       disputeStatus: paymentContext.disputeStatus,
-      bookingDisputeStatus: paymentContext.bookingDisputeStatus,
+      disputeCaseStatus: paymentContext.disputeCaseStatus,
       paidOutAt: paymentContext.paidOutAt,
       payoutEligibleAt: paymentContext.payoutEligibleAt,
       bookingEndAt: paymentContext.bookingEndAt,
@@ -483,7 +422,7 @@ export async function processSinglePayoutCandidate(params: {
           payoutStatus: locked.payoutStatus,
           payoutBlockedReason: locked.payoutBlockedReason,
           disputeStatus: locked.disputeStatus,
-          bookingDisputeStatus: locked.bookingDisputeStatus,
+          disputeCaseStatus: locked.disputeCaseStatus,
           paidOutAt: locked.paidOutAt,
           payoutEligibleAt: locked.payoutEligibleAt,
           bookingEndAt: locked.bookingEndAt,
@@ -775,7 +714,7 @@ export async function ensurePaymentRecordForIntentInTx(
       stripeConnectedAccountId: connectedAccountId,
       payoutStatus: "not_ready",
       payoutEligibleAt,
-      paymentType: (normalizePaymentStateValue(params.fallbackPaymentType) || "deposit") as "deposit" | "final" | "installment",
+      paymentType: (normalizePaymentStateValue(params.fallbackPaymentType) || "booking") as "booking" | "security_deposit" | "travel_fee",
       status: "pending",
     })
     .returning({

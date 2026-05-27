@@ -22,6 +22,7 @@ import EventLinkPicker from "@/components/EventLinkPicker";
 import { apiRequest } from "@/lib/queryClient";
 import { useToast } from "@/hooks/use-toast";
 import { useFeeRates } from "@/hooks/useFeeRates";
+import { normalizeAmountToCents, deriveBookingAmounts } from "@/lib/bookingAmounts";
 
 type TravelFeeProposal = {
   id: string;
@@ -58,23 +59,13 @@ type VendorBooking = {
   vendorTimezoneSnapshot?: string | null;
   instantBookSnapshot?: boolean | null;
   addOnItems?: Array<{ title: string; priceCents: number }>;
+  travelFeeProposal?: { id: string; status: string; amountCents: number; reason?: string | null } | null;
 };
 
 type TabKey = "all" | "upcoming" | "pending" | "completed" | "cancelled";
 type ViewMode = "calendar" | "list";
 const STATUS_TAB_TRIGGER_ACTIVE_CLASSNAME =
   "data-[state=active]:bg-primary data-[state=active]:text-primary-foreground data-[state=active]:shadow-sm data-[state=active]:hover:bg-primary";
-
-function normalizeAmountToCents(value: unknown) {
-  const n = Number(value ?? 0);
-  // The current booking flow always writes amounts in cents.
-  // Decimal values (legacy dollars written as e.g. 370.00) are scaled up.
-  // Any legacy rows that stored whole-dollar integers will need a one-time
-  // data migration to correct the stored values — do not add heuristics here.
-  if (!Number.isFinite(n) || n <= 0) return 0;
-  if (!Number.isInteger(n)) return Math.round(n * 100);
-  return Math.round(n);
-}
 
 function formatUsd(cents: number) {
   return new Intl.NumberFormat(undefined, {
@@ -129,37 +120,6 @@ function getTzName(tz: string): string {
 function isTimezoneMismatch(eventTz: string | null | undefined, vendorTz: string | null | undefined): boolean {
   if (!eventTz || !vendorTz) return false;
   return eventTz !== vendorTz;
-}
-
-function deriveBookingAmounts(booking: VendorBooking, vendorFeeRate: number) {
-  const customerTotalCents = normalizeAmountToCents(booking.totalAmount ?? 0);
-  const vendorFeeCents = normalizeAmountToCents(booking.platformFee ?? 0);
-  const storedPayoutCents = normalizeAmountToCents(booking.vendorPayout ?? 0);
-
-  if (storedPayoutCents > 0 || vendorFeeCents > 0) {
-    const listingPriceCents = Math.max(0, storedPayoutCents + vendorFeeCents);
-    const customerFeeCents = Math.max(0, customerTotalCents - listingPriceCents);
-    return {
-      customerTotalCents,
-      listingPriceCents,
-      customerFeeCents,
-      vendorFeeCents,
-      estimatedPayoutCents: storedPayoutCents > 0 ? storedPayoutCents : Math.max(0, listingPriceCents - vendorFeeCents),
-    };
-  }
-
-  // Fallback if legacy row is missing fee/payout columns.
-  const listingPriceCents = Math.max(0, Math.round(customerTotalCents / 1.05));
-  const customerFeeCents = Math.max(0, customerTotalCents - listingPriceCents);
-  const derivedVendorFeeCents = Math.max(0, Math.round(listingPriceCents * vendorFeeRate));
-  const estimatedPayoutCents = Math.max(0, listingPriceCents - derivedVendorFeeCents);
-  return {
-    customerTotalCents,
-    listingPriceCents,
-    customerFeeCents,
-    vendorFeeCents: derivedVendorFeeCents,
-    estimatedPayoutCents,
-  };
 }
 
 type VendorMe = {
@@ -337,10 +297,11 @@ export default function VendorBookings() {
   }, [bookings]);
 
   const tabFilteredItems = useMemo(() => {
-    const now = new Date();
+    const startOfToday = new Date();
+    startOfToday.setHours(0, 0, 0, 0);
     const matchesTab = (x: { date: Date; status: string }) => {
       if (activeTab === "all") return true;
-      if (activeTab === "upcoming") return x.date >= now && x.status === "confirmed";
+      if (activeTab === "upcoming") return x.date >= startOfToday && x.status === "confirmed";
       return x.status === activeTab;
     };
 
@@ -916,10 +877,11 @@ export default function VendorBookings() {
                         <Button
                           size="sm"
                           onClick={() => {
+                            if (item.status === "confirmed") return;
                             setActionBookingId(item.id);
                             bookingActionMutation.mutate({ id: item.id, status: "confirmed" });
                           }}
-                          disabled={bookingActionMutation.isPending}
+                          disabled={bookingActionMutation.isPending || item.status === "confirmed"}
                         >
                           {bookingActionMutation.isPending && actionBookingId === item.id
                             ? t("vendorBookings.accepting")
@@ -931,27 +893,13 @@ export default function VendorBookings() {
                           onClick={() => setCancelModalBookingId(item.id)}
                           disabled={bookingActionMutation.isPending}
                         >
-                          {t("vendorBookings.decline")}
+                          {item.status === "confirmed" ? "Cancel" : t("vendorBookings.decline")}
                         </Button>
                       </div>
                     ) : null}
-                    {/* Confirmed and NOT outside service radius: show Completed only after event date, always show Decline */}
+                    {/* Confirmed and NOT outside service radius: show Cancel only — completion is handled automatically */}
                     {item.status === "confirmed" && !item.raw.outsideServiceRadius ? (
                       <div className="mt-3 flex items-center gap-2">
-                        {item.date < new Date() ? (
-                          <Button
-                            size="sm"
-                            onClick={() => {
-                              setActionBookingId(item.id);
-                              bookingActionMutation.mutate({ id: item.id, status: "completed" });
-                            }}
-                            disabled={bookingActionMutation.isPending}
-                          >
-                            {bookingActionMutation.isPending && actionBookingId === item.id
-                              ? t("vendorBookings.completing")
-                              : t("vendorBookings.completed")}
-                          </Button>
-                        ) : null}
                         <Button
                           size="sm"
                           variant="outline"
@@ -959,8 +907,8 @@ export default function VendorBookings() {
                           disabled={bookingActionMutation.isPending}
                         >
                           {bookingActionMutation.isPending && actionBookingId === item.id
-                            ? t("vendorBookings.declining")
-                            : t("vendorBookings.decline")}
+                            ? "Cancelling…"
+                            : "Cancel"}
                         </Button>
                       </div>
                     ) : null}
@@ -975,6 +923,17 @@ export default function VendorBookings() {
                     {/* Travel / delivery fee proposal */}
                     {item.raw.outsideServiceRadius &&
                       (item.status === "pending" || item.status === "confirmed") ? (
+                      item.raw.travelFeeProposal?.status === "accepted" ? (
+                        <div className="mt-3 rounded-lg border border-emerald-200 bg-emerald-50 p-3 flex items-start gap-2">
+                          <MapPin className="h-4 w-4 text-emerald-600 mt-0.5 shrink-0" />
+                          <div>
+                            <div className="text-sm font-medium text-emerald-800">Travel/delivery fee paid</div>
+                            <div className="text-xs text-emerald-700">
+                              The customer paid {formatUsd(item.raw.travelFeeProposal.amountCents)} for the travel/delivery fee.
+                            </div>
+                          </div>
+                        </div>
+                      ) : (
                       <div className="mt-3 rounded-lg border border-amber-200 bg-amber-50 p-3 space-y-2">
                         <div className="flex items-center gap-2 text-sm font-medium text-amber-800">
                           <MapPin className="h-4 w-4 shrink-0" />
@@ -1062,6 +1021,7 @@ export default function VendorBookings() {
                           </Button>
                         )}
                       </div>
+                      )
                     ) : null}
                   </div>
                 ))}

@@ -50,13 +50,11 @@ import {
   resolveCustomerAuthFromRequest,
 } from "../services/customerAuth";
 import {
-  ensureBookingDisputesTable,
   ensureStripeCustomer,
   recomputeBookingPaymentStatusInTx,
   markBookingAsPaymentFailedInTx,
   type LockedPaymentPayoutContext,
   loadPaymentPayoutContextForUpdateInTx,
-  getBookingDisputeStatusInTx,
   refreshPaymentPayoutStateInTx,
   processSinglePayoutCandidate,
   ensurePaymentRecordForIntentInTx,
@@ -101,7 +99,6 @@ import { registerCircumventionRoutes } from "../routers/circumvention";
 import { storage } from "../storage";
 import crypto from "crypto";
 import {
-  insertEventSchema,
   insertVendorAccountSchema,
   vendorProfiles,
   vendorAccounts,
@@ -113,8 +110,6 @@ import {
   bookings,
   events,
   payments,
-  bookingDisputes,
-  disputeAdminNotes,
   rentalTypes,
   stripeWebhookEvents,
   vendorVacationBlocks,
@@ -558,9 +553,8 @@ export function registerBookingRoutes(app: Express): void {
         )
         .orderBy(desc(payments.createdAt));
 
-      // Main booking payment (type 'booking' or legacy 'deposit')
       const payment = allBookingPayments.find(
-        (p) => p.paymentType === "booking" || p.paymentType === "deposit"
+        (p) => p.paymentType === "booking"
       );
       // Vendor-proposed travel fee (separate Stripe charge, same policy % applied)
       const travelFeePayments = allBookingPayments.filter(
@@ -2747,7 +2741,7 @@ export function registerBookingRoutes(app: Express): void {
             status: payments.status,
           })
           .from(payments)
-          .where(and(eq(payments.bookingId, bookingId), eq(payments.paymentType, "deposit")))
+          .where(and(eq(payments.bookingId, bookingId), eq(payments.paymentType, "booking")))
           .orderBy(desc(payments.createdAt))
           .limit(1);
         const depositPayment = depositPaymentRows[0];

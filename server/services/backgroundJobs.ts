@@ -423,7 +423,7 @@ export async function runAutoPayoutTickWithResult(): Promise<boolean> {
       .from(payments)
       .where(
         and(
-          eq(payments.paymentType, "deposit"),
+          eq(payments.paymentType, "booking"),
           eq(payments.stripeTransferId, null as any),
           inArray(payments.payoutStatus, ["not_ready", "eligible", "scheduled"])
         )
@@ -445,6 +445,149 @@ export async function runAutoPayoutTickWithResult(): Promise<boolean> {
   } finally {
     autoPayoutTickInFlight = false;
     await releaseWorkerLock("payout");
+  }
+}
+
+export async function runSecurityDepositRefundJob(): Promise<number> {
+  const lockAcquired = await tryAcquireWorkerLock("security_deposit_refund", 70 * 60 * 1000);
+  if (!lockAcquired) {
+    logger.info("[security-deposit-refund] lock held by another instance — skipping");
+    return 0;
+  }
+  try {
+    const eligible: any = await db.execute(drizzleSql`
+      SELECT
+        p.id                       AS payment_id,
+        p.stripe_payment_intent_id AS stripe_pi_id,
+        p.amount                   AS deposit_cents,
+        b.id                       AS booking_id,
+        b.listing_title_snapshot   AS listing_title
+      FROM payments p
+      JOIN bookings b ON b.id = p.booking_id
+      WHERE p.payment_type = 'security_deposit'
+        AND p.status = 'succeeded'
+        AND b.security_deposit_cents > 0
+        AND b.security_deposit_refunded_at IS NULL
+        AND (
+          (b.booking_end_at IS NOT NULL AND b.booking_end_at < now() - interval '72 hours')
+          OR
+          (b.booking_end_at IS NULL AND (b.event_date::date + interval '1 day') < now() - interval '72 hours')
+        )
+        AND b.status IN ('confirmed', 'completed')
+        AND NOT EXISTS (
+          SELECT 1 FROM dispute_cases dc
+          WHERE dc.booking_id = b.id AND dc.status != 'resolved'
+        )
+      LIMIT 50
+    `);
+
+    const rows = extractRows<{
+      payment_id: string;
+      stripe_pi_id: string | null;
+      deposit_cents: number;
+      booking_id: string;
+      listing_title: string | null;
+    }>(eligible);
+
+    if (rows.length === 0) return 0;
+
+    logger.info("[security-deposit-refund] %d eligible deposit(s) to refund", rows.length);
+    const { refundBookingPayment } = await import("../stripe");
+    const now = new Date();
+    let refunded = 0;
+
+    for (const row of rows) {
+      if (!row.stripe_pi_id) {
+        logger.warn("[security-deposit-refund] payment %s has no stripe_pi_id — skipping", row.payment_id);
+        continue;
+      }
+      try {
+        await refundBookingPayment({
+          paymentIntentId: row.stripe_pi_id,
+          reason: "requested_by_customer",
+          idempotencyKey: `auto-deposit-refund:${row.payment_id}`,
+        });
+
+        await db.transaction(async (tx) => {
+          await tx
+            .update(payments)
+            .set({
+              status: "refunded",
+              refundAmount: row.deposit_cents,
+              refundReason: "auto_deposit_refund_72h",
+              refundedAt: now,
+              payoutStatus: "cancelled",
+              payoutEligibleAt: null,
+              payoutBlockedReason: "auto_refunded_no_dispute",
+              payoutAdjustedAmount: 0,
+            })
+            .where(eq(payments.id, row.payment_id));
+
+          await tx
+            .update(bookings)
+            .set({ securityDepositRefundedAt: now, updatedAt: now })
+            .where(eq(bookings.id, row.booking_id));
+        });
+
+        refunded++;
+        logger.info(
+          "[security-deposit-refund] refunded booking=%s amount=%d cents",
+          row.booking_id,
+          row.deposit_cents
+        );
+      } catch (rowErr: any) {
+        logger.warn(
+          "[security-deposit-refund] failed for payment=%s booking=%s: %s",
+          row.payment_id,
+          row.booking_id,
+          rowErr?.message || rowErr
+        );
+      }
+    }
+
+    if (refunded > 0) {
+      logger.info("[security-deposit-refund] auto-refunded %d security deposit(s)", refunded);
+    }
+    return refunded;
+  } catch (err: any) {
+    logger.warn("[security-deposit-refund] job failed: %s", err?.message || err);
+    return 0;
+  } finally {
+    await releaseWorkerLock("security_deposit_refund");
+  }
+}
+
+export async function runBookingCompletionJob(): Promise<number> {
+  const lockAcquired = await tryAcquireWorkerLock("booking_auto_complete", 5 * 60 * 60 * 1000);
+  if (!lockAcquired) {
+    logger.info("[booking-completion] lock held by another instance — skipping");
+    return 0;
+  }
+  try {
+    const now = new Date();
+    const result: any = await db.execute(drizzleSql`
+      UPDATE bookings
+      SET
+        status       = 'completed',
+        completed_at = ${now},
+        updated_at   = ${now}
+      WHERE status = 'confirmed'
+        AND (
+          (booking_end_at IS NOT NULL AND booking_end_at < now() - interval '2 hours')
+          OR
+          (booking_end_at IS NULL AND event_date::date < current_date)
+        )
+    `);
+    const rowCount = result?.rowCount ?? result?.rows?.length ?? 0;
+    if (rowCount > 0) {
+      logger.info("[booking-completion] auto-completed %d booking(s)", rowCount);
+    }
+    return rowCount;
+  } catch (err: any) {
+    logger.warn("[booking-completion] job failed: %s", err?.message || err);
+    return 0;
+  } finally {
+    await releaseWorkerLock("booking_auto_complete");
   }
 }
 

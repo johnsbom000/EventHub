@@ -50,13 +50,12 @@ import {
   resolveCustomerAuthFromRequest,
 } from "../services/customerAuth";
 import {
-  ensureBookingDisputesTable,
   ensureStripeCustomer,
   recomputeBookingPaymentStatusInTx,
   markBookingAsPaymentFailedInTx,
   type LockedPaymentPayoutContext,
   loadPaymentPayoutContextForUpdateInTx,
-  getBookingDisputeStatusInTx,
+  getDisputeCaseStatusInTx,
   refreshPaymentPayoutStateInTx,
   processSinglePayoutCandidate,
   ensurePaymentRecordForIntentInTx,
@@ -101,7 +100,6 @@ import { registerCircumventionRoutes } from "../routers/circumvention";
 import { storage } from "../storage";
 import crypto from "crypto";
 import {
-  insertEventSchema,
   insertVendorAccountSchema,
   vendorProfiles,
   vendorAccounts,
@@ -111,10 +109,7 @@ import {
   users,
   webTraffic,
   bookings,
-  events,
   payments,
-  bookingDisputes,
-  disputeAdminNotes,
   rentalTypes,
   stripeWebhookEvents,
   vendorVacationBlocks,
@@ -672,7 +667,7 @@ export function registerPaymentRoutes(app: Express): void {
               .where(eq(bookings.id, payment.bookingId))
               .limit(1);
             if (!bookingRow?.id) return;
-            const bookingDisputeStatus = await getBookingDisputeStatusInTx(tx, payment.bookingId);
+            const disputeCaseStatus = await getDisputeCaseStatusInTx(tx, payment.bookingId);
 
             const payoutEligibility = computePayoutEligibility({
               bookingStatus: bookingRow.status,
@@ -680,7 +675,7 @@ export function registerPaymentRoutes(app: Express): void {
               payoutStatus: payment.payoutStatus,
               payoutBlockedReason: payment.payoutBlockedReason,
               disputeStatus: payment.disputeStatus,
-              bookingDisputeStatus,
+              disputeCaseStatus,
               paidOutAt: payment.paidOutAt,
               payoutEligibleAt: payment.payoutEligibleAt,
               bookingEndAt: bookingRow.bookingEndAt,
@@ -1058,14 +1053,14 @@ export function registerPaymentRoutes(app: Express): void {
               : refundedAmount > 0
                 ? "partially_refunded"
                 : "succeeded";
-          const bookingDisputeStatus = await getBookingDisputeStatusInTx(tx, payment.bookingId);
+          const disputeCaseStatus = await getDisputeCaseStatusInTx(tx, payment.bookingId);
           const payoutEligibility = computePayoutEligibility({
             bookingStatus: bookingRow.status,
             paymentStatus: nextPaymentStatus,
             payoutStatus: payment.payoutStatus,
             payoutBlockedReason: null,
             disputeStatus,
-            bookingDisputeStatus,
+            disputeCaseStatus,
             paidOutAt: payment.paidOutAt,
             payoutEligibleAt: payment.payoutEligibleAt,
             bookingEndAt: bookingRow.bookingEndAt,
@@ -1135,7 +1130,7 @@ export function registerPaymentRoutes(app: Express): void {
               .where(eq(bookings.id, payment.bookingId))
               .limit(1);
             if (!bookingRow?.id) return;
-            const bookingDisputeStatus = await getBookingDisputeStatusInTx(tx, payment.bookingId);
+            const disputeCaseStatus = await getDisputeCaseStatusInTx(tx, payment.bookingId);
 
             const payoutEligibility = computePayoutEligibility({
               bookingStatus: bookingRow.status,
@@ -1146,7 +1141,7 @@ export function registerPaymentRoutes(app: Express): void {
                   ? "refund_after_payout_manual_recovery"
                   : null,
               disputeStatus: payment.disputeStatus,
-              bookingDisputeStatus,
+              disputeCaseStatus,
               paidOutAt: payment.paidOutAt,
               payoutEligibleAt: payment.payoutEligibleAt,
               bookingEndAt: bookingRow.bookingEndAt,
@@ -1271,7 +1266,7 @@ export function registerPaymentRoutes(app: Express): void {
         new Set((payload.paymentIds ?? []).map((id) => asTrimmedString(id)).filter(Boolean))
       );
 
-      const whereClauses: any[] = [eq(payments.paymentType, "deposit")];
+      const whereClauses: any[] = [eq(payments.paymentType, "booking")];
       if (bookingIds.length > 0) {
         whereClauses.push(inArray(payments.bookingId, bookingIds));
       }
@@ -1423,7 +1418,7 @@ export function registerPaymentRoutes(app: Express): void {
                 payoutStatus: locked.payoutStatus,
                 payoutBlockedReason: locked.payoutBlockedReason,
                 disputeStatus: locked.disputeStatus,
-                bookingDisputeStatus: locked.bookingDisputeStatus,
+                disputeCaseStatus: locked.disputeCaseStatus,
                 paidOutAt: locked.paidOutAt,
                 payoutEligibleAt: locked.payoutEligibleAt,
                 bookingEndAt: locked.bookingEndAt,
@@ -1565,7 +1560,7 @@ export function registerPaymentRoutes(app: Express): void {
         JOIN bookings b ON b.id = p.booking_id
         LEFT JOIN vendor_accounts va ON va.id = p.vendor_account_id
         LEFT JOIN users u ON u.id = p.customer_id
-        WHERE p.payment_type = 'deposit'
+        WHERE p.payment_type = 'booking'
         ORDER BY p.created_at DESC
         LIMIT 200
       `);

@@ -50,13 +50,11 @@ import {
   resolveCustomerAuthFromRequest,
 } from "../services/customerAuth";
 import {
-  ensureBookingDisputesTable,
   ensureStripeCustomer,
   recomputeBookingPaymentStatusInTx,
   markBookingAsPaymentFailedInTx,
   type LockedPaymentPayoutContext,
   loadPaymentPayoutContextForUpdateInTx,
-  getBookingDisputeStatusInTx,
   refreshPaymentPayoutStateInTx,
   processSinglePayoutCandidate,
   ensurePaymentRecordForIntentInTx,
@@ -104,7 +102,6 @@ import { registerMiscRoutes } from "../routers/misc";
 import { storage } from "../storage";
 import crypto from "crypto";
 import {
-  insertEventSchema,
   insertVendorAccountSchema,
   vendorProfiles,
   vendorAccounts,
@@ -114,10 +111,7 @@ import {
   users,
   webTraffic,
   bookings,
-  events,
   payments,
-  bookingDisputes,
-  disputeAdminNotes,
   rentalTypes,
   stripeWebhookEvents,
   vendorVacationBlocks,
@@ -467,6 +461,7 @@ export function registerVendorRoutes(app: Express): void {
       deliveryIncluded?: boolean | null;
       setupIncluded?: boolean | null;
       addOnItems?: { title: string; priceCents: number }[];
+      travelFeeProposal?: { id: string; status: string; amountCents: number; reason: string | null } | null;
     }>;
 
     return Promise.all(
@@ -609,6 +604,18 @@ export function registerVendorRoutes(app: Express): void {
 
         const parentListingTitle = normalizeListingTitleCandidate(item?.parentListingTitle) ?? null;
 
+        const [latestProposal] = await db
+          .select({
+            id: travelFeeProposals.id,
+            status: travelFeeProposals.status,
+            amountCents: travelFeeProposals.amountCents,
+            reason: travelFeeProposals.reason,
+          })
+          .from(travelFeeProposals)
+          .where(eq(travelFeeProposals.bookingId, row.id))
+          .orderBy(desc(travelFeeProposals.createdAt))
+          .limit(1);
+
         return {
           ...row,
           itemTitle: resolvedItemTitle,
@@ -632,6 +639,7 @@ export function registerVendorRoutes(app: Express): void {
           deliveryIncluded,
           setupIncluded,
           addOnItems,
+          travelFeeProposal: latestProposal ?? null,
         };
       })
     );
@@ -4172,7 +4180,7 @@ export function registerVendorRoutes(app: Express): void {
         .where(
           and(
             eq(bookings.vendorProfileId, activeProfileId),
-            inArray(bookings.status, ["pending", "confirmed"]),
+            eq(bookings.status, "pending"),
             ...(sinceIsValid ? [gte(bookings.createdAt, sinceDate)] : [])
           )
         );
@@ -4357,7 +4365,7 @@ export function registerVendorRoutes(app: Express): void {
           .orderBy(desc(payments.createdAt));
 
         const vcMainPayment = vendorCancelPayments.find(
-          (p) => p.paymentType === "booking" || p.paymentType === "deposit"
+          (p) => p.paymentType === "booking"
         );
         const vcTravelFeePayments = vendorCancelPayments.filter(
           (p) => p.paymentType === "travel_fee"
@@ -5198,106 +5206,9 @@ export function registerVendorRoutes(app: Express): void {
     }
   });
 
-  app.post("/api/vendor/bookings/:id/dispute/respond", socialRateLimiter, ...requireVendorAuth0, async (req, res) => {
-    try {
-      await ensureBookingDisputesTable();
-
-      const vendorAuth = (req as any).vendorAuth;
-      const vendorAccountId = asTrimmedString(vendorAuth?.id);
-      if (!vendorAccountId) {
-        return res.status(403).json({ error: "Vendor account required" });
-      }
-
-      const bookingId = asTrimmedString(req.params?.id);
-      if (!bookingId) {
-        return res.status(400).json({ error: "Booking id is required" });
-      }
-
-      const payload = z
-        .object({
-          response: z.string().trim().min(4).max(2000),
-        })
-        .parse(req.body ?? {});
-
-      const disputeRows: any = await db.execute(drizzleSql`
-        select
-          d.id as "disputeId",
-          d.status as "status",
-          d.booking_id as "bookingId",
-          coalesce(b.vendor_account_id, listing_owner.account_id) as "vendorAccountId",
-          coalesce(b.listing_title_snapshot, listing_owner.title) as "listingTitle",
-          b.event_date as "eventDate",
-          cust.email as "customerEmail",
-          cust.name as "customerName",
-          va.business_name as "vendorBusinessName"
-        from booking_disputes d
-        inner join bookings b on b.id = d.booking_id
-        left join vendor_listings listing_owner on listing_owner.id = b.listing_id
-        left join customers cust on cust.id = b.customer_id
-        left join vendor_accounts va on va.id = coalesce(b.vendor_account_id, listing_owner.account_id)
-        where d.booking_id = ${bookingId}
-        limit 1
-      `);
-      const dispute = extractRows<{
-        disputeId?: string | null;
-        status?: string | null;
-        bookingId?: string | null;
-        vendorAccountId?: string | null;
-        listingTitle?: string | null;
-        eventDate?: string | null;
-        customerEmail?: string | null;
-        customerName?: string | null;
-        vendorBusinessName?: string | null;
-      }>(disputeRows)[0];
-
-      if (!dispute?.disputeId) {
-        return res.status(404).json({ error: "Dispute not found for this booking" });
-      }
-      if (asTrimmedString(dispute.vendorAccountId) !== vendorAccountId) {
-        return res.status(403).json({ error: "You do not have access to this dispute" });
-      }
-      if (dispute.status === "resolved_refund" || dispute.status === "resolved_payout") {
-        return res.status(409).json({ error: "Dispute is already resolved" });
-      }
-
-      const now = new Date();
-      const [updatedDispute] = await db
-        .update(bookingDisputes)
-        .set({
-          status: "vendor_responded",
-          vendorResponse: payload.response,
-          vendorRespondedAt: now,
-          updatedAt: now,
-        })
-        .where(eq(bookingDisputes.id, dispute.disputeId))
-        .returning();
-
-      // Notify the customer that the vendor has responded
-      if (dispute.customerEmail) {
-        const serverUrl = appUrl();
-        sendDisputeVendorRespondedEmail(dispute.customerEmail, {
-          recipientName: asTrimmedString(dispute.customerName) || "Customer",
-          vendorBusinessName: asTrimmedString(dispute.vendorBusinessName) || "Vendor",
-          listingTitle: asTrimmedString(dispute.listingTitle) || "Your booking",
-          eventDate: asTrimmedString(dispute.eventDate) || "N/A",
-          vendorResponse: payload.response,
-          serverUrl,
-        }).catch(() => {});
-      }
-
-      return res.json({
-        disputeId: updatedDispute.id,
-        bookingId: updatedDispute.bookingId,
-        status: updatedDispute.status,
-        vendorResponse: updatedDispute.vendorResponse,
-        vendorRespondedAt: updatedDispute.vendorRespondedAt,
-      });
-    } catch (error: any) {
-      if (error?.name === "ZodError") {
-        return res.status(400).json({ error: "Validation failed", details: error.errors });
-      }
-      return res.status(500).json({ error: "Unable to submit dispute response" });
-    }
+  // Legacy endpoint removed — use POST /api/vendor/disputes/:caseId/respond instead.
+  app.post("/_removed/api/vendor/bookings/:id/dispute/respond", socialRateLimiter, ...requireVendorAuth0, async (req, res) => {
+    return res.status(410).json({ error: "This endpoint has been removed. Use POST /api/vendor/disputes/:caseId/respond." });
   });
 
   // ── Dispute Case System ────────────────────────────────────────────────────

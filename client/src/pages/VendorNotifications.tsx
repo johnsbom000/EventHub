@@ -18,6 +18,7 @@ import { Tabs, TabsList, TabsTrigger } from "@/components/ui/tabs";
 import { apiRequest } from "@/lib/queryClient";
 import { useToast } from "@/hooks/use-toast";
 import { useFeeRates } from "@/hooks/useFeeRates";
+import { deriveBookingAmounts } from "@/lib/bookingAmounts";
 
 const FILTER_TAB_ACTIVE_CLASSNAME =
   "data-[state=active]:bg-primary data-[state=active]:text-primary-foreground data-[state=active]:shadow-sm data-[state=active]:hover:bg-primary";
@@ -89,53 +90,11 @@ const FILTER_LABELS: Record<FilterKey, string> = {
 
 // ---------- helpers ----------
 
-function normalizeAmountToCents(value: unknown) {
-  const n = Number(value ?? 0);
-  if (!Number.isFinite(n) || n <= 0) return 0;
-  if (!Number.isInteger(n)) return Math.round(n * 100);
-  if (n < 1000) return n * 100;
-  return n;
-}
-
 function formatUsd(cents: number) {
   return new Intl.NumberFormat(undefined, {
     style: "currency",
     currency: "USD",
   }).format((cents || 0) / 100);
-}
-
-function deriveBookingAmounts(booking: VendorBooking, vendorFeeRate: number) {
-  const customerTotalCents = normalizeAmountToCents(booking.totalAmount ?? 0);
-  const vendorFeeCents = normalizeAmountToCents(booking.platformFee ?? 0);
-  const storedPayoutCents = normalizeAmountToCents(booking.vendorPayout ?? 0);
-
-  if (storedPayoutCents > 0 || vendorFeeCents > 0) {
-    const listingPriceCents = Math.max(0, storedPayoutCents + vendorFeeCents);
-    const customerFeeCents = Math.max(0, customerTotalCents - listingPriceCents);
-    return {
-      customerTotalCents,
-      listingPriceCents,
-      customerFeeCents,
-      vendorFeeCents,
-      estimatedPayoutCents:
-        storedPayoutCents > 0
-          ? storedPayoutCents
-          : Math.max(0, listingPriceCents - vendorFeeCents),
-    };
-  }
-
-  const listingPriceCents = Math.max(0, Math.round(customerTotalCents / 1.05));
-  const customerFeeCents = Math.max(0, customerTotalCents - listingPriceCents);
-  const derivedVendorFeeCents = Math.max(0, Math.round(listingPriceCents * vendorFeeRate));
-  const estimatedPayoutCents = Math.max(0, listingPriceCents - derivedVendorFeeCents);
-
-  return {
-    customerTotalCents,
-    listingPriceCents,
-    customerFeeCents,
-    vendorFeeCents: derivedVendorFeeCents,
-    estimatedPayoutCents,
-  };
 }
 
 function isBookingNotificationType(type: string | null | undefined) {
