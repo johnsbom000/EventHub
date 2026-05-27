@@ -76,6 +76,8 @@ app.use(
               process.env.OBJECT_STORAGE_PUBLIC_BASE_URL || "",
               // Stripe-hosted payment brand images
               "https://*.stripe.com",
+              // Unsplash CDN for temporary landing page fake listing cards
+              "https://images.unsplash.com",
             ].filter(Boolean),
             connectSrc: [
               "'self'",
