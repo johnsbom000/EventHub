@@ -1878,15 +1878,6 @@ export default function VendorDashboard() {
  </SelectContent>
  </Select>
  </div>
- <Button
- type="button"
- variant="outline"
- onClick={() => setLocation("/vendor/onboarding?createProfile=1")}
- className="md:self-end"
- data-testid="button-dashboard-create-profile"
- >
- {t("vendorDashboard.createAnotherProfile")}
- </Button>
  </div>
  ) : null}
 

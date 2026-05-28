@@ -350,14 +350,6 @@ export default function VendorShell({ children, onOpenAccountSettings }: VendorS
                 ) : null}
 
                 <DropdownMenuItem
-                  onClick={() => setLocation("/vendor/onboarding?createProfile=1")}
-                  data-testid="menu-item-vendor-create-profile"
-                >
-                  <span>{t("vendorShell.createAnotherProfile")}</span>
-                </DropdownMenuItem>
-                <DropdownMenuSeparator />
-
-                <DropdownMenuItem
                   onClick={() => setLocation("/vendor/dashboard")}
                   data-testid="menu-item-vendor-shell-profile"
                 >
