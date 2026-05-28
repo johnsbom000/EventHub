@@ -134,6 +134,7 @@ import {
   listingReviews,
   reviewReplies,
   vendorReferrals,
+  foundingVendorInvites,
 } from "@shared/schema";
 import {
   requireDualAuthAuth0,
@@ -1729,6 +1730,117 @@ export function registerAdminRoutes(app: Express): void {
       );
 
       return res.json({ results });
+    } catch (err: any) {
+      return respondWithInternalServerError(req, res, err);
+    }
+  });
+
+  // ── Founding Vendor Admin Endpoints ──────────────────────────────────────────
+
+  // GET /api/admin/founding-vendors/stats
+  app.get("/api/admin/founding-vendors/stats", adminRateLimiter, requireAdminAuth, async (req: any, res: any) => {
+    try {
+      const [stats] = await db
+        .select({
+          spotsUsed: drizzleSql<number>`count(*) filter (where ${vendorAccounts.isFoundingVendor} = true)::int`,
+          totalHolidayBookingsUsed: drizzleSql<number>`coalesce(sum(${vendorAccounts.foundingBenefitBookingsUsed}) filter (where ${vendorAccounts.isFoundingVendor} = true), 0)::int`,
+        })
+        .from(vendorAccounts)
+        .where(isNull(vendorAccounts.deletedAt));
+
+      // Return the single canonical invite regardless of active state so the admin can see and toggle it
+      const [invite] = await db
+        .select({
+          token: foundingVendorInvites.token,
+          active: foundingVendorInvites.active,
+          redemptionCount: foundingVendorInvites.redemptionCount,
+        })
+        .from(foundingVendorInvites)
+        .orderBy(desc(foundingVendorInvites.createdAt))
+        .limit(1);
+
+      const spotsUsed = stats?.spotsUsed ?? 0;
+      const inviteUrl = invite
+        ? `${appUrl()}/vendor/onboarding?fv=${invite.token}`
+        : null;
+
+      return res.json({
+        spotsUsed,
+        totalHolidayBookingsUsed: stats?.totalHolidayBookingsUsed ?? 0,
+        inviteToken: invite?.token ?? null,
+        inviteUrl,
+        inviteActive: invite?.active ?? false,
+        redemptionCount: invite?.redemptionCount ?? 0,
+      });
+    } catch (err: any) {
+      return respondWithInternalServerError(req, res, err);
+    }
+  });
+
+  // GET /api/admin/founding-vendors — list all founding vendors
+  app.get("/api/admin/founding-vendors", adminRateLimiter, requireAdminAuth, async (req: any, res: any) => {
+    try {
+      const rows = await db
+        .select({
+          id: vendorAccounts.id,
+          businessName: vendorAccounts.businessName,
+          email: vendorAccounts.email,
+          foundingVendorNumber: vendorAccounts.foundingVendorNumber,
+          foundingBenefitBookingsUsed: vendorAccounts.foundingBenefitBookingsUsed,
+          foundingReferralBonusBookingsRemaining: vendorAccounts.foundingReferralBonusBookingsRemaining,
+          foundingBenefitsActivatedAt: vendorAccounts.foundingBenefitsActivatedAt,
+          foundingHolidayEndsAt: vendorAccounts.foundingHolidayEndsAt,
+          foundingRateEndsAt: vendorAccounts.foundingRateEndsAt,
+          createdAt: vendorAccounts.createdAt,
+        })
+        .from(vendorAccounts)
+        .where(and(eq(vendorAccounts.isFoundingVendor, true), isNull(vendorAccounts.deletedAt)))
+        .orderBy(asc(vendorAccounts.foundingVendorNumber));
+      return res.json({ foundingVendors: rows });
+    } catch (err: any) {
+      return respondWithInternalServerError(req, res, err);
+    }
+  });
+
+  // POST /api/admin/founding-vendors/:vendorId/revoke — revoke founding status
+  app.post("/api/admin/founding-vendors/:vendorId/revoke", adminRateLimiter, requireAdminAuth, async (req: any, res: any) => {
+    try {
+      const { vendorId } = req.params;
+      await db
+        .update(vendorAccounts)
+        .set({ isFoundingVendor: false, foundingVendorNumber: null })
+        .where(and(eq(vendorAccounts.id, vendorId), isNull(vendorAccounts.deletedAt)));
+      return res.json({ ok: true });
+    } catch (err: any) {
+      return respondWithInternalServerError(req, res, err);
+    }
+  });
+
+  // POST /api/admin/founding-vendors/toggle-link — enable or disable the invite link
+  app.post("/api/admin/founding-vendors/toggle-link", adminRateLimiter, requireAdminAuth, async (req: any, res: any) => {
+    try {
+      const { active } = req.body as { active: boolean };
+
+      // Fetch the canonical invite (most recent)
+      const [invite] = await db
+        .select({ id: foundingVendorInvites.id, token: foundingVendorInvites.token })
+        .from(foundingVendorInvites)
+        .orderBy(desc(foundingVendorInvites.createdAt))
+        .limit(1);
+
+      if (!invite) {
+        // No token exists yet — seed the first one (active or inactive per request)
+        const token = crypto.randomBytes(16).toString("hex");
+        await db.insert(foundingVendorInvites).values({ token, active: Boolean(active) });
+        return res.json({ ok: true, active: Boolean(active) });
+      }
+
+      await db
+        .update(foundingVendorInvites)
+        .set({ active: Boolean(active) })
+        .where(eq(foundingVendorInvites.id, invite.id));
+
+      return res.json({ ok: true, active: Boolean(active) });
     } catch (err: any) {
       return respondWithInternalServerError(req, res, err);
     }

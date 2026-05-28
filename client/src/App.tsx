@@ -243,10 +243,11 @@ function AdminAutoRedirect() {
   useEffect(() => {
     if (!shouldCheck) return;
     if (!data && !isError) return; // still in flight
-    // Mark as checked so navigation within the session doesn't re-trigger.
     setShouldCheck(false);
     sessionStorage.setItem("eh_admin_checked", "1");
-    if (data?.isAdmin) setLocation("/admin");
+    // Don't redirect away from invite-link flows (?fv= or ?ref=).
+    const params = new URLSearchParams(window.location.search);
+    if (data?.isAdmin && !params.has("fv") && !params.has("ref")) setLocation("/admin");
   }, [data, isError, shouldCheck, setLocation]);
 
   return null;

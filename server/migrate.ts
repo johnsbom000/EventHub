@@ -64,7 +64,7 @@ function getMigrationFiles(): string[] {
   const migrationsDir = isProd
     ? path.resolve(__dirname, "./migrations")   // dist/migrations/
     : path.resolve(__dirname, "../migrations"); // repo root migrations/
-  const ext = isProd ? /^00\d+_.*\.js$/ : /^00\d+_.*\.ts$/;
+  const ext = isProd ? /^\d{4}_.*\.js$/ : /^\d{4}_.*\.ts$/;
   return readdirSync(migrationsDir)
     .filter((file) => ext.test(file))
     .sort()

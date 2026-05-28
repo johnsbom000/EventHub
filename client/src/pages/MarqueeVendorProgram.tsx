@@ -70,7 +70,7 @@ const benefits = [
 const finePrint = [
   "Marquee benefits apply only to bookings completed on the EventHub platform, in line with our Terms of Service.",
   "The Marquee deal is available only to vendors personally invited by EventHub, up to 20 total. Vendors who join through a referral participate under standard terms, not Marquee terms.",
-  "The Marquee rate requires an active account: a published listing and at least 2 bookings per month. Two consecutive inactive months returns your account to standard rates.",
+  "The Marquee rate requires an active account: a published listing and at least 5 bookings per month. Two consecutive inactive months returns your account to standard rates.",
   "The fee holiday is a single window per vendor and is not transferable.",
   "EventHub early adopter benefits will not be available to new accounts once the 20-vendor cap or a market booking-volume target is reached.",
   "Rates and windows shown reflect the program at launch and apply to Marquee vendors enrolled during the offer period.",

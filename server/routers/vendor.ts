@@ -134,6 +134,7 @@ import {
   listingReviews,
   reviewReplies,
   vendorReferrals,
+  foundingVendorInvites,
 } from "@shared/schema";
 import {
   requireDualAuthAuth0,
@@ -302,6 +303,11 @@ import {
   MARQUEE_CUSTOMER_FEE_RATE,
   MARQUEE_CUSTOMER_FEE_MONTHS,
   MARQUEE_VISIBILITY_MONTHS,
+  FOUNDING_VENDOR_HOLIDAY_BOOKING_COUNT,
+  FOUNDING_VENDOR_HOLIDAY_DAYS,
+  FOUNDING_VENDOR_RATE_MONTHS,
+  FOUNDING_VENDOR_VISIBILITY_MONTHS,
+  FOUNDING_VENDOR_REFERRAL_BONUS_BOOKINGS,
   STRIPE_FEE_ESTIMATE_PERCENT,
   STRIPE_FEE_ESTIMATE_FIXED_CENTS,
   VENDOR_ABSORBS_STRIPE_FEES,
@@ -799,6 +805,13 @@ export function registerVendorRoutes(app: Express): void {
         marqueeCustomerFeeEndsAt: account.marqueeCustomerFeeEndsAt ?? null,
         marqueeVisibilityEndsAt: account.marqueeVisibilityEndsAt ?? null,
         referralCode: account.referralCode ?? null,
+        isFoundingVendor: account.isFoundingVendor ?? false,
+        foundingVendorNumber: account.foundingVendorNumber ?? null,
+        foundingBenefitBookingsUsed: account.foundingBenefitBookingsUsed ?? 0,
+        foundingBenefitsActivatedAt: account.foundingBenefitsActivatedAt ?? null,
+        foundingHolidayEndsAt: account.foundingHolidayEndsAt ?? null,
+        foundingRateEndsAt: account.foundingRateEndsAt ?? null,
+        foundingReferralBonusBookingsRemaining: account.foundingReferralBonusBookingsRemaining ?? 0,
         __marker: "vendor_me_route_hit",
       });
     } catch (error: any) {
@@ -972,6 +985,7 @@ export function registerVendorRoutes(app: Express): void {
 
     createNewProfile: z.boolean().optional(),
     referralCode: z.string().max(20).optional(),
+    foundingInviteToken: z.string().max(64).optional(),
   });
 
   app.post("/api/vendor/onboarding/complete", onboardingRateLimiter, requireAuth0, async (req, res) => {
@@ -1310,7 +1324,7 @@ export function registerVendorRoutes(app: Express): void {
       }
 
       // Track vendor referrals: if a valid referral code was provided by a new vendor,
-      // record the relationship so we can reward the referring founding vendor later.
+      // record the relationship so we can reward the referring vendor later.
       if (isFirstTimeOnboarding && onboardingData.referralCode) {
         void (async () => {
           try {
@@ -1321,7 +1335,10 @@ export function registerVendorRoutes(app: Express): void {
               .where(
                 and(
                   drizzleSql`upper(${vendorAccounts.referralCode}) = ${code}`,
-                  eq(vendorAccounts.isMarqueeVendor, true),
+                  or(
+                    eq(vendorAccounts.isMarqueeVendor, true),
+                    eq(vendorAccounts.isFoundingVendor, true)
+                  ),
                   isNull(vendorAccounts.deletedAt)
                 )
               )
@@ -1335,6 +1352,61 @@ export function registerVendorRoutes(app: Express): void {
             }
           } catch (refErr: any) {
             logger.warn("[vendor referral] failed to record referral:", refErr?.message || refErr);
+          }
+        })();
+      }
+
+      // Apply Founding Vendor status if a valid global invite token was used.
+      if (isFirstTimeOnboarding && onboardingData.foundingInviteToken) {
+        void (async () => {
+          try {
+            const token = onboardingData.foundingInviteToken!.trim();
+            const [invite] = await db
+              .select({ id: foundingVendorInvites.id })
+              .from(foundingVendorInvites)
+              .where(
+                and(
+                  eq(foundingVendorInvites.token, token),
+                  eq(foundingVendorInvites.active, true)
+                )
+              )
+              .limit(1);
+            if (!invite) return;
+
+            // Assign the next slot number in a transaction to prevent race conditions
+            let granted = false;
+            await db.transaction(async (tx) => {
+              const [counts] = await tx
+                .select({
+                  nextSlot: drizzleSql<number>`coalesce(max(${vendorAccounts.foundingVendorNumber}), 0) + 1`,
+                })
+                .from(vendorAccounts)
+                .where(isNull(vendorAccounts.deletedAt));
+
+              const nextSlot = counts?.nextSlot ?? 1;
+              const [updated] = await tx
+                .update(vendorAccounts)
+                .set({ isFoundingVendor: true, foundingVendorNumber: nextSlot })
+                .where(
+                  and(
+                    eq(vendorAccounts.id, account.id),
+                    eq(vendorAccounts.isFoundingVendor, false)
+                  )
+                )
+                .returning({ id: vendorAccounts.id });
+
+              if (updated) granted = true;
+            });
+
+            // Increment the redemption counter only if the slot was actually granted
+            if (granted) {
+              await db
+                .update(foundingVendorInvites)
+                .set({ redemptionCount: drizzleSql`${foundingVendorInvites.redemptionCount} + 1` })
+                .where(eq(foundingVendorInvites.id, invite.id));
+            }
+          } catch (fvErr: any) {
+            logger.warn("[founding vendor grant] failed:", fvErr?.message || fvErr);
           }
         })();
       }
@@ -2419,6 +2491,29 @@ export function registerVendorRoutes(app: Express): void {
           )
           .catch(() => {});
 
+        // Stamp all founding vendor expiry timestamps the first time a founding vendor goes live
+        void db
+          .update(vendorAccounts)
+          .set({
+            foundingBenefitsActivatedAt: now,
+            foundingHolidayEndsAt: new Date(now.getTime() + FOUNDING_VENDOR_HOLIDAY_DAYS * 24 * 60 * 60 * 1000),
+            // 12-month rate window starts after the 14-day holiday
+            foundingRateEndsAt: new Date(
+              now.getTime()
+              + FOUNDING_VENDOR_HOLIDAY_DAYS * 24 * 60 * 60 * 1000
+              + FOUNDING_VENDOR_RATE_MONTHS * 30.44 * 24 * 60 * 60 * 1000
+            ),
+            foundingVisibilityEndsAt: new Date(now.getTime() + FOUNDING_VENDOR_VISIBILITY_MONTHS * 30.44 * 24 * 60 * 60 * 1000),
+          })
+          .where(
+            and(
+              eq(vendorAccounts.id, vendorAuth.id),
+              eq(vendorAccounts.isFoundingVendor, true),
+              isNull(vendorAccounts.foundingBenefitsActivatedAt)
+            )
+          )
+          .catch(() => {});
+
         // Reward the referring vendor when a referred vendor publishes their first listing.
         // Using UPDATE-first so concurrent requests can't double-award (status='pending' is the lock).
         void (async () => {
@@ -2436,15 +2531,33 @@ export function registerVendorRoutes(app: Express): void {
               .returning({ referrerVendorId: vendorReferrals.referrerVendorId });
 
             if (rewarded) {
-              await db
-                .update(vendorAccounts)
-                .set({
-                  marqueeHolidayBonusBookings: drizzleSql`${vendorAccounts.marqueeHolidayBonusBookings} + ${MARQUEE_REFERRAL_BONUS_BOOKINGS}`,
+              const [referrer] = await db
+                .select({
+                  isMarqueeVendor: vendorAccounts.isMarqueeVendor,
+                  isFoundingVendor: vendorAccounts.isFoundingVendor,
                 })
-                .where(eq(vendorAccounts.id, rewarded.referrerVendorId));
+                .from(vendorAccounts)
+                .where(eq(vendorAccounts.id, rewarded.referrerVendorId))
+                .limit(1);
+
+              if (referrer?.isMarqueeVendor) {
+                await db
+                  .update(vendorAccounts)
+                  .set({
+                    marqueeHolidayBonusBookings: drizzleSql`${vendorAccounts.marqueeHolidayBonusBookings} + ${MARQUEE_REFERRAL_BONUS_BOOKINGS}`,
+                  })
+                  .where(eq(vendorAccounts.id, rewarded.referrerVendorId));
+              } else if (referrer?.isFoundingVendor) {
+                await db
+                  .update(vendorAccounts)
+                  .set({
+                    foundingReferralBonusBookingsRemaining: drizzleSql`${vendorAccounts.foundingReferralBonusBookingsRemaining} + ${FOUNDING_VENDOR_REFERRAL_BONUS_BOOKINGS}`,
+                  })
+                  .where(eq(vendorAccounts.id, rewarded.referrerVendorId));
+              }
             }
           } catch (err: any) {
-            logger.warn("[marquee referral reward] failed:", err?.message || err);
+            logger.warn("[vendor referral reward] failed:", err?.message || err);
           }
         })();
       }
@@ -4336,9 +4449,7 @@ export function registerVendorRoutes(app: Express): void {
         return res.status(500).json({ error: "Failed to update booking status" });
       }
 
-      // Increment founding-vendor free-booking counter when a booking is confirmed.
-      // Done fire-and-forget; a missed increment is non-critical and can be corrected
-      // manually via the admin panel.
+      // Increment program booking counters when a booking is confirmed (fire-and-forget).
       if (nextStatus === "confirmed" && vendorAccountId) {
         void db
           .execute(
@@ -4354,6 +4465,27 @@ export function registerVendorRoutes(app: Express): void {
                 END
               WHERE id = ${vendorAccountId}
                 AND is_marquee_vendor = true
+            `
+          )
+          .catch(() => {});
+
+        void db
+          .execute(
+            drizzleSql`
+              UPDATE vendor_accounts
+              SET
+                founding_benefit_bookings_used = founding_benefit_bookings_used + 1,
+                founding_referral_bonus_bookings_remaining = GREATEST(0,
+                  CASE
+                    WHEN founding_benefit_bookings_used + 1 > ${FOUNDING_VENDOR_HOLIDAY_BOOKING_COUNT}
+                      AND founding_holiday_ends_at IS NOT NULL
+                      AND NOW() >= founding_holiday_ends_at
+                    THEN founding_referral_bonus_bookings_remaining - 1
+                    ELSE founding_referral_bonus_bookings_remaining
+                  END
+                )
+              WHERE id = ${vendorAccountId}
+                AND is_founding_vendor = true
             `
           )
           .catch(() => {});

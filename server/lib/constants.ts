@@ -26,6 +26,15 @@ if (!Number.isFinite(CUSTOMER_FEE_RATE) || CUSTOMER_FEE_RATE < 0 || CUSTOMER_FEE
   );
 }
 
+// ─── Founding Vendor program ──────────────────────────────────────────────────
+export const FOUNDING_VENDOR_HOLIDAY_BOOKING_COUNT = 10; // 0% until N bookings…
+export const FOUNDING_VENDOR_HOLIDAY_DAYS = 14;          // …OR 14 days, whichever comes LAST
+export const FOUNDING_VENDOR_FEE_RATE = 0.06;            // 6% for 12 months after holiday
+export const FOUNDING_VENDOR_RATE_MONTHS = 12;
+export const FOUNDING_VENDOR_VISIBILITY_MONTHS = 6;      // search boost for 6 months
+export const FOUNDING_VENDOR_REFERRAL_BONUS_BOOKINGS = 2; // 2 extra bookings per referral
+export const FOUNDING_VENDOR_REFERRAL_BONUS_FEE_RATE = 0.04; // 4% on referral bonus bookings
+
 // ─── Stripe fee estimation ────────────────────────────────────────────────────
 export const STRIPE_FEE_ESTIMATE_PERCENT = 0.029;
 export const STRIPE_FEE_ESTIMATE_FIXED_CENTS = 30;

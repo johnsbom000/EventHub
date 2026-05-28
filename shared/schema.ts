@@ -278,6 +278,15 @@ export const vendorAccounts = pgTable(
     marqueeVisibilityEndsAt: timestamp("marquee_visibility_ends_at"),
     marqueeConsecutiveInactiveMonths: integer("marquee_consecutive_inactive_months").notNull().default(0),
     referralCode: varchar("referral_code", { length: 20 }),
+    // Founding Vendor program (migration 0089 + 0099)
+    isFoundingVendor: boolean("is_founding_vendor").notNull().default(false),
+    foundingVendorNumber: integer("founding_vendor_number"),
+    foundingBenefitBookingsUsed: integer("founding_benefit_bookings_used").notNull().default(0),
+    foundingBenefitsActivatedAt: timestamp("founding_benefits_activated_at"),
+    foundingHolidayEndsAt: timestamp("founding_holiday_ends_at"),
+    foundingRateEndsAt: timestamp("founding_rate_ends_at"),
+    foundingVisibilityEndsAt: timestamp("founding_visibility_ends_at"),
+    foundingReferralBonusBookingsRemaining: integer("founding_referral_bonus_bookings_remaining").notNull().default(0),
   },
   (table) => ({
     userIdActiveUniqueIdx: uniqueIndex("vendor_accounts_user_id_active_unique_idx")
@@ -1384,3 +1393,14 @@ export const vendorReferrals = pgTable(
 
 export type VendorReferral = typeof vendorReferrals.$inferSelect;
 export type InsertVendorReferral = typeof vendorReferrals.$inferInsert;
+
+// Founding Vendor Invite Tokens — global links admin shares to grant founding status
+export const foundingVendorInvites = pgTable("founding_vendor_invites", {
+  id: serial("id").primaryKey(),
+  token: varchar("token", { length: 32 }).notNull().unique(),
+  active: boolean("active").notNull().default(true),
+  redemptionCount: integer("redemption_count").notNull().default(0),
+  createdAt: timestamp("created_at").notNull().defaultNow(),
+});
+
+export type FoundingVendorInvite = typeof foundingVendorInvites.$inferSelect;

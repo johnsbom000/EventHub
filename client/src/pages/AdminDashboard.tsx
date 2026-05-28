@@ -2074,26 +2074,223 @@ function MarqueeVendorSection({ isAdmin }: { isAdmin: boolean }) {
   );
 }
 
+// ─── Section: Founding Vendors ───────────────────────────────────────────────
+
+function FoundingVendorSection({ isAdmin }: { isAdmin: boolean }) {
+  const qc = useQueryClient();
+  const [copied, setCopied] = useState(false);
+
+  const { data: stats, isLoading: statsLoading, isError: statsError, refetch: refetchStats } = useQuery<any>({
+    queryKey: ["/api/admin/founding-vendors/stats"],
+    queryFn: async () => (await apiRequest("GET", "/api/admin/founding-vendors/stats")).json(),
+    enabled: isAdmin,
+    staleTime: 0,
+    retry: 2,
+  });
+
+  const { data: list = [], isLoading } = useQuery<any[]>({
+    queryKey: ["/api/admin/founding-vendors"],
+    queryFn: async () => {
+      const res = await apiRequest("GET", "/api/admin/founding-vendors");
+      const data = await res.json();
+      return data.foundingVendors ?? [];
+    },
+    enabled: isAdmin,
+  });
+
+  const revokeMutation = useMutation({
+    mutationFn: async (vendorId: string) => {
+      const res = await apiRequest("POST", `/api/admin/founding-vendors/${vendorId}/revoke`);
+      if (!res.ok) throw new Error("Failed to revoke");
+    },
+    onSuccess: () => {
+      qc.invalidateQueries({ queryKey: ["/api/admin/founding-vendors"] });
+      qc.invalidateQueries({ queryKey: ["/api/admin/founding-vendors/stats"] });
+    },
+  });
+
+  const toggleMutation = useMutation({
+    mutationFn: async (active: boolean) => {
+      const res = await apiRequest("POST", "/api/admin/founding-vendors/toggle-link", { active });
+      if (!res.ok) {
+        const body = await res.json().catch(() => ({}));
+        throw new Error(body.error ?? "Failed to update link");
+      }
+      return res.json();
+    },
+    onSuccess: () => {
+      qc.refetchQueries({ queryKey: ["/api/admin/founding-vendors/stats"] });
+    },
+  });
+
+  const spotsUsed = stats?.spotsUsed ?? 0;
+  const inviteUrl = stats?.inviteUrl ?? null;
+  const inviteActive = stats?.inviteActive ?? false;
+  const redemptionCount = stats?.redemptionCount ?? 0;
+
+  const handleCopy = () => {
+    if (!inviteUrl) return;
+    navigator.clipboard.writeText(inviteUrl).then(() => {
+      setCopied(true);
+      setTimeout(() => setCopied(false), 2000);
+    });
+  };
+
+  return (
+    <>
+      <div className="mt-10 mb-4 border-t border-border pt-8">
+        <h2 className="text-xl font-semibold font-serif tracking-tight text-foreground">Founding Vendors</h2>
+        <p className="text-sm text-muted-foreground mt-0.5">Manage the Founding Vendor program</p>
+      </div>
+
+      <div className="grid gap-4 grid-cols-2 mb-6">
+        <StatCard title="Founding Vendors" value={spotsUsed} sub="Total enrolled" icon={<Star className="h-4 w-4 text-amber-400" />} />
+        <StatCard title="Holiday Bookings Used" value={stats?.totalHolidayBookingsUsed ?? 0} sub="Across all Founding vendors" icon={<Calendar className="h-4 w-4 text-muted-foreground" />} />
+      </div>
+
+      <Card className="mb-6">
+        <CardHeader>
+          <CardTitle>Founding Vendor Invite Link</CardTitle>
+          <CardDescription>
+            Share this link via DM, email, or text. Anyone who signs up through it gets Founding Vendor status (first 10 bookings free, then 6% for 12 months).
+          </CardDescription>
+        </CardHeader>
+        <CardContent>
+          {statsLoading ? (
+            <p className="text-sm text-muted-foreground">Loading…</p>
+          ) : statsError ? (
+            <div className="flex items-center gap-3">
+              <p className="text-sm text-destructive">Failed to load invite link.</p>
+              <button onClick={() => refetchStats()} className="text-xs underline text-muted-foreground">Retry</button>
+            </div>
+          ) : (
+            <>
+              <div className="flex items-center gap-2">
+                <div className={`flex-1 rounded-md border px-3 py-2 text-sm font-mono truncate ${inviteActive ? "border-border bg-muted text-muted-foreground" : "border-border bg-muted/40 text-muted-foreground/50 line-through"}`}>
+                  {inviteUrl ?? "No link yet"}
+                </div>
+                {inviteUrl && inviteActive && (
+                  <button
+                    onClick={handleCopy}
+                    className="rounded-md bg-amber-500 px-4 py-2 text-sm font-semibold text-white whitespace-nowrap"
+                  >
+                    {copied ? "Copied!" : "Copy Link"}
+                  </button>
+                )}
+              </div>
+              <div className="mt-3 flex items-center justify-between">
+                <div className="flex items-center gap-3">
+                  <button
+                    onClick={() => toggleMutation.mutate(!inviteActive)}
+                    disabled={toggleMutation.isPending}
+                    className={`rounded-md px-3 py-1.5 text-xs font-medium whitespace-nowrap disabled:opacity-50 ${inviteActive ? "border border-destructive/30 text-destructive hover:bg-destructive/5" : "border border-green-600/30 text-green-700 hover:bg-green-50"}`}
+                  >
+                    {toggleMutation.isPending ? "Saving…" : inviteActive ? "Disable Link" : "Enable Link"}
+                  </button>
+                  {toggleMutation.isError && (
+                    <p className="text-xs text-destructive">{(toggleMutation.error as Error).message}</p>
+                  )}
+                </div>
+                <p className="text-xs text-muted-foreground">
+                  {redemptionCount} {redemptionCount === 1 ? "redemption" : "redemptions"} so far
+                </p>
+              </div>
+            </>
+          )}
+        </CardContent>
+      </Card>
+
+      <Card>
+        <CardHeader>
+          <CardTitle>Founding Vendors</CardTitle>
+          <CardDescription>{spotsUsed} enrolled</CardDescription>
+        </CardHeader>
+        <CardContent>
+          {isLoading ? (
+            <p className="text-sm text-muted-foreground">Loading…</p>
+          ) : list.length === 0 ? (
+            <p className="text-sm text-muted-foreground">No Founding Vendors yet.</p>
+          ) : (
+            <div className="overflow-x-auto">
+              <table className="w-full text-sm">
+                <thead>
+                  <tr className="border-b text-muted-foreground text-left">
+                    <th className="pb-2 pr-4">#</th>
+                    <th className="pb-2 pr-4">Business</th>
+                    <th className="pb-2 pr-4">Email</th>
+                    <th className="pb-2 pr-4">Holiday Bookings Used</th>
+                    <th className="pb-2 pr-4">Referral Bonus Remaining</th>
+                    <th className="pb-2 pr-4">Activated</th>
+                    <th className="pb-2 pr-4">Holiday Ends</th>
+                    <th className="pb-2 pr-4">Rate Ends</th>
+                    <th className="pb-2"></th>
+                  </tr>
+                </thead>
+                <tbody>
+                  {list.map((v: any) => (
+                    <tr key={v.id} className="border-b last:border-0">
+                      <td className="py-2 pr-4 font-bold text-amber-400">#{v.foundingVendorNumber}</td>
+                      <td className="py-2 pr-4">{v.businessName}</td>
+                      <td className="py-2 pr-4 text-muted-foreground">{v.email}</td>
+                      <td className="py-2 pr-4">{v.foundingBenefitBookingsUsed} / 10</td>
+                      <td className="py-2 pr-4">{v.foundingReferralBonusBookingsRemaining ?? 0}</td>
+                      <td className="py-2 pr-4">
+                        {v.foundingBenefitsActivatedAt
+                          ? new Date(v.foundingBenefitsActivatedAt).toLocaleDateString()
+                          : <span className="text-muted-foreground italic">not yet</span>}
+                      </td>
+                      <td className="py-2 pr-4">
+                        {v.foundingHolidayEndsAt
+                          ? new Date(v.foundingHolidayEndsAt).toLocaleDateString()
+                          : <span className="text-muted-foreground italic">—</span>}
+                      </td>
+                      <td className="py-2 pr-4">
+                        {v.foundingRateEndsAt
+                          ? new Date(v.foundingRateEndsAt).toLocaleDateString()
+                          : <span className="text-muted-foreground italic">—</span>}
+                      </td>
+                      <td className="py-2">
+                        <button
+                          onClick={() => { if (confirm(`Revoke Founding Vendor status from ${v.businessName}?`)) revokeMutation.mutate(v.id); }}
+                          disabled={revokeMutation.isPending}
+                          className="rounded px-2 py-1 text-xs text-destructive border border-destructive/30 hover:bg-destructive/10 disabled:opacity-50"
+                        >
+                          Revoke
+                        </button>
+                      </td>
+                    </tr>
+                  ))}
+                </tbody>
+              </table>
+            </div>
+          )}
+        </CardContent>
+      </Card>
+    </>
+  );
+}
+
 // ─── Root: auth guard + section router ───────────────────────────────────────
 
 export default function AdminDashboard() {
   const [, setLocation] = useLocation();
   const params = useParams<{ section?: string }>();
-  const { isAuthenticated } = useAuth0();
+  const { isAuthenticated, isLoading: authLoading } = useAuth0();
 
   const { data: adminMe, isLoading: loadingAdmin, isError: adminDenied } = useQuery<{ isAdmin: boolean }>({
     queryKey: ["/api/admin/me"],
-    enabled: isAuthenticated,
-    retry: false,
+    enabled: isAuthenticated && !authLoading,
+    retry: 2,
   });
   const isAdmin = adminMe?.isAdmin === true;
 
   useEffect(() => {
+    if (authLoading) return;
     if (!isAuthenticated) { setLocation("/"); return; }
     if (!loadingAdmin && (adminDenied || (adminMe && !isAdmin))) setLocation("/");
-  }, [setLocation, isAuthenticated, loadingAdmin, adminDenied, adminMe, isAdmin]);
+  }, [setLocation, authLoading, isAuthenticated, loadingAdmin, adminDenied, adminMe, isAdmin]);
 
-  if (loadingAdmin) {
+  if (authLoading || loadingAdmin) {
     return (
       <div className="flex items-center justify-center min-h-screen">
         <div className="text-muted-foreground text-sm">Loading…</div>
@@ -2115,7 +2312,7 @@ export default function AdminDashboard() {
       {section === "listings"   && <ListingsSection    isAdmin={isAdmin} />}
       {section === "traffic"    && <TrafficSection     isAdmin={isAdmin} />}
       {section === "moderation" && <ModerationSection       isAdmin={isAdmin} />}
-      {section === "marquee"    && <MarqueeVendorSection   isAdmin={isAdmin} />}
+      {section === "marquee"    && <><MarqueeVendorSection isAdmin={isAdmin} /><FoundingVendorSection isAdmin={isAdmin} /></>}
       {section === "feedback"   && <FeedbackSection         isAdmin={isAdmin} />}
       {section === "health"     && <HealthSection           isAdmin={isAdmin} />}
     </AdminShell>

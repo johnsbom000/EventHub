@@ -301,6 +301,9 @@ import {
   MARQUEE_CUSTOMER_FEE_RATE,
   MARQUEE_CUSTOMER_FEE_MONTHS,
   MARQUEE_VISIBILITY_MONTHS,
+  FOUNDING_VENDOR_HOLIDAY_BOOKING_COUNT,
+  FOUNDING_VENDOR_FEE_RATE,
+  FOUNDING_VENDOR_REFERRAL_BONUS_FEE_RATE,
   STRIPE_FEE_ESTIMATE_PERCENT,
   STRIPE_FEE_ESTIMATE_FIXED_CENTS,
   VENDOR_ABSORBS_STRIPE_FEES,
@@ -1129,6 +1132,11 @@ export function registerBookingRoutes(app: Express): void {
           marqueeHolidayEndsAt: vendorAccounts.marqueeHolidayEndsAt,
           marqueeRateEndsAt: vendorAccounts.marqueeRateEndsAt,
           marqueeCustomerFeeEndsAt: vendorAccounts.marqueeCustomerFeeEndsAt,
+          isFoundingVendor: vendorAccounts.isFoundingVendor,
+          foundingBenefitBookingsUsed: vendorAccounts.foundingBenefitBookingsUsed,
+          foundingReferralBonusBookingsRemaining: vendorAccounts.foundingReferralBonusBookingsRemaining,
+          foundingHolidayEndsAt: vendorAccounts.foundingHolidayEndsAt,
+          foundingRateEndsAt: vendorAccounts.foundingRateEndsAt,
         })
         .from(vendorAccounts)
         .where(and(eq(vendorAccounts.id, vendorIdToLoad), eq(vendorAccounts.active, true)))
@@ -1548,6 +1556,28 @@ export function registerBookingRoutes(app: Express): void {
           effectiveVendorFeeRate = MARQUEE_REFERRAL_BONUS_FEE_RATE;
         } else if (vendorAccount.marqueeRateEndsAt && now < vendorAccount.marqueeRateEndsAt) {
           effectiveVendorFeeRate = MARQUEE_VENDOR_FEE_RATE;
+        } else {
+          effectiveVendorFeeRate = VENDOR_FEE_RATE;
+        }
+      } else if (vendorAccount.isFoundingVendor) {
+        // Founding Vendor fee rates
+        // Holiday: 0% while EITHER booking count < 10 OR current time < foundingHolidayEndsAt
+        const fBookingsUsed = vendorAccount.foundingBenefitBookingsUsed ?? 0;
+        const fBonusRemaining = vendorAccount.foundingReferralBonusBookingsRemaining ?? 0;
+        const fUnderBookingLimit = fBookingsUsed < FOUNDING_VENDOR_HOLIDAY_BOOKING_COUNT;
+        const fUnderTimeLimit = vendorAccount.foundingHolidayEndsAt
+          ? now < vendorAccount.foundingHolidayEndsAt
+          : true; // pre-activation: treat holiday as still active
+        const fHolidayActive = fUnderBookingLimit || fUnderTimeLimit;
+
+        const fBonusPhaseActive = !fHolidayActive && fBonusRemaining > 0;
+
+        if (fHolidayActive) {
+          effectiveVendorFeeRate = 0;
+        } else if (fBonusPhaseActive) {
+          effectiveVendorFeeRate = FOUNDING_VENDOR_REFERRAL_BONUS_FEE_RATE;
+        } else if (vendorAccount.foundingRateEndsAt && now < vendorAccount.foundingRateEndsAt) {
+          effectiveVendorFeeRate = FOUNDING_VENDOR_FEE_RATE;
         } else {
           effectiveVendorFeeRate = VENDOR_FEE_RATE;
         }
