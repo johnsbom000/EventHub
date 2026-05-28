@@ -89,25 +89,6 @@ export function ServiceAreaStep({ draft, setDraft, showValidation }: ServiceArea
     Number.isFinite(Number(draft.serviceCenter?.lng)) &&
     Number(draft.serviceRadiusMiles) > 0;
 
-  const staticMapPreviewUrl = useMemo(() => {
-    if (!center || !MAPBOX_TOKEN) return null;
-    const radiusMiles = Number(draft.serviceRadiusMiles);
-    const features: any[] = [];
-    if (Number.isFinite(radiusMiles) && radiusMiles > 0) {
-      features.push({
-        type: "Feature",
-        properties: { fill: "#9EDBC0", "fill-opacity": 0.25, stroke: "#2B7A67", "stroke-width": 2 },
-        geometry: makeCircleGeoJSON(center, radiusMiles, 36).geometry,
-      });
-    }
-    features.push({
-      type: "Feature",
-      properties: { "marker-size": "small", "marker-color": "#2B7A67" },
-      geometry: { type: "Point", coordinates: [center.lng, center.lat] },
-    });
-    const geoJson = encodeURIComponent(JSON.stringify({ type: "FeatureCollection", features }));
-    return `https://api.mapbox.com/styles/v1/mapbox/outdoors-v12/static/geojson(${geoJson})/${center.lng},${center.lat},9,0/640x288@2x?access_token=${MAPBOX_TOKEN}`;
-  }, [center, draft.serviceRadiusMiles]);
 
   // Initialize/update mapbox map
   useEffect(() => {
@@ -121,8 +102,12 @@ export function ServiceAreaStep({ draft, setDraft, showValidation }: ServiceArea
           center: [center.lng, center.lat],
           zoom: 9,
         });
-        mapRef.current.on("load", () => setIsMapReady(true));
-        mapRef.current.on("error", () => setMapError("Map failed to load."));
+        mapRef.current.once("load", () => setIsMapReady(true));
+        mapRef.current.once("error", (e) => {
+          // Only treat errors before first load as fatal.
+          if (!mapRef.current?.loaded()) setMapError("Map failed to load.");
+          else console.warn("Mapbox non-fatal error:", e);
+        });
       } catch {
         setMapError("Map failed to initialize.");
       }
@@ -298,15 +283,6 @@ export function ServiceAreaStep({ draft, setDraft, showValidation }: ServiceArea
         </div>
 
         <div className="relative h-72 overflow-hidden rounded-xl border border-border">
-          {staticMapPreviewUrl && !isMapReady ? (
-            <img
-              src={staticMapPreviewUrl}
-              alt=""
-              aria-hidden
-              className="absolute inset-0 h-full w-full object-cover"
-              loading="lazy"
-            />
-          ) : null}
           <div ref={mapContainerRef} className="h-full w-full" />
 
           {!center && (
