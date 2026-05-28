@@ -585,6 +585,7 @@ export function CreateListingWizard({ onClose, initialListingType, parentListing
  const [attemptedStepAdvance, setAttemptedStepAdvance] = useState<Partial<Record<StepId, boolean>>>({});
 
  const createRequestedRef = useRef(false);
+ const createDraftPromiseRef = useRef<Promise<any> | null>(null);
  const pendingPayloadRef = useRef<any | null>(null);
  const pendingPayloadKeyRef = useRef<string | null>(null);
  const lastSuccessfulAutosaveKeyRef = useRef<string | null>(null);
@@ -1096,7 +1097,7 @@ export function CreateListingWizard({ onClose, initialListingType, parentListing
  pendingPayloadKeyRef.current = payloadKey;
  if (!createRequestedRef.current) {
  createRequestedRef.current = true;
- createDraftMutation.mutate({ source: "autosave", listingType: listingType ?? "single" });
+ createDraftPromiseRef.current = createDraftMutation.mutateAsync({ source: "autosave", listingType: listingType ?? "single" }).catch(() => null);
  }
  return;
  }
@@ -1685,8 +1686,17 @@ export function CreateListingWizard({ onClose, initialListingType, parentListing
  let nextListingId = listingId;
 
  if (!nextListingId) {
- const created = await createDraftMutation.mutateAsync({ source: "manual", listingType: listingType ?? "single" });
- nextListingId = created?.id || created?.data?.id;
+ let created: any;
+ if (createRequestedRef.current && createDraftPromiseRef.current) {
+   // Autosave creation is already in flight — await it instead of creating a phantom duplicate
+   created = await createDraftPromiseRef.current;
+   nextListingId = created?.id || created?.data?.id;
+ }
+ if (!nextListingId) {
+   // No autosave in flight (or it failed) — create now
+   created = await createDraftMutation.mutateAsync({ source: "manual", listingType: listingType ?? "single" });
+   nextListingId = created?.id || created?.data?.id;
+ }
  if (!nextListingId) throw new Error("Failed to create listing draft");
  setListingId(nextListingId);
  }
