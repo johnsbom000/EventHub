@@ -1488,6 +1488,16 @@ export function registerVendorRoutes(app: Express): void {
         didBackfill = true;
       }
 
+      // Resolve image storage paths to public CDN URLs so the client can render
+      // them without routing through the API server (which doesn't host S3 files).
+      for (const field of [
+        "shopProfileImageUrl", "shopProfileImageStoragePath", "profileImageUrl",
+        "shopCoverImageUrl", "shopCoverImageStoragePath", "coverImageUrl",
+      ]) {
+        const raw = asTrimmedString(onlineProfiles[field] as string | undefined);
+        if (raw) onlineProfiles[field] = resolveStoredUploadPath(raw) ?? raw;
+      }
+
       if (didBackfill) {
         const normalizedProfileName = getProfileDisplayName(
           { ...existingProfile, onlineProfiles },
@@ -1505,6 +1515,7 @@ export function registerVendorRoutes(app: Express): void {
 
         return res.json({
           ...(updatedProfile ?? { ...existingProfile, profileName: normalizedProfileName, onlineProfiles }),
+          onlineProfiles,
           activeProfileId: context.activeProfileId,
         });
       }
