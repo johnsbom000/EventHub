@@ -19,7 +19,7 @@ export const VENDOR_TOURS: Record<string, PageTour> = {
       },
       {
         title: "Your Public Shop Page",
-        body: "My Hub is your public-facing shop page. Customers browsing EventHub will land here to see your listings, read your reviews, and book you. Think of it as your storefront.",
+        body: "My Hub is how you edit your public-facing shop page. You share the link in your social media, customers are brought straight to your Hub, they see all your listings and can learn more about you! Think of it as your storefront.",
         highlightSelector: "[data-testid='link-vendor-myHub']",
       },
       {
