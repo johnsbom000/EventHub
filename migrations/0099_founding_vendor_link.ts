@@ -25,7 +25,7 @@ export async function up() {
   // Seed an initial token on first run
   await db.execute(sql`
     INSERT INTO founding_vendor_invites (token)
-    SELECT encode(gen_random_bytes(16), 'hex')
+    SELECT replace(gen_random_uuid()::text, '-', '')
     WHERE NOT EXISTS (
       SELECT 1 FROM founding_vendor_invites WHERE active = true
     )
