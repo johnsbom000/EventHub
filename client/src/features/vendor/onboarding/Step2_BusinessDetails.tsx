@@ -236,10 +236,10 @@ export default function Step2_BusinessDetails({
                     marketLocation: loc,
                     homeBaseLocation: coords || undefined,
 
-                    streetAddress: parsed.streetAddress || label,
-                    city: (loc as any).city || parsed.city || "",
-                    state: (loc as any).state || parsed.state || "",
-                    zipCode: (loc as any).zipCode || parsed.zipCode || "",
+                    streetAddress: loc.street || parsed.streetAddress || label,
+                    city: loc.city || parsed.city || "",
+                    state: loc.state || parsed.state || "",
+                    zipCode: loc.postalCode || parsed.zipCode || "",
                   });
                 }}
                 placeholder="Search and select your business address"
