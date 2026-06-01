@@ -3853,18 +3853,31 @@ export function registerVendorRoutes(app: Express): void {
         });
       }
 
-      const [inactivatedListing] = await db
-        .update(vendorListings)
-        .set({ status: "deleted", updatedAt: new Date() })
-        .where(and(eq(vendorListings.id, id), eq(vendorListings.accountId, vendorAuth.id)))
-        .returning({
-          id: vendorListings.id,
-          status: vendorListings.status,
-        });
+      const isDraft = (existing[0]?.status || "").toLowerCase() === "draft";
+
+      let deletedId: string = id;
+      let deletedStatus: string = "deleted";
+
+      if (isDraft) {
+        await db
+          .delete(vendorListings)
+          .where(and(eq(vendorListings.id, id), eq(vendorListings.accountId, vendorAuth.id)));
+      } else {
+        const [inactivatedListing] = await db
+          .update(vendorListings)
+          .set({ status: "deleted", updatedAt: new Date() })
+          .where(and(eq(vendorListings.id, id), eq(vendorListings.accountId, vendorAuth.id)))
+          .returning({
+            id: vendorListings.id,
+            status: vendorListings.status,
+          });
+        deletedId = inactivatedListing?.id ?? id;
+        deletedStatus = inactivatedListing?.status ?? "deleted";
+      }
 
       return res.json({
-        listingId: inactivatedListing?.id ?? id,
-        status: inactivatedListing?.status ?? "deleted",
+        listingId: deletedId,
+        status: deletedStatus,
         action: "deleted",
         hiddenFromVendor: true,
         preservedBookingHistoryCount,
