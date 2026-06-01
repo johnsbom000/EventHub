@@ -109,9 +109,11 @@ export default function VendorListings() {
     },
   });
 
-  const handleDeleteListing = (listingId: string) => {
-    const ok = window.confirm("Delete this listing? It will no longer appear in your dashboard or to customers.");
-    if (!ok) return;
+  const handleDeleteListing = (listingId: string, isDraft?: boolean) => {
+    if (!isDraft) {
+      const ok = window.confirm("Delete this listing? It will no longer appear in your dashboard or to customers.");
+      if (!ok) return;
+    }
     deleteMutation.mutate(listingId);
   };
 
@@ -273,7 +275,7 @@ export default function VendorListings() {
               className="min-w-0 flex-1 px-2 hover:border-destructive hover:bg-destructive hover:text-destructive-foreground"
               onClick={(e) => {
                 e.stopPropagation();
-                handleDeleteListing(listing.id);
+                handleDeleteListing(listing.id, String(listing?.status || "").toLowerCase() === "draft");
               }}
               data-testid={`button-delete-${listing.id}`}
               disabled={deleteMutation.isPending || publishMutation.isPending || unpublishMutation.isPending}

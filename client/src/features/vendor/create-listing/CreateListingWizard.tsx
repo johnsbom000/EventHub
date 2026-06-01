@@ -1636,13 +1636,23 @@ export function CreateListingWizard({ onClose, initialListingType, parentListing
 
  const handleCancelConfirmed = async () => {
  setShowCancelConfirm(false);
- if (listingId) {
+
+ let idToDelete = listingId;
+
+ // If autosave create is in-flight but state hasn't updated yet, await it
+ if (!idToDelete && createRequestedRef.current && createDraftPromiseRef.current) {
+ const created = await createDraftPromiseRef.current;
+ idToDelete = created?.id || created?.data?.id || null;
+ }
+
+ if (idToDelete) {
  try {
- await apiRequest("DELETE", `/api/vendor/listings/${listingId}`);
+ await apiRequest("DELETE", `/api/vendor/listings/${idToDelete}`);
  } catch {
  // ignore — navigate away regardless
  }
  }
+
  onClose();
  };
 
