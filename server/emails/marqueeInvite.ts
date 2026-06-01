@@ -5,21 +5,16 @@ const FORE      = "#16222C";
 const MUTED     = "#7898A2";
 const BORDER    = "#DDE8EE";
 
-// Damion (logo), Cormorant Garamond (headings), DM Sans (body) — mirrors the website
-const FONTS = `@import url('https://fonts.googleapis.com/css2?family=Damion&family=Cormorant+Garamond:wght@300;400;600&family=DM+Sans:wght@300;400;500&display=swap');`;
+const FONTS = `@import url('https://fonts.googleapis.com/css2?family=Cormorant+Garamond:wght@300;400;600&family=DM+Sans:wght@300;400;500&display=swap');`;
 
-// Logo: "Event" + "Hub" in Damion cursive, two-tone.
-// onDark  → header bar (slate bg):  "Event" white,  "Hub" gold
-// onLight → hero / footer (white):  "Event" slate,  "Hub" gold
 function logoOnDark(px: number): string {
-  return `<span style="font-family:'Damion',cursive,Georgia,serif;font-size:${px}px;line-height:1;letter-spacing:-0.01em;display:inline-block;"><span style="color:#ffffff;">Event</span><span style="color:${GOLD};">Hub</span></span>`;
+  return `<span style="font-family:'Playfair Display',Georgia,serif;font-size:${px}px;color:#ffffff;font-weight:700;letter-spacing:0.5px;">EventHub</span>`;
 }
 function logoOnLight(px: number): string {
-  return `<span style="font-family:'Damion',cursive,Georgia,serif;font-size:${px}px;line-height:1;letter-spacing:-0.01em;display:inline-block;"><span style="color:${SLATE};">Event</span><span style="color:${GOLD};">Hub</span></span>`;
+  return `<span style="font-family:'Playfair Display',Georgia,serif;font-size:${px}px;color:${SLATE};font-weight:700;letter-spacing:0.5px;">EventHub</span>`;
 }
-// Inline brand reference within body text (smaller, inline)
 function brandInline(): string {
-  return `<span style="font-family:'Damion',cursive,Georgia,serif;font-size:1.15em;letter-spacing:-0.005em;"><span style="color:${SLATE};">Event</span><span style="color:${GOLD};">Hub</span></span>`;
+  return `<span style="font-family:'Playfair Display',Georgia,serif;font-weight:700;">EventHub</span>`;
 }
 
 const BENEFITS = [
