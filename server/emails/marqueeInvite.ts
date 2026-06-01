@@ -29,7 +29,7 @@ const BENEFITS = [
   },
   {
     title: "The Marquee Rate: 6% instead of 8%",
-    desc: "After the holiday, your platform fee settles at just 6% for 24 months. After 24 months, your fee returns to the normal platform rate.",
+    desc: "After the holiday, your platform fee settles at just 6% for 24 months.",
   },
   {
     title: "Lower Fees for Your Customers: 2.5% vs 5%",
@@ -136,7 +136,7 @@ export function marqueeInviteTemplate(params: MarqueeInviteParams): {
     </table>
     <p style="margin:0 0 20px;font-family:'DM Sans',Arial,Helvetica,sans-serif;font-size:14px;
               line-height:1.7;color:${MUTED};max-width:460px;margin-left:auto;margin-right:auto;">
-      You helped shape ${brandInline()}. Now claim the best deal we will ever offer,
+      Claim the best deal we will ever offer,
       built to put more bookings, and more of each booking, in your pocket.
     </p>
     <p style="margin:0;font-family:'DM Sans',Arial,Helvetica,sans-serif;font-size:13px;color:${MUTED};">
@@ -260,7 +260,7 @@ export function marqueeInviteTemplate(params: MarqueeInviteParams): {
     "THE MARQUEE VENDOR PROGRAM",
     "LAUNCH OFFER · BY INVITATION",
     "",
-    "You helped shape EventHub. Now claim the best deal we will ever offer, built to put more bookings, and more of each booking, in your pocket.",
+    "Claim the best deal we will ever offer, built to put more bookings, and more of each booking, in your pocket.",
     "",
     "By invitation only. Reserved for the first 20 vendors we invite.",
     "",
