@@ -93,26 +93,41 @@ export function ServiceAreaStep({ draft, setDraft, showValidation }: ServiceArea
   // Initialize/update mapbox map
   useEffect(() => {
     if (!mapContainerRef.current || !MAPBOX_TOKEN || !center) return;
-    if (!mapRef.current) {
-      try {
-        mapboxgl.accessToken = MAPBOX_TOKEN;
-        mapRef.current = new mapboxgl.Map({
-          container: mapContainerRef.current,
-          style: "mapbox://styles/mapbox/outdoors-v12",
-          center: [center.lng, center.lat],
-          zoom: 9,
-        });
-        mapRef.current.once("load", () => setIsMapReady(true));
-        mapRef.current.once("error", (e) => {
-          // Only treat errors before first load as fatal.
-          if (!mapRef.current?.loaded()) setMapError("Map failed to load.");
-          else console.warn("Mapbox non-fatal error:", e);
-        });
-      } catch {
-        setMapError("Map failed to initialize.");
-      }
-      return;
+    if (mapRef.current) return;
+
+    let loadTimeoutId: number | null = null;
+
+    try {
+      mapboxgl.accessToken = MAPBOX_TOKEN;
+      const map = new mapboxgl.Map({
+        container: mapContainerRef.current,
+        style: "mapbox://styles/mapbox/outdoors-v12",
+        center: [center.lng, center.lat],
+        zoom: 9,
+      });
+      mapRef.current = map;
+
+      map.on("load", () => {
+        if (loadTimeoutId !== null) window.clearTimeout(loadTimeoutId);
+        setIsMapReady(true);
+        requestAnimationFrame(() => { try { map.resize(); } catch { /* no-op */ } });
+      });
+
+      // Only show error if the map genuinely fails to load its style within 5s.
+      // Individual tile errors are non-fatal and should not surface to the user.
+      loadTimeoutId = window.setTimeout(() => {
+        if (!map.isStyleLoaded()) setMapError("Map failed to load. Check your connection and try again.");
+      }, 5000);
+    } catch {
+      setMapError("Map failed to initialize.");
     }
+
+    return () => {
+      if (loadTimeoutId !== null) window.clearTimeout(loadTimeoutId);
+      try { mapRef.current?.remove(); } catch { /* no-op */ }
+      mapRef.current = null;
+      setIsMapReady(false);
+    };
   }, [center]);
 
   // Update circle layer and fit map to circle on radius or center change
