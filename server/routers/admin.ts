@@ -135,6 +135,7 @@ import {
   reviewReplies,
   vendorReferrals,
   foundingVendorInvites,
+  marqueeVendorInvites,
   marqueeEmailInvites,
 } from "@shared/schema";
 import {
@@ -1570,10 +1571,30 @@ export function registerAdminRoutes(app: Express): void {
         })
         .from(vendorAccounts)
         .where(isNull(vendorAccounts.deletedAt));
+
+      // Return the single canonical invite regardless of active state so the admin can see and toggle it
+      const [invite] = await db
+        .select({
+          token: marqueeVendorInvites.token,
+          active: marqueeVendorInvites.active,
+          redemptionCount: marqueeVendorInvites.redemptionCount,
+        })
+        .from(marqueeVendorInvites)
+        .orderBy(desc(marqueeVendorInvites.createdAt))
+        .limit(1);
+
+      const inviteUrl = invite
+        ? `${appUrl()}/vendor/onboarding?mv=${invite.token}`
+        : null;
+
       return res.json({
         spotsUsed: stats?.spotsUsed ?? 0,
         spotsRemaining: MARQUEE_VENDOR_MAX_SPOTS - (stats?.spotsUsed ?? 0),
         totalHolidayBookingsUsed: stats?.totalHolidayBookingsUsed ?? 0,
+        inviteToken: invite?.token ?? null,
+        inviteUrl,
+        inviteActive: invite?.active ?? false,
+        redemptionCount: invite?.redemptionCount ?? 0,
       });
     } catch (err: any) {
       return respondWithInternalServerError(req, res, err);
@@ -1682,6 +1703,35 @@ export function registerAdminRoutes(app: Express): void {
         .update(vendorAccounts)
         .set({ isMarqueeVendor: false, marqueeVendorNumber: null })
         .where(eq(vendorAccounts.id, vendorId));
+
+      return res.json({ success: true });
+    } catch (err: any) {
+      return respondWithInternalServerError(req, res, err);
+    }
+  });
+
+  // POST /api/admin/marquee-vendors/toggle-link — enable or disable the invite link
+  app.post("/api/admin/marquee-vendors/toggle-link", adminRateLimiter, requireAdminAuth, async (req: any, res: any) => {
+    try {
+      const { active } = req.body as { active: boolean };
+
+      // Fetch the canonical invite (most recent)
+      const [invite] = await db
+        .select({ id: marqueeVendorInvites.id, token: marqueeVendorInvites.token })
+        .from(marqueeVendorInvites)
+        .orderBy(desc(marqueeVendorInvites.createdAt))
+        .limit(1);
+
+      if (!invite) {
+        // No token exists yet — seed the first one (active or inactive per request)
+        const token = crypto.randomBytes(16).toString("hex");
+        await db.insert(marqueeVendorInvites).values({ token, active: Boolean(active) });
+      } else {
+        await db
+          .update(marqueeVendorInvites)
+          .set({ active: Boolean(active) })
+          .where(eq(marqueeVendorInvites.id, invite.id));
+      }
 
       return res.json({ success: true });
     } catch (err: any) {

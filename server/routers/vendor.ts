@@ -135,6 +135,7 @@ import {
   reviewReplies,
   vendorReferrals,
   foundingVendorInvites,
+  marqueeVendorInvites,
 } from "@shared/schema";
 import {
   requireDualAuthAuth0,
@@ -986,6 +987,7 @@ export function registerVendorRoutes(app: Express): void {
     createNewProfile: z.boolean().optional(),
     referralCode: z.string().max(20).optional(),
     foundingInviteToken: z.string().max(64).optional(),
+    marqueeInviteToken: z.string().max(64).optional(),
   });
 
   app.post("/api/vendor/onboarding/complete", onboardingRateLimiter, requireAuth0, async (req, res) => {
@@ -1407,6 +1409,71 @@ export function registerVendorRoutes(app: Express): void {
             }
           } catch (fvErr: any) {
             logger.warn("[founding vendor grant] failed:", fvErr?.message || fvErr);
+          }
+        })();
+      }
+
+      // Apply Marquee Vendor status if a valid global invite token was used.
+      if (isFirstTimeOnboarding && onboardingData.marqueeInviteToken) {
+        void (async () => {
+          try {
+            const token = onboardingData.marqueeInviteToken!.trim();
+            const [invite] = await db
+              .select({ id: marqueeVendorInvites.id })
+              .from(marqueeVendorInvites)
+              .where(
+                and(
+                  eq(marqueeVendorInvites.token, token),
+                  eq(marqueeVendorInvites.active, true)
+                )
+              )
+              .limit(1);
+            if (!invite) return;
+
+            let granted = false;
+            await db.transaction(async (tx) => {
+              const [countRow] = await tx
+                .select({ count: drizzleSql<number>`count(*)::int` })
+                .from(vendorAccounts)
+                .where(and(eq(vendorAccounts.isMarqueeVendor, true), isNull(vendorAccounts.deletedAt)));
+              const currentCount = countRow?.count ?? 0;
+              if (currentCount >= MARQUEE_VENDOR_MAX_SPOTS) return;
+
+              const nextSlot = currentCount + 1;
+              let referralCode: string | undefined;
+              for (let attempt = 0; attempt < 5; attempt++) {
+                const candidate = crypto.randomBytes(6).toString("hex").toUpperCase();
+                const [existing] = await tx
+                  .select({ id: vendorAccounts.id })
+                  .from(vendorAccounts)
+                  .where(eq(vendorAccounts.referralCode, candidate))
+                  .limit(1);
+                if (!existing) { referralCode = candidate; break; }
+              }
+              if (!referralCode) return;
+
+              const [updated] = await tx
+                .update(vendorAccounts)
+                .set({ isMarqueeVendor: true, marqueeVendorNumber: nextSlot, referralCode })
+                .where(
+                  and(
+                    eq(vendorAccounts.id, account.id),
+                    eq(vendorAccounts.isMarqueeVendor, false)
+                  )
+                )
+                .returning({ id: vendorAccounts.id });
+
+              if (updated) granted = true;
+            }, { isolationLevel: "serializable" });
+
+            if (granted) {
+              await db
+                .update(marqueeVendorInvites)
+                .set({ redemptionCount: drizzleSql`${marqueeVendorInvites.redemptionCount} + 1` })
+                .where(eq(marqueeVendorInvites.id, invite.id));
+            }
+          } catch (mvErr: any) {
+            logger.warn("[marquee vendor grant] failed:", mvErr?.message || mvErr);
           }
         })();
       }

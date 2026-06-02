@@ -1794,6 +1794,7 @@ function MarqueeVendorSection({ isAdmin }: { isAdmin: boolean }) {
   const [selectedVendor, setSelectedVendor] = useState<{ id: string; businessName: string; email: string } | null>(null);
   const [showDropdown, setShowDropdown] = useState(false);
   const [grantError, setGrantError] = useState("");
+  const [linkCopied, setLinkCopied] = useState(false);
 
   const [inviteEmails, setInviteEmails] = useState("");
   const [inviteResults, setInviteResults] = useState<{ email: string; sent: boolean; skipped: boolean; reason?: string }[]>([]);
@@ -1829,11 +1830,39 @@ function MarqueeVendorSection({ isAdmin }: { isAdmin: boolean }) {
     return () => clearTimeout(t);
   }, [searchQuery]);
 
-  const { data: stats } = useQuery<any>({
+  const { data: stats, isLoading: statsLoading, isError: statsError, refetch: refetchStats } = useQuery<any>({
     queryKey: ["/api/admin/marquee-vendors/stats"],
     queryFn: async () => (await apiRequest("GET", "/api/admin/marquee-vendors/stats")).json(),
     enabled: isAdmin,
+    staleTime: 0,
+    retry: 2,
   });
+
+  const toggleLinkMutation = useMutation({
+    mutationFn: async (active: boolean) => {
+      const res = await apiRequest("POST", "/api/admin/marquee-vendors/toggle-link", { active });
+      if (!res.ok) {
+        const body = await res.json().catch(() => ({}));
+        throw new Error((body as any).error ?? "Failed to update link");
+      }
+      return res.json();
+    },
+    onSuccess: () => {
+      qc.refetchQueries({ queryKey: ["/api/admin/marquee-vendors/stats"] });
+    },
+  });
+
+  const inviteUrl = stats?.inviteUrl ?? null;
+  const inviteActive = stats?.inviteActive ?? false;
+  const redemptionCount = stats?.redemptionCount ?? 0;
+
+  const handleCopyLink = () => {
+    if (!inviteUrl) return;
+    navigator.clipboard.writeText(inviteUrl).then(() => {
+      setLinkCopied(true);
+      setTimeout(() => setLinkCopied(false), 2000);
+    });
+  };
 
   const { data: list = [], isLoading } = useQuery<any[]>({
     queryKey: ["/api/admin/marquee-vendors"],
@@ -1898,6 +1927,58 @@ function MarqueeVendorSection({ isAdmin }: { isAdmin: boolean }) {
         <StatCard title="Spots Remaining" value={spotsRemaining} sub="Available" icon={<Star className="h-4 w-4 text-muted-foreground" />} />
         <StatCard title="Holiday Bookings Used" value={stats?.totalHolidayBookingsUsed ?? 0} sub="Across all Marquee vendors" icon={<Calendar className="h-4 w-4 text-muted-foreground" />} />
       </div>
+
+      <Card className="mb-6">
+        <CardHeader>
+          <CardTitle>Marquee Vendor Invite Link</CardTitle>
+          <CardDescription>
+            Share this link via DM, email, or text. Anyone who signs up through it gets Marquee Vendor status automatically.
+          </CardDescription>
+        </CardHeader>
+        <CardContent>
+          {statsLoading ? (
+            <p className="text-sm text-muted-foreground">Loading…</p>
+          ) : statsError ? (
+            <div className="flex items-center gap-3">
+              <p className="text-sm text-destructive">Failed to load invite link.</p>
+              <button onClick={() => refetchStats()} className="text-xs underline text-muted-foreground">Retry</button>
+            </div>
+          ) : (
+            <>
+              <div className="flex items-center gap-2">
+                <div className={`flex-1 rounded-md border px-3 py-2 text-sm font-mono truncate ${inviteActive ? "border-border bg-muted text-muted-foreground" : "border-border bg-muted/40 text-muted-foreground/50 line-through"}`}>
+                  {inviteUrl ?? "No link yet"}
+                </div>
+                {inviteUrl && inviteActive && (
+                  <button
+                    onClick={handleCopyLink}
+                    className="rounded-md bg-amber-500 px-4 py-2 text-sm font-semibold text-white whitespace-nowrap"
+                  >
+                    {linkCopied ? "Copied!" : "Copy Link"}
+                  </button>
+                )}
+              </div>
+              <div className="mt-3 flex items-center justify-between">
+                <div className="flex items-center gap-3">
+                  <button
+                    onClick={() => toggleLinkMutation.mutate(!inviteActive)}
+                    disabled={toggleLinkMutation.isPending}
+                    className={`rounded-md px-3 py-1.5 text-xs font-medium whitespace-nowrap disabled:opacity-50 ${inviteActive ? "border border-destructive/30 text-destructive hover:bg-destructive/5" : "border border-green-600/30 text-green-700 hover:bg-green-50"}`}
+                  >
+                    {toggleLinkMutation.isPending ? "Saving…" : inviteActive ? "Disable Link" : "Enable Link"}
+                  </button>
+                  {toggleLinkMutation.isError && (
+                    <p className="text-xs text-destructive">{(toggleLinkMutation.error as Error).message}</p>
+                  )}
+                </div>
+                <p className="text-xs text-muted-foreground">
+                  {redemptionCount} {redemptionCount === 1 ? "redemption" : "redemptions"} so far
+                </p>
+              </div>
+            </>
+          )}
+        </CardContent>
+      </Card>
 
       <Card className="mb-6">
         <CardHeader>

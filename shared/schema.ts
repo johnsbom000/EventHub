@@ -1405,6 +1405,17 @@ export const foundingVendorInvites = pgTable("founding_vendor_invites", {
 
 export type FoundingVendorInvite = typeof foundingVendorInvites.$inferSelect;
 
+// Marquee Vendor Invite Tokens — global links admin shares to grant marquee status
+export const marqueeVendorInvites = pgTable("marquee_vendor_invites", {
+  id: serial("id").primaryKey(),
+  token: varchar("token", { length: 32 }).notNull().unique(),
+  active: boolean("active").notNull().default(true),
+  redemptionCount: integer("redemption_count").notNull().default(0),
+  createdAt: timestamp("created_at").notNull().defaultNow(),
+});
+
+export type MarqueeVendorInvite = typeof marqueeVendorInvites.$inferSelect;
+
 // Marquee Email Invites — log of every invitation email the admin sends
 export const marqueeEmailInvites = pgTable("marquee_email_invites", {
   id: serial("id").primaryKey(),
