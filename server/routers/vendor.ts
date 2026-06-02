@@ -2329,6 +2329,23 @@ export function registerVendorRoutes(app: Express): void {
         });
       }
 
+      // Block publish until Stripe Connect onboarding is complete.
+      const [vendorAccount] = await db
+        .select({
+          stripeConnectId: vendorAccounts.stripeConnectId,
+          stripeOnboardingComplete: vendorAccounts.stripeOnboardingComplete,
+        })
+        .from(vendorAccounts)
+        .where(eq(vendorAccounts.id, vendorAuth.id))
+        .limit(1);
+
+      if (!vendorAccount?.stripeConnectId || !vendorAccount.stripeOnboardingComplete) {
+        return res.status(400).json({
+          error: "stripe_not_configured",
+          message: "Set up your payment account before publishing a listing. Go to your dashboard and complete the Stripe Connect setup — your listing will stay in draft until then.",
+        });
+      }
+
       const incomingListingData = req.body?.listingData;
       const incomingTitle = req.body?.title;
       const incomingDescription =

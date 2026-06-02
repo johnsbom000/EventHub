@@ -14,6 +14,7 @@ type PublishMissingFlags = {
 
 type PublishErrorPayload = {
   error?: unknown;
+  message?: unknown;
   missing?: unknown;
   reasons?: unknown;
 };
@@ -87,6 +88,7 @@ const extractPublishErrorPayload = (error: unknown): PublishErrorPayload | null 
   if (isRecord(error)) {
     const directPayload: PublishErrorPayload = {
       error: error.error,
+      message: error.message,
       missing: error.missing,
       reasons: error.reasons,
     };
@@ -111,6 +113,25 @@ export function getPublishFailureToastContent(error: unknown): {
   description: ReactNode;
 } {
   const payload = extractPublishErrorPayload(error);
+
+  if (payload?.error === "stripe_not_configured") {
+    return {
+      title: "Payment setup required",
+      description: (
+        <div className="space-y-1">
+          <p>Complete your Stripe Connect setup before publishing this listing.</p>
+          <p>
+            Go to your{" "}
+            <a href="/vendor/dashboard" className="underline font-medium">
+              dashboard
+            </a>{" "}
+            to finish payment setup — your listing will stay as a draft until then.
+          </p>
+        </div>
+      ),
+    };
+  }
+
   const reasons = normalizeReasons(payload);
 
   if (reasons.length === 0) {
