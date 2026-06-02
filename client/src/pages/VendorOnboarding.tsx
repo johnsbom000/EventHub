@@ -11,7 +11,6 @@ import Navigation from "@/components/Navigation";
 import { useAuth0 } from "@auth0/auth0-react";
 import { cn } from "@/lib/utils";
 import { getFreshAccessToken } from "@/lib/authToken";
-import { loginWithPopupFirst } from "@/lib/auth0Login";
 import { trackEvent, trackEventBeacon } from "@/lib/analytics";
 
 // Step components (Prop/Decor-only flow)
@@ -247,7 +246,7 @@ export default function VendorOnboarding() {
 
  const [, setLocation] = useLocation();
  const { toast } = useToast();
- const { loginWithRedirect, loginWithPopup, isAuthenticated } = useAuth0();
+ const { loginWithRedirect, isAuthenticated } = useAuth0();
  const isCreatingAdditionalProfile =
  typeof window !== "undefined" &&
  new URLSearchParams(window.location.search).get("createProfile") === "1";
@@ -541,61 +540,23 @@ export default function VendorOnboarding() {
  }
  };
 
- // Check auth synchronously before any async work so the popup opens close
- // enough to the user gesture to be allowed on iOS Safari. Using popup (not
- // redirect) keeps window.opener = app, so Auth0's postMessage origin check
- // passes for Google social login.
+ // Redirect to Auth0 login when not authenticated. loginWithRedirect uses a
+ // full-page redirect (no popup), so there is no window.opener chain to break —
+ // the same approach used by AuthModal, which works on all browsers and devices.
+ // The draft is preserved in localStorage; onRedirectCallback returns the user
+ // here and they re-submit while authenticated.
  if (!isAuthenticated) {
- try {
  preserveDraftOnUnmountRef.current = true;
- const returnTo =
- typeof window !== "undefined"
- ? `${window.location.pathname}${window.location.search}${window.location.hash}`
- : "/vendor/onboarding";
-
+ setIsFinalizingOnboarding(false);
+ setPendingFinalAction(null);
  trackEvent("vendor_signup_started", { step: currentStep });
- const loginResult = await loginWithPopupFirst({
- loginWithPopup,
- loginWithRedirect,
- popupOptions: {
- authorizationParams: { prompt: "login" },
+ await loginWithRedirect({
+ appState: {
+ returnTo: `${window.location.pathname}${window.location.search}${window.location.hash}`,
  },
- redirectOptions: {
- appState: { returnTo },
  authorizationParams: { prompt: "login" },
- },
- });
-
- if (loginResult === "redirect") {
- setIsFinalizingOnboarding(false);
- setPendingFinalAction(null);
- return;
- }
-
- if (loginResult === "cancelled") {
- preserveDraftOnUnmountRef.current = false;
- setIsFinalizingOnboarding(false);
- setPendingFinalAction(null);
- toast({
- title: "Login required",
- description: "Please sign in to finish onboarding.",
- variant: "destructive",
  });
  return;
- }
-
- preserveDraftOnUnmountRef.current = false;
- } catch (authError: any) {
- preserveDraftOnUnmountRef.current = false;
- setIsFinalizingOnboarding(false);
- setPendingFinalAction(null);
- toast({
- title: "Login required",
- description: authError?.message || "Please sign in again to finish onboarding.",
- variant: "destructive",
- });
- return;
- }
  }
 
  try {
