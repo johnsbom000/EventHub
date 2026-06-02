@@ -365,6 +365,7 @@
     grid-area: slot;
     visibility: hidden;
     white-space: nowrap;
+    line-height: 1;
   }
 
   .hero-rotating-word-overlay {
@@ -386,6 +387,12 @@
     opacity: 0;
     animation: hero-rotate-single 12s cubic-bezier(0.68, 0, 0.32, 1) infinite;
     will-change: transform, opacity;
+  }
+
+  @media (max-width: 1023px) {
+    .hero-rotating-word {
+      transform: translateY(-0.25em);
+    }
   }
 
   input[type="date"] {
