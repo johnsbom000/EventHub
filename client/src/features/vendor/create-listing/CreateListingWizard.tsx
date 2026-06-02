@@ -586,6 +586,7 @@ export function CreateListingWizard({ onClose, initialListingType, parentListing
 
  const createRequestedRef = useRef(false);
  const createDraftPromiseRef = useRef<Promise<any> | null>(null);
+ const listingIdRef = useRef<string | null>(null);
  const pendingPayloadRef = useRef<any | null>(null);
  const pendingPayloadKeyRef = useRef<string | null>(null);
  const lastSuccessfulAutosaveKeyRef = useRef<string | null>(null);
@@ -688,6 +689,7 @@ export function CreateListingWizard({ onClose, initialListingType, parentListing
  onSuccess: (payload: any) => {
  const id = payload?.id || payload?.data?.id;
  if (!id) return;
+ listingIdRef.current = id;
  setListingId(id);
  createRequestedRef.current = false;
  pendingPayloadKeyRef.current = null;
@@ -1637,7 +1639,7 @@ export function CreateListingWizard({ onClose, initialListingType, parentListing
  const handleCancelConfirmed = async () => {
  setShowCancelConfirm(false);
 
- let idToDelete = listingId;
+ let idToDelete = listingId ?? listingIdRef.current;
 
  // If autosave create is in-flight but state hasn't updated yet, await it
  if (!idToDelete && createRequestedRef.current && createDraftPromiseRef.current) {
@@ -1693,7 +1695,7 @@ export function CreateListingWizard({ onClose, initialListingType, parentListing
  const payloadKey = JSON.stringify(payload);
  blockedAutosaveKeyRef.current = null;
 
- let nextListingId = listingId;
+ let nextListingId = listingId ?? listingIdRef.current;
 
  if (!nextListingId) {
  let created: any;
