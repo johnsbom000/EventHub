@@ -999,7 +999,7 @@ export function CreateListingWizard({ onClose, initialListingType, parentListing
  features,
  }),
  );
- return `https://api.mapbox.com/styles/v1/mapbox/outdoors-v12/static/geojson(${staticOverlay})/auto/1200x700?padding=56,56,56,56&access_token=${MAPBOX_TOKEN}`;
+ return `https://api.mapbox.com/styles/v1/mapbox/streets-v12/static/geojson(${staticOverlay})/auto/1200x700?padding=56,56,56,56&access_token=${MAPBOX_TOKEN}`;
  }, [center, draft.serviceRadiusMiles]);
 
  const hasMeaningfulData =
@@ -1137,7 +1137,7 @@ export function CreateListingWizard({ onClose, initialListingType, parentListing
 
  const map = new mapboxgl.Map({
  container: mapContainerRef.current,
- style: "mapbox://styles/mapbox/outdoors-v12",
+ style: "mapbox://styles/mapbox/streets-v12",
  center: initialCenter,
  zoom: 10,
  });

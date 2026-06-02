@@ -71,7 +71,7 @@ export function MapLocationPicker({ value, onChange, onGeocode, className }: Map
       mapboxgl.accessToken = MAPBOX_TOKEN;
       const map = new mapboxgl.Map({
         container: containerRef.current,
-        style: "mapbox://styles/mapbox/outdoors-v12",
+        style: "mapbox://styles/mapbox/streets-v12",
         center: value ? [value.lng, value.lat] : [-98.35, 39.5],
         zoom: value ? 14 : 4,
       });

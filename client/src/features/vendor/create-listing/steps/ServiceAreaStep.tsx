@@ -101,7 +101,7 @@ export function ServiceAreaStep({ draft, setDraft, showValidation }: ServiceArea
       mapboxgl.accessToken = MAPBOX_TOKEN;
       const map = new mapboxgl.Map({
         container: mapContainerRef.current,
-        style: "mapbox://styles/mapbox/outdoors-v12",
+        style: "mapbox://styles/mapbox/streets-v12",
         center: [center.lng, center.lat],
         zoom: 9,
       });

@@ -1303,7 +1303,7 @@ export default function VendorListingEdit() {
     const startCenter = center ? [center.lng, center.lat] : [-111.891, 40.7608]; // fallback
     const map = new mapboxgl.Map({
       container: mapContainerRef.current,
-      style: "mapbox://styles/mapbox/outdoors-v12",
+      style: "mapbox://styles/mapbox/streets-v12",
       center: startCenter as [number, number],
       zoom: center ? 9 : 5,
     });
