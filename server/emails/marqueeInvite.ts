@@ -7,11 +7,10 @@ const BORDER    = "#DDE8EE";
 
 const FONTS = `@import url('https://fonts.googleapis.com/css2?family=Cormorant+Garamond:wght@300;400;600&family=DM+Sans:wght@300;400;500&display=swap');`;
 
-function logoOnDark(px: number): string {
-  return `<span style="font-family:'Playfair Display',Georgia,serif;font-size:${px}px;color:#ffffff;font-weight:700;letter-spacing:0.5px;">EventHub</span>`;
-}
-function logoOnLight(px: number): string {
-  return `<span style="font-family:'Playfair Display',Georgia,serif;font-size:${px}px;color:${SLATE};font-weight:700;letter-spacing:0.5px;">EventHub</span>`;
+const LOGO_URL = "https://pub-fb81e46f4a6e414b8342a1a2f1e9d59e.r2.dev/assets/eventhub_logo_transparent.png";
+
+function logoImg(width: number, alt = "EventHub"): string {
+  return `<img src="${LOGO_URL}" width="${width}" alt="${alt}" style="display:block;border:0;outline:none;text-decoration:none;" />`;
 }
 function brandInline(): string {
   return `<span style="font-family:'Playfair Display',Georgia,serif;font-weight:700;">EventHub</span>`;
@@ -106,14 +105,14 @@ export function marqueeInviteTemplate(params: MarqueeInviteParams): {
             box-shadow:0 1px 4px rgba(0,0,0,0.08);">
 
   <!-- Header bar -->
-  <div style="background:${SLATE};padding:22px 32px;">
-    ${logoOnDark(28)}
+  <div style="background:#ffffff;padding:20px 32px;border-bottom:2px solid ${GOLD};">
+    ${logoImg(140)}
   </div>
 
   <!-- Hero -->
   <div style="background:#FDFBF5;padding:44px 32px 36px;text-align:center;
               border-bottom:1px solid ${BORDER};">
-    <div style="margin-bottom:18px;">${logoOnLight(34)}</div>
+    <div style="margin-bottom:18px;"><table align="center" cellpadding="0" cellspacing="0" border="0"><tr><td>${logoImg(180)}</td></tr></table></div>
     <p style="margin:0 0 16px;font-family:'DM Sans',Arial,Helvetica,sans-serif;font-size:10px;
               font-weight:700;text-transform:uppercase;letter-spacing:2.5px;color:${GOLD_TEXT};">
       LAUNCH OFFER &middot; BY INVITATION
@@ -239,7 +238,7 @@ export function marqueeInviteTemplate(params: MarqueeInviteParams): {
 
   <!-- Footer -->
   <div style="padding:18px 32px;border-top:1px solid #f0eeec;text-align:center;">
-    ${logoOnLight(20)}
+    <table align="center" cellpadding="0" cellspacing="0" border="0"><tr><td>${logoImg(100)}</td></tr></table>
     <p style="margin:6px 0 0;font-family:'DM Sans',Arial,Helvetica,sans-serif;font-size:11px;color:#aaa;">
       This invitation was sent by the ${brandInline()} team.
     </p>
