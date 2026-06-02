@@ -247,7 +247,7 @@ export default function VendorOnboarding() {
 
  const [, setLocation] = useLocation();
  const { toast } = useToast();
- const { loginWithRedirect, loginWithPopup } = useAuth0();
+ const { loginWithRedirect, loginWithPopup, isAuthenticated } = useAuth0();
  const isCreatingAdditionalProfile =
  typeof window !== "undefined" &&
  new URLSearchParams(window.location.search).get("createProfile") === "1";
@@ -432,7 +432,9 @@ export default function VendorOnboarding() {
  isAddressVerified;
 
  const isAboutOwnerComplete =
- completedStepIds.includes(2) || currentStep > 2;
+ formData.ownerFirstName.trim() !== "" &&
+ formData.ownerLastName.trim() !== "" &&
+ (completedStepIds.includes(2) || currentStep > 2);
 
  const isStepComplete = (stepId: number) => {
  if (!SINGLE_VENDOR_MODE) return stepId < currentStep;
@@ -539,10 +541,11 @@ export default function VendorOnboarding() {
  }
  };
 
- try {
- await finishAndNavigate();
- } catch (e: any) {
- if (isAuthRequiredError(e)) {
+ // Check auth synchronously before any async work so the popup opens close
+ // enough to the user gesture to be allowed on iOS Safari. Using popup (not
+ // redirect) keeps window.opener = app, so Auth0's postMessage origin check
+ // passes for Google social login.
+ if (!isAuthenticated) {
  try {
  preserveDraftOnUnmountRef.current = true;
  const returnTo =
@@ -555,24 +558,24 @@ export default function VendorOnboarding() {
  loginWithPopup,
  loginWithRedirect,
  popupOptions: {
- authorizationParams: {
- prompt: "login",
- },
+ authorizationParams: { prompt: "login" },
  },
  redirectOptions: {
  appState: { returnTo },
- authorizationParams: {
- prompt: "login",
- },
+ authorizationParams: { prompt: "login" },
  },
  });
 
  if (loginResult === "redirect") {
+ setIsFinalizingOnboarding(false);
+ setPendingFinalAction(null);
  return;
  }
 
  if (loginResult === "cancelled") {
  preserveDraftOnUnmountRef.current = false;
+ setIsFinalizingOnboarding(false);
+ setPendingFinalAction(null);
  toast({
  title: "Login required",
  description: "Please sign in to finish onboarding.",
@@ -582,18 +585,10 @@ export default function VendorOnboarding() {
  }
 
  preserveDraftOnUnmountRef.current = false;
- await finishAndNavigate();
- return;
  } catch (authError: any) {
  preserveDraftOnUnmountRef.current = false;
- if (!isAuthRequiredError(authError)) {
- toast({
- title: "Onboarding failed",
- description: authError?.message || "Please try again.",
- variant: "destructive",
- });
- return;
- }
+ setIsFinalizingOnboarding(false);
+ setPendingFinalAction(null);
  toast({
  title: "Login required",
  description: authError?.message || "Please sign in again to finish onboarding.",
@@ -603,6 +598,9 @@ export default function VendorOnboarding() {
  }
  }
 
+ try {
+ await finishAndNavigate();
+ } catch (e: any) {
  if ((e as any)?.code === "business_name_taken") {
  setBusinessNameError("This business name is already taken. Please choose a different name.");
  setCurrentStep(1);
