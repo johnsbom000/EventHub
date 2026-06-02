@@ -4084,6 +4084,7 @@ export function registerVendorRoutes(app: Express): void {
         checkAccountOnboardingStatus,
         createDashboardLoginLink,
         createAccountOnboardingLink,
+        createV1AccountOnboardingLink,
         ensureManualPayoutSchedule,
       } = await import("../stripe");
       const status = await checkAccountOnboardingStatus(account.stripeConnectId);
@@ -4120,7 +4121,13 @@ export function registerVendorRoutes(app: Express): void {
           .where(eq(vendorAccounts.id, account.id));
       }
 
-      const url = await createAccountOnboardingLink(account.stripeConnectId);
+      // V2 recipient accounts use the V2 account links API.
+      // V1 express/standard accounts (and legacy accounts with no stored type)
+      // must use the V1 API — the V2 API does not support them.
+      const isV2Account = account.stripeAccountType === "recipient";
+      const url = isV2Account
+        ? await createAccountOnboardingLink(account.stripeConnectId)
+        : await createV1AccountOnboardingLink(account.stripeConnectId);
       return res.json({ url });
     } catch (error: any) {
       return respondWithInternalServerError(req, res, error);

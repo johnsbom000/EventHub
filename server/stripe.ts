@@ -57,29 +57,21 @@ function getConnectRedirectUrl(path: string) {
 // ---------------------------------------------------------------------------
 
 /**
- * Generates a short-lived hosted URL the vendor uses to complete their
+ * Generates a short-lived hosted URL for a V2 "recipient" account to complete
  * Stripe Connect onboarding.
  *
- * Uses the V2 Account Links API so the link is tied to the "recipient"
- * configuration we requested when the account was created.
- *
- * @param accountId  The Stripe account ID (acct_...) to onboard.
- * @returns          The hosted onboarding URL to redirect the vendor to.
+ * Only call this for accounts with stripeAccountType === "recipient".
+ * For V1 express/standard accounts use createV1AccountOnboardingLink instead.
  */
 export async function createAccountOnboardingLink(accountId: string): Promise<string> {
-  // V2 Account Links API.
-  // refresh_url  — where to redirect if the link expires before the vendor finishes.
-  // return_url   — where to redirect after the vendor completes (or skips) onboarding.
-  //               We append accountId so the return page can look up current status.
   const accountLink = await (stripeClient.v2.core.accountLinks as any).create({
     account: accountId,
     use_case: {
       type: "account_onboarding",
       account_onboarding: {
-        // "recipient" enables stripe_transfers payouts to the vendor's Stripe balance.
-        // "merchant" enables the vendor to accept card payments on their behalf.
-        // Both are needed for a full marketplace seller onboarding experience.
-        configurations: ["recipient", "merchant"],
+        // Only "recipient" — matches the single configuration requested at account creation.
+        // Requesting "merchant" here would fail because the account was not configured for it.
+        configurations: ["recipient"],
         refresh_url: getConnectRedirectUrl("/vendor/connect/refresh"),
         return_url: `${getConnectRedirectUrl("/vendor/connect/return")}?accountId=${accountId}`,
       },
@@ -87,6 +79,27 @@ export async function createAccountOnboardingLink(accountId: string): Promise<st
   });
 
   return accountLink.url as string;
+}
+
+// ---------------------------------------------------------------------------
+// Connect: Create Onboarding Link (V1 — express / standard accounts)
+// ---------------------------------------------------------------------------
+
+/**
+ * Generates a short-lived hosted URL for a V1 express or standard account to
+ * continue/complete their Stripe Connect onboarding.
+ *
+ * Use this for accounts where stripeAccountType is "express", "standard", or null
+ * (i.e. accounts created before the V2 migration).
+ */
+export async function createV1AccountOnboardingLink(accountId: string): Promise<string> {
+  const accountLink = await stripeClient.accountLinks.create({
+    account: accountId,
+    refresh_url: getConnectRedirectUrl("/vendor/connect/refresh"),
+    return_url: `${getConnectRedirectUrl("/vendor/connect/return")}?accountId=${accountId}`,
+    type: "account_onboarding",
+  });
+  return accountLink.url;
 }
 
 // ---------------------------------------------------------------------------
