@@ -143,7 +143,7 @@ export default function Step4_Confirm({
     <div className="space-y-6 pb-28">
       <div className="space-y-2">
         <OnboardingStepHeader currentStep={3} />
-        <h1 className="text-[3rem] font-semibold">Confirm</h1>
+        <h1 className="text-2xl sm:text-[3rem] font-semibold">Confirm</h1>
         {hasPendingReferral && (
           <p className="text-sm text-muted-foreground">Joining via a referral — welcome!</p>
         )}
@@ -184,7 +184,7 @@ export default function Step4_Confirm({
           </div>
         </div>
 
-        <div className="fixed bottom-0 left-24 right-0 z-30 bg-[#ffffff]/96 backdrop-blur-sm">
+        <div className="fixed bottom-0 left-0 sm:left-24 right-0 z-30 bg-[#ffffff]/96 backdrop-blur-sm">
           <div className="mx-auto flex w-full max-w-[1400px] flex-col gap-3 px-6 pt-4 pb-8 sm:px-12 lg:px-16">
             <div className="flex items-start gap-3">
               <Checkbox
@@ -202,24 +202,24 @@ export default function Step4_Confirm({
               </Label>
             </div>
 
-            <div className="flex items-center justify-between">
+            <div className="flex flex-col gap-2 sm:flex-row sm:items-center sm:justify-between">
               <Button
                 variant="outline"
                 type="button"
                 onClick={onBack}
                 disabled={isSubmitting}
-                className="min-h-[2.7rem] px-6 font-sans text-[1.2rem] font-medium"
+                className="min-h-[2.7rem] w-full px-6 font-sans text-[1.2rem] font-medium sm:w-auto"
               >
                 Back
               </Button>
 
-              <div className="flex items-center gap-3">
+              <div className="flex flex-col gap-2 sm:flex-row sm:items-center sm:gap-3">
                 <Button
                   variant="outline"
                   type="button"
                   onClick={() => onComplete(false, "myHub")}
                   disabled={isSubmitting || !agreedToTerms}
-                  className="min-h-[2.7rem] px-6 font-sans text-[1.2rem] font-medium"
+                  className="min-h-[2.7rem] w-full px-6 font-sans text-[1.2rem] font-medium sm:w-auto"
                 >
                   {isSubmitting && submittingAction === "myHub" ? "Opening My Hub..." : "Go To My Hub"}
                 </Button>
@@ -227,7 +227,7 @@ export default function Step4_Confirm({
                   type="button"
                   onClick={() => onComplete(true)}
                   disabled={isSubmitting || !agreedToTerms}
-                  className="min-h-[2.7rem] px-6 font-sans text-[1.2rem] font-medium"
+                  className="min-h-[2.7rem] w-full px-6 font-sans text-[1.2rem] font-medium sm:w-auto"
                 >
                   {isSubmitting && submittingAction === "createListing" ? "Opening listing wizard..." : "Create first listing"}
                 </Button>

@@ -171,7 +171,7 @@ export default function Step2_BusinessDetails({
     <div className="space-y-6 pb-28">
       <div className="space-y-2">
         <OnboardingStepHeader currentStep={1} />
-        <h1 className="text-[3rem] font-semibold">Business Details</h1>
+        <h1 className="text-2xl sm:text-[3rem] font-semibold">Business Details</h1>
       </div>
 
       <form
@@ -452,7 +452,7 @@ export default function Step2_BusinessDetails({
             </div>
         </div>
 
-        <div className="fixed bottom-0 left-24 right-0 z-30 bg-[#ffffff]/96 backdrop-blur-sm">
+        <div className="fixed bottom-0 left-0 sm:left-24 right-0 z-30 bg-[#ffffff]/96 backdrop-blur-sm">
           <div className="mx-auto flex w-full max-w-[1400px] items-center justify-between px-6 pt-4 pb-8 sm:px-12 lg:px-16">
             <Button
               type="button"

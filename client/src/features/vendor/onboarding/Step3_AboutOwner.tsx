@@ -716,7 +716,7 @@ export default function Step3_AboutOwner({
     <div className="space-y-6 pb-28">
       <div className="space-y-2">
         <OnboardingStepHeader currentStep={2} />
-        <h1 className="text-[3rem] font-semibold">About the Owner</h1>
+        <h1 className="text-2xl sm:text-[3rem] font-semibold">About the Owner</h1>
         <p className="text-[14px] text-muted-foreground">Optional but highly recommended!</p>
       </div>
 
@@ -725,7 +725,7 @@ export default function Step3_AboutOwner({
           <div className="space-y-4 rounded-2xl border border-[rgba(154,172,180,0.55)] bg-[#ffffff] p-6 lg:col-[1/2]">
 
           {/* Personal identity — used when a vendor books other vendors */}
-          <div className="grid grid-cols-2 gap-4">
+          <div className="grid gap-4 sm:grid-cols-2">
             <div className="space-y-2">
               <Label htmlFor="onboarding-owner-first-name">
                 First name <span className="text-destructive">*</span>
@@ -1113,7 +1113,7 @@ export default function Step3_AboutOwner({
           </DialogContent>
         </Dialog>
 
-        <div className="fixed bottom-0 left-24 right-0 z-30 bg-[#ffffff]/96 backdrop-blur-sm">
+        <div className="fixed bottom-0 left-0 sm:left-24 right-0 z-30 bg-[#ffffff]/96 backdrop-blur-sm">
           <div className="mx-auto flex w-full max-w-[1400px] items-center justify-between px-6 pt-4 pb-8 sm:px-12 lg:px-16">
             <Button
               type="button"

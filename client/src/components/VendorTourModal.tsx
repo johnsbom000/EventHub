@@ -65,7 +65,7 @@ export default function VendorTourModal({ steps, onDismiss }: VendorTourModalPro
   };
 
   return (
-    <div className="fixed bottom-6 right-6 z-[90] w-[360px] rounded-[20px] bg-[#ffffff] shadow-[0_8px_40px_rgba(0,0,0,0.18)] border border-[rgba(74,106,125,0.18)]">
+    <div className="fixed bottom-4 left-3 right-3 z-[90] rounded-[20px] bg-[#ffffff] shadow-[0_8px_40px_rgba(0,0,0,0.18)] border border-[rgba(74,106,125,0.18)] sm:bottom-6 sm:left-auto sm:right-6 sm:w-[360px]">
       {/* Top bar */}
       <div className="flex items-center justify-between px-5 pt-4 pb-0">
         <span className="text-[1.2rem] font-semibold text-[#7c8095]">

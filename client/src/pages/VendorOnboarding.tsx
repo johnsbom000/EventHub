@@ -713,8 +713,8 @@ export default function VendorOnboarding() {
  <Navigation />
 
  <div className="flex flex-1">
- {/* Sidebar */}
- <div className="w-24 shrink-0 border-r border-[rgba(74,106,125,0.22)] bg-[#ffffff] ">
+ {/* Sidebar — hidden on mobile, visible sm+ */}
+ <div className="hidden sm:flex sm:w-24 sm:shrink-0 border-r border-[rgba(74,106,125,0.22)] bg-[#ffffff] flex-col">
  <div className="flex h-full flex-col items-center pt-6">
  <div className="flex flex-col items-center gap-3">
  {STEPS.map((step) => (
@@ -780,7 +780,7 @@ export default function VendorOnboarding() {
  )}
  <div
  className={cn(
- "vendor-onboarding-input-surface vendor-onboarding-steps-typography mx-auto w-full max-w-[1400px] py-10 px-12 sm:px-24 lg:px-36"
+ "vendor-onboarding-input-surface vendor-onboarding-steps-typography mx-auto w-full max-w-[1400px] py-10 px-4 sm:px-12 lg:px-36"
  )}
  >
  {renderStep()}
