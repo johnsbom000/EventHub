@@ -1603,6 +1603,15 @@ app.post(
           const auth0 = await verifyAuth0Token(token);
           const email = typeof auth0?.email === "string" ? auth0.email.trim().toLowerCase() : "";
           if (email) {
+            const OWNER_EMAILS = [
+              "johnsbom000@gmail.com",
+              "boman@griffjohnson.com",
+              "cassidymalm21@gmail.com",
+              "eventhubglobal@gmail.com",
+            ];
+            if (OWNER_EMAILS.includes(email)) {
+              return res.json({ success: true });
+            }
             const [user] = await db
               .select({
                 id: users.id,
