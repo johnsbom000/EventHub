@@ -310,6 +310,20 @@ export default function Step3_AboutOwner({
   onBack,
 }: Step3AboutOwnerProps) {
   const { toast } = useToast();
+  const [firstNameError, setFirstNameError] = useState<string | null>(null);
+  const [lastNameError, setLastNameError] = useState<string | null>(null);
+
+  const handleNext = () => {
+    const firstName = formData.ownerFirstName.trim();
+    const lastName = formData.ownerLastName.trim();
+    const firstErr = firstName ? null : "First name is required";
+    const lastErr = lastName ? null : "Last name is required";
+    setFirstNameError(firstErr);
+    setLastNameError(lastErr);
+    if (firstErr || lastErr) return;
+    onNext();
+  };
+
   const profilePhotoInputRef = useRef<HTMLInputElement | null>(null);
   const coverPhotoInputRef = useRef<HTMLInputElement | null>(null);
   const profileEditorDragStateRef = useRef<{
@@ -733,10 +747,16 @@ export default function Step3_AboutOwner({
               <Input
                 id="onboarding-owner-first-name"
                 value={formData.ownerFirstName}
-                onChange={(e) => updateFormData({ ownerFirstName: e.target.value })}
+                onChange={(e) => {
+                  updateFormData({ ownerFirstName: e.target.value });
+                  if (e.target.value.trim()) setFirstNameError(null);
+                }}
                 placeholder="Jane"
                 autoComplete="given-name"
+                aria-required
+                aria-invalid={!!firstNameError}
               />
+              {firstNameError && <p className="text-[0.75rem] text-destructive">{firstNameError}</p>}
             </div>
             <div className="space-y-2">
               <Label htmlFor="onboarding-owner-last-name">
@@ -745,10 +765,16 @@ export default function Step3_AboutOwner({
               <Input
                 id="onboarding-owner-last-name"
                 value={formData.ownerLastName}
-                onChange={(e) => updateFormData({ ownerLastName: e.target.value })}
+                onChange={(e) => {
+                  updateFormData({ ownerLastName: e.target.value });
+                  if (e.target.value.trim()) setLastNameError(null);
+                }}
                 placeholder="Smith"
                 autoComplete="family-name"
+                aria-required
+                aria-invalid={!!lastNameError}
               />
+              {lastNameError && <p className="text-[0.75rem] text-destructive">{lastNameError}</p>}
             </div>
           </div>
 
@@ -1125,7 +1151,7 @@ export default function Step3_AboutOwner({
             </Button>
             <Button
               type="button"
-              onClick={onNext}
+              onClick={handleNext}
               className="min-h-[2.7rem] px-6 font-sans text-[1.2rem] font-medium"
             >
               Next
