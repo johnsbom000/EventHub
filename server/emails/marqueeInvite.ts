@@ -8,6 +8,7 @@ const BORDER    = "#DDE8EE";
 const FONTS = `@import url('https://fonts.googleapis.com/css2?family=Cormorant+Garamond:wght@300;400;600&family=DM+Sans:wght@300;400;500&display=swap');`;
 
 const LOGO_URL = "https://pub-fb81e46f4a6e414b8342a1a2f1e9d59e.r2.dev/assets/eventhub_logo_transparent.png";
+const MARQUEE_LOGO_URL = "https://pub-fb81e46f4a6e414b8342a1a2f1e9d59e.r2.dev/assets/eventhub_marquee_logo_transparent.png";
 
 function logoImg(width: number, alt = "EventHub"): string {
   return `<img src="${LOGO_URL}" width="${width}" alt="${alt}" style="display:block;border:0;outline:none;text-decoration:none;" />`;
@@ -104,15 +105,10 @@ export function marqueeInviteTemplate(params: MarqueeInviteParams): {
 <div style="max-width:600px;margin:0 auto;background:#ffffff;border-radius:8px;overflow:hidden;
             box-shadow:0 1px 4px rgba(0,0,0,0.08);">
 
-  <!-- Header bar -->
-  <div style="background:#ffffff;padding:20px 32px;border-bottom:2px solid ${GOLD};">
-    ${logoImg(140)}
-  </div>
-
   <!-- Hero -->
   <div style="background:#FDFBF5;padding:44px 32px 36px;text-align:center;
               border-bottom:1px solid ${BORDER};">
-    <div style="margin-bottom:18px;"><table align="center" cellpadding="0" cellspacing="0" border="0"><tr><td>${logoImg(180)}</td></tr></table></div>
+    <div style="margin-bottom:18px;"><table align="center" cellpadding="0" cellspacing="0" border="0"><tr><td><img src="${MARQUEE_LOGO_URL}" width="240" alt="EventHub" style="display:block;border:0;outline:none;text-decoration:none;" /></td></tr></table></div>
     <p style="margin:0 0 16px;font-family:'DM Sans',Arial,Helvetica,sans-serif;font-size:10px;
               font-weight:700;text-transform:uppercase;letter-spacing:2.5px;color:${GOLD_TEXT};">
       LAUNCH OFFER &middot; BY INVITATION
