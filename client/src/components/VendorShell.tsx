@@ -6,15 +6,26 @@ import { VendorTimezoneModal, useShowTimezoneModal } from "@/components/VendorTi
 import { getTourKey, hasTourBeenSeen, markTourSeen, VENDOR_TOURS } from "@/lib/vendorTourContent";
 import {
   ArrowLeft,
+  Bell,
   Calendar,
   Check,
+  DollarSign,
   HelpCircle,
   Home,
+  LayoutGrid,
   Loader2,
   LogOut,
+  Menu,
+  MessageSquare,
+  Scale,
   Settings,
+  Star,
+  Store,
+  Tag,
   User,
 } from "lucide-react";
+import { Sheet, SheetContent, SheetTitle } from "@/components/ui/sheet";
+import { cn } from "@/lib/utils";
 import { Link, useLocation } from "wouter";
 import { VendorSidebar } from "@/components/vendor-sidebar";
 import BrandWordmark from "@/components/BrandWordmark";
@@ -33,6 +44,19 @@ import { Avatar, AvatarFallback } from "@/components/ui/avatar";
 import { useAuth0 } from "@auth0/auth0-react";
 import { useQuery, useQueryClient } from "@tanstack/react-query";
 import { useTranslation } from "react-i18next";
+
+const vendorMobileNavItems = [
+  { key: "myHub",         url: "/vendor/shop",          icon: Store },
+  { key: "dashboard",     url: "/vendor/dashboard",     icon: Home },
+  { key: "bookings",      url: "/vendor/bookings",      icon: Calendar },
+  { key: "listings",      url: "/vendor/listings",      icon: LayoutGrid },
+  { key: "messages",      url: "/vendor/messages",      icon: MessageSquare },
+  { key: "payments",      url: "/vendor/payments",      icon: DollarSign },
+  { key: "discounts",     url: "/vendor/discounts",     icon: Tag },
+  { key: "reviews",       url: "/vendor/reviews",       icon: Star },
+  { key: "notifications", url: "/vendor/notifications", icon: Bell },
+  { key: "disputes",      url: "/vendor/disputes",      icon: Scale },
+] as const;
 
 type VendorShellProps = {
   children: React.ReactNode;
@@ -168,6 +192,7 @@ export default function VendorShell({ children, onOpenAccountSettings }: VendorS
     circumventionStatus && !circumventionStatus.suspension && circumventionStatus.warningCount > 0
   );
   const [showWarningBanner, setShowWarningBanner] = useState(false);
+  const [mobileNavOpen, setMobileNavOpen] = useState(false);
 
   // Tour system
   const [activeTourKey, setActiveTourKey] = useState<string | null>(null);
@@ -265,17 +290,26 @@ export default function VendorShell({ children, onOpenAccountSettings }: VendorS
     <SidebarProvider style={sidebarStyle}>
       <div className="swap-dashboard-whites flex h-screen w-full flex-col">
         <header className="flex items-center justify-between border-b border-[rgba(74,106,125,0.22)] bg-[#ffffff] p-4">
-          <Link
-            href="/"
-            className="flex items-center gap-2 rounded-md px-3 py-2"
-            data-testid="link-vendor-shell-home"
-          >
-            <BrandWordmark
-              className="text-[1.875rem]"
-              eventClassName="text-[#e07a6a] font-normal"
-              hubClassName="text-[#4a6a7d] font-normal"
-            />
-          </Link>
+          <div className="flex items-center gap-1">
+            <button
+              className="lg:hidden flex h-9 w-9 items-center justify-center rounded-md text-[#2a3a42] hover:bg-[#e6e1d6] transition-colors"
+              onClick={() => setMobileNavOpen(true)}
+              aria-label="Open navigation"
+            >
+              <Menu className="h-5 w-5" />
+            </button>
+            <Link
+              href="/"
+              className="flex items-center gap-2 rounded-md px-3 py-2"
+              data-testid="link-vendor-shell-home"
+            >
+              <BrandWordmark
+                className="text-[1.875rem]"
+                eventClassName="text-[#e07a6a] font-normal"
+                hubClassName="text-[#4a6a7d] font-normal"
+              />
+            </Link>
+          </div>
 
           <div className="flex items-center gap-3">
             <Button
@@ -389,6 +423,38 @@ export default function VendorShell({ children, onOpenAccountSettings }: VendorS
           </div>
         </header>
 
+        {/* Mobile nav drawer */}
+        <Sheet open={mobileNavOpen} onOpenChange={setMobileNavOpen}>
+          <SheetContent side="left" className="w-64 p-0 flex flex-col">
+            <SheetTitle className="sr-only">Navigation</SheetTitle>
+            <div className="px-4 py-4 border-b border-[rgba(74,106,125,0.22)]">
+              <BrandWordmark
+                className="text-[1.4rem]"
+                eventClassName="text-[#e07a6a] font-normal"
+                hubClassName="text-[#4a6a7d] font-normal"
+              />
+            </div>
+            <nav className="flex-1 overflow-y-auto py-3 px-3 space-y-1">
+              {vendorMobileNavItems.map((item) => (
+                <Link
+                  key={item.url}
+                  href={item.url}
+                  onClick={() => setMobileNavOpen(false)}
+                  className={cn(
+                    "flex items-center gap-3 rounded-xl px-3 py-3 text-sm font-medium transition-colors",
+                    location === item.url
+                      ? "bg-[#4a6a7d] text-[#f5f0e8]"
+                      : "text-[#2a3a42] hover:bg-[#e6e1d6]"
+                  )}
+                >
+                  <item.icon className="h-5 w-5 shrink-0" />
+                  <span>{t(`vendorSidebar.${item.key}`)}</span>
+                </Link>
+              ))}
+            </nav>
+          </SheetContent>
+        </Sheet>
+
         {/* Circumvention banners — shown below the header */}
         {circumventionStatus?.suspension ? (
           <SuspensionBanner
@@ -401,7 +467,7 @@ export default function VendorShell({ children, onOpenAccountSettings }: VendorS
 
         <div className="flex min-h-0 flex-1">
           <VendorSidebar
-            className="flex shrink-0"
+            className="hidden lg:flex shrink-0"
             showWarningBadge={hasActivePolicyWarning && !showWarningBanner}
             onWarningBadgeClick={
               hasActivePolicyWarning

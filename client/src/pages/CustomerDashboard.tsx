@@ -10,15 +10,19 @@ import {
   Home,
   Loader2,
   LogOut,
+  Menu,
   MessageSquare,
   PlusCircle,
+  Scale,
   Settings,
   User,
 } from "lucide-react";
+import { Sheet, SheetContent, SheetTitle } from "@/components/ui/sheet";
+import { cn } from "@/lib/utils";
 import { useTranslation } from "react-i18next";
 import { SidebarProvider } from "@/components/ui/sidebar";
 import { Button } from "@/components/ui/button";
-import { CustomerSidebar } from "@/components/customer-sidebar";
+import { CustomerSidebar, isMenuItemActive } from "@/components/customer-sidebar";
 import BrandWordmark from "@/components/BrandWordmark";
 import { ApiRequestError, apiRequest } from "@/lib/queryClient";
 import { deriveVendorDetection, type VendorMeState } from "@/lib/vendorState";
@@ -52,6 +56,15 @@ interface Customer {
 type Section = "profile" | "events" | "messages" | "notifications" | "plan" | "disputes";
 
 const POLICY_WARNING_LAST_SHOWN_COUNT_KEY = "eventhub:policy-warning-last-shown-count";
+
+const customerMobileNavItems = [
+  { key: "myEvents",      url: "/dashboard/events",        icon: Calendar },
+  { key: "messages",      url: "/dashboard/messages",      icon: MessageSquare },
+  { key: "notifications", url: "/dashboard/notifications", icon: Bell },
+  { key: "planNewEvent",  url: "/dashboard/plan",          icon: PlusCircle },
+  { key: "disputes",      url: "/dashboard/disputes",      icon: Scale },
+  { key: "myProfile",     url: "/dashboard/profile",       icon: User },
+] as const;
 
 function CustomerMobileNavLink({
   href,
@@ -206,6 +219,7 @@ export default function CustomerDashboard() {
     circumventionStatus && !circumventionStatus.suspension && circumventionStatus.warningCount > 0
   );
   const [showWarningBanner, setShowWarningBanner] = useState(false);
+  const [mobileNavOpen, setMobileNavOpen] = useState(false);
   const shouldShowCustomerPhoto =
     !isVendorAccountLoading &&
     !isVendorAccountFetching &&
@@ -283,17 +297,26 @@ export default function CustomerDashboard() {
     <SidebarProvider style={sidebarStyle}>
       <div className="swap-dashboard-whites flex h-screen w-full flex-col">
         <header className="flex items-center justify-between border-b border-[rgba(74,106,125,0.22)] bg-[#ffffff] p-4">
-          <Link
-            href="/"
-            className="flex items-center gap-2 rounded-md px-3 py-2"
-            data-testid="link-customer-shell-home"
-          >
-            <BrandWordmark
-              className="text-[1.875rem]"
-              eventClassName="text-[#e07a6a] font-normal"
-              hubClassName="text-[#4a6a7d] font-normal"
-            />
-          </Link>
+          <div className="flex items-center gap-1">
+            <button
+              className="lg:hidden flex h-9 w-9 items-center justify-center rounded-md text-[#2a3a42] hover:bg-[#e6e1d6] transition-colors"
+              onClick={() => setMobileNavOpen(true)}
+              aria-label="Open navigation"
+            >
+              <Menu className="h-5 w-5" />
+            </button>
+            <Link
+              href="/"
+              className="flex items-center gap-2 rounded-md px-3 py-2"
+              data-testid="link-customer-shell-home"
+            >
+              <BrandWordmark
+                className="text-[1.875rem]"
+                eventClassName="text-[#e07a6a] font-normal"
+                hubClassName="text-[#4a6a7d] font-normal"
+              />
+            </Link>
+          </div>
 
           <div className="flex items-center gap-3">
             <Button
@@ -385,6 +408,38 @@ export default function CustomerDashboard() {
             </DropdownMenu>
           </div>
         </header>
+
+        {/* Mobile nav drawer */}
+        <Sheet open={mobileNavOpen} onOpenChange={setMobileNavOpen}>
+          <SheetContent side="left" className="w-64 p-0 flex flex-col">
+            <SheetTitle className="sr-only">Navigation</SheetTitle>
+            <div className="px-4 py-4 border-b border-[rgba(74,106,125,0.22)]">
+              <BrandWordmark
+                className="text-[1.4rem]"
+                eventClassName="text-[#e07a6a] font-normal"
+                hubClassName="text-[#4a6a7d] font-normal"
+              />
+            </div>
+            <nav className="flex-1 overflow-y-auto py-3 px-3 space-y-1">
+              {customerMobileNavItems.map((item) => (
+                <Link
+                  key={item.url}
+                  href={item.url}
+                  onClick={() => setMobileNavOpen(false)}
+                  className={cn(
+                    "flex items-center gap-3 rounded-xl px-3 py-3 text-sm font-medium transition-colors",
+                    isMenuItemActive(location, item.url)
+                      ? "bg-[#4a6a7d] text-[#f5f0e8]"
+                      : "text-[#2a3a42] hover:bg-[#e6e1d6]"
+                  )}
+                >
+                  <item.icon className="h-5 w-5 shrink-0" />
+                  <span>{t(`customerSidebar.${item.key}`)}</span>
+                </Link>
+              ))}
+            </nav>
+          </SheetContent>
+        </Sheet>
 
         {circumventionStatus?.suspension ? (
           <SuspensionBanner

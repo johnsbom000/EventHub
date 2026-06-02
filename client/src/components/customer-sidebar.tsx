@@ -48,7 +48,7 @@ function getInitials(name: string) {
  );
 }
 
-function isMenuItemActive(currentPath: string, itemUrl: string) {
+export function isMenuItemActive(currentPath: string, itemUrl: string) {
  if (itemUrl === "/dashboard/profile") {
  return currentPath === "/dashboard" || currentPath.startsWith("/dashboard/profile");
  }
