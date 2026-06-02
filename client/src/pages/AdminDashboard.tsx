@@ -1798,6 +1798,16 @@ function MarqueeVendorSection({ isAdmin }: { isAdmin: boolean }) {
   const [inviteEmails, setInviteEmails] = useState("");
   const [inviteResults, setInviteResults] = useState<{ email: string; sent: boolean; skipped: boolean; reason?: string }[]>([]);
 
+  const { data: inviteHistory = [], refetch: refetchInviteHistory } = useQuery<{ id: number; email: string; sentAt: string; sentBy: string | null; accepted: boolean }[]>({
+    queryKey: ["/api/admin/marquee-invites"],
+    queryFn: async () => {
+      const res = await apiRequest("GET", "/api/admin/marquee-invites");
+      const data = await res.json();
+      return data.invites ?? [];
+    },
+    enabled: isAdmin,
+  });
+
   const inviteMutation = useMutation({
     mutationFn: async (emails: string[]) => {
       const res = await apiRequest("POST", "/api/admin/marquee-invite", { emails });
@@ -1810,6 +1820,7 @@ function MarqueeVendorSection({ isAdmin }: { isAdmin: boolean }) {
     onSuccess: (data) => {
       setInviteResults(data.results);
       setInviteEmails("");
+      refetchInviteHistory();
     },
   });
 
@@ -1990,6 +2001,7 @@ function MarqueeVendorSection({ isAdmin }: { isAdmin: boolean }) {
           )}
           {inviteResults.length > 0 && (
             <div className="mt-4 space-y-1">
+              <p className="text-xs font-medium text-muted-foreground mb-2">Just sent:</p>
               {inviteResults.map((r) => (
                 <div key={r.email} className="flex items-center gap-2 text-sm">
                   {r.sent ? (
@@ -2003,6 +2015,39 @@ function MarqueeVendorSection({ isAdmin }: { isAdmin: boolean }) {
                   )}
                 </div>
               ))}
+            </div>
+          )}
+          {inviteHistory.length > 0 && (
+            <div className="mt-6">
+              <p className="text-xs font-medium text-muted-foreground mb-2">Invitation history ({inviteHistory.length})</p>
+              <div className="rounded-md border border-border overflow-hidden">
+                <table className="w-full text-xs">
+                  <thead>
+                    <tr className="bg-muted/50 border-b border-border">
+                      <th className="text-left px-3 py-2 font-medium text-muted-foreground">Email</th>
+                      <th className="text-left px-3 py-2 font-medium text-muted-foreground">Sent</th>
+                      <th className="text-left px-3 py-2 font-medium text-muted-foreground">Status</th>
+                    </tr>
+                  </thead>
+                  <tbody>
+                    {inviteHistory.map((inv) => (
+                      <tr key={inv.id} className="border-b border-border last:border-0">
+                        <td className="px-3 py-2 font-mono">{inv.email}</td>
+                        <td className="px-3 py-2 text-muted-foreground whitespace-nowrap">
+                          {new Date(inv.sentAt).toLocaleString()}
+                        </td>
+                        <td className="px-3 py-2">
+                          {inv.accepted ? (
+                            <span className="inline-flex items-center gap-1 text-green-600"><CheckCircle className="h-3 w-3" /> Sent</span>
+                          ) : (
+                            <span className="inline-flex items-center gap-1 text-destructive"><XCircle className="h-3 w-3" /> Failed</span>
+                          )}
+                        </td>
+                      </tr>
+                    ))}
+                  </tbody>
+                </table>
+              </div>
             </div>
           )}
         </CardContent>

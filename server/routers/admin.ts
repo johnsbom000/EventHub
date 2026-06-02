@@ -135,6 +135,7 @@ import {
   reviewReplies,
   vendorReferrals,
   foundingVendorInvites,
+  marqueeEmailInvites,
 } from "@shared/schema";
 import {
   requireDualAuthAuth0,
@@ -1708,6 +1709,20 @@ export function registerAdminRoutes(app: Express): void {
     }
   });
 
+  // GET /api/admin/marquee-invites — list invitation history
+  app.get("/api/admin/marquee-invites", adminRateLimiter, requireAdminAuth, async (req: any, res: any) => {
+    try {
+      const rows = await db
+        .select()
+        .from(marqueeEmailInvites)
+        .orderBy(desc(marqueeEmailInvites.sentAt))
+        .limit(200);
+      return res.json({ invites: rows });
+    } catch (err: any) {
+      return respondWithInternalServerError(req, res, err);
+    }
+  });
+
   // POST /api/admin/marquee-invite — send invitation emails
   app.post("/api/admin/marquee-invite", adminRateLimiter, requireAdminAuth, async (req: any, res: any) => {
     try {
@@ -1722,9 +1737,16 @@ export function registerAdminRoutes(app: Express): void {
         return res.status(400).json({ error: "No valid email addresses provided" });
       }
 
+      const adminEmail = (req.adminAuth as { email?: string } | undefined)?.email ?? null;
+
       const results = await Promise.all(
         emails.map(async (email) => {
           const result = await sendMarqueeInviteEmail(email, { recipientEmail: email });
+          await db.insert(marqueeEmailInvites).values({
+            email,
+            sentBy: adminEmail,
+            accepted: result.sent,
+          });
           return { email, ...result };
         })
       );

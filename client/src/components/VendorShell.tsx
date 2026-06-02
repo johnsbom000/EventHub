@@ -8,13 +8,10 @@ import {
   ArrowLeft,
   Calendar,
   Check,
-  DollarSign,
   HelpCircle,
   Home,
-  LayoutGrid,
   Loader2,
   LogOut,
-  MessageSquare,
   Settings,
   User,
 } from "lucide-react";
@@ -61,21 +58,6 @@ type VendorProfilesResponse = {
 
 const POLICY_WARNING_LAST_SHOWN_COUNT_KEY = "eventhub:policy-warning-last-shown-count";
 
-function MobileNavLink({ href, icon: Icon, label }: { href: string; icon: React.ElementType; label: string }) {
-  const [location] = useLocation();
-  const isActive = location === href || (href !== "/vendor/dashboard" && location.startsWith(href));
-  return (
-    <Link
-      href={href}
-      className={`flex flex-col items-center gap-0.5 px-3 py-1 rounded-lg text-[10px] font-medium transition-colors ${
-        isActive ? "text-[#4a6a7d]" : "text-[#8fa2ad]"
-      }`}
-    >
-      <Icon className={`h-5 w-5 ${isActive ? "text-[#4a6a7d]" : "text-[#8fa2ad]"}`} />
-      {label}
-    </Link>
-  );
-}
 
 function getInitialsFromName(nameOrEmail: string) {
   const value = (nameOrEmail || "").trim();
@@ -419,7 +401,7 @@ export default function VendorShell({ children, onOpenAccountSettings }: VendorS
 
         <div className="flex min-h-0 flex-1">
           <VendorSidebar
-            className="hidden lg:flex shrink-0"
+            className="flex shrink-0"
             showWarningBadge={hasActivePolicyWarning && !showWarningBanner}
             onWarningBadgeClick={
               hasActivePolicyWarning
@@ -429,17 +411,8 @@ export default function VendorShell({ children, onOpenAccountSettings }: VendorS
                 : undefined
             }
           />
-          <main className="flex-1 overflow-auto p-4 pb-20 lg:p-6 lg:pb-6">{children}</main>
+          <main className="flex-1 overflow-auto p-4 lg:p-6">{children}</main>
         </div>
-
-        {/* Mobile bottom navigation */}
-        <nav className="lg:hidden fixed bottom-0 left-0 right-0 z-50 flex items-center justify-around border-t border-[rgba(74,106,125,0.22)] bg-[#ffffff] px-2 py-2">
-          <MobileNavLink href="/vendor/dashboard" icon={Home} label={t("vendorShell.mobile.dashboard")} />
-          <MobileNavLink href="/vendor/bookings" icon={Calendar} label={t("vendorShell.mobile.bookings")} />
-          <MobileNavLink href="/vendor/listings" icon={LayoutGrid} label={t("vendorShell.mobile.listings")} />
-          <MobileNavLink href="/vendor/messages" icon={MessageSquare} label={t("vendorShell.mobile.messages")} />
-          <MobileNavLink href="/vendor/payments" icon={DollarSign} label={t("vendorShell.mobile.payments")} />
-        </nav>
       </div>
 
       {activeTourKey && VENDOR_TOURS[activeTourKey] && (
