@@ -1097,7 +1097,20 @@ export function registerAdminRoutes(app: Express): void {
 
   app.get("/api/admin/stats/traffic", adminRateLimiter, requireAdminAuth, async (req, res) => {
     try {
-      const [totalVisitsResult] = await db.select({ count: count() }).from(webTraffic);
+      const excludeInternal = req.query.excludeInternal === "true";
+
+      // Excludes traffic from owner accounts when the toggle is on
+      const ownerFilter = excludeInternal
+        ? drizzleSql`(${webTraffic.userId} IS NULL OR ${webTraffic.userId} NOT IN (SELECT id FROM users WHERE email IN ('johnsbom000@gmail.com', 'boman@griffjohnson.com', 'cassidymalm21@gmail.com', 'eventhubglobal@gmail.com')))`
+        : undefined;
+      const ownerFilterLoggedIn = excludeInternal
+        ? drizzleSql`${webTraffic.userId} IS NOT NULL AND ${webTraffic.userId} NOT IN (SELECT id FROM users WHERE email IN ('johnsbom000@gmail.com', 'boman@griffjohnson.com', 'cassidymalm21@gmail.com', 'eventhubglobal@gmail.com'))`
+        : drizzleSql`${webTraffic.userId} IS NOT NULL`;
+
+      const [totalVisitsResult] = await db
+        .select({ count: count() })
+        .from(webTraffic)
+        .where(ownerFilter);
       const totalVisits = totalVisitsResult.count;
 
       const [uniqueVisitorsResult] = await db
@@ -1105,7 +1118,7 @@ export function registerAdminRoutes(app: Express): void {
           count: drizzleSql<number>`COUNT(DISTINCT ${webTraffic.userId})`,
         })
         .from(webTraffic)
-        .where(drizzleSql`${webTraffic.userId} IS NOT NULL`);
+        .where(ownerFilterLoggedIn);
       const uniqueVisitors = uniqueVisitorsResult.count;
 
       const topPaths = await db
@@ -1114,6 +1127,7 @@ export function registerAdminRoutes(app: Express): void {
           count: count(),
         })
         .from(webTraffic)
+        .where(ownerFilter)
         .groupBy(webTraffic.path)
         .orderBy(desc(count()))
         .limit(10);
@@ -1127,7 +1141,7 @@ export function registerAdminRoutes(app: Express): void {
           count: count(),
         })
         .from(webTraffic)
-        .where(gte(webTraffic.timestamp, thirtyDaysAgo))
+        .where(and(gte(webTraffic.timestamp, thirtyDaysAgo), ownerFilter))
         .groupBy(drizzleSql`DATE(${webTraffic.timestamp})`)
         .orderBy(drizzleSql`DATE(${webTraffic.timestamp})`);
 

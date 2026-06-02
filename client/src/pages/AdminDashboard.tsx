@@ -15,6 +15,7 @@ import { useAuth0 } from "@auth0/auth0-react";
 import { useEffect, useState } from "react";
 import { apiRequest } from "@/lib/queryClient";
 import AdminShell from "@/components/AdminShell";
+import { Switch } from "@/components/ui/switch";
 
 // ─── Shared helpers ───────────────────────────────────────────────────────────
 
@@ -894,11 +895,26 @@ function ListingsSection({ isAdmin }: { isAdmin: boolean }) {
 // ─── Section: Traffic ─────────────────────────────────────────────────────────
 
 function TrafficSection({ isAdmin }: { isAdmin: boolean }) {
-  const { data: trafficStats } = useQuery<any>({ queryKey: ["/api/admin/stats/traffic"], enabled: isAdmin });
+  const [excludeInternal, setExcludeInternal] = useState(false);
+  const trafficUrl = excludeInternal
+    ? "/api/admin/stats/traffic?excludeInternal=true"
+    : "/api/admin/stats/traffic";
+  const { data: trafficStats } = useQuery<any>({ queryKey: [trafficUrl], enabled: isAdmin });
 
   return (
     <>
-      <PageHeading title="Traffic" description="Website visits and top pages" />
+      <div className="flex items-start justify-between mb-6">
+        <div>
+          <h1 className="text-3xl font-serif font-bold">Traffic</h1>
+          <p className="text-muted-foreground text-sm mt-1">Website visits and top pages</p>
+        </div>
+        <div className="flex items-center gap-2 mt-1.5">
+          <Switch id="exclude-internal" checked={excludeInternal} onCheckedChange={setExcludeInternal} />
+          <label htmlFor="exclude-internal" className="text-sm text-muted-foreground cursor-pointer select-none">
+            Exclude my accounts
+          </label>
+        </div>
+      </div>
 
       <div className="grid gap-4 grid-cols-2 md:grid-cols-2 mb-6">
         <StatCard title="Total Visits" value={trafficStats?.totalVisits ?? 0} sub="All time" icon={<Eye className="h-4 w-4 text-muted-foreground" />} />
