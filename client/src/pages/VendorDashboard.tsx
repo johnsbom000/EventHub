@@ -1393,7 +1393,7 @@ export default function VendorDashboard() {
  {vendorAccount?.isMarqueeVendor && (
  <div className="rounded-xl border border-amber-300 bg-amber-50 p-6">
    <div className="flex items-center gap-2 mb-4">
-     <span className="text-lg">★</span>
+     <span className="text-lg text-yellow-500">★</span>
      <h2 className="font-heading text-[20px] leading-none tracking-tight text-amber-800">
        Marquee Vendor
      </h2>
