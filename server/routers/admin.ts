@@ -375,8 +375,8 @@ export function registerAdminRoutes(app: Express): void {
           b.payout_status,
           b.payout_blocked_reason,
           b.customer_fee_amount_cents,
-          b.platform_fee         AS booking_platform_fee,
-          b.vendor_payout        AS vendor_payout_cents,
+          b.platform_fee_amount  AS booking_platform_fee,
+          b.vendor_net_payout_amount AS vendor_payout_cents,
           cust.name              AS customer_name,
           cust.email             AS customer_email,
           va.business_name       AS vendor_name,
@@ -1207,7 +1207,7 @@ export function registerAdminRoutes(app: Express): void {
         SELECT
           DATE(b.created_at)                    AS date,
           SUM(b.total_amount)::bigint           AS revenue_cents,
-          SUM(b.platform_fee)::bigint           AS platform_fee_cents,
+          SUM(b.platform_fee_amount)::bigint    AS platform_fee_cents,
           COUNT(*)::int                         AS booking_count
         FROM bookings b
         WHERE b.created_at >= NOW() - INTERVAL '30 days'
@@ -1221,7 +1221,7 @@ export function registerAdminRoutes(app: Express): void {
         SELECT
           DATE_TRUNC('month', b.created_at)     AS month,
           SUM(b.total_amount)::bigint           AS revenue_cents,
-          SUM(b.platform_fee)::bigint           AS platform_fee_cents,
+          SUM(b.platform_fee_amount)::bigint    AS platform_fee_cents,
           COUNT(*)::int                         AS booking_count
         FROM bookings b
         WHERE b.created_at >= DATE_TRUNC('month', NOW() - INTERVAL '11 months')
@@ -1235,7 +1235,7 @@ export function registerAdminRoutes(app: Express): void {
         SELECT
           EXTRACT(YEAR FROM b.created_at)::int  AS year,
           SUM(b.total_amount)::bigint           AS revenue_cents,
-          SUM(b.platform_fee)::bigint           AS platform_fee_cents,
+          SUM(b.platform_fee_amount)::bigint    AS platform_fee_cents,
           COUNT(*)::int                         AS booking_count
         FROM bookings b
         WHERE b.status NOT IN ('cancelled', 'failed', 'expired')
