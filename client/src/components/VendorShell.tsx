@@ -440,6 +440,7 @@ export default function VendorShell({ children, onOpenAccountSettings }: VendorS
                   key={item.url}
                   href={item.url}
                   onClick={() => setMobileNavOpen(false)}
+                  data-testid={`link-vendor-${item.key}`}
                   className={cn(
                     "flex items-center gap-3 rounded-xl px-3 py-3 text-sm font-medium transition-colors",
                     location === item.url

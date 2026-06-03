@@ -77,6 +77,7 @@ function benefitRows(): string {
 export interface MarqueeInviteParams {
   recipientEmail: string;
   appBaseUrl?: string;
+  inviteToken?: string;
 }
 
 export function marqueeInviteTemplate(params: MarqueeInviteParams): {
@@ -86,7 +87,9 @@ export function marqueeInviteTemplate(params: MarqueeInviteParams): {
 } {
   const baseUrl = (params.appBaseUrl || DEFAULT_APP_URL).replace(/\/$/, "");
   const agreementUrl = `${baseUrl}/vendor/marquee`;
-  const ctaUrl = `${baseUrl}/`;
+  const ctaUrl = params.inviteToken
+    ? `${baseUrl}/vendor/onboarding?mv=${params.inviteToken}`
+    : `${baseUrl}/vendor/onboarding`;
 
   const subject = "You're invited: The EventHub Marquee Vendor Program";
 

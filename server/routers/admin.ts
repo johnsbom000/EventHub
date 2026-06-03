@@ -1803,9 +1803,19 @@ export function registerAdminRoutes(app: Express): void {
 
       const adminEmail = (req.adminAuth as { email?: string } | undefined)?.email ?? null;
 
+      const [activeInvite] = await db
+        .select({ token: marqueeVendorInvites.token })
+        .from(marqueeVendorInvites)
+        .where(eq(marqueeVendorInvites.active, true))
+        .orderBy(desc(marqueeVendorInvites.createdAt))
+        .limit(1);
+
       const results = await Promise.all(
         emails.map(async (email) => {
-          const result = await sendMarqueeInviteEmail(email, { recipientEmail: email });
+          const result = await sendMarqueeInviteEmail(email, {
+            recipientEmail: email,
+            inviteToken: activeInvite?.token,
+          });
           await db.insert(marqueeEmailInvites).values({
             email,
             sentBy: adminEmail,

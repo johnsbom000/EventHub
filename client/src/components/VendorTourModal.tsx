@@ -49,6 +49,10 @@ export default function VendorTourModal({ steps, onDismiss }: VendorTourModalPro
     const el = document.querySelector(selector);
     if (!el) return;
 
+    const rect = el.getBoundingClientRect();
+    const isVisible = rect.width > 0 && rect.height > 0;
+    if (!isVisible) return;
+
     el.classList.add("tour-highlight-active");
     return () => el.classList.remove("tour-highlight-active");
   }, [currentStep.highlightSelector]);

@@ -108,6 +108,11 @@ const extractPublishErrorPayload = (error: unknown): PublishErrorPayload | null 
   return null;
 };
 
+export function isStripeNotConfiguredError(error: unknown): boolean {
+  const payload = extractPublishErrorPayload(error);
+  return payload?.error === "stripe_not_configured";
+}
+
 export function getPublishFailureToastContent(error: unknown): {
   title: string;
   description: ReactNode;

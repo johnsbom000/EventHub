@@ -33,7 +33,7 @@ import { Button } from "@/components/ui/button";
 import { useToast } from "@/hooks/use-toast";
 import { getFreshAccessToken } from "@/lib/authToken";
 import { DEFAULT_COVER_RATIO, type CoverRatio } from "@/lib/listingPhotos";
-import { getPublishFailureToastContent } from "@/lib/publishFailureToast";
+import { getPublishFailureToastContent, isStripeNotConfiguredError } from "@/lib/publishFailureToast";
 import { apiRequest, getApiErrorStatus, queryClient } from "@/lib/queryClient";
 import { cn } from "@/lib/utils";
 import type { LocationResult } from "@/types/location";
@@ -555,9 +555,11 @@ export type CreateListingWizardProps = {
  parentListingId?: string;
  /** Fired after save or publish completes (before the wizard closes). */
  onComplete?: (newListingId: string) => void;
+ /** Fired when a publish attempt fails because Stripe Connect is not configured. */
+ onStripeRequired?: () => void;
 };
 
-export function CreateListingWizard({ onClose, initialListingType, parentListingId, onComplete }: CreateListingWizardProps) {
+export function CreateListingWizard({ onClose, initialListingType, parentListingId, onComplete, onStripeRequired }: CreateListingWizardProps) {
  const { toast } = useToast();
  const { isAuthenticated } = useAuth0();
 
@@ -1852,6 +1854,9 @@ export function CreateListingWizard({ onClose, initialListingType, parentListing
  description: publishError.description,
  variant: "destructive",
  });
+ if (isStripeNotConfiguredError(error)) {
+   onStripeRequired?.();
+ }
  } finally {
  setIsPublishing(false);
  publishInFlightRef.current = false;

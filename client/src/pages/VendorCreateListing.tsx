@@ -14,9 +14,17 @@ export default function VendorCreateListing() {
     didPublishRef.current = true;
   };
 
+  const handleStripeRequired = () => {
+    setLocation("/vendor/shop");
+  };
+
   return (
     <div data-testid="page-vendor-create-listing">
-      <CreateListingWizard onClose={handleClose} onComplete={handleComplete} />
+      <CreateListingWizard
+        onClose={handleClose}
+        onComplete={handleComplete}
+        onStripeRequired={handleStripeRequired}
+      />
     </div>
   );
 }
