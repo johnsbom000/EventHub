@@ -303,6 +303,12 @@ export default function VendorOnboarding() {
  }, []);
 
  const [currentStep, setCurrentStep] = useState<number>(() => {
+ // If arriving via an invite link, always start fresh — never inherit another user's draft.
+ const urlParams = new URLSearchParams(window.location.search);
+ if (urlParams.get("mv") || urlParams.get("fv")) {
+  localStorage.removeItem(STORAGE_KEY);
+  return 1;
+ }
  try {
  const raw = localStorage.getItem(STORAGE_KEY);
  if (!raw) return 1;
