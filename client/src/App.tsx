@@ -1,7 +1,7 @@
 import { Switch, Route, useLocation } from "wouter";
-import { useEffect, useRef, useState } from "react";
-import { QueryClientProvider, useQuery } from "@tanstack/react-query";
-import { queryClient } from "./lib/queryClient";
+import React, { useEffect, useRef, useState } from "react";
+import { QueryClientProvider, useQuery, useQueryClient } from "@tanstack/react-query";
+import { queryClient, apiRequest } from "./lib/queryClient";
 import { useAuth0 } from "@auth0/auth0-react";
 
 import { Toaster } from "@/components/ui/toaster";
@@ -39,9 +39,11 @@ import CustomerBookingDetail from "@/pages/customer/CustomerBookingDetail";
 import Checkout from "@/pages/Checkout";
 import Terms from "@/pages/Terms";
 import { deriveVendorDetection, type VendorMeState } from "@/lib/vendorState";
+import { useIsVendorOnly } from "@/hooks/useIsVendorOnly";
 import { useToast } from "@/hooks/use-toast";
 import Privacy from "@/pages/Privacy";
 import MarqueeVendorProgram from "@/pages/MarqueeVendorProgram";
+import FoundingVendorProgram from "@/pages/FoundingVendorProgram";
 
 // Handles the post-sign-in redirect for normal logins (not "Become a Vendor").
 // AuthModal routes here via appState.returnTo so this mounts fresh after
@@ -101,6 +103,9 @@ function RootEntry() {
   const { isAuthenticated, isLoading: isAuthLoading } = useAuth0();
   const { toast } = useToast();
   const hasShownToastRef = useRef(false);
+  const hasMarkedVendorOnlyRef = useRef(false);
+  const qc = useQueryClient();
+  const { isVendorOnly } = useIsVendorOnly();
 
   // "Become a Vendor" flow — check vendor status and redirect to dashboard/onboarding.
   const [vendorIntent] = useState(() => {
@@ -143,6 +148,13 @@ function RootEntry() {
       }
     } else if (vendorDetection.status === "non_vendor") {
       nextPath = "/vendor/onboarding";
+      // Fresh vendor signup from the landing page — mark account as vendor-only.
+      if (!hasMarkedVendorOnlyRef.current) {
+        hasMarkedVendorOnlyRef.current = true;
+        void apiRequest("POST", "/api/me/mark-vendor-only")
+          .then(() => qc.invalidateQueries({ queryKey: ["/api/customer/me"] }))
+          .catch(() => {});
+      }
     } else {
       const lastKnownVendorAccount =
         typeof window !== "undefined" &&
@@ -152,7 +164,13 @@ function RootEntry() {
 
     const pathname = location.split("?")[0] || "/";
     if (pathname !== nextPath) setLocation(nextPath);
-  }, [vendorIntent, isAuthLoading, isAuthenticated, location, setLocation, vendorDetection, toast]);
+  }, [vendorIntent, isAuthLoading, isAuthenticated, location, setLocation, vendorDetection, toast, qc]);
+
+  // Vendor-only accounts that navigate directly to / after onboarding get redirected.
+  useEffect(() => {
+    if (isAuthLoading || !isAuthenticated || vendorIntent || !isVendorOnly) return;
+    setLocation("/vendor/dashboard");
+  }, [isAuthLoading, isAuthenticated, vendorIntent, isVendorOnly, setLocation]);
 
   if (isAuthLoading) return <Home />;
   if (!isAuthenticated) return <TemporaryLanding />;
@@ -163,8 +181,23 @@ function RootEntry() {
       </div>
     );
   }
+  if (isAuthenticated && isVendorOnly) return null;
 
   return <Home />;
+}
+
+// Blocks vendor-only accounts from customer-facing pages by redirecting to /vendor/dashboard.
+// Customers and customer-turned-vendors pass through unaffected.
+function VendorOnlyGuard({ children }: { children: React.ReactNode }) {
+  const { isVendorOnly, isLoading } = useIsVendorOnly();
+  const [, setLocation] = useLocation();
+
+  useEffect(() => {
+    if (!isLoading && isVendorOnly) setLocation("/vendor/dashboard");
+  }, [isVendorOnly, isLoading, setLocation]);
+
+  if (isLoading || isVendorOnly) return null;
+  return <>{children}</>;
 }
 
 function Router() {
@@ -174,15 +207,15 @@ function Router() {
       <Switch>
         <Route path="/" component={RootEntry} />
         <Route path="/post-login" component={PostLogin} />
-        <Route path="/marketplace" component={Home} />
+        <Route path="/marketplace" component={() => <VendorOnlyGuard><Home /></VendorOnlyGuard>} />
 
         {/* Customer */}
-        <Route path="/dashboard" component={CustomerDashboard} />
-        <Route path="/dashboard/:section" component={CustomerDashboard} />
-        <Route path="/browse" component={BrowseVendors} />
+        <Route path="/dashboard" component={() => <VendorOnlyGuard><CustomerDashboard /></VendorOnlyGuard>} />
+        <Route path="/dashboard/:section" component={() => <VendorOnlyGuard><CustomerDashboard /></VendorOnlyGuard>} />
+        <Route path="/browse" component={() => <VendorOnlyGuard><BrowseVendors /></VendorOnlyGuard>} />
         <Route path="/listing/:id" component={ListingDetail} />
-        <Route path="/booking/:bookingId" component={CustomerBookingDetail} />
-        <Route path="/checkout/:listingId" component={Checkout} />
+        <Route path="/booking/:bookingId" component={() => <VendorOnlyGuard><CustomerBookingDetail /></VendorOnlyGuard>} />
+        <Route path="/checkout/:listingId" component={() => <VendorOnlyGuard><Checkout /></VendorOnlyGuard>} />
         <Route path="/shop/:vendorId" component={VendorHub} />
         <Route path="/vendor/hub/:vendorId" component={VendorHub} />
         {/* Vendor */}
@@ -207,6 +240,7 @@ function Router() {
 
         {/* Program pages */}
         <Route path="/vendor/marquee" component={MarqueeVendorProgram} />
+        <Route path="/vendor/founding" component={FoundingVendorProgram} />
 
         {/* Legal */}
         <Route path="/terms" component={Terms} />
@@ -247,7 +281,7 @@ function AdminAutoRedirect() {
     sessionStorage.setItem("eh_admin_checked", "1");
     // Don't redirect away from invite-link flows (?fv= or ?ref=).
     const params = new URLSearchParams(window.location.search);
-    if (data?.isAdmin && !params.has("fv") && !params.has("ref")) setLocation("/admin");
+    if (data?.isAdmin && !params.has("fv") && !params.has("ref") && !params.has("mv")) setLocation("/admin");
   }, [data, isError, shouldCheck, setLocation]);
 
   return null;

@@ -9,12 +9,12 @@ import BrandWordmark from "@/components/BrandWordmark";
 import { Badge } from "@/components/ui/badge";
 import { loginWithPopupFirst } from "@/lib/auth0Login";
 
-const MARQUEE_TOKEN_STORAGE_KEY = "eventhub:marquee-invite-token";
+const FOUNDING_TOKEN_STORAGE_KEY = "eventhub:founding-invite-token";
 
 const valueProps = [
   {
     title: "Keep more",
-    description: "A fee holiday to start, then a rate that stays below standard.",
+    description: "A fee holiday to start, then a founding rate that stays below standard.",
   },
   {
     title: "Book more",
@@ -22,7 +22,7 @@ const valueProps = [
   },
   {
     title: "Belong",
-    description: "A seat in the Insider Circle, with first access to everything new.",
+    description: "A permanent Founding Vendor badge and early access to everything new.",
   },
 ];
 
@@ -30,26 +30,20 @@ const benefits = [
   {
     title: "Fee Holiday: 0% platform fee",
     description:
-      "Keep 100% of your earliest bookings. No platform commission while the holiday is active.",
-    tag: "Ends at 20 bookings or 30 days, whichever comes last",
+      "Keep 100% of your first 10 bookings. No platform commission while the holiday is active.",
+    tag: "Ends at 10 bookings or 30 days, whichever comes last",
   },
   {
-    title: "The Marquee Rate: 6% instead of 8%",
+    title: "The Founding Rate: 6% instead of 8%",
     description:
-      "After the holiday, your platform fee settles at just 6% for 24 months. After 24 months, your fee returns to the normal platform rate.",
-    tag: "Lasts 24 months, then returns to standard",
-  },
-  {
-    title: "Lower Fees for Your Customers: 2.5% vs 5%",
-    description:
-      'Your listings carry a "Lower Fees" badge, so you are the better deal when couples compare.',
-    tag: "Runs your first 12 months, then returns to standard",
+      "After the holiday, your platform fee settles at just 6% for 12 months. After 12 months, your fee returns to the normal platform rate.",
+    tag: "Lasts 12 months, then returns to standard",
   },
   {
     title: "Launch Visibility: top placement + spotlight",
     description:
       "Guaranteed top placement in your area's search, plus a feature to our email list and socials.",
-    tag: "Runs your first 12 months, then converts to merit placement, giving you a head start",
+    tag: "Runs your first 12 months, then converts to merit placement",
   },
   {
     title: "White-Glove Onboarding",
@@ -58,9 +52,10 @@ const benefits = [
     tag: "One-time · on the house",
   },
   {
-    title: "Insider Circle",
-    description: "Early access to features and a say in the roadmap.",
-    tag: "While active, in accordance with EventHub's other terms of use",
+    title: "Founding Vendor Badge",
+    description:
+      "A permanent badge on your shop marking you as one of the original EventHub vendors.",
+    tag: "Permanent · displayed on all your listings",
   },
   {
     title: "Refer a Vendor, Earn Free Bookings",
@@ -71,15 +66,15 @@ const benefits = [
 ];
 
 const finePrint = [
-  "Marquee benefits apply only to bookings completed on the EventHub platform, in line with our Terms of Service.",
-  "The Marquee deal is available only to vendors personally invited by EventHub, up to 20 total. Vendors who join through a referral participate under standard terms, not Marquee terms.",
-  "The Marquee rate requires an active account: a published listing and at least 5 bookings per month. Two consecutive inactive months returns your account to standard rates.",
+  "Founding Vendor benefits apply only to bookings completed on the EventHub platform, in line with our Terms of Service.",
+  "The Founding Vendor deal is available only to vendors personally invited by EventHub. Vendors who join through a referral participate under standard terms, not Founding Vendor terms.",
+  "The Founding rate requires an active account: a published listing and at least 5 bookings per month. Two consecutive inactive months returns your account to standard rates.",
   "The fee holiday is a single window per vendor and is not transferable.",
-  "EventHub early adopter benefits will not be available to new accounts once the 20-vendor cap or a market booking-volume target is reached.",
-  "Rates and windows shown reflect the program at launch and apply to Marquee vendors enrolled during the offer period.",
+  "EventHub early adopter benefits will not be available to new accounts once the enrollment window or a market booking-volume target is reached.",
+  "Rates and windows shown reflect the program at launch and apply to Founding Vendors enrolled during the offer period.",
 ];
 
-export default function MarqueeVendorProgram() {
+export default function FoundingVendorProgram() {
   const [, setLocation] = useLocation();
   const { isAuthenticated, isLoading: isAuthLoading, loginWithPopup, loginWithRedirect } = useAuth0();
   const [isClaiming, setIsClaiming] = useState(false);
@@ -87,23 +82,23 @@ export default function MarqueeVendorProgram() {
   // Detect invite token before first render (URL param OR existing localStorage value)
   const [hasToken] = useState(() => {
     const params = new URLSearchParams(window.location.search);
-    return Boolean(params.get("mv")) || Boolean(localStorage.getItem(MARQUEE_TOKEN_STORAGE_KEY));
+    return Boolean(params.get("fv")) || Boolean(localStorage.getItem(FOUNDING_TOKEN_STORAGE_KEY));
   });
 
   // Capture URL token to localStorage and strip from URL
   useEffect(() => {
     const params = new URLSearchParams(window.location.search);
-    const mv = params.get("mv");
-    if (mv) {
-      localStorage.setItem(MARQUEE_TOKEN_STORAGE_KEY, mv.trim());
-      params.delete("mv");
+    const fv = params.get("fv");
+    if (fv) {
+      localStorage.setItem(FOUNDING_TOKEN_STORAGE_KEY, fv.trim());
+      params.delete("fv");
       const qs = params.toString();
       window.history.replaceState(null, "", window.location.pathname + (qs ? `?${qs}` : ""));
     }
   }, []);
 
   const { data: vendorAccount, isLoading: isVendorLoading } = useQuery<{
-    isMarqueeVendor?: boolean | null;
+    isFoundingVendor?: boolean | null;
   }>({
     queryKey: ["/api/vendor/me"],
     enabled: isAuthenticated && !isAuthLoading,
@@ -112,15 +107,15 @@ export default function MarqueeVendorProgram() {
   });
 
   const isLoading = isAuthLoading || isVendorLoading;
-  const isMarqueeVendor = vendorAccount?.isMarqueeVendor === true;
+  const isFoundingVendor = vendorAccount?.isFoundingVendor === true;
 
-  // Redirect to / only if: authenticated, not a marquee vendor, and no invite token
+  // Redirect to / only if: authenticated, not a founding vendor, and no invite token
   useEffect(() => {
     if (isLoading) return;
-    if (isAuthenticated && !isMarqueeVendor && !hasToken) {
+    if (isAuthenticated && !isFoundingVendor && !hasToken) {
       setLocation("/");
     }
-  }, [isLoading, isAuthenticated, isMarqueeVendor, hasToken, setLocation]);
+  }, [isLoading, isAuthenticated, isFoundingVendor, hasToken, setLocation]);
 
   const handleClaim = async () => {
     if (isAuthenticated) {
@@ -158,9 +153,9 @@ export default function MarqueeVendorProgram() {
   }
 
   // Not in member mode or invite mode — useEffect will redirect
-  if (!isMarqueeVendor && !hasToken) return null;
+  if (!isFoundingVendor && !hasToken) return null;
 
-  const isInviteMode = !isMarqueeVendor;
+  const isInviteMode = !isFoundingVendor;
 
   return (
     <div className="min-h-screen flex flex-col bg-[#ffffff]">
@@ -181,10 +176,10 @@ export default function MarqueeVendorProgram() {
               hubClassName="text-[#C9A84C]"
             />
             <p className="font-sans text-xs font-medium uppercase tracking-[0.15em] text-[#9B7A1A] mb-5">
-              LAUNCH OFFER · BY INVITATION
+              FOUNDING OFFER · BY INVITATION
             </p>
             <h1 className="text-foreground mb-4">
-              The Marquee Vendor Program
+              The Founding Vendor Program
             </h1>
             <div
               className="mx-auto mb-5 h-px w-16"
@@ -193,8 +188,8 @@ export default function MarqueeVendorProgram() {
             />
             <p className="font-sans text-base text-muted-foreground leading-relaxed mb-7 max-w-xl mx-auto">
               {isInviteMode
-                ? "Claim the best deal we will ever offer, built to put more bookings, and more of each booking, in your pocket."
-                : "You helped shape EventHub. Now claim the best deal we will ever offer, built to put more bookings, and more of each booking, in your pocket."}
+                ? "Join EventHub as a founding vendor and claim the best deal we will ever offer — built to put more bookings, and more of each booking, in your pocket."
+                : "You're one of EventHub's original vendors. Here are the terms of the program you're a part of."}
             </p>
             <div className="inline-flex items-center gap-2.5 font-sans text-sm text-muted-foreground">
               <span
@@ -202,7 +197,7 @@ export default function MarqueeVendorProgram() {
                 style={{ backgroundColor: "rgb(34 197 94)" }}
                 aria-hidden="true"
               />
-              By invitation only. Reserved for the first 20 vendors we invite.
+              By invitation only.
             </div>
           </div>
         </section>
@@ -260,8 +255,7 @@ export default function MarqueeVendorProgram() {
               <div className="flex gap-4">
                 <Lock className="h-4 w-4 flex-shrink-0 mt-0.5 text-muted-foreground" aria-hidden="true" />
                 <p className="font-sans text-sm text-muted-foreground leading-relaxed">
-                  Enrollment is by invitation only and closes once all 20 invited
-                  spots are claimed.
+                  Enrollment is by invitation only and closes once all spots are claimed.
                 </p>
               </div>
               <div className="flex gap-4">
@@ -308,7 +302,7 @@ export default function MarqueeVendorProgram() {
           <div className="mx-auto max-w-4xl flex items-center justify-between gap-4 px-4 py-4 sm:px-6">
             <div className="hidden sm:block">
               <p className="font-sans text-sm font-semibold text-foreground">Ready to claim your spot?</p>
-              <p className="font-sans text-xs text-muted-foreground">By invitation only · 20 spots total</p>
+              <p className="font-sans text-xs text-muted-foreground">By invitation only · Limited spots available</p>
             </div>
             <button
               type="button"
@@ -317,7 +311,7 @@ export default function MarqueeVendorProgram() {
               className="w-full sm:w-auto inline-flex items-center justify-center gap-2 rounded-lg px-6 py-3 font-sans text-sm font-semibold text-[#1C1100] transition-opacity disabled:opacity-60"
               style={{ background: "#C9A84C", border: "1px solid #B0882C" }}
             >
-              {isClaiming ? "Opening…" : "Claim your Marquee spot →"}
+              {isClaiming ? "Opening…" : "Claim your Founding spot →"}
             </button>
           </div>
         </div>

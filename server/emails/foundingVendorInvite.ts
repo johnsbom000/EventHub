@@ -83,8 +83,8 @@ export function foundingVendorInviteTemplate(params: FoundingVendorInviteParams)
   const baseUrl = (params.appBaseUrl || DEFAULT_APP_URL).replace(/\/$/, "");
   const agreementUrl = `${baseUrl}/vendor/founding`;
   const ctaUrl = params.inviteToken
-    ? `${baseUrl}/vendor/onboarding?fv=${params.inviteToken}`
-    : `${baseUrl}/vendor/onboarding`;
+    ? `${baseUrl}/vendor/founding?fv=${params.inviteToken}`
+    : `${baseUrl}/vendor/founding`;
 
   const subject = "You're invited: The EventHub Founding Vendor Program";
 
