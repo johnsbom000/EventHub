@@ -1101,11 +1101,7 @@ export function registerAdminRoutes(app: Express): void {
     try {
       const excludeInternal = req.query.excludeInternal === "true";
 
-      // Excludes traffic from owner accounts when the toggle is on
       const ownerFilter = excludeInternal
-        ? drizzleSql`(${webTraffic.userId} IS NULL OR ${webTraffic.userId} NOT IN (SELECT id FROM users WHERE email IN ('johnsbom000@gmail.com', 'boman@griffjohnson.com', 'cassidymalm21@gmail.com', 'eventhubglobal@gmail.com')))`
-        : undefined;
-      const ownerFilterLoggedIn = excludeInternal
         ? drizzleSql`${webTraffic.userId} IS NOT NULL AND ${webTraffic.userId} NOT IN (SELECT id FROM users WHERE email IN ('johnsbom000@gmail.com', 'boman@griffjohnson.com', 'cassidymalm21@gmail.com', 'eventhubglobal@gmail.com'))`
         : drizzleSql`${webTraffic.userId} IS NOT NULL`;
 
@@ -1120,7 +1116,7 @@ export function registerAdminRoutes(app: Express): void {
           count: drizzleSql<number>`COUNT(DISTINCT ${webTraffic.userId})`,
         })
         .from(webTraffic)
-        .where(ownerFilterLoggedIn);
+        .where(ownerFilter);
       const uniqueVisitors = uniqueVisitorsResult.count;
 
       const topPaths = await db

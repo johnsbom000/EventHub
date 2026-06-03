@@ -895,7 +895,7 @@ function ListingsSection({ isAdmin }: { isAdmin: boolean }) {
 // ─── Section: Traffic ─────────────────────────────────────────────────────────
 
 function TrafficSection({ isAdmin }: { isAdmin: boolean }) {
-  const [excludeInternal, setExcludeInternal] = useState(false);
+  const [excludeInternal, setExcludeInternal] = useState(true);
   const trafficUrl = excludeInternal
     ? "/api/admin/stats/traffic?excludeInternal=true"
     : "/api/admin/stats/traffic";
