@@ -137,6 +137,7 @@ import {
   foundingVendorInvites,
   marqueeVendorInvites,
   marqueeEmailInvites,
+  foundingEmailInvites,
 } from "@shared/schema";
 import {
   requireDualAuthAuth0,
@@ -173,6 +174,7 @@ import {
   sendTravelFeeProposedEmail,
   sendTravelFeeRespondedEmail,
   sendMarqueeInviteEmail,
+  sendFoundingVendorInviteEmail,
 } from "../email";
 import { calculateRefund } from "../lib/calculateRefund";
 import {
@@ -1907,6 +1909,64 @@ export function registerAdminRoutes(app: Express): void {
         .set({ isFoundingVendor: false, foundingVendorNumber: null })
         .where(and(eq(vendorAccounts.id, vendorId), isNull(vendorAccounts.deletedAt)));
       return res.json({ ok: true });
+    } catch (err: any) {
+      return respondWithInternalServerError(req, res, err);
+    }
+  });
+
+  // GET /api/admin/founding-vendors/email-invites — list invitation email history
+  app.get("/api/admin/founding-vendors/email-invites", adminRateLimiter, requireAdminAuth, async (req: any, res: any) => {
+    try {
+      const rows = await db
+        .select()
+        .from(foundingEmailInvites)
+        .orderBy(desc(foundingEmailInvites.sentAt))
+        .limit(200);
+      return res.json({ invites: rows });
+    } catch (err: any) {
+      return respondWithInternalServerError(req, res, err);
+    }
+  });
+
+  // POST /api/admin/founding-vendors/send-invites — send founding vendor invitation emails
+  app.post("/api/admin/founding-vendors/send-invites", adminRateLimiter, requireAdminAuth, async (req: any, res: any) => {
+    try {
+      const raw: unknown = req.body?.emails;
+      if (!Array.isArray(raw) || raw.length === 0) {
+        return res.status(400).json({ error: "emails must be a non-empty array" });
+      }
+      const emails: string[] = raw
+        .map((e: unknown) => (typeof e === "string" ? e.trim().toLowerCase() : ""))
+        .filter((e) => /^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(e));
+      if (emails.length === 0) {
+        return res.status(400).json({ error: "No valid email addresses provided" });
+      }
+
+      const adminEmail = (req.adminAuth as { email?: string } | undefined)?.email ?? null;
+
+      const [activeInvite] = await db
+        .select({ token: foundingVendorInvites.token })
+        .from(foundingVendorInvites)
+        .where(eq(foundingVendorInvites.active, true))
+        .orderBy(desc(foundingVendorInvites.createdAt))
+        .limit(1);
+
+      const results = await Promise.all(
+        emails.map(async (email) => {
+          const result = await sendFoundingVendorInviteEmail(email, {
+            recipientEmail: email,
+            inviteToken: activeInvite?.token,
+          });
+          await db.insert(foundingEmailInvites).values({
+            email,
+            sentBy: adminEmail,
+            accepted: result.sent,
+          });
+          return { email, ...result };
+        })
+      );
+
+      return res.json({ results });
     } catch (err: any) {
       return respondWithInternalServerError(req, res, err);
     }

@@ -2221,6 +2221,8 @@ function MarqueeVendorSection({ isAdmin }: { isAdmin: boolean }) {
 function FoundingVendorSection({ isAdmin }: { isAdmin: boolean }) {
   const qc = useQueryClient();
   const [copied, setCopied] = useState(false);
+  const [foundingInviteEmails, setFoundingInviteEmails] = useState("");
+  const [foundingInviteResults, setFoundingInviteResults] = useState<{ email: string; sent: boolean; skipped: boolean; reason?: string }[]>([]);
 
   const { data: stats, isLoading: statsLoading, isError: statsError, refetch: refetchStats } = useQuery<any>({
     queryKey: ["/api/admin/founding-vendors/stats"],
@@ -2262,6 +2264,32 @@ function FoundingVendorSection({ isAdmin }: { isAdmin: boolean }) {
     },
     onSuccess: () => {
       qc.refetchQueries({ queryKey: ["/api/admin/founding-vendors/stats"] });
+    },
+  });
+
+  const { data: foundingInviteHistory = [], refetch: refetchFoundingInviteHistory } = useQuery<{ id: number; email: string; sentAt: string; sentBy: string | null; accepted: boolean }[]>({
+    queryKey: ["/api/admin/founding-vendors/email-invites"],
+    queryFn: async () => {
+      const res = await apiRequest("GET", "/api/admin/founding-vendors/email-invites");
+      const data = await res.json();
+      return data.invites ?? [];
+    },
+    enabled: isAdmin,
+  });
+
+  const foundingInviteMutation = useMutation({
+    mutationFn: async (emails: string[]) => {
+      const res = await apiRequest("POST", "/api/admin/founding-vendors/send-invites", { emails });
+      if (!res.ok) {
+        const body = await res.json().catch(() => ({}));
+        throw new Error((body as any).error ?? "Failed to send invitations");
+      }
+      return res.json() as Promise<{ results: { email: string; sent: boolean; skipped: boolean; reason?: string }[] }>;
+    },
+    onSuccess: (data) => {
+      setFoundingInviteResults(data.results);
+      setFoundingInviteEmails("");
+      refetchFoundingInviteHistory();
     },
   });
 
@@ -2338,6 +2366,89 @@ function FoundingVendorSection({ isAdmin }: { isAdmin: boolean }) {
                 </p>
               </div>
             </>
+          )}
+        </CardContent>
+      </Card>
+
+      <Card className="mb-6">
+        <CardHeader>
+          <CardTitle>Send Invitations</CardTitle>
+          <CardDescription>Enter one email address per line. Each recipient receives the Founding Vendor invitation email.</CardDescription>
+        </CardHeader>
+        <CardContent>
+          <textarea
+            value={foundingInviteEmails}
+            onChange={(e) => { setFoundingInviteEmails(e.target.value); setFoundingInviteResults([]); }}
+            placeholder={"vendor@example.com\nanother@example.com"}
+            rows={4}
+            className="w-full rounded-md border border-border bg-background px-3 py-2 text-sm font-mono resize-y mb-3"
+          />
+          <button
+            onClick={() => {
+              const emails = foundingInviteEmails
+                .split(/[\n,]+/)
+                .map((e) => e.trim())
+                .filter((e) => e.length > 0);
+              if (emails.length > 0) foundingInviteMutation.mutate(emails);
+            }}
+            disabled={foundingInviteMutation.isPending || foundingInviteEmails.trim().length === 0}
+            className="rounded-md bg-amber-500 px-4 py-2 text-sm font-semibold text-white disabled:opacity-50"
+          >
+            {foundingInviteMutation.isPending ? "Sending…" : "Send Invitations"}
+          </button>
+          {foundingInviteMutation.isError && (
+            <p className="mt-2 text-sm text-destructive">{(foundingInviteMutation.error as Error).message}</p>
+          )}
+          {foundingInviteResults.length > 0 && (
+            <div className="mt-4 space-y-1">
+              <p className="text-xs font-medium text-muted-foreground mb-2">Just sent:</p>
+              {foundingInviteResults.map((r) => (
+                <div key={r.email} className="flex items-center gap-2 text-sm">
+                  {r.sent ? (
+                    <CheckCircle className="h-4 w-4 text-green-500 flex-shrink-0" />
+                  ) : (
+                    <XCircle className="h-4 w-4 text-destructive flex-shrink-0" />
+                  )}
+                  <span className="font-mono text-xs">{r.email}</span>
+                  {!r.sent && r.reason && (
+                    <span className="text-xs text-muted-foreground truncate">{r.reason}</span>
+                  )}
+                </div>
+              ))}
+            </div>
+          )}
+          {foundingInviteHistory.length > 0 && (
+            <div className="mt-6">
+              <p className="text-xs font-medium text-muted-foreground mb-2">Invitation history ({foundingInviteHistory.length})</p>
+              <div className="rounded-md border border-border overflow-hidden">
+                <table className="w-full text-xs">
+                  <thead>
+                    <tr className="bg-muted/50 border-b border-border">
+                      <th className="text-left px-3 py-2 font-medium text-muted-foreground">Email</th>
+                      <th className="text-left px-3 py-2 font-medium text-muted-foreground">Sent</th>
+                      <th className="text-left px-3 py-2 font-medium text-muted-foreground">Status</th>
+                    </tr>
+                  </thead>
+                  <tbody>
+                    {foundingInviteHistory.map((inv) => (
+                      <tr key={inv.id} className="border-b border-border last:border-0">
+                        <td className="px-3 py-2 font-mono">{inv.email}</td>
+                        <td className="px-3 py-2 text-muted-foreground whitespace-nowrap">
+                          {new Date(inv.sentAt).toLocaleString()}
+                        </td>
+                        <td className="px-3 py-2">
+                          {inv.accepted ? (
+                            <span className="inline-flex items-center gap-1 text-green-600"><CheckCircle className="h-3 w-3" /> Sent</span>
+                          ) : (
+                            <span className="inline-flex items-center gap-1 text-destructive"><XCircle className="h-3 w-3" /> Failed</span>
+                          )}
+                        </td>
+                      </tr>
+                    ))}
+                  </tbody>
+                </table>
+              </div>
+            </div>
           )}
         </CardContent>
       </Card>

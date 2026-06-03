@@ -1426,3 +1426,14 @@ export const marqueeEmailInvites = pgTable("marquee_email_invites", {
 });
 
 export type MarqueeEmailInvite = typeof marqueeEmailInvites.$inferSelect;
+
+// Founding Vendor Email Invites — log of every invitation email the admin sends
+export const foundingEmailInvites = pgTable("founding_email_invites", {
+  id: serial("id").primaryKey(),
+  email: varchar("email", { length: 255 }).notNull(),
+  sentAt: timestamp("sent_at", { withTimezone: true }).notNull().defaultNow(),
+  sentBy: varchar("sent_by", { length: 255 }),
+  accepted: boolean("accepted").notNull().default(false),
+});
+
+export type FoundingEmailInvite = typeof foundingEmailInvites.$inferSelect;

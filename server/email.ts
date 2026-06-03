@@ -21,6 +21,7 @@ import { disputeResponseTemplate, type DisputeResponseParams } from "./emails/di
 import { travelFeeProposedTemplate, type TravelFeeProposedParams } from "./emails/travelFeeProposed";
 import { travelFeeRespondedTemplate, type TravelFeeRespondedParams } from "./emails/travelFeeResponded";
 import { marqueeInviteTemplate, type MarqueeInviteParams } from "./emails/marqueeInvite";
+import { foundingVendorInviteTemplate, type FoundingVendorInviteParams } from "./emails/foundingVendorInvite";
 import { appUrl } from "./lib/routeHelpers";
 
 export type EmailResult = {
@@ -276,5 +277,13 @@ export async function sendMarqueeInviteEmail(
   params: MarqueeInviteParams
 ): Promise<EmailResult> {
   const { subject, html, text } = marqueeInviteTemplate({ ...params, appBaseUrl: appUrl() });
+  return sendViaResend({ to, subject, html, text });
+}
+
+export async function sendFoundingVendorInviteEmail(
+  to: string,
+  params: FoundingVendorInviteParams
+): Promise<EmailResult> {
+  const { subject, html, text } = foundingVendorInviteTemplate({ ...params, appBaseUrl: appUrl() });
   return sendViaResend({ to, subject, html, text });
 }

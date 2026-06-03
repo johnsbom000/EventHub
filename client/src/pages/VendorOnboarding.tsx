@@ -533,6 +533,7 @@ export default function VendorOnboarding() {
  localStorage.removeItem(STORAGE_KEY);
  localStorage.removeItem(REFERRAL_STORAGE_KEY);
  localStorage.removeItem(FOUNDING_TOKEN_STORAGE_KEY);
+ localStorage.removeItem(MARQUEE_TOKEN_STORAGE_KEY);
  if (createListing) {
  setLocation("/vendor/listings/new");
  } else {
