@@ -33,6 +33,7 @@ import {
  Check,
 } from "lucide-react";
 import { deriveVendorDetection, type VendorMeState } from "@/lib/vendorState";
+import { useIsVendorOnly } from "@/hooks/useIsVendorOnly";
 import FeedbackModal from "@/components/FeedbackModal";
 import { useTranslation } from "react-i18next";
 import { useLanguage } from "@/context/LanguageContext";
@@ -66,6 +67,7 @@ export default function Navigation({
  const { t } = useTranslation();
  const { language, setLanguage } = useLanguage();
  const [location, setLocation] = useLocation();
+ const { isVendorOnly } = useIsVendorOnly(); // [vendor-only restrictions] remove this line
  const hideAvatarNotifications = location === "/";
  const isVendorOnboardingRoute = location.startsWith("/vendor/onboarding");
  const [userRole, setUserRole] = useState<UserRole>(null);
@@ -256,7 +258,8 @@ export default function Navigation({
          </Button>
         </Link>
 
-        {location.startsWith("/dashboard") ? (
+        {/* [vendor-only restrictions] remove the !isVendorOnly wrapper, keep the inner ternary as-is */}
+        {!isVendorOnly && (location.startsWith("/dashboard") ? (
          <Link href="/" className="hidden sm:inline-flex">
           <Button variant="ghost" size="default" className={backToMarketplaceNavButtonClass} data-testid="link-vendor-back-to-marketplace">
            <Store />
@@ -269,7 +272,7 @@ export default function Navigation({
            {t("nav.vendor.myEvents")}
           </Button>
          </Link>
-        )}
+        ))}
 
         <DropdownMenu>
          <DropdownMenuTrigger asChild>
@@ -288,10 +291,13 @@ export default function Navigation({
            <User className="mr-2 h-4 w-4" />
            <span>{t("nav.vendor.profile")}</span>
           </DropdownMenuItem>
-          <DropdownMenuItem onClick={() => setLocation("/dashboard/events")} data-testid="menu-item-vendor-my-events">
-           <Calendar className="mr-2 h-4 w-4" />
-           <span>{t("nav.vendor.myEvents")}</span>
-          </DropdownMenuItem>
+          {/* [vendor-only restrictions] remove the !isVendorOnly wrapper, keep just the DropdownMenuItem */}
+          {!isVendorOnly && (
+           <DropdownMenuItem onClick={() => setLocation("/dashboard/events")} data-testid="menu-item-vendor-my-events">
+            <Calendar className="mr-2 h-4 w-4" />
+            <span>{t("nav.vendor.myEvents")}</span>
+           </DropdownMenuItem>
+          )}
           <DropdownMenuItem onClick={() => setLocation("/vendor/dashboard")} data-testid="menu-item-vendor-dashboard">
            <Home className="mr-2 h-4 w-4" />
            <span>{t("nav.vendor.dashboard")}</span>

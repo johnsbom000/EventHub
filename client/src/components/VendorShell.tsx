@@ -67,6 +67,7 @@ type VendorHeaderAccount = {
   businessName?: string | null;
   email?: string | null;
   operatingTimezone?: string | null;
+  vendorOnlySignup?: boolean;
 };
 
 type VendorProfileSummary = {
@@ -145,6 +146,8 @@ export default function VendorShell({ children, onOpenAccountSettings }: VendorS
     vendorProfiles.find((profile) => profile.id === activeProfileId)?.profileName ||
     vendorAccount?.businessName ||
     "Vendor Profile";
+
+  const isVendorOnly = Boolean(vendorAccount?.vendorOnlySignup); // [vendor-only restrictions] remove this line
 
   const showTimezoneModal = useShowTimezoneModal(vendorAccount?.operatingTimezone);
   const [tzModalDismissed, setTzModalDismissed] = useState(false);
@@ -298,29 +301,43 @@ export default function VendorShell({ children, onOpenAccountSettings }: VendorS
             >
               <Menu className="h-5 w-5" />
             </button>
-            <Link
-              href="/"
-              className="flex items-center gap-2 rounded-md px-3 py-2"
-              data-testid="link-vendor-shell-home"
-            >
-              <BrandWordmark
-                className="text-[1.875rem]"
-                eventClassName="text-[#e07a6a] font-normal"
-                hubClassName="text-[#4a6a7d] font-normal"
-              />
-            </Link>
+            {/* [vendor-only restrictions] collapse to just the <Link> branch and remove the isVendorOnly conditional */}
+            {isVendorOnly ? (
+              <span className="flex items-center gap-2 rounded-md px-3 py-2">
+                <BrandWordmark
+                  className="text-[1.875rem]"
+                  eventClassName="text-[#e07a6a] font-normal"
+                  hubClassName="text-[#4a6a7d] font-normal"
+                />
+              </span>
+            ) : (
+              <Link
+                href="/"
+                className="flex items-center gap-2 rounded-md px-3 py-2"
+                data-testid="link-vendor-shell-home"
+              >
+                <BrandWordmark
+                  className="text-[1.875rem]"
+                  eventClassName="text-[#e07a6a] font-normal"
+                  hubClassName="text-[#4a6a7d] font-normal"
+                />
+              </Link>
+            )}
           </div>
 
           <div className="flex items-center gap-3">
-            <Button
-              variant="default"
-              className="no-global-scale editorial-login-btn min-h-0 h-[27px] min-w-[136px] rounded-[7px] px-3.5 py-0 text-[12.5px] leading-none gap-1 [&_svg]:!size-2"
-              onClick={() => setLocation("/")}
-              data-testid="button-back-marketplace"
-            >
-              <ArrowLeft />
-              {t("vendorShell.backToMarketplace")}
-            </Button>
+            {/* [vendor-only restrictions] remove the !isVendorOnly wrapper, keep just the Button */}
+            {!isVendorOnly && (
+              <Button
+                variant="default"
+                className="no-global-scale editorial-login-btn min-h-0 h-[27px] min-w-[136px] rounded-[7px] px-3.5 py-0 text-[12.5px] leading-none gap-1 [&_svg]:!size-2"
+                onClick={() => setLocation("/")}
+                data-testid="button-back-marketplace"
+              >
+                <ArrowLeft />
+                {t("vendorShell.backToMarketplace")}
+              </Button>
+            )}
 
             <DropdownMenu>
               <DropdownMenuTrigger asChild>
@@ -372,13 +389,16 @@ export default function VendorShell({ children, onOpenAccountSettings }: VendorS
                   <User className="mr-2 h-4 w-4" />
                   <span>{t("vendorShell.profile")}</span>
                 </DropdownMenuItem>
-                <DropdownMenuItem
-                  onClick={() => setLocation("/dashboard/events")}
-                  data-testid="menu-item-vendor-shell-my-events"
-                >
-                  <Calendar className="mr-2 h-4 w-4" />
-                  <span>{t("vendorShell.myEvents")}</span>
-                </DropdownMenuItem>
+                {/* [vendor-only restrictions] remove the !isVendorOnly wrapper, keep just the DropdownMenuItem */}
+                {!isVendorOnly && (
+                  <DropdownMenuItem
+                    onClick={() => setLocation("/dashboard/events")}
+                    data-testid="menu-item-vendor-shell-my-events"
+                  >
+                    <Calendar className="mr-2 h-4 w-4" />
+                    <span>{t("vendorShell.myEvents")}</span>
+                  </DropdownMenuItem>
+                )}
                 <DropdownMenuItem
                   onClick={() => setLocation("/vendor/dashboard")}
                   data-testid="menu-item-vendor-shell-dashboard"
