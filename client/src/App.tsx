@@ -103,6 +103,7 @@ function RootEntry() {
   const { isAuthenticated, isLoading: isAuthLoading } = useAuth0();
   const { toast } = useToast();
   const hasShownToastRef = useRef(false);
+  // [vendor-only restrictions] remove these 3 lines
   const hasMarkedVendorOnlyRef = useRef(false);
   const qc = useQueryClient();
   const { isVendorOnly } = useIsVendorOnly();
@@ -148,7 +149,7 @@ function RootEntry() {
       }
     } else if (vendorDetection.status === "non_vendor") {
       nextPath = "/vendor/onboarding";
-      // Fresh vendor signup from the landing page — mark account as vendor-only.
+      // [vendor-only restrictions] remove this block
       if (!hasMarkedVendorOnlyRef.current) {
         hasMarkedVendorOnlyRef.current = true;
         void apiRequest("POST", "/api/me/mark-vendor-only")
@@ -166,7 +167,7 @@ function RootEntry() {
     if (pathname !== nextPath) setLocation(nextPath);
   }, [vendorIntent, isAuthLoading, isAuthenticated, location, setLocation, vendorDetection, toast, qc]);
 
-  // Vendor-only accounts that navigate directly to / after onboarding get redirected.
+  // [vendor-only restrictions] remove this entire effect
   useEffect(() => {
     if (isAuthLoading || !isAuthenticated || vendorIntent || !isVendorOnly) return;
     setLocation("/vendor/dashboard");
@@ -181,13 +182,12 @@ function RootEntry() {
       </div>
     );
   }
-  if (isAuthenticated && isVendorOnly) return null;
+  if (isAuthenticated && isVendorOnly) return null; // [vendor-only restrictions] remove this line
 
   return <Home />;
 }
 
-// Blocks vendor-only accounts from customer-facing pages by redirecting to /vendor/dashboard.
-// Customers and customer-turned-vendors pass through unaffected.
+// [vendor-only restrictions] remove this entire VendorOnlyGuard component
 function VendorOnlyGuard({ children }: { children: React.ReactNode }) {
   const { isVendorOnly, isLoading } = useIsVendorOnly();
   const [, setLocation] = useLocation();
@@ -207,6 +207,7 @@ function Router() {
       <Switch>
         <Route path="/" component={RootEntry} />
         <Route path="/post-login" component={PostLogin} />
+        {/* [vendor-only restrictions] unwrap VendorOnlyGuard from all routes below that have it */}
         <Route path="/marketplace" component={() => <VendorOnlyGuard><Home /></VendorOnlyGuard>} />
 
         {/* Customer */}
