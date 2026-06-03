@@ -1796,14 +1796,24 @@ export function registerAdminRoutes(app: Express): void {
       if (!Array.isArray(raw) || raw.length === 0) {
         return res.status(400).json({ error: "emails must be a non-empty array" });
       }
-      const emails: string[] = raw
-        .map((e: unknown) => (typeof e === "string" ? e.trim().toLowerCase() : ""))
-        .filter((e) => /^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(e));
+      const emails: string[] = [...new Set(
+        raw
+          .map((e: unknown) => (typeof e === "string" ? e.trim().toLowerCase() : ""))
+          .filter((e) => /^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(e))
+      )];
       if (emails.length === 0) {
         return res.status(400).json({ error: "No valid email addresses provided" });
       }
 
       const adminEmail = (req.adminAuth as { email?: string } | undefined)?.email ?? null;
+
+      // Skip emails that were already successfully sent
+      const alreadySentRows = await db
+        .select({ email: marqueeEmailInvites.email })
+        .from(marqueeEmailInvites)
+        .where(and(inArray(marqueeEmailInvites.email, emails), eq(marqueeEmailInvites.accepted, true)));
+      const alreadySent = new Set(alreadySentRows.map((r) => r.email));
+      const toSend = emails.filter((e) => !alreadySent.has(e));
 
       const [activeInvite] = await db
         .select({ token: marqueeVendorInvites.token })
@@ -1813,24 +1823,33 @@ export function registerAdminRoutes(app: Express): void {
         .limit(1);
 
       const results: { email: string; sent: boolean }[] = [];
-      for (let i = 0; i < emails.length; i += 4) {
-        const batch = emails.slice(i, i + 4);
+      for (let i = 0; i < toSend.length; i += 4) {
+        const batch = toSend.slice(i, i + 4);
         const batchResults = await Promise.all(
           batch.map(async (email) => {
             const result = await sendMarqueeInviteEmail(email, {
               recipientEmail: email,
               inviteToken: activeInvite?.token,
             });
-            await db.insert(marqueeEmailInvites).values({
-              email,
-              sentBy: adminEmail,
-              accepted: result.sent,
-            });
+            // Update existing failed record if one exists, otherwise insert
+            const [existing] = await db
+              .select({ id: marqueeEmailInvites.id })
+              .from(marqueeEmailInvites)
+              .where(and(eq(marqueeEmailInvites.email, email), eq(marqueeEmailInvites.accepted, false)))
+              .orderBy(desc(marqueeEmailInvites.sentAt))
+              .limit(1);
+            if (existing) {
+              await db.update(marqueeEmailInvites)
+                .set({ accepted: result.sent, sentAt: new Date(), sentBy: adminEmail })
+                .where(eq(marqueeEmailInvites.id, existing.id));
+            } else {
+              await db.insert(marqueeEmailInvites).values({ email, sentBy: adminEmail, accepted: result.sent });
+            }
             return { email, ...result };
           })
         );
         results.push(...batchResults);
-        if (i + 4 < emails.length) await new Promise((r) => setTimeout(r, 1100));
+        if (i + 4 < toSend.length) await new Promise((r) => setTimeout(r, 1100));
       }
 
       return res.json({ results });
@@ -1941,14 +1960,24 @@ export function registerAdminRoutes(app: Express): void {
       if (!Array.isArray(raw) || raw.length === 0) {
         return res.status(400).json({ error: "emails must be a non-empty array" });
       }
-      const emails: string[] = raw
-        .map((e: unknown) => (typeof e === "string" ? e.trim().toLowerCase() : ""))
-        .filter((e) => /^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(e));
+      const emails: string[] = [...new Set(
+        raw
+          .map((e: unknown) => (typeof e === "string" ? e.trim().toLowerCase() : ""))
+          .filter((e) => /^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(e))
+      )];
       if (emails.length === 0) {
         return res.status(400).json({ error: "No valid email addresses provided" });
       }
 
       const adminEmail = (req.adminAuth as { email?: string } | undefined)?.email ?? null;
+
+      // Skip emails that were already successfully sent
+      const alreadySentRows = await db
+        .select({ email: foundingEmailInvites.email })
+        .from(foundingEmailInvites)
+        .where(and(inArray(foundingEmailInvites.email, emails), eq(foundingEmailInvites.accepted, true)));
+      const alreadySent = new Set(alreadySentRows.map((r) => r.email));
+      const toSend = emails.filter((e) => !alreadySent.has(e));
 
       const [activeInvite] = await db
         .select({ token: foundingVendorInvites.token })
@@ -1958,24 +1987,33 @@ export function registerAdminRoutes(app: Express): void {
         .limit(1);
 
       const results: { email: string; sent: boolean }[] = [];
-      for (let i = 0; i < emails.length; i += 4) {
-        const batch = emails.slice(i, i + 4);
+      for (let i = 0; i < toSend.length; i += 4) {
+        const batch = toSend.slice(i, i + 4);
         const batchResults = await Promise.all(
           batch.map(async (email) => {
             const result = await sendFoundingVendorInviteEmail(email, {
               recipientEmail: email,
               inviteToken: activeInvite?.token,
             });
-            await db.insert(foundingEmailInvites).values({
-              email,
-              sentBy: adminEmail,
-              accepted: result.sent,
-            });
+            // Update existing failed record if one exists, otherwise insert
+            const [existing] = await db
+              .select({ id: foundingEmailInvites.id })
+              .from(foundingEmailInvites)
+              .where(and(eq(foundingEmailInvites.email, email), eq(foundingEmailInvites.accepted, false)))
+              .orderBy(desc(foundingEmailInvites.sentAt))
+              .limit(1);
+            if (existing) {
+              await db.update(foundingEmailInvites)
+                .set({ accepted: result.sent, sentAt: new Date(), sentBy: adminEmail })
+                .where(eq(foundingEmailInvites.id, existing.id));
+            } else {
+              await db.insert(foundingEmailInvites).values({ email, sentBy: adminEmail, accepted: result.sent });
+            }
             return { email, ...result };
           })
         );
         results.push(...batchResults);
-        if (i + 4 < emails.length) await new Promise((r) => setTimeout(r, 1100));
+        if (i + 4 < toSend.length) await new Promise((r) => setTimeout(r, 1100));
       }
 
       return res.json({ results });
