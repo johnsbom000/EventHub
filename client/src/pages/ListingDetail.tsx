@@ -452,6 +452,7 @@ export default function ListingDetailPage() {
  price: pricingRate,
  pricingUnit,
  instantBookEnabled,
+ allowPreBookingContact: parseBooleanLike(raw?.allowPreBookingContact) ?? false,
  availableQuantity,
  included,
  notIncluded,
@@ -1077,6 +1078,7 @@ export default function ListingDetailPage() {
  }
  pricingUnit={data.pricingUnit}
  instantBookEnabled={Boolean(data.instantBookEnabled)}
+ allowPreBookingContact={Boolean(data.allowPreBookingContact)}
  availableQuantity={Number(data.availableQuantity) || 1}
  vacationBlocks={data.vacationBlocks ?? []}
  cancellationPolicy={(() => {
@@ -1315,6 +1317,7 @@ function ReservationCard({
  price,
  pricingUnit,
  instantBookEnabled,
+ allowPreBookingContact,
  availableQuantity,
  vacationBlocks,
  cancellationPolicy,
@@ -1326,6 +1329,7 @@ function ReservationCard({
  price: number | null;
  pricingUnit: string;
  instantBookEnabled: boolean;
+ allowPreBookingContact: boolean;
  availableQuantity: number;
  vacationBlocks: Array<{ id: string; startDate: string; endDate: string }>;
  cancellationPolicy: string;
@@ -1374,6 +1378,19 @@ function ReservationCard({
  : null;
 
  const { isAuthenticated, loginWithRedirect } = useAuth0();
+ const [, setLocationInner] = useLocation();
+
+ async function handleMessageVendor() {
+   if (!isAuthenticated) {
+     const returnTo = `${window.location.pathname}${window.location.search}${window.location.hash}`;
+     try {
+       await loginWithRedirect({ appState: { returnTo }, authorizationParams: { prompt: "login" } });
+     } catch {}
+     return;
+   }
+   if (!vendorId) return;
+   setLocationInner(`/dashboard/customer/messages?vendorId=${encodeURIComponent(vendorId)}`);
+ }
 
  // Active sale for this listing
  const { data: activeSaleData } = useQuery<{ sale: { percentOff: number; endsAt: string } | null }>({
@@ -1581,6 +1598,17 @@ function ReservationCard({
  >
  {isRouting ? t("listing.reservationCard.loadingButton") : instantBookEnabled ? t("listing.reservationCard.bookButton") : t("listing.reservationCard.requestButton")}
  </button>
+
+ {allowPreBookingContact && vendorId && (
+   <button
+     type="button"
+     onClick={handleMessageVendor}
+     disabled={isRouting}
+     className="w-full rounded-md border border-border py-3 text-sm font-medium transition hover:bg-muted disabled:opacity-50"
+   >
+     Message Vendor
+   </button>
+ )}
 
  {bookingError ? <p className="text-sm text-red-600 text-center">{bookingError}</p> : null}
 

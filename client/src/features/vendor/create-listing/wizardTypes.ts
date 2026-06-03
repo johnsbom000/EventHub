@@ -79,6 +79,8 @@ export type ListingDraft = {
   securityDepositEnabled: boolean;
   securityDepositAmount: string;
 
+  allowPreBookingContact: boolean;
+
   photoPreviews: string[];
   photoNames: string[];
   coverPhotoRatio: CoverRatio;
@@ -137,6 +139,8 @@ export const DEFAULT_DRAFT: ListingDraft = {
 
   securityDepositEnabled: false,
   securityDepositAmount: "",
+
+  allowPreBookingContact: false,
 
   photoPreviews: [],
   photoNames: [],

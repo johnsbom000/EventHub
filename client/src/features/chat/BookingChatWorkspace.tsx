@@ -38,6 +38,8 @@ type Conversation = {
   expired: boolean;
   unreadCount: number;
   hasUnread: boolean;
+  isInquiry?: boolean;
+  vendorAccountId?: string | null;
 };
 
 type EventGroup = {
@@ -249,7 +251,7 @@ function TravelFeePaymentModal({
   );
 }
 
-export function BookingChatWorkspace({ role, initialBookingId }: { role: Role; initialBookingId?: string }) {
+export function BookingChatWorkspace({ role, initialBookingId, initialVendorId }: { role: Role; initialBookingId?: string; initialVendorId?: string }) {
   const { toast } = useToast();
   const { t, i18n } = useTranslation();
   const queryClient = useQueryClient();
@@ -273,11 +275,14 @@ export function BookingChatWorkspace({ role, initialBookingId }: { role: Role; i
     refetchInterval: 10_000,
   });
 
+  const inquiryConversations = useMemo(() => conversations.filter((c) => c.isInquiry), [conversations]);
+  const bookingConversations = useMemo(() => conversations.filter((c) => !c.isInquiry), [conversations]);
+
   const eventGroups = useMemo<EventGroup[]>(() => {
     if (role !== "customer") return [];
 
     const grouped = new Map<string, EventGroup>();
-    for (const conversation of conversations) {
+    for (const conversation of bookingConversations) {
       const key = getConversationEventKey(conversation);
       const existing = grouped.get(key);
       if (existing) {
@@ -304,14 +309,15 @@ export function BookingChatWorkspace({ role, initialBookingId }: { role: Role; i
       if (b.eventDate) return 1;
       return a.eventTitle.localeCompare(b.eventTitle);
     });
-  }, [conversations, role]);
+  }, [bookingConversations, role]);
 
   const visibleConversations = useMemo(() => {
     if (role !== "customer") return conversations;
     if (!selectedEventKey) return [];
+    if (selectedEventKey === "__inquiry__") return inquiryConversations;
     const group = eventGroups.find((item) => item.key === selectedEventKey);
     return group ? group.conversations : [];
-  }, [conversations, eventGroups, role, selectedEventKey]);
+  }, [conversations, eventGroups, inquiryConversations, role, selectedEventKey]);
 
   const selectedEvent = useMemo(
     () => (role === "customer" && selectedEventKey ? eventGroups.find((item) => item.key === selectedEventKey) ?? null : null),
@@ -336,14 +342,14 @@ export function BookingChatWorkspace({ role, initialBookingId }: { role: Role; i
       return;
     }
 
-    if (!conversations.length) {
+    if (!bookingConversations.length) {
       setSelectedBookingId("");
       return;
     }
     if (!selectedBookingId || !conversations.some((c) => c.bookingId === selectedBookingId)) {
-      setSelectedBookingId(conversations[0].bookingId);
+      setSelectedBookingId(bookingConversations[0].bookingId);
     }
-  }, [conversations, role, selectedBookingId, showEventList, visibleConversations]);
+  }, [bookingConversations, conversations, role, selectedBookingId, showEventList, visibleConversations]);
 
   useEffect(() => {
     if (role !== "customer") {
@@ -375,17 +381,37 @@ export function BookingChatWorkspace({ role, initialBookingId }: { role: Role; i
     }
   }, [conversations, initialBookingId, loadingConversations, role]);
 
+  // ── Deep-link: auto-open an inquiry channel by vendorId ──────────────────────
+  const initialVendorAppliedRef = useRef(false);
+  useEffect(() => {
+    if (!initialVendorId || initialVendorAppliedRef.current) return;
+    if (loadingConversations || conversations.length === 0) return;
+    const match = conversations.find((c) => c.isInquiry && c.vendorAccountId === initialVendorId);
+    if (!match) return;
+    initialVendorAppliedRef.current = true;
+    setSelectedBookingId(match.bookingId);
+    if (role === "customer") {
+      setSelectedEventKey("__inquiry__");
+    }
+  }, [conversations, initialVendorId, loadingConversations, role]);
+
   const selectedConversation = useMemo(
     () => visibleConversations.find((c) => c.bookingId === selectedBookingId) ?? null,
     [selectedBookingId, visibleConversations]
   );
 
   const bootstrapMutation = useMutation({
-    mutationFn: async (bookingId: string) => {
-      const response = await apiRequest("POST", `${bootstrapPathPrefix}/${bookingId}/bootstrap`);
+    mutationFn: async (conversationKey: string) => {
+      const conv = conversations.find((c) => c.bookingId === conversationKey);
+      const url = conv?.isInquiry
+        ? `${bootstrapPathPrefix}/inquiry/${conversationKey}/bootstrap`
+        : `${bootstrapPathPrefix}/${conversationKey}/bootstrap`;
+      const response = await apiRequest("POST", url);
       return (await response.json()) as ChatBootstrapResponse;
     },
   });
+
+  const isSelectedInquiry = selectedConversation?.isInquiry ?? false;
 
   // ── Travel fee proposals ──────────────────────────────────────────────────────
   type TravelFeeProposal = {
@@ -407,7 +433,7 @@ export function BookingChatWorkspace({ role, initialBookingId }: { role: Role; i
       if (!res.ok) return [];
       return res.json();
     },
-    enabled: role === "customer" && Boolean(selectedBookingId),
+    enabled: role === "customer" && Boolean(selectedBookingId) && !isSelectedInquiry,
     staleTime: 15_000,
     refetchInterval: 20_000,
   });
@@ -420,7 +446,7 @@ export function BookingChatWorkspace({ role, initialBookingId }: { role: Role; i
       if (!res.ok) return [];
       return res.json();
     },
-    enabled: role === "vendor" && Boolean(selectedBookingId),
+    enabled: role === "vendor" && Boolean(selectedBookingId) && !isSelectedInquiry,
     staleTime: 15_000,
     refetchInterval: 20_000,
   });
@@ -798,31 +824,67 @@ export function BookingChatWorkspace({ role, initialBookingId }: { role: Role; i
               <p className="text-sm text-muted-foreground">{t("chat.noConversations")}</p>
             </div>
           ) : showEventList ? (
-            eventGroups.map((group) => (
-              <button
-                key={group.key}
-                type="button"
-                onClick={() => {
-                  setSelectedEventKey(group.key);
-                  setSelectedBookingId(group.conversations[0]?.bookingId || "");
-                }}
-                className="w-full rounded-lg border border-[rgba(74,106,125,0.22)] p-3 text-left transition-colors hover:bg-muted/50"
-                data-testid={`chat-event-${group.key}`}
-              >
-                <div className="mb-1 flex items-center justify-between gap-2">
-                  <p className="truncate text-sm font-medium">{group.eventTitle}</p>
-                  {group.unreadCount > 0 ? (
-                    <Badge className="bg-cyan-600 text-[10px] text-white hover:bg-cyan-600">
-                      {group.unreadCount}
-                    </Badge>
-                  ) : null}
-                </div>
-                <p className="text-sm text-muted-foreground">{formatDate(group.eventDate, t("chat.dateUnknown"), i18n.language)}</p>
-                <p className="mt-1 text-sm text-muted-foreground">
-                  {t("chat.vendorCount", { count: group.conversations.length })}
-                </p>
-              </button>
-            ))
+            <>
+              {eventGroups.map((group) => (
+                <button
+                  key={group.key}
+                  type="button"
+                  onClick={() => {
+                    setSelectedEventKey(group.key);
+                    setSelectedBookingId(group.conversations[0]?.bookingId || "");
+                  }}
+                  className="w-full rounded-lg border border-[rgba(74,106,125,0.22)] p-3 text-left transition-colors hover:bg-muted/50"
+                  data-testid={`chat-event-${group.key}`}
+                >
+                  <div className="mb-1 flex items-center justify-between gap-2">
+                    <p className="truncate text-sm font-medium">{group.eventTitle}</p>
+                    {group.unreadCount > 0 ? (
+                      <Badge className="bg-cyan-600 text-[10px] text-white hover:bg-cyan-600">
+                        {group.unreadCount}
+                      </Badge>
+                    ) : null}
+                  </div>
+                  <p className="text-sm text-muted-foreground">{formatDate(group.eventDate, t("chat.dateUnknown"), i18n.language)}</p>
+                  <p className="mt-1 text-sm text-muted-foreground">
+                    {t("chat.vendorCount", { count: group.conversations.length })}
+                  </p>
+                </button>
+              ))}
+              {inquiryConversations.length > 0 && (
+                <>
+                  <p className="px-1 pt-2 text-xs font-semibold uppercase tracking-wide text-muted-foreground">
+                    Pre-Booking Inquiries
+                  </p>
+                  {inquiryConversations.map((inq) => {
+                    const inqActive = inq.bookingId === selectedBookingId && selectedEventKey === "__inquiry__";
+                    return (
+                      <button
+                        key={inq.bookingId}
+                        type="button"
+                        onClick={() => {
+                          setSelectedEventKey("__inquiry__");
+                          setSelectedBookingId(inq.bookingId);
+                        }}
+                        className={cn(
+                          "w-full rounded-lg border border-[rgba(74,106,125,0.22)] p-3 text-left transition-colors",
+                          inqActive ? "bg-primary/5" : inq.hasUnread ? "bg-cyan-50/70 hover:bg-cyan-50" : "hover:bg-muted/50"
+                        )}
+                      >
+                        <div className="mb-1 flex items-center justify-between gap-2">
+                          <p className="truncate text-sm font-medium">{inq.counterpartName}</p>
+                          {inq.unreadCount > 0 ? (
+                            <Badge className="bg-cyan-600 text-[10px] text-white hover:bg-cyan-600">
+                              {inq.unreadCount}
+                            </Badge>
+                          ) : null}
+                        </div>
+                        <p className="text-xs text-muted-foreground">Pre-booking inquiry</p>
+                      </button>
+                    );
+                  })}
+                </>
+              )}
+            </>
           ) : (
             <>
               {role === "customer" ? (
@@ -870,19 +932,29 @@ export function BookingChatWorkspace({ role, initialBookingId }: { role: Role; i
                           {conversation.unreadCount}
                         </Badge>
                       ) : null}
-                      <Badge variant="outline" className="text-[10px] uppercase">
-                        {normalizeStatus(conversation.status)}
-                      </Badge>
+                      {conversation.isInquiry ? (
+                        <Badge variant="outline" className="text-[10px]">Inquiry</Badge>
+                      ) : (
+                        <Badge variant="outline" className="text-[10px] uppercase">
+                          {normalizeStatus(conversation.status)}
+                        </Badge>
+                      )}
                     </div>
                   </div>
-                  <p className="truncate text-sm text-muted-foreground">
-                    {conversation.eventTitle || t("chat.bookingChatFallback")}
-                  </p>
-                  <p className="mt-1 text-sm text-muted-foreground">
-                    {formatDate(conversation.eventDate, t("chat.dateUnknown"), i18n.language)}
-                  </p>
-                  {conversation.expired && (
-                    <p className="mt-1 text-sm font-medium text-destructive">{t("chat.expired")}</p>
+                  {conversation.isInquiry ? (
+                    <p className="text-xs text-muted-foreground">Pre-booking inquiry</p>
+                  ) : (
+                    <>
+                      <p className="truncate text-sm text-muted-foreground">
+                        {conversation.eventTitle || t("chat.bookingChatFallback")}
+                      </p>
+                      <p className="mt-1 text-sm text-muted-foreground">
+                        {formatDate(conversation.eventDate, t("chat.dateUnknown"), i18n.language)}
+                      </p>
+                      {conversation.expired && (
+                        <p className="mt-1 text-sm font-medium text-destructive">{t("chat.expired")}</p>
+                      )}
+                    </>
                   )}
                 </button>
               );

@@ -858,6 +858,7 @@ export function buildCanonicalListingColumns(input: {
     takedownOffered?: unknown;
     takedownFeeEnabled?: unknown;
     takedownFeeAmountCents?: unknown;
+    allowPreBookingContact?: unknown;
     photos?: unknown;
   };
   classification: {
@@ -885,6 +886,11 @@ export function buildCanonicalListingColumns(input: {
     explicitInstantBook ??
     parseBooleanInput(existing?.instantBookEnabled) ??
     (input.classification.category === "Rentals" ? true : false);
+
+  const allowPreBookingContact =
+    parseBooleanInput(listingData?.allowPreBookingContact) ??
+    parseBooleanInput(existing?.allowPreBookingContact) ??
+    false;
 
   const explicitPriceCents = parseIntegerValue(listingData?.priceCents);
   const fallbackPriceCents =
@@ -1037,6 +1043,7 @@ export function buildCanonicalListingColumns(input: {
         ? toUniqueTrimmedStringList(listingData?.popularFor)
         : toUniqueTrimmedStringList(existing?.popularFor),
     instantBookEnabled,
+    allowPreBookingContact,
     pricingUnit,
     priceCents,
     quantity: Math.max(1, Math.floor(quantity)),
@@ -1132,5 +1139,37 @@ export function toConversationPayload(
     expired: row.eventDate ? isChatExpiredForEventDate(row.eventDate) : false,
     unreadCount: normalizedUnread,
     hasUnread: normalizedUnread > 0,
+    isInquiry: false as const,
+    vendorAccountId: row.vendorAccountId ?? null,
+  };
+}
+
+export function toInquiryConversationPayload(
+  role: "customer" | "vendor",
+  row: {
+    inquiryChannelId: string;
+    vendorAccountId: string;
+    vendorName: string | null;
+    customerId: string;
+    customerName: string | null;
+  },
+  unreadCount: number
+) {
+  const normalizedUnread = Math.max(0, Number(unreadCount || 0));
+  return {
+    bookingId: row.inquiryChannelId, // inquiry channel ID used as the UI key
+    eventId: null,
+    counterpartName: role === "customer" ? row.vendorName || "Vendor" : row.customerName || "Customer",
+    eventDate: null,
+    eventTitle: null,
+    status: "inquiry" as const,
+    paymentStatus: null,
+    paymentInfoCollected: false,
+    retentionExpiresAt: null,
+    expired: false,
+    unreadCount: normalizedUnread,
+    hasUnread: normalizedUnread > 0,
+    isInquiry: true as const,
+    vendorAccountId: row.vendorAccountId,
   };
 }

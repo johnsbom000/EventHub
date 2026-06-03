@@ -176,6 +176,23 @@ export function BookingPricingStep({ draft, setDraft, showValidation }: BookingP
             </div>
           )}
         </div>
+
+        <div className="space-y-4 rounded-xl border border-border bg-muted/30 p-4">
+          <div className="flex items-center justify-between gap-4">
+            <div>
+              <Label className="text-base font-semibold">Allow customers to contact you before booking?</Label>
+              <p className="text-sm text-muted-foreground mt-0.5">
+                Shows a "Message Vendor" button on your listing page so customers can ask questions before committing to a booking.
+              </p>
+            </div>
+            <Switch
+              checked={draft.allowPreBookingContact}
+              onCheckedChange={(checked) =>
+                setDraft((prev) => ({ ...prev, allowPreBookingContact: checked }))
+              }
+            />
+          </div>
+        </div>
       </Card>
     </div>
   );
