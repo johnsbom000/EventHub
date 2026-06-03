@@ -132,6 +132,7 @@ import {
   listingReviews,
   reviewReplies,
   vendorReferrals,
+  vendorInquiries,
 } from "@shared/schema";
 import {
   requireDualAuthAuth0,
@@ -187,6 +188,7 @@ import {
   computeChatRetentionExpiry,
   deleteStreamBookingChannel,
   ensureStreamBookingChannel,
+  promoteInquiryToBookingChannel,
   getAverageVendorResponseMinutesForBookings,
   getStreamUnreadCountsForBookings,
   getStreamApiKey,
@@ -2013,6 +2015,48 @@ export function registerBookingRoutes(app: Express): void {
       }
       const bookingStatus = bookingInsertResult.effectiveStatus;
       const pendingReason = bookingInsertResult.pendingReason ?? null;
+
+      void (async () => {
+        try {
+          const [inquiry] = await db
+            .select()
+            .from(vendorInquiries)
+            .where(
+              and(
+                eq(vendorInquiries.vendorAccountId, vendorAccount.id),
+                eq(vendorInquiries.customerId, customerAuth.id),
+                eq(vendorInquiries.status, "active"),
+              ),
+            )
+            .limit(1);
+
+          if (inquiry) {
+            const retention = computeChatRetentionExpiry(data.eventDate);
+            await promoteInquiryToBookingChannel({
+              channelId: inquiry.streamChannelId,
+              bookingId: booking.id,
+              eventDate: data.eventDate,
+              retentionExpiresAt: retention?.toISOString() ?? null,
+            });
+            await db
+              .update(vendorInquiries)
+              .set({ status: "converted", bookingId: booking.id, updatedAt: new Date() })
+              .where(
+                and(
+                  eq(vendorInquiries.vendorAccountId, vendorAccount.id),
+                  eq(vendorInquiries.customerId, customerAuth.id),
+                  eq(vendorInquiries.status, "active"),
+                ),
+              );
+            await db
+              .update(bookings)
+              .set({ inquiryChannelId: inquiry.streamChannelId, updatedAt: new Date() })
+              .where(eq(bookings.id, booking.id));
+          }
+        } catch (err: any) {
+          logger.warn("[inquiry-promotion] Failed to promote inquiry channel:", err?.message);
+        }
+      })();
 
       stage = "create-notifications";
       await Promise.allSettled([

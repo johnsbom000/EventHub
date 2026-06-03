@@ -89,6 +89,7 @@ export const users = pgTable(
     defaultLocation: jsonb("default_location"),
     preferredLanguage: varchar("preferred_language", { length: 10 }).notNull().default("en"),
     stripeCustomerId: text("stripe_customer_id"),
+    vendorOnlySignup: boolean("vendor_only_signup").notNull().default(false),
     createdAt: timestamp("created_at").defaultNow().notNull(),
     updatedAt: timestamp("updated_at").defaultNow().notNull(),
   },
@@ -424,6 +425,8 @@ export const vendorListings = pgTable("vendor_listings", {
   // ─── Security deposit ──────────────────────────────────────────────────────
   securityDepositEnabled: boolean("security_deposit_enabled").notNull().default(false),
   securityDepositCents: integer("security_deposit_cents"),
+  // ─── Pre-booking contact ───────────────────────────────────────────────────
+  allowPreBookingContact: boolean("allow_pre_booking_contact").notNull().default(false),
   createdAt: timestamp("created_at").defaultNow(),
   updatedAt: timestamp("updated_at").defaultNow(),
 });
@@ -518,6 +521,10 @@ export const bookings = pgTable("bookings", {
   cancellationPolicySnapshot: jsonb("cancellation_policy_snapshot"),
   appliedDiscountId: varchar("applied_discount_id").references(() => vendorDiscounts.id, { onDelete: "set null" }),
   discountAmountCents: integer("discount_amount_cents"),
+  // ─── Pre-booking inquiry channel (set when booking was preceded by an inquiry) ──
+  inquiryChannelId: varchar("inquiry_channel_id", { length: 255 }),
+  vendorDismissedAt: timestamp("vendor_dismissed_at"),
+  customerDismissedAt: timestamp("customer_dismissed_at"),
   createdAt: timestamp("created_at").defaultNow(),
   updatedAt: timestamp("updated_at").defaultNow(),
 });
@@ -1437,3 +1444,21 @@ export const foundingEmailInvites = pgTable("founding_email_invites", {
 });
 
 export type FoundingEmailInvite = typeof foundingEmailInvites.$inferSelect;
+
+// Vendor Inquiries — tracks pre-booking inquiry channels (one per vendor+customer pair)
+export const vendorInquiries = pgTable("vendor_inquiries", {
+  id: varchar("id", { length: 36 }).primaryKey(),
+  vendorAccountId: varchar("vendor_account_id", { length: 255 })
+    .notNull()
+    .references(() => vendorAccounts.id),
+  customerId: varchar("customer_id", { length: 255 }).notNull(),
+  streamChannelId: varchar("stream_channel_id", { length: 255 }).notNull(),
+  initialListingId: varchar("initial_listing_id", { length: 255 }).references(() => vendorListings.id),
+  bookingId: varchar("booking_id", { length: 255 }).references(() => bookings.id),
+  status: varchar("status", { length: 20 }).notNull().default("active"),
+  createdAt: timestamp("created_at").notNull().defaultNow(),
+  updatedAt: timestamp("updated_at").notNull().defaultNow(),
+});
+
+export type VendorInquiry = typeof vendorInquiries.$inferSelect;
+export type InsertVendorInquiry = typeof vendorInquiries.$inferInsert;

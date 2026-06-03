@@ -149,3 +149,56 @@ export async function listVendorBookingChatContexts(vendorAccountId: string): Pr
   `);
   return extractRows(rows).map(normalizeBookingChatContext);
 }
+
+export type InquiryChannel = {
+  inquiryChannelId: string;
+  vendorAccountId: string;
+  vendorName: string | null;
+  vendorEmail: string | null;
+  customerId: string;
+  customerName: string | null;
+  customerEmail: string | null;
+  createdAt: Date | string | null;
+};
+
+export async function listCustomerInquiryChannels(customerId: string): Promise<InquiryChannel[]> {
+  const rows: any = await db.execute(drizzleSql`
+    select
+      vi.stream_channel_id  as "inquiryChannelId",
+      vi.vendor_account_id  as "vendorAccountId",
+      va.business_name      as "vendorName",
+      va.email              as "vendorEmail",
+      vi.customer_id        as "customerId",
+      coalesce(nullif(u.display_name, ''), nullif(u.name, ''), 'Customer') as "customerName",
+      u.email               as "customerEmail",
+      vi.created_at         as "createdAt"
+    from vendor_inquiries vi
+    join vendor_accounts va on va.id = vi.vendor_account_id
+    left join users u on u.id = vi.customer_id
+    where vi.customer_id = ${customerId}
+      and vi.status = 'active'
+    order by vi.created_at desc
+  `);
+  return extractRows<InquiryChannel>(rows);
+}
+
+export async function listVendorInquiryChannels(vendorAccountId: string): Promise<InquiryChannel[]> {
+  const rows: any = await db.execute(drizzleSql`
+    select
+      vi.stream_channel_id  as "inquiryChannelId",
+      vi.vendor_account_id  as "vendorAccountId",
+      va.business_name      as "vendorName",
+      va.email              as "vendorEmail",
+      vi.customer_id        as "customerId",
+      coalesce(nullif(u.display_name, ''), nullif(u.name, ''), 'Customer') as "customerName",
+      u.email               as "customerEmail",
+      vi.created_at         as "createdAt"
+    from vendor_inquiries vi
+    join vendor_accounts va on va.id = vi.vendor_account_id
+    left join users u on u.id = vi.customer_id
+    where vi.vendor_account_id = ${vendorAccountId}
+      and vi.status = 'active'
+    order by vi.created_at desc
+  `);
+  return extractRows<InquiryChannel>(rows);
+}

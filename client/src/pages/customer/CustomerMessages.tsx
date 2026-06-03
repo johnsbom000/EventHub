@@ -1,4 +1,6 @@
+import { useMemo } from "react";
 import { useTranslation } from "react-i18next";
+import { useSearch } from "wouter";
 import { BookingChatWorkspace } from "@/features/chat/BookingChatWorkspace";
 
 interface CustomerMessagesProps {
@@ -12,6 +14,12 @@ interface CustomerMessagesProps {
 
 export default function CustomerMessages({ initialBookingId }: CustomerMessagesProps) {
   const { t } = useTranslation();
+  const searchString = useSearch();
+  const initialVendorId = useMemo(() => {
+    const params = new URLSearchParams(searchString);
+    return params.get("vendorId") ?? undefined;
+  }, [searchString]);
+
   return (
     <div className="space-y-6">
       <div>
@@ -20,8 +28,11 @@ export default function CustomerMessages({ initialBookingId }: CustomerMessagesP
         </h1>
       </div>
 
-      <BookingChatWorkspace role="customer" initialBookingId={initialBookingId} />
+      <BookingChatWorkspace
+        role="customer"
+        initialBookingId={initialBookingId}
+        initialVendorId={initialVendorId}
+      />
     </div>
   );
 }
-

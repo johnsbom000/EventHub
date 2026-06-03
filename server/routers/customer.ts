@@ -86,6 +86,7 @@ import {
   getBookingChatContextById,
   listCustomerBookingChatContexts,
   listVendorBookingChatContexts,
+  listCustomerInquiryChannels,
 } from "../services/chatService";
 import {
   deactivateActiveListingsViolatingPublishGate,
@@ -135,6 +136,7 @@ import {
   listingReviews,
   reviewReplies,
   vendorReferrals,
+  vendorInquiries,
 } from "@shared/schema";
 import {
   requireDualAuthAuth0,
@@ -190,8 +192,12 @@ import {
   computeChatRetentionExpiry,
   deleteStreamBookingChannel,
   ensureStreamBookingChannel,
+  ensureStreamInquiryChannel,
+  promoteInquiryToBookingChannel,
   getAverageVendorResponseMinutesForBookings,
   getStreamUnreadCountsForBookings,
+  getStreamUnreadCountsForChannels,
+  toStreamInquiryChannelId,
   getStreamApiKey,
   isChatExpiredForEventDate,
   isChatWindowClosedForEventDate,
@@ -288,6 +294,7 @@ import {
   hasPaymentAccessForChat,
   normalizeBookingChatContext,
   toConversationPayload,
+  toInquiryConversationPayload,
   deriveVendorSlug,
 } from "../lib/routeUtils";
 import {
@@ -406,10 +413,28 @@ export function registerCustomerRoutes(app: Express): void {
         role: user.role,
         defaultLocation,
         createdAt: user.createdAt,
+        vendorOnlySignup: user.vendorOnlySignup,
       });
     } catch (error: any) {
       logRouteError("/api/customer/me", error);
       res.status(500).json({ error: "Unable to load account" });
+    }
+  });
+
+  app.post("/api/me/mark-vendor-only", mutationRateLimiter, requireCustomerAnyAuth, async (req, res) => {
+    try {
+      const customerAuth = await resolveCustomerAuthFromRequest(req, { createIfMissing: true });
+      if (!customerAuth?.id) {
+        return res.status(401).json({ error: "Authentication required" });
+      }
+      await db
+        .update(users)
+        .set({ vendorOnlySignup: true, updatedAt: new Date() })
+        .where(eq(users.id, customerAuth.id));
+      res.json({ ok: true });
+    } catch (error: any) {
+      logRouteError("/api/me/mark-vendor-only", error);
+      res.status(500).json({ error: "Failed to update account" });
     }
   });
 
@@ -612,7 +637,19 @@ export function registerCustomerRoutes(app: Express): void {
       const conversations = activeRows.map((row) =>
         toConversationPayload("customer", row, unread.counts[row.bookingId] || 0)
       );
-      return res.json(conversations);
+
+      // Append active pre-booking inquiry channels
+      const inquiryRows = await listCustomerInquiryChannels(customerAuth.id);
+      const inquiryUnread = await getStreamUnreadCountsForChannels({
+        role: "customer",
+        appUserId: customerAuth.id,
+        channelIds: inquiryRows.map((r) => r.inquiryChannelId),
+      });
+      const inquiryConversations = inquiryRows.map((r) =>
+        toInquiryConversationPayload("customer", r, inquiryUnread.counts[r.inquiryChannelId] || 0)
+      );
+
+      return res.json([...conversations, ...inquiryConversations]);
     } catch (error: any) {
       return respondWithInternalServerError(req, res, error);
     }
@@ -641,6 +678,176 @@ export function registerCustomerRoutes(app: Express): void {
         bookingIds: paidBookingIds,
       });
       return res.json({ unreadCount: unread.totalUnread });
+    } catch (error: any) {
+      return respondWithInternalServerError(req, res, error);
+    }
+  });
+
+  // Initialize a pre-booking inquiry channel between this customer and a vendor.
+  app.post("/api/customer/messages/inquiry/init", messagingRateLimiter, requireCustomerAnyAuth, async (req, res) => {
+    try {
+      if (!isStreamChatConfigured()) {
+        return res.status(503).json({ error: "Stream chat is not configured on the server" });
+      }
+
+      const customerAuth = await resolveCustomerAuthFromRequest(req, { createIfMissing: true });
+      if (!customerAuth?.id) {
+        return res.status(401).json({ error: "Customer authentication required" });
+      }
+
+      const { vendorAccountId, listingId } = req.body as { vendorAccountId?: string; listingId?: string };
+      if (!vendorAccountId) {
+        return res.status(400).json({ error: "vendorAccountId is required" });
+      }
+
+      // Verify the vendor exists and has allowPreBookingContact on the specified (or any active) listing
+      const [vendorAccount] = await db
+        .select({ id: vendorAccounts.id, businessName: vendorAccounts.businessName, email: vendorAccounts.email })
+        .from(vendorAccounts)
+        .where(eq(vendorAccounts.id, vendorAccountId))
+        .limit(1);
+      if (!vendorAccount) {
+        return res.status(404).json({ error: "Vendor not found" });
+      }
+
+      // Check that the vendor allows pre-booking contact
+      const listingQuery = db
+        .select({ id: vendorListings.id })
+        .from(vendorListings)
+        .where(
+          and(
+            eq(vendorListings.accountId, vendorAccountId),
+            eq(vendorListings.status, "active"),
+            eq(vendorListings.allowPreBookingContact, true),
+            ...(listingId ? [eq(vendorListings.id, listingId)] : [])
+          )
+        )
+        .limit(1);
+      const [allowedListing] = await listingQuery;
+      if (!allowedListing) {
+        return res.status(403).json({ error: "This vendor has not enabled pre-booking contact" });
+      }
+
+      // Check for an existing inquiry row (idempotent)
+      const [existing] = await db
+        .select()
+        .from(vendorInquiries)
+        .where(
+          and(
+            eq(vendorInquiries.vendorAccountId, vendorAccountId),
+            eq(vendorInquiries.customerId, customerAuth.id),
+            eq(vendorInquiries.status, "active")
+          )
+        )
+        .limit(1);
+
+      if (existing) {
+        return res.json({ channelId: existing.streamChannelId });
+      }
+
+      // Resolve customer display name for Stream
+      const [customerUser] = await db
+        .select({ displayName: users.displayName, name: users.name, email: users.email })
+        .from(users)
+        .where(eq(users.id, customerAuth.id))
+        .limit(1);
+
+      const channelId = toStreamInquiryChannelId(vendorAccountId, customerAuth.id);
+      await ensureStreamInquiryChannel({
+        vendorAccountId,
+        customerId: customerAuth.id,
+        vendorName: vendorAccount.businessName,
+        vendorEmail: vendorAccount.email,
+        customerName: customerUser?.displayName || customerUser?.name || null,
+        customerEmail: customerUser?.email || customerAuth.email || null,
+        initialListingId: listingId ?? null,
+      });
+
+      const { nanoid } = await import("nanoid");
+      await db.insert(vendorInquiries).values({
+        id: nanoid(),
+        vendorAccountId,
+        customerId: customerAuth.id,
+        streamChannelId: channelId,
+        initialListingId: listingId ?? null,
+        status: "active",
+      });
+
+      return res.json({ channelId });
+    } catch (error: any) {
+      return respondWithInternalServerError(req, res, error);
+    }
+  });
+
+  // Bootstrap Stream Chat for a pre-booking inquiry channel (customer side).
+  app.post("/api/customer/messages/inquiry/:channelId/bootstrap", messagingRateLimiter, requireCustomerAnyAuth, async (req, res) => {
+    try {
+      if (!isStreamChatConfigured()) {
+        return res.status(503).json({ error: "Stream chat is not configured on the server" });
+      }
+
+      const customerAuth = await resolveCustomerAuthFromRequest(req, { createIfMissing: true });
+      if (!customerAuth?.id) {
+        return res.status(401).json({ error: "Customer authentication required" });
+      }
+
+      const channelId = String(req.params.channelId || "").trim();
+      if (!channelId) {
+        return res.status(400).json({ error: "channelId is required" });
+      }
+
+      const [inquiry] = await db
+        .select()
+        .from(vendorInquiries)
+        .where(
+          and(
+            eq(vendorInquiries.streamChannelId, channelId),
+            eq(vendorInquiries.customerId, customerAuth.id)
+          )
+        )
+        .limit(1);
+      if (!inquiry) {
+        return res.status(404).json({ error: "Inquiry not found" });
+      }
+
+      const [vendorAccount] = await db
+        .select({ businessName: vendorAccounts.businessName, email: vendorAccounts.email })
+        .from(vendorAccounts)
+        .where(eq(vendorAccounts.id, inquiry.vendorAccountId))
+        .limit(1);
+
+      const [customerUser] = await db
+        .select({ displayName: users.displayName, name: users.name, email: users.email })
+        .from(users)
+        .where(eq(users.id, customerAuth.id))
+        .limit(1);
+
+      const streamState = await ensureStreamInquiryChannel({
+        vendorAccountId: inquiry.vendorAccountId,
+        customerId: customerAuth.id,
+        vendorName: vendorAccount?.businessName ?? null,
+        vendorEmail: vendorAccount?.email ?? null,
+        customerName: customerUser?.displayName || customerUser?.name || null,
+        customerEmail: customerUser?.email || customerAuth.email || null,
+      });
+
+      const streamUserId = toStreamUserId("customer", customerAuth.id);
+      const streamToken = streamState.tokenForUser(streamUserId);
+
+      return res.json({
+        streamApiKey: getStreamApiKey(),
+        streamToken,
+        streamUser: { id: streamUserId, name: customerUser?.displayName || customerUser?.name || "Customer" },
+        channel: { type: streamState.channelType, id: streamState.channelId, cid: streamState.channelCid },
+        booking: {
+          id: channelId,
+          eventDate: null,
+          eventTitle: null,
+          counterpartName: vendorAccount?.businessName || "Vendor",
+        },
+        policyWarning: CHAT_POLICY_WARNING,
+        retentionExpiresAt: null,
+      });
     } catch (error: any) {
       return respondWithInternalServerError(req, res, error);
     }
@@ -683,17 +890,49 @@ export function registerCustomerRoutes(app: Express): void {
         return res.status(410).json({ error: "Chat expired 30 days after the event date" });
       }
 
-      const streamState = await ensureStreamBookingChannel({
-        bookingId,
-        eventDate: booking.eventDate,
-        eventTitle: booking.eventTitle,
-        customerId: booking.customerId,
-        customerName: booking.customerName,
-        customerEmail: booking.customerEmail,
-        vendorAccountId: booking.vendorAccountId,
-        vendorName: booking.vendorName,
-        vendorEmail: booking.vendorEmail,
-      });
+      // Check if this booking was preceded by an inquiry channel — if so, reuse it
+      const [bookingRow] = await db
+        .select({ inquiryChannelId: bookings.inquiryChannelId })
+        .from(bookings)
+        .where(eq(bookings.id, bookingId))
+        .limit(1);
+
+      let streamState: Awaited<ReturnType<typeof ensureStreamBookingChannel>>;
+      let resolvedChannelId: string;
+
+      if (bookingRow?.inquiryChannelId) {
+        // Promote the inquiry channel to booking context (idempotent — updatePartial is safe to re-run)
+        await promoteInquiryToBookingChannel({
+          channelId: bookingRow.inquiryChannelId,
+          bookingId,
+          eventDate: booking.eventDate!,
+          retentionExpiresAt: computeChatRetentionExpiry(booking.eventDate!)?.toISOString() ?? null,
+        }).catch(() => {});
+        // Bootstrap the inquiry channel for this user (ensures membership)
+        const inquiryState = await ensureStreamInquiryChannel({
+          vendorAccountId: booking.vendorAccountId!,
+          customerId: booking.customerId!,
+          vendorName: booking.vendorName,
+          vendorEmail: booking.vendorEmail,
+          customerName: booking.customerName,
+          customerEmail: booking.customerEmail,
+        });
+        streamState = inquiryState as any;
+        resolvedChannelId = bookingRow.inquiryChannelId;
+      } else {
+        streamState = await ensureStreamBookingChannel({
+          bookingId,
+          eventDate: booking.eventDate,
+          eventTitle: booking.eventTitle,
+          customerId: booking.customerId,
+          customerName: booking.customerName,
+          customerEmail: booking.customerEmail,
+          vendorAccountId: booking.vendorAccountId,
+          vendorName: booking.vendorName,
+          vendorEmail: booking.vendorEmail,
+        });
+        resolvedChannelId = streamState.channelId;
+      }
 
       const streamUserId = toStreamUserId("customer", booking.customerId);
       const streamToken = streamState.tokenForUser(streamUserId);
@@ -707,8 +946,8 @@ export function registerCustomerRoutes(app: Express): void {
         },
         channel: {
           type: streamState.channelType,
-          id: streamState.channelId,
-          cid: streamState.channelCid,
+          id: resolvedChannelId,
+          cid: `${streamState.channelType}:${resolvedChannelId}`,
         },
         booking: {
           id: booking.bookingId,
@@ -717,7 +956,7 @@ export function registerCustomerRoutes(app: Express): void {
           counterpartName: booking.vendorName || "Vendor",
         },
         policyWarning: CHAT_POLICY_WARNING,
-        retentionExpiresAt: streamState.retentionExpiresAt,
+        retentionExpiresAt: (streamState as any).retentionExpiresAt ?? null,
       });
     } catch (error: any) {
       return respondWithInternalServerError(req, res, error);

@@ -135,6 +135,8 @@ type ListingDraft = {
  securityDepositEnabled: boolean;
  securityDepositAmount: string;
 
+ allowPreBookingContact: boolean;
+
  photoPreviews: string[];
  photoNames: string[];
  coverPhotoRatio: CoverRatio;
@@ -193,6 +195,8 @@ const DEFAULT_DRAFT: ListingDraft = {
 
  securityDepositEnabled: false,
  securityDepositAmount: "",
+
+ allowPreBookingContact: false,
 
  photoPreviews: [],
  photoNames: [],
@@ -852,6 +856,7 @@ export function CreateListingWizard({ onClose, initialListingType, parentListing
  popularFor: draft.popularFor,
 
  instantBookEnabled,
+ allowPreBookingContact: draft.allowPreBookingContact,
  bookingType: draft.category === "Rental" ? "instant" : draft.bookingType,
  pricingUnit: draft.pricingUnit,
  rate: price,

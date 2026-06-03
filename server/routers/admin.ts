@@ -1812,20 +1812,26 @@ export function registerAdminRoutes(app: Express): void {
         .orderBy(desc(marqueeVendorInvites.createdAt))
         .limit(1);
 
-      const results = await Promise.all(
-        emails.map(async (email) => {
-          const result = await sendMarqueeInviteEmail(email, {
-            recipientEmail: email,
-            inviteToken: activeInvite?.token,
-          });
-          await db.insert(marqueeEmailInvites).values({
-            email,
-            sentBy: adminEmail,
-            accepted: result.sent,
-          });
-          return { email, ...result };
-        })
-      );
+      const results: { email: string; sent: boolean }[] = [];
+      for (let i = 0; i < emails.length; i += 4) {
+        const batch = emails.slice(i, i + 4);
+        const batchResults = await Promise.all(
+          batch.map(async (email) => {
+            const result = await sendMarqueeInviteEmail(email, {
+              recipientEmail: email,
+              inviteToken: activeInvite?.token,
+            });
+            await db.insert(marqueeEmailInvites).values({
+              email,
+              sentBy: adminEmail,
+              accepted: result.sent,
+            });
+            return { email, ...result };
+          })
+        );
+        results.push(...batchResults);
+        if (i + 4 < emails.length) await new Promise((r) => setTimeout(r, 1100));
+      }
 
       return res.json({ results });
     } catch (err: any) {
@@ -1951,20 +1957,26 @@ export function registerAdminRoutes(app: Express): void {
         .orderBy(desc(foundingVendorInvites.createdAt))
         .limit(1);
 
-      const results = await Promise.all(
-        emails.map(async (email) => {
-          const result = await sendFoundingVendorInviteEmail(email, {
-            recipientEmail: email,
-            inviteToken: activeInvite?.token,
-          });
-          await db.insert(foundingEmailInvites).values({
-            email,
-            sentBy: adminEmail,
-            accepted: result.sent,
-          });
-          return { email, ...result };
-        })
-      );
+      const results: { email: string; sent: boolean }[] = [];
+      for (let i = 0; i < emails.length; i += 4) {
+        const batch = emails.slice(i, i + 4);
+        const batchResults = await Promise.all(
+          batch.map(async (email) => {
+            const result = await sendFoundingVendorInviteEmail(email, {
+              recipientEmail: email,
+              inviteToken: activeInvite?.token,
+            });
+            await db.insert(foundingEmailInvites).values({
+              email,
+              sentBy: adminEmail,
+              accepted: result.sent,
+            });
+            return { email, ...result };
+          })
+        );
+        results.push(...batchResults);
+        if (i + 4 < emails.length) await new Promise((r) => setTimeout(r, 1100));
+      }
 
       return res.json({ results });
     } catch (err: any) {

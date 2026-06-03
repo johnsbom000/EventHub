@@ -1061,7 +1061,7 @@ export default function VendorDashboard() {
 
  const handleCopyReferralLink = async () => {
  if (!vendorAccount?.referralCode) return;
- const link = `${window.location.origin}/vendor/onboarding?ref=${vendorAccount.referralCode}`;
+ const link = `${window.location.origin}/?ref=${vendorAccount.referralCode}`;
  try {
   await navigator.clipboard.writeText(link);
   setReferralLinkCopied(true);
@@ -1406,7 +1406,7 @@ export default function VendorDashboard() {
        </p>
        <div className="flex items-center gap-2">
          <code className="flex-1 rounded bg-amber-100 px-2 py-1 text-[11px] font-mono text-amber-900 break-all select-all">
-           {`${window.location.origin}/vendor/onboarding?ref=${vendorAccount.referralCode}`}
+           {`${window.location.origin}/?ref=${vendorAccount.referralCode}`}
          </code>
          <Button
            variant="outline"

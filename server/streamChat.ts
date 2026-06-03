@@ -2,6 +2,7 @@ import { StreamChat } from "stream-chat";
 
 const STREAM_CHANNEL_TYPE = "messaging";
 const BOOKING_CHANNEL_PREFIX = "booking_";
+const INQUIRY_CHANNEL_PREFIX = "inquiry_";
 const RETENTION_DAYS_AFTER_EVENT = 30;
 
 let cachedClient: StreamChat | null = null;
@@ -64,6 +65,11 @@ export function toStreamBookingChannelId(bookingId: string) {
 
 export function toStreamBookingCid(bookingId: string) {
   return `${STREAM_CHANNEL_TYPE}:${toStreamBookingChannelId(bookingId)}`;
+}
+
+export function toStreamInquiryChannelId(vendorAccountId: string, customerId: string) {
+  const suffix = `${sanitizeIdPart(vendorAccountId)}_${sanitizeIdPart(customerId)}`;
+  return `${INQUIRY_CHANNEL_PREFIX}${suffix}`.slice(0, 64);
 }
 
 export function computeChatRetentionExpiry(eventDate: string): Date | null {
@@ -183,6 +189,117 @@ export async function ensureStreamBookingChannel(params: {
   };
 }
 
+export async function ensureStreamInquiryChannel(params: {
+  vendorAccountId: string;
+  customerId: string;
+  vendorName?: string | null;
+  vendorEmail?: string | null;
+  customerName?: string | null;
+  customerEmail?: string | null;
+  initialListingId?: string | null;
+}) {
+  const client = getServerClient();
+  const apiKey = getStreamApiKeyValue();
+  const customerStreamUserId = toStreamUserId("customer", params.customerId);
+  const vendorStreamUserId = toStreamUserId("vendor", params.vendorAccountId);
+  const channelId = toStreamInquiryChannelId(params.vendorAccountId, params.customerId);
+  const channelCid = `${STREAM_CHANNEL_TYPE}:${channelId}`;
+  const channelName = `Inquiry with ${safeDisplayName(params.vendorName, "Vendor")}`;
+
+  await client.upsertUsers([
+    {
+      id: customerStreamUserId,
+      name: safeDisplayName(params.customerName, "Customer"),
+      role: "user",
+      app_role: "customer",
+      app_user_id: params.customerId,
+      email: params.customerEmail || undefined,
+    } as any,
+    {
+      id: vendorStreamUserId,
+      name: safeDisplayName(params.vendorName, "Vendor"),
+      role: "user",
+      app_role: "vendor",
+      app_user_id: params.vendorAccountId,
+      email: params.vendorEmail || undefined,
+    } as any,
+  ]);
+
+  const channel = client.channel(STREAM_CHANNEL_TYPE, channelId, {
+    name: channelName,
+    members: [customerStreamUserId, vendorStreamUserId],
+    created_by_id: customerStreamUserId,
+    channel_type: "inquiry",
+    vendor_account_id: params.vendorAccountId,
+    customer_id: params.customerId,
+    initial_listing_id: params.initialListingId ?? null,
+  } as any);
+
+  try {
+    await channel.create({ watch: false, state: false });
+  } catch (error) {
+    if (!isChannelExistsError(error)) {
+      throw error;
+    }
+  }
+
+  await channel.addMembers([customerStreamUserId, vendorStreamUserId]).catch(() => {});
+
+  await channel.updatePartial({
+    set: {
+      name: channelName,
+      channel_type: "inquiry",
+      vendor_account_id: params.vendorAccountId,
+      customer_id: params.customerId,
+      initial_listing_id: params.initialListingId ?? null,
+    },
+  } as any);
+
+  return {
+    apiKey,
+    channelType: STREAM_CHANNEL_TYPE,
+    channelId,
+    channelCid,
+    customerStreamUserId,
+    vendorStreamUserId,
+    tokenForUser(streamUserId: string) {
+      return client.createToken(streamUserId);
+    },
+  };
+}
+
+export async function promoteInquiryToBookingChannel(params: {
+  channelId: string;
+  bookingId: string;
+  eventDate: string;
+  retentionExpiresAt: string | null;
+}) {
+  if (!isStreamChatConfigured()) return;
+
+  const client = getServerClient();
+  const channel = client.channel(STREAM_CHANNEL_TYPE, params.channelId);
+
+  try {
+    await channel.updatePartial({
+      set: {
+        booking_id: params.bookingId,
+        event_date: params.eventDate,
+        retention_expires_at: params.retentionExpiresAt,
+        channel_type: "booking",
+      },
+    } as any);
+
+    await client.upsertUser({ id: "system", name: "EventHub", role: "admin" });
+    await channel.sendMessage({
+      text: "Booking created — your conversation continues here.",
+      user_id: "system",
+      type: "system",
+    } as any);
+  } catch {
+    // Non-blocking — promotion failure must never fail the booking creation.
+  }
+}
+
 /**
  * Posts a system message into a booking's Stream Chat channel.
  * Uses a dedicated "system" user so the message is visually distinct
@@ -295,6 +412,54 @@ export async function getStreamUnreadCountsForBookings(params: {
     totalUnread += Number(counts[bookingId] || 0);
   }
 
+  return { counts, totalUnread };
+}
+
+// Like getStreamUnreadCountsForBookings but accepts already-formed channel IDs (for inquiry channels).
+export async function getStreamUnreadCountsForChannels(params: {
+  role: "customer" | "vendor";
+  appUserId: string;
+  channelIds: string[];
+}) {
+  const counts: Record<string, number> = {};
+  for (const id of params.channelIds) counts[id] = 0;
+  let totalUnread = 0;
+
+  if (!isStreamChatConfigured() || params.channelIds.length === 0) {
+    return { counts, totalUnread };
+  }
+
+  const uniqueChannelIds = Array.from(new Set(params.channelIds.filter((x) => x.length > 0)));
+  const streamUserId = toStreamUserId(params.role, params.appUserId);
+  const client = getServerClient();
+
+  let channels: Awaited<ReturnType<typeof client.queryChannels>>;
+  try {
+    channels = await client.queryChannels(
+      {
+        type: STREAM_CHANNEL_TYPE,
+        members: { $in: [streamUserId] },
+        id: { $in: uniqueChannelIds },
+      } as any,
+      { last_message_at: -1 } as any,
+      { state: true, watch: false, presence: false, limit: Math.max(uniqueChannelIds.length, 30) } as any
+    );
+  } catch {
+    return { counts, totalUnread };
+  }
+
+  for (const channel of channels) {
+    const channelId = String(channel.id || "").trim();
+    if (!channelId || !counts.hasOwnProperty(channelId)) continue;
+    const unreadFromReadState = Number(channel.state?.read?.[streamUserId]?.unread_messages ?? 0);
+    const unreadFromState = Number(channel.state?.unreadCount ?? 0);
+    counts[channelId] = Math.max(
+      0,
+      Number.isFinite(unreadFromReadState) && unreadFromReadState > 0 ? unreadFromReadState : unreadFromState
+    );
+  }
+
+  for (const id of uniqueChannelIds) totalUnread += Number(counts[id] || 0);
   return { counts, totalUnread };
 }
 
