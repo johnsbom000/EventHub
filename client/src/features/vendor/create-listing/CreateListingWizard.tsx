@@ -1876,7 +1876,7 @@ export function CreateListingWizard({ onClose, initialListingType, parentListing
 
  if (!listingType) {
  return (
- <div className="swap-dashboard-whites flex h-screen w-full flex-col bg-[#ffffff]">
+ <div className="swap-dashboard-whites flex h-screen w-full flex-col overflow-hidden bg-[#ffffff]">
  <Navigation vendorDashboardAligned />
  <AuthModal
  open={authModalOpen}
@@ -1885,7 +1885,9 @@ export function CreateListingWizard({ onClose, initialListingType, parentListing
  if (!open) authPromptShownRef.current = false;
  }}
  />
+ <div className="min-h-0 flex-1 overflow-y-auto">
  <ListingTypeSelector onSelect={(type) => setListingType(type)} />
+ </div>
  </div>
  );
  }
@@ -1905,7 +1907,7 @@ export function CreateListingWizard({ onClose, initialListingType, parentListing
  />
 
  <div className="flex min-h-0 flex-1">
- <div className="w-24 shrink-0 border-r border-[rgba(74,106,125,0.22)] bg-[#ffffff] ">
+ <div className="hidden w-24 shrink-0 border-r border-[rgba(74,106,125,0.22)] bg-[#ffffff] sm:block">
  <div className="flex h-full flex-col items-center pt-6">
  <div className="flex flex-col items-center gap-3">
  {steps.map((step, index) => {
@@ -2015,7 +2017,7 @@ export function CreateListingWizard({ onClose, initialListingType, parentListing
          </div>
          </div>
 
- <div className="fixed bottom-0 left-24 right-0 z-30 bg-[#ffffff]/96 backdrop-blur-sm">
+ <div className="fixed bottom-0 left-0 right-0 z-30 bg-[#ffffff]/96 backdrop-blur-sm sm:left-24">
  <div className="mx-auto flex w-full max-w-[1400px] flex-wrap items-center justify-between gap-3 px-6 pt-4 pb-8 sm:px-12 lg:px-16">
  <div className="flex items-center gap-2">
  <Button
