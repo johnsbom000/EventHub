@@ -8,6 +8,7 @@ const SECTIONS = [
   { id: "authentication", label: "Authentication" },
   { id: "maps-location", label: "Maps & Location" },
   { id: "messaging", label: "Messaging" },
+  { id: "google-calendar", label: "Google Calendar Integration" },
   { id: "how-we-share", label: "How We Share Information" },
   { id: "data-retention", label: "Data Retention" },
   { id: "security", label: "Security" },
@@ -30,7 +31,7 @@ export default function PrivacyPolicy() {
         <div className="mb-8">
           <h1 className="text-3xl font-semibold tracking-tight text-foreground">Privacy Policy</h1>
           <p className="mt-2 text-sm text-muted-foreground">
-            Effective May 13, 2026 · Governing law: State of Utah · Questions: legal@eventhub.com
+            Effective June 3, 2026 · Governing law: State of Utah · Questions: support@eventhubglobal.com
           </p>
         </div>
 
@@ -180,9 +181,46 @@ export default function PrivacyPolicy() {
               </p>
             </section>
 
-            {/* 7. How We Share Information */}
+            {/* 7. Google Calendar Integration */}
+            <section id="google-calendar">
+              <h2>7. Google Calendar Integration</h2>
+              <p>
+                EventHub offers vendors an optional integration with Google Calendar to synchronize confirmed bookings into the vendor's calendar.
+              </p>
+              <h3>What We Access</h3>
+              <p>When a vendor connects their Google account, EventHub requests three permissions:</p>
+              <ul>
+                <li><strong>Read and write access to calendar events</strong> (<code>calendar.events</code>) — used to create, update, and delete booking events in the vendor's selected calendar, and to register push notification watch channels so that changes made directly in Google Calendar are reflected in EventHub availability.</li>
+                <li><strong>Read-only access to the vendor's calendar list</strong> (<code>calendar.calendarlist.readonly</code>) — used to display the vendor's available calendars so they can select which one to sync with.</li>
+                <li><strong>Access to the vendor's Google account email address</strong> (<code>userinfo.email</code>) — used to display the connected Google account in the vendor's dashboard settings.</li>
+              </ul>
+              <p>
+                EventHub only reads event data from the specific calendar the vendor explicitly selects. We do not access Drive, Contacts, Gmail, or any other Google data.
+              </p>
+              <h3>How We Use It</h3>
+              <p>
+                We use Google Calendar data exclusively to write and update booking events when booking status changes, write vacation block events when a vendor marks dates unavailable, and receive push notifications when a vendor edits an event directly in Google Calendar so EventHub availability stays in sync. Google Calendar data is never used for advertising, analytics, or user profiling.
+              </p>
+              <h3>How We Store It</h3>
+              <p>
+                OAuth access tokens (short-lived, ~1 hour) and refresh tokens (long-lived) are encrypted at rest using AES-256-GCM with a 256-bit key stored separately from the database. Tokens are never shared with any third party and are never logged or exposed to client-side code.
+              </p>
+              <h3>Retention</h3>
+              <p>
+                Tokens are kept while the integration is active. Disconnecting from the vendor dashboard immediately deletes all tokens from our database and revokes the access token with Google. Account deletion purges all Google tokens within 30 days.
+              </p>
+              <h3>Vendor Rights</h3>
+              <p>
+                Vendors may disconnect the Google Calendar integration at any time from dashboard Settings. This stops all future sync and deletes stored tokens. Previously created calendar events are not removed from Google Calendar on disconnect. Vendors may also revoke EventHub's access directly at{" "}
+                <a href="https://myaccount.google.com/permissions" target="_blank" rel="noopener noreferrer" className="underline underline-offset-2 hover:text-foreground">
+                  myaccount.google.com/permissions
+                </a>.
+              </p>
+            </section>
+
+            {/* 9. How We Share Information */}
             <section id="how-we-share">
-              <h2>7. How We Share Your Information</h2>
+              <h2>8. How We Share Your Information</h2>
               <p>We share your information only in the following circumstances:</p>
               <ul>
                 <li>
@@ -201,9 +239,9 @@ export default function PrivacyPolicy() {
               <p>We do not sell, rent, or trade your personal information to third parties for their marketing purposes.</p>
             </section>
 
-            {/* 8. Data Retention */}
+            {/* 10. Data Retention */}
             <section id="data-retention">
-              <h2>8. Data Retention</h2>
+              <h2>9. Data Retention</h2>
               <p>
                 We retain your personal information for as long as your account is active or as needed to provide services. We also retain information to comply with legal obligations (including tax and financial record-keeping requirements, which may extend up to 7 years), resolve disputes, and enforce agreements.
               </p>
@@ -212,9 +250,9 @@ export default function PrivacyPolicy() {
               </p>
             </section>
 
-            {/* 9. Security */}
+            {/* 11. Security */}
             <section id="security">
-              <h2>9. Security</h2>
+              <h2>10. Security</h2>
               <p>
                 We implement industry-standard safeguards including encrypted data transmission (HTTPS/TLS), encrypted storage of sensitive credentials, server-side authentication token validation, and access controls limiting staff access to personal data.
               </p>
@@ -223,9 +261,9 @@ export default function PrivacyPolicy() {
               </p>
             </section>
 
-            {/* 10. Your Rights */}
+            {/* 12. Your Rights */}
             <section id="your-rights">
-              <h2>10. Your Rights</h2>
+              <h2>11. Your Rights</h2>
               <p>Depending on your location, you may have the right to:</p>
               <ul>
                 <li><strong>Access:</strong> request a copy of the personal information we hold about you.</li>
@@ -236,13 +274,13 @@ export default function PrivacyPolicy() {
                 <li><strong>Withdrawal of consent:</strong> where processing is based on consent, withdraw it at any time without affecting prior processing.</li>
               </ul>
               <p>
-                To exercise these rights, email us at legal@eventhub.com. We will respond within 30 days. We may ask you to verify your identity before fulfilling a request.
+                To exercise these rights, email us at support@eventhubglobal.com. We will respond within 30 days. We may ask you to verify your identity before fulfilling a request.
               </p>
             </section>
 
-            {/* 11. California */}
+            {/* 13. California */}
             <section id="california">
-              <h2>11. California Residents (CCPA / CPRA)</h2>
+              <h2>12. California Residents (CCPA / CPRA)</h2>
               <p>
                 If you are a California resident, the California Consumer Privacy Act (CCPA) and the California Privacy Rights Act (CPRA) provide you additional rights, including:
               </p>
@@ -254,21 +292,21 @@ export default function PrivacyPolicy() {
                 <li>The right to non-discrimination for exercising your privacy rights.</li>
               </ul>
               <p>
-                To submit a California privacy rights request, email legal@eventhub.com with "California Privacy Request" in the subject line. We will respond within 45 days.
+                To submit a California privacy rights request, email support@eventhubglobal.com with "California Privacy Request" in the subject line. We will respond within 45 days.
               </p>
             </section>
 
-            {/* 12. Children */}
+            {/* 14. Children */}
             <section id="children">
-              <h2>12. Children's Privacy</h2>
+              <h2>13. Children's Privacy</h2>
               <p>
-                The Platform is intended for users who are at least 18 years old. We do not knowingly collect personal information from children under 13. If we learn that we have collected personal information from a child under 13 without verifiable parental consent, we will delete that information. If you believe a child has provided us with personal information, please contact us at legal@eventhub.com.
+                The Platform is intended for users who are at least 18 years old. We do not knowingly collect personal information from children under 13. If we learn that we have collected personal information from a child under 13 without verifiable parental consent, we will delete that information. If you believe a child has provided us with personal information, please contact us at support@eventhubglobal.com.
               </p>
             </section>
 
-            {/* 13. Changes */}
+            {/* 15. Changes */}
             <section id="changes">
-              <h2>13. Changes to This Policy</h2>
+              <h2>14. Changes to This Policy</h2>
               <p>
                 We may update this Privacy Policy from time to time. If we make material changes, we will notify you by updating the effective date at the top of this policy and, where required by law, by sending an email to the address associated with your account or by displaying a prominent notice on the Platform.
               </p>
@@ -277,12 +315,12 @@ export default function PrivacyPolicy() {
               </p>
             </section>
 
-            {/* 14. Contact */}
+            {/* 16. Contact */}
             <section id="contact">
-              <h2>14. Contact Us</h2>
+              <h2>15. Contact Us</h2>
               <p>If you have questions, concerns, or requests regarding this Privacy Policy, please contact us:</p>
               <ul>
-                <li><strong>Email:</strong> legal@eventhub.com</li>
+                <li><strong>Email:</strong> support@eventhubglobal.com</li>
                 <li><strong>Mailing address:</strong> EventHub, LLC · Attn: Privacy · [Address] · Utah, USA</li>
               </ul>
               <p>

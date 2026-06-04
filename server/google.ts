@@ -1190,6 +1190,10 @@ export async function listGoogleCalendarsForVendorAccount(vendorAccountId: strin
     .filter((calendar): calendar is NormalizedGoogleCalendar => Boolean(calendar));
 }
 
+/**
+ * @deprecated Requires auth/calendar (broad scope), which is no longer requested.
+ * Route disabled to support Google API verification with narrower scopes.
+ */
 export async function createGoogleCalendarForVendorAccount(vendorAccountId: string) {
   const response = await performGoogleApiRequestForVendorAccount(
     vendorAccountId,
