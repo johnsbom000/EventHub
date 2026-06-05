@@ -868,10 +868,25 @@ export function registerAdminRoutes(app: Express): void {
 
   app.get("/api/admin/stats/users", adminRateLimiter, requireAdminAuth, async (req, res) => {
     try {
-      const [totalUsersResult] = await db.select({ count: count() }).from(users);
+      const INTERNAL_EMAILS = [
+        "johnsbom000@gmail.com",
+        "boman@griffjohnson.com",
+        "cassidymalm21@gmail.com",
+        "eventhubglobal@gmail.com",
+      ];
+
+      const [totalUsersResult] = await db
+        .select({ count: count() })
+        .from(users)
+        .where(not(inArray(users.email, INTERNAL_EMAILS)));
       const totalUsers = totalUsersResult.count;
 
-      const [totalVendorsResult] = await db.select({ count: count() }).from(vendorAccounts);
+      const [totalVendorsResult] = await db
+        .select({ count: count() })
+        .from(vendorAccounts)
+        .where(
+          drizzleSql`${vendorAccounts.userId} NOT IN (SELECT id FROM users WHERE email IN ('johnsbom000@gmail.com', 'boman@griffjohnson.com', 'cassidymalm21@gmail.com', 'eventhubglobal@gmail.com'))`
+        );
       const totalVendors = totalVendorsResult.count;
 
       // Count distinct vendor accounts per listing category (categories live on listings now)
@@ -881,6 +896,10 @@ export function registerAdminRoutes(app: Express): void {
           COUNT(DISTINCT account_id)::int                        AS count
         FROM vendor_listings
         WHERE status != 'deleted'
+          AND account_id NOT IN (
+            SELECT id FROM vendor_accounts
+            WHERE user_id IN (SELECT id FROM users WHERE email IN ('johnsbom000@gmail.com', 'boman@griffjohnson.com', 'cassidymalm21@gmail.com', 'eventhubglobal@gmail.com'))
+          )
         GROUP BY 1
         ORDER BY count DESC
       `);
@@ -897,7 +916,7 @@ export function registerAdminRoutes(app: Express): void {
           count: count(),
         })
         .from(users)
-        .where(gte(users.createdAt, thirtyDaysAgo))
+        .where(and(gte(users.createdAt, thirtyDaysAgo), not(inArray(users.email, INTERNAL_EMAILS))))
         .groupBy(drizzleSql`DATE(${users.createdAt})`)
         .orderBy(drizzleSql`DATE(${users.createdAt})`);
 
