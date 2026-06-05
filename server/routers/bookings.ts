@@ -1803,7 +1803,6 @@ export function registerBookingRoutes(app: Express): void {
             listingId: isAlaCarte ? null : (listingRow?.id ?? null),
             eventId: txBookingEventId,
             packageId: data.packageId ?? null,
-            addOnIds: normalizedAddOnInputs.map((a) => a.id),
             eventDate: data.eventDate,
             eventStartTime: data.eventStartTime ?? null,
             eventEndTime: data.eventEndTime ?? null,
