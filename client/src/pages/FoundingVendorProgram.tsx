@@ -1,4 +1,4 @@
-import { useEffect, useState } from "react";
+import { useEffect } from "react";
 import { useLocation } from "wouter";
 import { useAuth0 } from "@auth0/auth0-react";
 import { useQuery } from "@tanstack/react-query";
@@ -7,7 +7,6 @@ import Navigation from "@/components/Navigation";
 import Footer from "@/components/Footer";
 import BrandWordmark from "@/components/BrandWordmark";
 import { Badge } from "@/components/ui/badge";
-import { loginWithPopupFirst } from "@/lib/auth0Login";
 
 const FOUNDING_TOKEN_STORAGE_KEY = "eventhub:founding-invite-token";
 
@@ -22,7 +21,7 @@ const valueProps = [
   },
   {
     title: "Belong",
-    description: "A permanent Founding Vendor badge and early access to everything new.",
+    description: "Early access to everything new as we build out the platform.",
   },
 ];
 
@@ -52,12 +51,6 @@ const benefits = [
     tag: "One-time · on the house",
   },
   {
-    title: "Founding Vendor Badge",
-    description:
-      "A permanent badge on your shop marking you as one of the original EventHub vendors.",
-    tag: "Permanent · displayed on all your listings",
-  },
-  {
     title: "Refer a Vendor, Earn Free Bookings",
     description:
       "For every vendor you refer who publishes a listing, earn 5 additional bookings at half the normal fee.",
@@ -76,26 +69,19 @@ const finePrint = [
 
 export default function FoundingVendorProgram() {
   const [, setLocation] = useLocation();
-  const { isAuthenticated, isLoading: isAuthLoading, loginWithPopup, loginWithRedirect } = useAuth0();
-  const [isClaiming, setIsClaiming] = useState(false);
+  const { isAuthenticated, isLoading: isAuthLoading } = useAuth0();
 
-  // Detect invite token before first render (URL param OR existing localStorage value)
-  const [hasToken] = useState(() => {
-    const params = new URLSearchParams(window.location.search);
-    return Boolean(params.get("fv")) || Boolean(localStorage.getItem(FOUNDING_TOKEN_STORAGE_KEY));
-  });
-
-  // Capture URL token to localStorage and strip from URL
+  // If URL has an invite token: save it and redirect to the right entry point.
+  // Unauthenticated → TemporaryLanding (token already in localStorage).
+  // Authenticated → VendorProvision (token fires at onboarding completion).
   useEffect(() => {
+    if (isAuthLoading) return;
     const params = new URLSearchParams(window.location.search);
     const fv = params.get("fv");
-    if (fv) {
-      localStorage.setItem(FOUNDING_TOKEN_STORAGE_KEY, fv.trim());
-      params.delete("fv");
-      const qs = params.toString();
-      window.history.replaceState(null, "", window.location.pathname + (qs ? `?${qs}` : ""));
-    }
-  }, []);
+    if (!fv) return;
+    localStorage.setItem(FOUNDING_TOKEN_STORAGE_KEY, fv.trim());
+    setLocation(isAuthenticated ? "/vendor/provision" : "/");
+  }, [isAuthLoading, isAuthenticated, setLocation]);
 
   const { data: vendorAccount, isLoading: isVendorLoading } = useQuery<{
     isFoundingVendor?: boolean | null;
@@ -109,40 +95,15 @@ export default function FoundingVendorProgram() {
   const isLoading = isAuthLoading || isVendorLoading;
   const isFoundingVendor = vendorAccount?.isFoundingVendor === true;
 
-  // Redirect to / only if: authenticated, not a founding vendor, and no invite token
+  // Non-founding-vendor visitors (with no URL token) get sent home.
+  // The URL-token effect above handles token-holders before this fires.
   useEffect(() => {
     if (isLoading) return;
-    if (isAuthenticated && !isFoundingVendor && !hasToken) {
+    const hasFvParam = Boolean(new URLSearchParams(window.location.search).get("fv"));
+    if (!isFoundingVendor && !hasFvParam) {
       setLocation("/");
     }
-  }, [isLoading, isAuthenticated, isFoundingVendor, hasToken, setLocation]);
-
-  const handleClaim = async () => {
-    if (isAuthenticated) {
-      setLocation("/vendor/onboarding");
-      return;
-    }
-    setIsClaiming(true);
-    try {
-      sessionStorage.setItem("eh:after-auth-intent", "vendor");
-      const result = await loginWithPopupFirst({
-        loginWithPopup,
-        loginWithRedirect,
-        popupOptions: { authorizationParams: { prompt: "login" } },
-        redirectOptions: {
-          appState: { returnTo: "/vendor/onboarding" },
-          authorizationParams: { prompt: "login" },
-        },
-      });
-      if (result === "popup") {
-        setLocation("/vendor/onboarding");
-      }
-    } catch {
-      sessionStorage.removeItem("eh:after-auth-intent");
-    } finally {
-      setIsClaiming(false);
-    }
-  };
+  }, [isLoading, isFoundingVendor, setLocation]);
 
   if (isLoading) {
     return (
@@ -152,10 +113,7 @@ export default function FoundingVendorProgram() {
     );
   }
 
-  // Not in member mode or invite mode — useEffect will redirect
-  if (!isFoundingVendor && !hasToken) return null;
-
-  const isInviteMode = !isFoundingVendor;
+  if (!isFoundingVendor) return null;
 
   return (
     <div className="min-h-screen flex flex-col bg-[#ffffff]">
@@ -163,7 +121,7 @@ export default function FoundingVendorProgram() {
         <Navigation showBottomBorder={false} />
       </div>
 
-      <main className={`flex-1${isInviteMode ? " pb-24" : ""}`}>
+      <main className="flex-1">
         {/* Hero */}
         <section
           className="border-b border-border/50 py-16 sm:py-24 text-center px-4 sm:px-6 lg:px-8"
@@ -187,9 +145,7 @@ export default function FoundingVendorProgram() {
               aria-hidden="true"
             />
             <p className="font-sans text-base text-muted-foreground leading-relaxed mb-7 max-w-xl mx-auto">
-              {isInviteMode
-                ? "Join EventHub as a founding vendor and claim the best deal we will ever offer — built to put more bookings, and more of each booking, in your pocket."
-                : "You're one of EventHub's original vendors. Here are the terms of the program you're a part of."}
+              You're one of EventHub's original vendors. Here are the terms of the program you're a part of.
             </p>
             <div className="inline-flex items-center gap-2.5 font-sans text-sm text-muted-foreground">
               <span
@@ -296,26 +252,6 @@ export default function FoundingVendorProgram() {
         <Footer />
       </div>
 
-      {/* Sticky CTA bar — invite mode only */}
-      {isInviteMode && (
-        <div className="fixed bottom-0 inset-x-0 z-50 bg-white border-t border-border/60 shadow-[0_-4px_24px_rgba(0,0,0,0.08)]">
-          <div className="mx-auto max-w-4xl flex items-center justify-between gap-4 px-4 py-4 sm:px-6">
-            <div className="hidden sm:block">
-              <p className="font-sans text-sm font-semibold text-foreground">Ready to claim your spot?</p>
-              <p className="font-sans text-xs text-muted-foreground">By invitation only · Limited spots available</p>
-            </div>
-            <button
-              type="button"
-              onClick={handleClaim}
-              disabled={isClaiming}
-              className="w-full sm:w-auto inline-flex items-center justify-center gap-2 rounded-lg px-6 py-3 font-sans text-sm font-semibold text-[#1C1100] transition-opacity disabled:opacity-60"
-              style={{ background: "#C9A84C", border: "1px solid #B0882C" }}
-            >
-              {isClaiming ? "Opening…" : "Claim your Founding spot →"}
-            </button>
-          </div>
-        </div>
-      )}
     </div>
   );
 }

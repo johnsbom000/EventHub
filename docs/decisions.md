@@ -4480,6 +4480,13 @@ Template for new entries:
 - Impact: Vendors now see `Photos` labels only, and the media step no longer includes the deferred video notice block.
 - Revisit trigger: If video uploads are introduced, re-add user-facing video guidance with production-ready copy tied to actual capability.
 
+## [2026-06-03] Align Step 3 onboarding terms checkbox with confirm cards
+- Context: In vendor onboarding Step 3, the terms agreement checkbox sat farther left than the `Business Details` confirm card and visually crowded the fixed bottom action buttons.
+- Decision: Add desktop-only left padding to the agreement row so its checkbox aligns with the confirm card column, and add bottom margin to lift only that row above the unchanged fixed action buttons.
+- Why: This preserves the existing summary card and button positions while improving visual alignment in the final onboarding confirmation step.
+- Impact: Only the agreement row moves; confirm cards, Back, Go To My Hub, and Create first listing controls keep their existing layout.
+- Revisit trigger: If the onboarding shell/footer spacing is centralized, replace the row-specific offset with a shared confirm-step alignment token.
+
 ## [2026-04-10] Force draft row creation when vendor clicks `Save Draft` in listing wizard
 - Context: `Save Draft` could exit the wizard without creating a listing row when no fields met the existing "meaningful data" threshold, which prevented vendors from seeing a draft in Listings after exit.
 - Decision: Add a `forceCreate` option to wizard save helper and call it from `Save Draft`, so the action always creates/updates a draft record before navigating away.

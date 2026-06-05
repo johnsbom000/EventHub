@@ -1792,11 +1792,11 @@ export function registerAdminRoutes(app: Express): void {
       if (!Array.isArray(raw) || raw.length === 0) {
         return res.status(400).json({ error: "emails must be a non-empty array" });
       }
-      const emails: string[] = [...new Set(
+      const emails: string[] = Array.from(new Set(
         raw
           .map((e: unknown) => (typeof e === "string" ? e.trim().toLowerCase() : ""))
           .filter((e) => /^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(e))
-      )];
+      ));
       if (emails.length === 0) {
         return res.status(400).json({ error: "No valid email addresses provided" });
       }
@@ -1956,11 +1956,11 @@ export function registerAdminRoutes(app: Express): void {
       if (!Array.isArray(raw) || raw.length === 0) {
         return res.status(400).json({ error: "emails must be a non-empty array" });
       }
-      const emails: string[] = [...new Set(
+      const emails: string[] = Array.from(new Set(
         raw
           .map((e: unknown) => (typeof e === "string" ? e.trim().toLowerCase() : ""))
           .filter((e) => /^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(e))
-      )];
+      ));
       if (emails.length === 0) {
         return res.status(400).json({ error: "No valid email addresses provided" });
       }

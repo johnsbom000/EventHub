@@ -258,6 +258,7 @@ export const vendorAccounts = pgTable(
     stripeAccountType: text("stripe_account_type"), // 'express' or 'standard'
     stripeOnboardingComplete: boolean("stripe_onboarding_complete").default(false),
     profileComplete: boolean("profile_complete").default(false),
+    onboardingCompletedAt: timestamp("onboarding_completed_at"),
     active: boolean("active").default(true),
     googleAccessToken: text("google_access_token"),
     googleRefreshToken: text("google_refresh_token"),

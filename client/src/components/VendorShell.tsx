@@ -68,6 +68,7 @@ type VendorHeaderAccount = {
   email?: string | null;
   operatingTimezone?: string | null;
   vendorOnlySignup?: boolean;
+  onboardingCompleted?: boolean;
 };
 
 type VendorProfileSummary = {
@@ -199,7 +200,7 @@ export default function VendorShell({ children, onOpenAccountSettings }: VendorS
 
   // Tour system
   const [activeTourKey, setActiveTourKey] = useState<string | null>(null);
-  const tourTimerRef = useRef<ReturnType<typeof window.setTimeout> | null>(null);
+  const tourTimerRef = useRef<number | null>(null);
 
   useEffect(() => {
     const key = getTourKey(location);
@@ -485,6 +486,22 @@ export default function VendorShell({ children, onOpenAccountSettings }: VendorS
         ) : hasActivePolicyWarning && showWarningBanner ? (
           <WarningCountBanner warningCount={circumventionStatus?.warningCount ?? 0} />
         ) : null}
+
+        {/* Onboarding incomplete banner — shown until vendor completes their profile */}
+        {vendorAccount && vendorAccount.onboardingCompleted === false && (
+          <div className="bg-amber-50 border-b border-amber-200 px-4 py-2.5 flex items-center justify-between gap-4">
+            <p className="text-sm text-amber-800">
+              <strong>Your profile isn't visible yet.</strong>{" "}
+              Complete vendor onboarding to publish listings and appear in search.
+            </p>
+            <a
+              href="/vendor/onboarding"
+              className="text-sm font-semibold text-amber-700 underline whitespace-nowrap shrink-0"
+            >
+              Complete profile →
+            </a>
+          </div>
+        )}
 
         <div className="flex min-h-0 flex-1">
           <VendorSidebar

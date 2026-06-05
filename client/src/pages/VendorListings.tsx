@@ -128,8 +128,15 @@ export default function VendorListings() {
       );
       const payload = await response.json().catch(() => null);
       if (!response.ok) {
-        const reasons = Array.isArray(payload?.reasons) ? payload.reasons.join(" ") : "";
-        throw new Error(reasons || payload?.error || "Unable to publish listing");
+        const err = Object.assign(
+          new Error(
+            Array.isArray(payload?.reasons)
+              ? payload.reasons.join(" ")
+              : payload?.error || "Unable to publish listing"
+          ),
+          { code: payload?.error }
+        );
+        throw err;
       }
       return payload;
     },
@@ -141,6 +148,21 @@ export default function VendorListings() {
       });
     },
     onError: (error: any) => {
+      if (error?.code === "onboarding_incomplete") {
+        toast({
+          title: "Finish your profile first",
+          description: "Complete vendor onboarding before publishing a listing.",
+          action: (
+            <a
+              href="/vendor/onboarding"
+              className="underline font-semibold text-sm"
+            >
+              Complete profile
+            </a>
+          ),
+        } as any);
+        return;
+      }
       toast({
         title: "Publish failed",
         description: error?.message || "Unable to publish listing.",

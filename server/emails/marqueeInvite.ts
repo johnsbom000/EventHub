@@ -88,8 +88,8 @@ export function marqueeInviteTemplate(params: MarqueeInviteParams): {
   const baseUrl = (params.appBaseUrl || DEFAULT_APP_URL).replace(/\/$/, "");
   const agreementUrl = `${baseUrl}/vendor/marquee`;
   const ctaUrl = params.inviteToken
-    ? `${baseUrl}/vendor/marquee?mv=${params.inviteToken}`
-    : `${baseUrl}/vendor/marquee`;
+    ? `${baseUrl}/?mv=${params.inviteToken}`
+    : `${baseUrl}/`;
 
   const subject = "You're invited: The EventHub Marquee Vendor Program";
 

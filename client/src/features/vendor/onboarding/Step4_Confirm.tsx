@@ -186,7 +186,7 @@ export default function Step4_Confirm({
 
         <div className="fixed bottom-0 left-0 sm:left-24 right-0 z-30 bg-[#ffffff]/96 backdrop-blur-sm">
           <div className="mx-auto flex w-full max-w-[1400px] flex-col gap-3 px-6 pt-4 pb-8 sm:px-12 lg:px-16">
-            <div className="flex items-start gap-3">
+            <div className="mb-12 flex items-start gap-3 lg:pl-20">
               <Checkbox
                 id="vendor-terms-agree"
                 checked={agreedToTerms}

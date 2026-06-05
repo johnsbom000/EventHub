@@ -11,6 +11,7 @@ interface LocationPickerProps {
   placeholder?: string;
   className?: string;
   showCurrentLocationButton?: boolean;
+  requirePrecise?: boolean;
 }
 
 // Display-only: strips county-level segments and trailing country from Nominatim labels.

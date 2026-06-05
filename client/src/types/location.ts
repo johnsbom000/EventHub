@@ -8,4 +8,5 @@ export interface LocationResult {
   country?: string;
   lat: number;
   lng: number;
+  placeType?: string;
 }
