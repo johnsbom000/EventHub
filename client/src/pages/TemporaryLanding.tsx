@@ -7,7 +7,7 @@ import AuthModal from "@/components/AuthModal";
 type Step = "question" | "signup" | "not-vendor";
 type AuthTab = "login" | "signup";
 
-const VENDOR_INTENT_RETURN_TO = "/?intent=vendor";
+const VENDOR_INTENT_RETURN_TO = "/vendor/provision";
 const CUSTOMER_DASHBOARD_RETURN_TO = "/dashboard";
 const ROOT_RETURN_TO = "/";
 
@@ -28,7 +28,7 @@ const FAKE_LISTINGS = [
   { title: "Wine Barrel Rental",              price: "$220",   photo: "https://images.unsplash.com/photo-1510812431401-41d2bd2722f3?w=400&h=420&fit=crop", aspect: "20/21"},
 ];
 
-function QuestionStep({ onYes, onNo, onSignIn }: { onYes: () => void; onNo: () => void; onSignIn: () => void }) {
+function QuestionStep({ onVendor, onCustomer, onSignIn }: { onVendor: () => void; onCustomer: () => void; onSignIn: () => void }) {
   return (
     <>
       <BrandWordmark
@@ -37,22 +37,24 @@ function QuestionStep({ onYes, onNo, onSignIn }: { onYes: () => void; onNo: () =
         hubClassName="text-[#4a6a7d] font-normal"
       />
       <p className="mt-2 mb-8 font-sans text-[1.5rem] leading-[1.55] text-[#4a6a7d]">
-        Join all the vendors making the switch to EventHub!<br />
+        What describes you?
       </p>
       <div className="grid grid-cols-2 gap-3 mb-4">
         <button
           type="button"
-          onClick={onNo}
-          className="rounded-[10px] border-[1.5px] border-[rgba(74,106,125,0.2)] bg-white px-0 py-4 font-sans text-[1.65rem] font-semibold text-[#2a3a42] transition-colors hover:border-[#4a6a7d] hover:bg-[#f8fafb]"
+          onClick={onCustomer}
+          className="flex flex-col items-center gap-1.5 rounded-[10px] border-[1.5px] border-[rgba(74,106,125,0.2)] bg-white px-3 py-5 font-sans text-[1.5rem] font-semibold text-[#2a3a42] transition-colors hover:border-[#4a6a7d] hover:bg-[#f8fafb]"
         >
-          Plan an Event
+          Planning an event
+          <span className="text-[1.1rem] font-normal text-[#7c8c94]">Find vendors to book</span>
         </button>
         <button
           type="button"
-          onClick={onYes}
-          className="rounded-[10px] bg-[#2a3a42] px-0 py-4 font-sans text-[1.65rem] font-semibold text-white transition-colors hover:bg-[#3a4f59]"
+          onClick={onVendor}
+          className="flex flex-col items-center gap-1.5 rounded-[10px] bg-[#2a3a42] px-3 py-5 font-sans text-[1.5rem] font-semibold text-white transition-colors hover:bg-[#3a4f59]"
         >
-          Become a Vendor
+          Event vendor
+          <span className="text-[1.1rem] font-normal text-[rgba(255,255,255,0.65)]">List your services</span>
         </button>
       </div>
       <p className="font-sans text-[1.2rem] text-[#9aacb4]">
@@ -89,10 +91,10 @@ function SignupStep({
         hubClassName="text-[#4a6a7d] font-normal"
       />
       <h2 className="font-heading text-[2.4rem] font-normal leading-[1.15] text-[#2a3a42]">
-        Create your account
+        Create your vendor account
       </h2>
       <p className="mt-2 mb-7 font-sans text-[1.5rem] leading-[1.5] text-[#4a6a7d]">
-        Sign up below — we'll take you straight to vendor onboarding.
+        Sign up to start listing your services on EventHub.
       </p>
 
       <button
@@ -361,8 +363,8 @@ const handleEmail = () =>
         <div className="relative w-full max-w-[560px] rounded-[20px] bg-white px-11 pb-11 pt-12 text-center shadow-[0_24px_80px_rgba(42,58,66,0.28)]">
           {step === "question" && (
             <QuestionStep
-              onYes={() => setStep("signup")}
-              onNo={() => setStep("not-vendor")}
+              onVendor={() => setStep("signup")}
+              onCustomer={handleCustomerCreateAccount}
               onSignIn={handleSignIn}
             />
           )}

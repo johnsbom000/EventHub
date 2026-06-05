@@ -37,6 +37,16 @@ export interface BookingRequestedParams {
   isInstant: boolean;
   serverUrl: string;
   addOns?: Array<{ title: string; priceCents: number }>;
+  packageName?: string | null;
+  outsideServiceRadius?: boolean | null;
+  feeLabel?: "delivery fee" | "travel fee";
+  basePriceCents?: number | null;
+  deliveryFeeAmountCents?: number | null;
+  setupFeeAmountCents?: number | null;
+  travelFeeAmountCents?: number | null;
+  discountAmountCents?: number | null;
+  serviceFeeAmountCents?: number | null;
+  securityDepositCents?: number | null;
 }
 
 export function bookingRequestedTemplate(params: BookingRequestedParams): {

@@ -5,13 +5,14 @@ import {
   varchar,
   timestamp,
   integer,
-  serial,
   jsonb,
   boolean,
   doublePrecision,
   pgEnum,
   index,
   uniqueIndex,
+  date,
+  type AnyPgColumn,
 } from "drizzle-orm/pg-core";
 import { createInsertSchema } from "drizzle-zod";
 import { z } from "zod";
@@ -70,6 +71,9 @@ export const notificationTypeEnum = pgEnum("notification_type", [
 
 export const messageSenderTypeEnum = pgEnum("message_sender_type", ["customer", "vendor"]);
 export const notificationRecipientTypeEnum = pgEnum("notification_recipient_type", ["customer", "vendor"]);
+export const listingTypeEnum = pgEnum("listing_type_enum", ["single", "package_container", "package_item", "addon"]);
+export const discountTypeEnum = pgEnum("discount_type_enum", ["promo_code", "public_sale"]);
+export const travelFeeProposalStatusEnum = pgEnum("travel_fee_proposal_status_enum", ["pending", "accepted", "declined", "cancelled"]);
 
 // Shared identity table for all principals — customers, vendors, and admins.
 // Vendors have an additional vendor_accounts row linked via vendor_accounts.user_id.
@@ -193,7 +197,7 @@ export const events = pgTable("events", {
   id: varchar("id").primaryKey().default(sql`gen_random_uuid()`),
   eventType: text("event_type").notNull(),
   location: text("location").notNull(),
-  date: text("date").notNull(),
+  date: date("date", { mode: "string" }).notNull(),
   startTime: text("start_time").notNull(),
   guestCount: integer("guest_count").notNull(),
   vendorsNeeded: text("vendors_needed").array().notNull(),
@@ -205,8 +209,8 @@ export const events = pgTable("events", {
   djDetails: jsonb("dj_details").$type<DJDetails | null>(),
   propDecorDetails: jsonb("prop_decor_details").$type<PropDecorDetails | null>(),
   customerId: varchar("customer_id").references(() => users.id, { onDelete: "set null" }),
-  createdAt: timestamp("created_at").defaultNow(),
-  updatedAt: timestamp("updated_at").defaultNow(),
+  createdAt: timestamp("created_at").defaultNow().notNull(),
+  updatedAt: timestamp("updated_at").defaultNow().notNull(),
 });
 
 export const insertEventSchema = createInsertSchema(events)
@@ -254,6 +258,7 @@ export const vendorAccounts = pgTable(
     stripeAccountType: text("stripe_account_type"), // 'express' or 'standard'
     stripeOnboardingComplete: boolean("stripe_onboarding_complete").default(false),
     profileComplete: boolean("profile_complete").default(false),
+    onboardingCompletedAt: timestamp("onboarding_completed_at"),
     active: boolean("active").default(true),
     googleAccessToken: text("google_access_token"),
     googleRefreshToken: text("google_refresh_token"),
@@ -267,7 +272,7 @@ export const vendorAccounts = pgTable(
     ownerLastName: text("owner_last_name"),
     ownerPhone: text("owner_phone"),
     deletedAt: timestamp("deleted_at"),
-    createdAt: timestamp("created_at").defaultNow(),
+    createdAt: timestamp("created_at").defaultNow().notNull(),
     isMarqueeVendor: boolean("is_marquee_vendor").notNull().default(false),
     marqueeVendorNumber: integer("marquee_vendor_number"),
     marqueeHolidayBookingsUsed: integer("marquee_holiday_bookings_used").notNull().default(0),
@@ -304,6 +309,9 @@ export const vendorAccounts = pgTable(
     referralCodeUniqueIdx: uniqueIndex("vendor_accounts_referral_code_unique_idx")
       .on(table.referralCode)
       .where(sql`${table.referralCode} is not null`),
+    shopSlugUniqueIdx: uniqueIndex("vendor_accounts_shop_slug_unique_idx")
+      .on(table.shopSlug)
+      .where(sql`${table.deletedAt} is null`),
   })
 );
 
@@ -347,8 +355,8 @@ export const vendorProfiles = pgTable("vendor_profiles", {
   serviceAddress: text("service_address"), // (for guests-come-to-me)
   photos: text("photos").array().default(sql`'{}'`),
   serviceDescription: text("service_description").notNull(),
-  createdAt: timestamp("created_at").defaultNow(),
-  updatedAt: timestamp("updated_at").defaultNow(),
+  createdAt: timestamp("created_at").defaultNow().notNull(),
+  updatedAt: timestamp("updated_at").defaultNow().notNull(),
 });
 
 export const insertVendorProfileSchema = createInsertSchema(vendorProfiles).omit({
@@ -413,9 +421,9 @@ export const vendorListings = pgTable("vendor_listings", {
   // ─── Listing type architecture ─────────────────────────────────────────────
   // listing_type: 'single' (default) | 'package_container' | 'package_item' | 'addon'
   // Browse queries MUST filter: WHERE listing_type NOT IN ('package_item', 'addon')
-  listingType: text("listing_type").notNull().default("single"),
+  listingType: listingTypeEnum("listing_type").notNull().default("single"),
   // parentListingId: set on package_item and addon child rows
-  parentListingId: varchar("parent_listing_id"), // self-referential FK — added in migration 0063
+  parentListingId: varchar("parent_listing_id").references((): AnyPgColumn => vendorListings.id, { onDelete: "cascade" }), // self-referential FK added in migration 0063
   // package_availability_mode: 'dependent' | 'independent' — only on package_container
   packageAvailabilityMode: text("package_availability_mode"),
   // serviceAreaOverride: when true on a package_item, use its own service area fields
@@ -427,8 +435,8 @@ export const vendorListings = pgTable("vendor_listings", {
   securityDepositCents: integer("security_deposit_cents"),
   // ─── Pre-booking contact ───────────────────────────────────────────────────
   allowPreBookingContact: boolean("allow_pre_booking_contact").notNull().default(false),
-  createdAt: timestamp("created_at").defaultNow(),
-  updatedAt: timestamp("updated_at").defaultNow(),
+  createdAt: timestamp("created_at").defaultNow().notNull(),
+  updatedAt: timestamp("updated_at").defaultNow().notNull(),
 });
 
 export const insertVendorListingSchema = createInsertSchema(vendorListings).omit({
@@ -462,8 +470,7 @@ export const bookings = pgTable("bookings", {
 
   eventId: varchar("event_id").references(() => events.id),
   packageId: text("package_id"), // reference to selected package
-  addOnIds: text("add_on_ids").array().default(sql`'{}'`),
-  eventDate: text("event_date").notNull(),
+  eventDate: date("event_date", { mode: "string" }).notNull(),
   eventStartTime: text("event_start_time"),
   eventEndTime: text("event_end_time"),
   eventLocation: text("event_location"),
@@ -525,8 +532,8 @@ export const bookings = pgTable("bookings", {
   inquiryChannelId: varchar("inquiry_channel_id", { length: 255 }),
   vendorDismissedAt: timestamp("vendor_dismissed_at"),
   customerDismissedAt: timestamp("customer_dismissed_at"),
-  createdAt: timestamp("created_at").defaultNow(),
-  updatedAt: timestamp("updated_at").defaultNow(),
+  createdAt: timestamp("created_at").defaultNow().notNull(),
+  updatedAt: timestamp("updated_at").defaultNow().notNull(),
 });
 
 export const insertBookingSchema = createInsertSchema(bookings).omit({
@@ -646,7 +653,7 @@ export const messages = pgTable("messages", {
   content: text("content").notNull(),
   attachments: text("attachments").array().default(sql`'{}'`), // URLs to uploaded files
   read: boolean("read").default(false).notNull(),
-  createdAt: timestamp("created_at").defaultNow(),
+  createdAt: timestamp("created_at").defaultNow().notNull(),
 });
 
 export const insertMessageSchema = createInsertSchema(messages).omit({
@@ -692,7 +699,7 @@ export const payments = pgTable("payments", {
   refundedAt: timestamp("refunded_at"),
   paidAt: timestamp("paid_at"),
   payoutEmailSent: boolean("payout_email_sent").notNull().default(false),
-  createdAt: timestamp("created_at").defaultNow(),
+  createdAt: timestamp("created_at").defaultNow().notNull(),
 });
 
 export const insertPaymentSchema = createInsertSchema(payments).omit({
@@ -714,7 +721,7 @@ export const notifications = pgTable("notifications", {
   link: text("link"), // URL to relevant page
   read: boolean("read").default(false).notNull(),
   archived: boolean("archived").default(false).notNull(),
-  createdAt: timestamp("created_at").defaultNow(),
+  createdAt: timestamp("created_at").defaultNow().notNull(),
   expiresAt: timestamp("expires_at", { withTimezone: true }).default(sql`now() + interval '90 days'`),
 });
 
@@ -733,11 +740,9 @@ export const reviewReplies = pgTable("review_replies", {
   // ✅ migrated from legacy vendors -> vendor_accounts
   vendorAccountId: varchar("vendor_account_id").references(() => vendorAccounts.id),
 
-  // DEPRECATED: use listingReviewId FK instead; kept until backfill is confirmed
-  reviewIndex: integer("review_index").notNull(),
   listingReviewId: varchar("listing_review_id").references(() => listingReviews.id, { onDelete: "cascade" }),
   reply: text("reply").notNull(),
-  createdAt: timestamp("created_at").defaultNow(),
+  createdAt: timestamp("created_at").defaultNow().notNull(),
 });
 
 export const insertReviewReplySchema = createInsertSchema(reviewReplies).omit({
@@ -785,14 +790,23 @@ export type InsertListingReview = z.infer<typeof insertListingReviewSchema>;
 export type ListingReview = typeof listingReviews.$inferSelect;
 
 // Web Traffic Tracking (for admin analytics)
-export const webTraffic = pgTable("web_traffic", {
-  id: varchar("id").primaryKey().default(sql`gen_random_uuid()`),
-  userId: varchar("user_id"), // nullable - can track anonymous visits
-  userType: text("user_type"), // 'customer', 'vendor', 'admin', or null
-  path: text("path").notNull(),
-  referrer: text("referrer"),
-  timestamp: timestamp("timestamp").defaultNow().notNull(),
-});
+export const webTraffic = pgTable(
+  "web_traffic",
+  {
+    id: varchar("id").primaryKey().default(sql`gen_random_uuid()`),
+    userId: varchar("user_id"), // nullable - can track anonymous visits
+    userType: text("user_type"), // 'customer', 'vendor', 'admin', or null
+    path: text("path").notNull(),
+    referrer: text("referrer"),
+    timestamp: timestamp("timestamp").defaultNow().notNull(),
+  },
+  (table) => ({
+    timestampIdx: index("idx_web_traffic_timestamp").on(table.timestamp),
+    userIdIdx: index("idx_web_traffic_user_id")
+      .on(table.userId)
+      .where(sql`${table.userId} is not null`),
+  })
+);
 
 
 // Listing-level traffic (replaces listing_views)
@@ -845,8 +859,8 @@ export const vendorVacationBlocks = pgTable("vendor_vacation_blocks", {
   vendorId: varchar("vendor_id")
     .notNull()
     .references(() => vendorAccounts.id, { onDelete: "cascade" }),
-  startDate: text("start_date").notNull(), // YYYY-MM-DD
-  endDate: text("end_date").notNull(),     // YYYY-MM-DD
+  startDate: date("start_date", { mode: "string" }).notNull(),
+  endDate: date("end_date", { mode: "string" }).notNull(),
   // Google Calendar sync linkage (added migration 0057)
   googleEventId: text("google_event_id"),
   googleCalendarId: text("google_calendar_id"),
@@ -1021,7 +1035,7 @@ export const vendorDiscounts = pgTable(
     vendorAccountId: varchar("vendor_account_id")
       .notNull()
       .references(() => vendorAccounts.id, { onDelete: "cascade" }),
-    discountType: varchar("discount_type").notNull(), // 'promo_code' | 'public_sale'
+    discountType: discountTypeEnum("discount_type").notNull(),
     code: varchar("code"), // uppercase alphanumeric, promo codes only
     percentOff: integer("percent_off").notNull(),
     startsAt: timestamp("starts_at").notNull(),
@@ -1174,7 +1188,7 @@ export const googleWebhookNotifications = pgTable(
   "google_webhook_notifications",
   {
     id: varchar("id").primaryKey().default(sql`gen_random_uuid()`),
-    vendorAccountId: varchar("vendor_account_id").notNull(),
+    vendorAccountId: varchar("vendor_account_id").notNull().references(() => vendorAccounts.id, { onDelete: "cascade" }),
     channelId: text("channel_id").notNull(),
     messageNumber: text("message_number").notNull(), // bigint stored as text to avoid JS precision loss
     resourceId: text("resource_id").notNull(),
@@ -1260,8 +1274,7 @@ export const travelFeeProposals = pgTable(
       .references(() => vendorAccounts.id, { onDelete: "cascade" }),
     amountCents: integer("amount_cents").notNull(),
     reason: text("reason"),
-    // 'pending' | 'accepted' | 'declined' | 'cancelled'
-    status: varchar("status", { length: 20 }).notNull().default("pending"),
+    status: travelFeeProposalStatusEnum("status").notNull().default("pending"),
     proposedAt: timestamp("proposed_at", { withTimezone: true }).notNull().defaultNow(),
     respondedAt: timestamp("responded_at", { withTimezone: true }),
     createdAt: timestamp("created_at", { withTimezone: true }).notNull().defaultNow(),
@@ -1270,6 +1283,9 @@ export const travelFeeProposals = pgTable(
   (table) => ({
     bookingIdIdx: index("idx_travel_fee_proposals_booking_id").on(table.bookingId, table.createdAt),
     vendorAccountIdx: index("idx_travel_fee_proposals_vendor_account_id").on(table.vendorAccountId),
+    bookingPendingUniqueIdx: uniqueIndex("travel_fee_proposals_booking_pending_unique")
+      .on(table.bookingId)
+      .where(sql`${table.status} = 'pending'`),
   })
 );
 
@@ -1381,7 +1397,7 @@ export const vendorReferralStatusEnum = pgEnum("vendor_referral_status", [
 export const vendorReferrals = pgTable(
   "vendor_referrals",
   {
-    id: serial("id").primaryKey(),
+    id: varchar("id").primaryKey().default(sql`gen_random_uuid()`),
     referrerVendorId: varchar("referrer_vendor_id")
       .notNull()
       .references(() => vendorAccounts.id),
@@ -1403,7 +1419,7 @@ export type InsertVendorReferral = typeof vendorReferrals.$inferInsert;
 
 // Founding Vendor Invite Tokens — global links admin shares to grant founding status
 export const foundingVendorInvites = pgTable("founding_vendor_invites", {
-  id: serial("id").primaryKey(),
+  id: varchar("id").primaryKey().default(sql`gen_random_uuid()`),
   token: varchar("token", { length: 32 }).notNull().unique(),
   active: boolean("active").notNull().default(true),
   redemptionCount: integer("redemption_count").notNull().default(0),
@@ -1414,7 +1430,7 @@ export type FoundingVendorInvite = typeof foundingVendorInvites.$inferSelect;
 
 // Marquee Vendor Invite Tokens — global links admin shares to grant marquee status
 export const marqueeVendorInvites = pgTable("marquee_vendor_invites", {
-  id: serial("id").primaryKey(),
+  id: varchar("id").primaryKey().default(sql`gen_random_uuid()`),
   token: varchar("token", { length: 32 }).notNull().unique(),
   active: boolean("active").notNull().default(true),
   redemptionCount: integer("redemption_count").notNull().default(0),
@@ -1425,7 +1441,7 @@ export type MarqueeVendorInvite = typeof marqueeVendorInvites.$inferSelect;
 
 // Marquee Email Invites — log of every invitation email the admin sends
 export const marqueeEmailInvites = pgTable("marquee_email_invites", {
-  id: serial("id").primaryKey(),
+  id: varchar("id").primaryKey().default(sql`gen_random_uuid()`),
   email: varchar("email", { length: 255 }).notNull(),
   sentAt: timestamp("sent_at", { withTimezone: true }).notNull().defaultNow(),
   sentBy: varchar("sent_by", { length: 255 }),
@@ -1436,7 +1452,7 @@ export type MarqueeEmailInvite = typeof marqueeEmailInvites.$inferSelect;
 
 // Founding Vendor Email Invites — log of every invitation email the admin sends
 export const foundingEmailInvites = pgTable("founding_email_invites", {
-  id: serial("id").primaryKey(),
+  id: varchar("id").primaryKey().default(sql`gen_random_uuid()`),
   email: varchar("email", { length: 255 }).notNull(),
   sentAt: timestamp("sent_at", { withTimezone: true }).notNull().defaultNow(),
   sentBy: varchar("sent_by", { length: 255 }),

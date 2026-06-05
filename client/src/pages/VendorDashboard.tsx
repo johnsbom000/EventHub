@@ -487,7 +487,6 @@ export default function VendorDashboard() {
  const [vacationEnd, setVacationEnd] = useState("");
  const [vacationFormError, setVacationFormError] = useState<string | null>(null);
  const [isShopShutdownDialogOpen, setIsShopShutdownDialogOpen] = useState(false);
- const [isCreateCalendarConfirmOpen, setIsCreateCalendarConfirmOpen] = useState(false);
  const [isDisconnectGoogleCalendarDialogOpen, setIsDisconnectGoogleCalendarDialogOpen] = useState(false);
  // Vacation blocks query
  const {
@@ -824,28 +823,7 @@ export default function VendorDashboard() {
  },
  });
 
- const createGoogleCalendarMutation = useMutation({
- mutationFn: async () => {
- const response = await apiRequest("POST", "/api/google/calendars/create", {});
- return (await response.json()) as GoogleCalendarSummary;
- },
- onSuccess: async (calendar) => {
- setSelectedGoogleCalendarId(calendar.id);
- await Promise.all([
- qc.invalidateQueries({ queryKey: ["/api/vendor/me"] }),
- qc.invalidateQueries({ queryKey: ["/api/vendor/bookings"] }),
- qc.invalidateQueries({ queryKey: ["/api/google/calendars"] }),
- qc.invalidateQueries({ queryKey: ["/api/google/bookings/reconciliation"] }),
- ]);
- },
- onError: (error: any) => {
- toast({
- title: "Unable to create Google calendar",
- description: error?.message || "Please try again.",
- variant: "destructive",
- });
- },
- });
+
 
  const syncExistingGoogleBookingsMutation = useMutation({
  mutationFn: async () => {
@@ -1198,17 +1176,9 @@ export default function VendorDashboard() {
  !selectGoogleCalendarMutation.isPending;
  const isGoogleCalendarSelectionSubmitting =
  selectGoogleCalendarMutation.isPending ||
- createGoogleCalendarMutation.isPending ||
  syncExistingGoogleBookingsMutation.isPending;
 
- const handleCreateGoogleCalendar = () => {
- const currentCalendarId = vendorAccount?.googleCalendarId || selectedGoogleCalendarId;
- if (currentCalendarId) {
- setIsCreateCalendarConfirmOpen(true);
- } else {
- createGoogleCalendarMutation.mutate();
- }
- };
+
 
  const openGoogleCalendarSelectionPrompt = () => {
  if (!selectedGoogleCalendarId) return;
@@ -1503,16 +1473,6 @@ export default function VendorDashboard() {
  </div>
 
  <div className="flex flex-wrap gap-3">
- <Button
- variant="outline"
- onClick={handleCreateGoogleCalendar}
- disabled={createGoogleCalendarMutation.isPending}
- data-testid="button-create-google-calendar"
- >
- {createGoogleCalendarMutation.isPending
- ? t("vendorDashboard.creating")
- : t("vendorDashboard.createEventHubCalendar")}
- </Button>
  <Button
  variant="outline"
  onClick={handleConnectGoogleCalendar}
@@ -2161,42 +2121,6 @@ export default function VendorDashboard() {
  </div>
  </section>
 
- {/* Create EventHub Bookings Calendar confirmation dialog */}
- <Dialog open={isCreateCalendarConfirmOpen} onOpenChange={setIsCreateCalendarConfirmOpen}>
- <DialogContent className="sm:max-w-md">
- <DialogHeader>
- <DialogTitle>{t("vendorDashboard.calendarDialogTitle")}</DialogTitle>
- <DialogDescription>
- {t("vendorDashboard.calendarDialogDescription")}
- </DialogDescription>
- </DialogHeader>
- <div className="flex flex-col gap-3">
- <Button
- className="w-full justify-start"
- onClick={() => {
- setIsCreateCalendarConfirmOpen(false);
- createGoogleCalendarMutation.mutate();
- }}
- disabled={createGoogleCalendarMutation.isPending}
- >
- {createGoogleCalendarMutation.isPending ? t("vendorDashboard.creating") : t("vendorDashboard.eventhubBookingsCalendar")}
- </Button>
- <Button
- variant="outline"
- className="w-full justify-start"
- onClick={() => setIsCreateCalendarConfirmOpen(false)}
- disabled={createGoogleCalendarMutation.isPending}
- >
- {googleCalendars.find(
- (c) => c.id === (selectedGoogleCalendarId || vendorAccount?.googleCalendarId)
- )?.summary ||
- selectedGoogleCalendarId ||
- vendorAccount?.googleCalendarId ||
- t("vendorDashboard.keepCurrentCalendar")}
- </Button>
- </div>
- </DialogContent>
- </Dialog>
 
  {/* Disconnect Google Calendar confirmation dialog */}
  <Dialog open={isDisconnectGoogleCalendarDialogOpen} onOpenChange={setIsDisconnectGoogleCalendarDialogOpen}>

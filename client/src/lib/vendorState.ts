@@ -12,6 +12,10 @@ export type VendorMeState = {
   hasAnyVendorProfiles?: boolean | null;
   hasActiveVendorProfile?: boolean | null;
   needsNewVendorProfileOnboarding?: boolean | null;
+  onboardingCompleted?: boolean | null;
+  isFoundingVendor?: boolean | null;
+  isMarqueeVendor?: boolean | null;
+  vendorOnlySignup?: boolean | null;
 };
 
 export type VendorDetectionStatus =

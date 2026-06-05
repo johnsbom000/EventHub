@@ -191,7 +191,6 @@ import {
 } from "../streamChat";
 import {
   GoogleCalendarConnectionError,
-  createGoogleCalendarForVendorAccount,
   createGoogleVacationBlockEvent,
   createVendorNotification,
   deleteGoogleCalendarEvent,
@@ -385,8 +384,9 @@ export function registerGoogleRoutes(app: Express): void {
       redirect_uri: redirectUri,
       response_type: "code",
       scope: [
-        "https://www.googleapis.com/auth/calendar",
         "https://www.googleapis.com/auth/calendar.events",
+        "https://www.googleapis.com/auth/calendar.calendarlist.readonly",
+        "https://www.googleapis.com/auth/userinfo.email",
       ].join(" "),
       access_type: "offline",
       prompt: "consent",
@@ -697,30 +697,14 @@ export function registerGoogleRoutes(app: Express): void {
     }
   });
 
-  app.post("/api/google/calendars/create", mutationRateLimiter, ...requireVendorAuth0, async (req, res) => {
-    try {
-      const account = await getVendorAccountFromRequest(req);
-      if (!account?.id) {
-        return res.status(404).json({ error: "Account not found" });
-      }
-
-      const calendar = await createGoogleCalendarForVendorAccount(account.id);
-
-      // Start watching the newly created calendar (non-fatal)
-      try {
-        await createGoogleCalendarWatchChannel(account.id, calendar.id);
-      } catch (watchErr) {
-        logRouteError("/api/google/calendars/create create-watch", watchErr);
-      }
-
-      return res.json(calendar);
-    } catch (error: any) {
-      if (error instanceof GoogleCalendarConnectionError) {
-        return res.status(error.statusCode).json({ error: safeGoogleErrorMessage(error), code: error.code });
-      }
-      logRouteError("/api/google/calendars/create", error);
-      return res.status(500).json({ error: "Unable to create Google calendar" });
-    }
+  app.post("/api/google/calendars/create", mutationRateLimiter, ...requireVendorAuth0, async (_req, res) => {
+    // Disabled: auto-creating calendars requires auth/calendar (broad scope).
+    // We now request only calendar.events + calendar.calendarlist.readonly.
+    // Vendors should select an existing calendar from the dropdown instead.
+    return res.status(410).json({
+      error: "Automatic calendar creation is no longer available. Please select an existing Google Calendar.",
+      code: "calendar_create_disabled",
+    });
   });
 
   app.post("/api/google/calendars/sync-existing", mutationRateLimiter, ...requireVendorAuth0, async (req, res) => {

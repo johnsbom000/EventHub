@@ -34,10 +34,6 @@ const BENEFITS = [
     desc: "We offer to build your first listing and sync your calendar with you. Setup takes about 10 minutes.",
   },
   {
-    title: "Founding Vendor Badge",
-    desc: "A permanent badge on your shop marking you as one of the original EventHub vendors.",
-  },
-  {
     title: "Refer a Vendor, Earn Free Bookings",
     desc: "For every vendor you refer who publishes a listing, earn 5 additional bookings at half the normal fee.",
   },
@@ -83,8 +79,8 @@ export function foundingVendorInviteTemplate(params: FoundingVendorInviteParams)
   const baseUrl = (params.appBaseUrl || DEFAULT_APP_URL).replace(/\/$/, "");
   const agreementUrl = `${baseUrl}/vendor/founding`;
   const ctaUrl = params.inviteToken
-    ? `${baseUrl}/vendor/founding?fv=${params.inviteToken}`
-    : `${baseUrl}/vendor/founding`;
+    ? `${baseUrl}/?fv=${params.inviteToken}`
+    : `${baseUrl}/`;
 
   const subject = "You're invited: The EventHub Founding Vendor Program";
 
@@ -156,7 +152,7 @@ export function foundingVendorInviteTemplate(params: FoundingVendorInviteParams)
           <p style="margin:0 0 6px;font-family:'Cormorant Garamond',Georgia,'Times New Roman',serif;
                     font-size:19px;font-weight:400;color:${FORE};">Belong</p>
           <p style="margin:0;font-family:'DM Sans',Arial,Helvetica,sans-serif;font-size:13px;
-                    color:${MUTED};line-height:1.6;">A permanent Founding Vendor badge and early access to everything new.</p>
+                    color:${MUTED};line-height:1.6;">Early access to everything new as we build out the platform.</p>
         </td>
       </tr>
     </table>
@@ -230,10 +226,7 @@ export function foundingVendorInviteTemplate(params: FoundingVendorInviteParams)
     "4. White-Glove Onboarding",
     "   We offer to build your first listing and sync your calendar with you.",
     "",
-    "5. Founding Vendor Badge",
-    "   A permanent badge on your shop marking you as one of the original EventHub vendors.",
-    "",
-    "6. Refer a Vendor, Earn Free Bookings",
+    "5. Refer a Vendor, Earn Free Bookings",
     "   Earn 5 bookings at half the normal fee for every vendor you refer who publishes a listing.",
     "",
     "── CLAIM YOUR SPOT ──",

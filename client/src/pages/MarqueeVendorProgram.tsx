@@ -1,4 +1,4 @@
-import { useEffect, useState } from "react";
+import { useEffect } from "react";
 import { useLocation } from "wouter";
 import { useAuth0 } from "@auth0/auth0-react";
 import { useQuery } from "@tanstack/react-query";
@@ -7,7 +7,6 @@ import Navigation from "@/components/Navigation";
 import Footer from "@/components/Footer";
 import BrandWordmark from "@/components/BrandWordmark";
 import { Badge } from "@/components/ui/badge";
-import { loginWithPopupFirst } from "@/lib/auth0Login";
 
 const MARQUEE_TOKEN_STORAGE_KEY = "eventhub:marquee-invite-token";
 
@@ -81,26 +80,19 @@ const finePrint = [
 
 export default function MarqueeVendorProgram() {
   const [, setLocation] = useLocation();
-  const { isAuthenticated, isLoading: isAuthLoading, loginWithPopup, loginWithRedirect } = useAuth0();
-  const [isClaiming, setIsClaiming] = useState(false);
+  const { isAuthenticated, isLoading: isAuthLoading } = useAuth0();
 
-  // Detect invite token before first render (URL param OR existing localStorage value)
-  const [hasToken] = useState(() => {
-    const params = new URLSearchParams(window.location.search);
-    return Boolean(params.get("mv")) || Boolean(localStorage.getItem(MARQUEE_TOKEN_STORAGE_KEY));
-  });
-
-  // Capture URL token to localStorage and strip from URL
+  // If URL has an invite token: save it and redirect to the right entry point.
+  // Unauthenticated → TemporaryLanding (token already in localStorage).
+  // Authenticated → VendorProvision (token fires at onboarding completion).
   useEffect(() => {
+    if (isAuthLoading) return;
     const params = new URLSearchParams(window.location.search);
     const mv = params.get("mv");
-    if (mv) {
-      localStorage.setItem(MARQUEE_TOKEN_STORAGE_KEY, mv.trim());
-      params.delete("mv");
-      const qs = params.toString();
-      window.history.replaceState(null, "", window.location.pathname + (qs ? `?${qs}` : ""));
-    }
-  }, []);
+    if (!mv) return;
+    localStorage.setItem(MARQUEE_TOKEN_STORAGE_KEY, mv.trim());
+    setLocation(isAuthenticated ? "/vendor/provision" : "/");
+  }, [isAuthLoading, isAuthenticated, setLocation]);
 
   const { data: vendorAccount, isLoading: isVendorLoading } = useQuery<{
     isMarqueeVendor?: boolean | null;
@@ -114,40 +106,14 @@ export default function MarqueeVendorProgram() {
   const isLoading = isAuthLoading || isVendorLoading;
   const isMarqueeVendor = vendorAccount?.isMarqueeVendor === true;
 
-  // Redirect to / only if: authenticated, not a marquee vendor, and no invite token
+  // Non-marquee-vendor visitors (with no URL token) get sent home.
   useEffect(() => {
     if (isLoading) return;
-    if (isAuthenticated && !isMarqueeVendor && !hasToken) {
+    const hasMvParam = Boolean(new URLSearchParams(window.location.search).get("mv"));
+    if (!isMarqueeVendor && !hasMvParam) {
       setLocation("/");
     }
-  }, [isLoading, isAuthenticated, isMarqueeVendor, hasToken, setLocation]);
-
-  const handleClaim = async () => {
-    if (isAuthenticated) {
-      setLocation("/vendor/onboarding");
-      return;
-    }
-    setIsClaiming(true);
-    try {
-      sessionStorage.setItem("eh:after-auth-intent", "vendor");
-      const result = await loginWithPopupFirst({
-        loginWithPopup,
-        loginWithRedirect,
-        popupOptions: { authorizationParams: { prompt: "login" } },
-        redirectOptions: {
-          appState: { returnTo: "/vendor/onboarding" },
-          authorizationParams: { prompt: "login" },
-        },
-      });
-      if (result === "popup") {
-        setLocation("/vendor/onboarding");
-      }
-    } catch {
-      sessionStorage.removeItem("eh:after-auth-intent");
-    } finally {
-      setIsClaiming(false);
-    }
-  };
+  }, [isLoading, isMarqueeVendor, setLocation]);
 
   if (isLoading) {
     return (
@@ -157,10 +123,7 @@ export default function MarqueeVendorProgram() {
     );
   }
 
-  // Not in member mode or invite mode — useEffect will redirect
-  if (!isMarqueeVendor && !hasToken) return null;
-
-  const isInviteMode = !isMarqueeVendor;
+  if (!isMarqueeVendor) return null;
 
   return (
     <div className="min-h-screen flex flex-col bg-[#ffffff]">
@@ -168,7 +131,7 @@ export default function MarqueeVendorProgram() {
         <Navigation showBottomBorder={false} />
       </div>
 
-      <main className={`flex-1${isInviteMode ? " pb-24" : ""}`}>
+      <main className="flex-1">
         {/* Hero */}
         <section
           className="border-b border-border/50 py-16 sm:py-24 text-center px-4 sm:px-6 lg:px-8"
@@ -192,9 +155,7 @@ export default function MarqueeVendorProgram() {
               aria-hidden="true"
             />
             <p className="font-sans text-base text-muted-foreground leading-relaxed mb-7 max-w-xl mx-auto">
-              {isInviteMode
-                ? "Claim the best deal we will ever offer, built to put more bookings, and more of each booking, in your pocket."
-                : "You helped shape EventHub. Now claim the best deal we will ever offer, built to put more bookings, and more of each booking, in your pocket."}
+              You helped shape EventHub. Here are the terms of the program you're a part of.
             </p>
             <div className="inline-flex items-center gap-2.5 font-sans text-sm text-muted-foreground">
               <span
@@ -302,26 +263,6 @@ export default function MarqueeVendorProgram() {
         <Footer />
       </div>
 
-      {/* Sticky CTA bar — invite mode only */}
-      {isInviteMode && (
-        <div className="fixed bottom-0 inset-x-0 z-50 bg-white border-t border-border/60 shadow-[0_-4px_24px_rgba(0,0,0,0.08)]">
-          <div className="mx-auto max-w-4xl flex items-center justify-between gap-4 px-4 py-4 sm:px-6">
-            <div className="hidden sm:block">
-              <p className="font-sans text-sm font-semibold text-foreground">Ready to claim your spot?</p>
-              <p className="font-sans text-xs text-muted-foreground">By invitation only · 20 spots total</p>
-            </div>
-            <button
-              type="button"
-              onClick={handleClaim}
-              disabled={isClaiming}
-              className="w-full sm:w-auto inline-flex items-center justify-center gap-2 rounded-lg px-6 py-3 font-sans text-sm font-semibold text-[#1C1100] transition-opacity disabled:opacity-60"
-              style={{ background: "#C9A84C", border: "1px solid #B0882C" }}
-            >
-              {isClaiming ? "Opening…" : "Claim your Marquee spot →"}
-            </button>
-          </div>
-        </div>
-      )}
     </div>
   );
 }

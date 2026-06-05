@@ -827,6 +827,7 @@ export function registerVendorRoutes(app: Express): void {
         foundingReferralBonusBookingsRemaining: account.foundingReferralBonusBookingsRemaining ?? 0,
         __marker: "vendor_me_route_hit",
         vendorOnlySignup,
+        onboardingCompleted: Boolean(account.onboardingCompletedAt),
       });
     } catch (error: any) {
       logRouteError("/api/vendor/me", error);
@@ -1001,6 +1002,83 @@ export function registerVendorRoutes(app: Express): void {
     referralCode: z.string().max(20).optional(),
     foundingInviteToken: z.string().max(64).optional(),
     marqueeInviteToken: z.string().max(64).optional(),
+  });
+
+  // Provision a minimal vendor account immediately after auth.
+  // Creates the DB row with just email + businessName so vendors aren't lost
+  // if they close the tab before completing full onboarding. Full onboarding
+  // (profiles, photos, address) remains required before publishing a listing.
+  app.post("/api/vendor/provision", onboardingRateLimiter, requireAuth0, async (req, res) => {
+    try {
+      const auth0 = (req as any).auth0 as { sub: string; email?: string } | undefined;
+      const rawEmail = auth0?.email;
+      const email = rawEmail ? rawEmail.toLowerCase().trim() : undefined;
+      const auth0Sub = auth0?.sub;
+
+      if (!email) {
+        return res.status(400).json({ error: "Auth0 email is required" });
+      }
+
+      // If a vendor account already exists for this identity, return it (idempotent).
+      const vendorResolution = await resolveVendorAccountForAuth0Identity({
+        auth0Sub,
+        email,
+        context: "/api/vendor/provision",
+      });
+      const existingAccount = vendorResolution.account;
+      if (existingAccount && !existingAccount.deletedAt) {
+        return res.status(200).json({
+          vendorAccountId: existingAccount.id,
+          businessName: existingAccount.businessName,
+          alreadyExisted: true,
+        });
+      }
+
+      const rawName = req.body?.businessName;
+      const nameResult = z.string().min(2).max(120).safeParse(rawName);
+      if (!nameResult.success) {
+        return res.status(400).json({ error: "Business name must be at least 2 characters." });
+      }
+
+      const normalizedName = normalizeProfileNameText(nameResult.data, 120);
+      if (normalizedName.length < 2) {
+        return res.status(400).json({ error: "Business name is invalid. Use letters, numbers, or spaces." });
+      }
+
+      // Enforce unique business name across active vendors.
+      const [nameTaken] = await db
+        .select({ id: vendorAccounts.id })
+        .from(vendorAccounts)
+        .where(and(drizzleSql`lower(${vendorAccounts.businessName}) = lower(${normalizedName})`, isNull(vendorAccounts.deletedAt)))
+        .limit(1);
+      if (nameTaken) {
+        return res.status(409).json({ error: "A vendor with this business name already exists.", code: "business_name_taken" });
+      }
+
+      const shopSlug = await allocateUniqueVendorSlug(normalizedName);
+      const [created] = await db
+        .insert(vendorAccounts)
+        .values({
+          email,
+          auth0Sub,
+          userId: vendorResolution.resolvedUserId || undefined,
+          businessName: normalizedName,
+          shopSlug,
+          profileComplete: false,
+        })
+        .returning();
+
+      logger.info(`[vendor-provision] Created stub account ${created.id} for ${email}`);
+
+      return res.status(200).json({
+        vendorAccountId: created.id,
+        businessName: created.businessName,
+        alreadyExisted: false,
+      });
+    } catch (error: any) {
+      logRouteError("/api/vendor/provision", error);
+      return res.status(500).json({ error: "Failed to provision vendor account" });
+    }
   });
 
   app.post("/api/vendor/onboarding/complete", onboardingRateLimiter, requireAuth0, async (req, res) => {
@@ -1299,6 +1377,7 @@ export function registerVendorRoutes(app: Express): void {
         .set({
           profileComplete: true,
           activeProfileId: profile.id,
+          onboardingCompletedAt: new Date(),
         })
         .where(eq(vendorAccounts.id, account.id));
 
@@ -2342,15 +2421,23 @@ export function registerVendorRoutes(app: Express): void {
         });
       }
 
-      // Block publish until Stripe Connect onboarding is complete.
+      // Block publish until vendor profile onboarding is complete.
       const [vendorAccount] = await db
         .select({
           stripeConnectId: vendorAccounts.stripeConnectId,
           stripeOnboardingComplete: vendorAccounts.stripeOnboardingComplete,
+          onboardingCompletedAt: vendorAccounts.onboardingCompletedAt,
         })
         .from(vendorAccounts)
         .where(eq(vendorAccounts.id, vendorAuth.id))
         .limit(1);
+
+      if (!vendorAccount?.onboardingCompletedAt) {
+        return res.status(403).json({
+          error: "onboarding_incomplete",
+          message: "Complete your vendor profile before publishing a listing.",
+        });
+      }
 
       if (!vendorAccount?.stripeConnectId || !vendorAccount.stripeOnboardingComplete) {
         return res.status(400).json({

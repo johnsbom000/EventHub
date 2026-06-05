@@ -1,7 +1,7 @@
 import { Switch, Route, useLocation } from "wouter";
 import React, { useEffect, useRef, useState } from "react";
-import { QueryClientProvider, useQuery, useQueryClient } from "@tanstack/react-query";
-import { queryClient, apiRequest } from "./lib/queryClient";
+import { QueryClientProvider, useQuery } from "@tanstack/react-query";
+import { queryClient } from "./lib/queryClient";
 import { useAuth0 } from "@auth0/auth0-react";
 
 import { Toaster } from "@/components/ui/toaster";
@@ -44,6 +44,7 @@ import { useToast } from "@/hooks/use-toast";
 import Privacy from "@/pages/Privacy";
 import MarqueeVendorProgram from "@/pages/MarqueeVendorProgram";
 import FoundingVendorProgram from "@/pages/FoundingVendorProgram";
+import VendorProvision from "@/pages/VendorProvision";
 
 // Handles the post-sign-in redirect for normal logins (not "Become a Vendor").
 // AuthModal routes here via appState.returnTo so this mounts fresh after
@@ -52,6 +53,16 @@ function PostLogin() {
   const [, setLocation] = useLocation();
   const { isAuthenticated, isLoading: isAuthLoading } = useAuth0();
   const hasRedirectedRef = useRef(false);
+
+  // Provision the DB user row immediately on first login, in parallel with the
+  // vendor check. Without this, users who bounce before Navigation renders never
+  // get a row — they exist in Auth0 but not in our database.
+  useQuery({
+    queryKey: ["/api/customer/me"],
+    enabled: isAuthenticated && !isAuthLoading,
+    retry: false,
+    staleTime: Infinity,
+  });
 
   const {
     data: vendorAccount,
@@ -103,9 +114,6 @@ function RootEntry() {
   const { isAuthenticated, isLoading: isAuthLoading } = useAuth0();
   const { toast } = useToast();
   const hasShownToastRef = useRef(false);
-  // [vendor-only restrictions] remove these 3 lines
-  const hasMarkedVendorOnlyRef = useRef(false);
-  const qc = useQueryClient();
   const { isVendorOnly } = useIsVendorOnly();
 
   // "Become a Vendor" flow — check vendor status and redirect to dashboard/onboarding.
@@ -148,24 +156,17 @@ function RootEntry() {
         hasShownToastRef.current = true;
       }
     } else if (vendorDetection.status === "non_vendor") {
-      nextPath = "/vendor/onboarding";
-      // [vendor-only restrictions] remove this block
-      if (!hasMarkedVendorOnlyRef.current) {
-        hasMarkedVendorOnlyRef.current = true;
-        void apiRequest("POST", "/api/me/mark-vendor-only")
-          .then(() => qc.invalidateQueries({ queryKey: ["/api/customer/me"] }))
-          .catch(() => {});
-      }
+      nextPath = "/vendor/provision";
     } else {
       const lastKnownVendorAccount =
         typeof window !== "undefined" &&
         window.localStorage.getItem("eventhub:last-known-vendor-account") === "1";
-      nextPath = lastKnownVendorAccount ? "/vendor/dashboard" : "/vendor/onboarding";
+      nextPath = lastKnownVendorAccount ? "/vendor/dashboard" : "/vendor/provision";
     }
 
     const pathname = location.split("?")[0] || "/";
     if (pathname !== nextPath) setLocation(nextPath);
-  }, [vendorIntent, isAuthLoading, isAuthenticated, location, setLocation, vendorDetection, toast, qc]);
+  }, [vendorIntent, isAuthLoading, isAuthenticated, location, setLocation, vendorDetection, toast]);
 
   // [vendor-only restrictions] remove this entire effect
   useEffect(() => {
@@ -221,6 +222,7 @@ function Router() {
         <Route path="/vendor/hub/:vendorId" component={VendorHub} />
         {/* Vendor */}
         <Route path="/vendor/login" component={VendorLogin} />
+        <Route path="/vendor/provision" component={VendorProvision} />
         <Route path="/vendor/onboarding" component={VendorOnboarding} />
         <Route path="/vendor/dashboard" component={VendorDashboard} />
         <Route path="/vendor/bookings" component={VendorBookings} />

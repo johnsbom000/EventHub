@@ -745,9 +745,9 @@ app.post(
 
       // Multi-category filter (OR across selected categories)
       if (categoriesFilter.length === 1) {
-        conditions.push(eq(vendorListings.category, categoriesFilter[0]) as any);
+        conditions.push(eq(vendorListings.category, categoriesFilter[0] as string) as any);
       } else if (categoriesFilter.length > 1) {
-        conditions.push(inArray(vendorListings.category, categoriesFilter) as any);
+        conditions.push(inArray(vendorListings.category, categoriesFilter as string[]) as any);
       }
       if (subsFilter.length === 1) {
         conditions.push(eq(vendorListings.subcategory, subsFilter[0]) as any);

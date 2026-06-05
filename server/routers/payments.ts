@@ -443,7 +443,7 @@ export function registerPaymentRoutes(app: Express): void {
       if (listing.status !== "active") {
         return res.status(400).json({ error: "This listing is not available for purchase" });
       }
-      if (!listing.priceCents || listing.priceCents <= 0) {
+      if (listing.priceCents == null || listing.priceCents! <= 0) {
         return res.status(400).json({ error: "Listing does not have a valid price" });
       }
 
@@ -464,7 +464,7 @@ export function registerPaymentRoutes(app: Express): void {
       // ── 3. Calculate fees ───────────────────────────────────────────────
       // application_fee_amount: the cut the platform retains from this charge.
       // The vendor receives: listingPrice − applicationFee − Stripe processing fee.
-      const applicationFeeAmountCents = Math.round(listing.priceCents * VENDOR_FEE_RATE);
+      const applicationFeeAmountCents = Math.round(listing.priceCents! * VENDOR_FEE_RATE);
 
       // ── 4. Build redirect URLs ──────────────────────────────────────────
       const appBaseUrl = (process.env.APP_URL || "http://localhost:5173").trim().replace(/\/+$/, "");
@@ -480,10 +480,10 @@ export function registerPaymentRoutes(app: Express): void {
 
       const session = await createCheckoutSession({
         listingName: listing.title || "EventHub Service",
-        amountCents: listing.priceCents,
+        amountCents: listing.priceCents!,
         currency: "usd",
         applicationFeeAmountCents,
-        vendorStripeAccountId: vendor.stripeConnectId,
+        vendorStripeAccountId: vendor.stripeConnectId!,
         successUrl,
         cancelUrl,
         // Store IDs in metadata so the checkout.session.completed webhook
@@ -491,7 +491,7 @@ export function registerPaymentRoutes(app: Express): void {
         metadata: {
           listingId: listing.id,
           vendorAccountId: listing.accountId,
-          vendorStripeAccountId: vendor.stripeConnectId,
+          vendorStripeAccountId: vendor.stripeConnectId!,
           applicationFeeAmountCents: applicationFeeAmountCents.toString(),
         },
       });
