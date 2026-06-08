@@ -12,6 +12,8 @@ import { type VendorMeState } from "@/lib/vendorState";
 const FOUNDING_TOKEN_KEY = "eventhub:founding-invite-token";
 const MARQUEE_TOKEN_KEY = "eventhub:marquee-invite-token";
 
+type TokenState = "checking" | "valid" | "invalid" | "none";
+
 export default function VendorProvision() {
   const [, setLocation] = useLocation();
   const { isAuthenticated, isLoading: isAuthLoading } = useAuth0();
@@ -23,12 +25,20 @@ export default function VendorProvision() {
   const [isSubmitting, setIsSubmitting] = useState(false);
   const inputRef = useRef<HTMLInputElement>(null);
 
-  const hasFoundingToken =
-    typeof window !== "undefined" &&
-    Boolean(localStorage.getItem(FOUNDING_TOKEN_KEY));
-  const hasMarqueeToken =
-    typeof window !== "undefined" &&
-    Boolean(localStorage.getItem(MARQUEE_TOKEN_KEY));
+  const foundingToken = typeof window !== "undefined" ? localStorage.getItem(FOUNDING_TOKEN_KEY) : null;
+  const marqueeToken  = typeof window !== "undefined" ? localStorage.getItem(MARQUEE_TOKEN_KEY)  : null;
+  const activeToken   = marqueeToken || foundingToken;
+  const activeType    = marqueeToken ? "marquee" : foundingToken ? "founding" : null;
+
+  const [tokenState, setTokenState] = useState<TokenState>(activeToken ? "checking" : "none");
+
+  useEffect(() => {
+    if (!activeToken || !activeType) return;
+    fetch(`/api/invite/validate?token=${encodeURIComponent(activeToken)}&type=${activeType}`)
+      .then((r) => r.json())
+      .then((data: { valid: boolean }) => setTokenState(data.valid ? "valid" : "invalid"))
+      .catch(() => setTokenState("invalid"));
+  }, []);
 
   // If they already have a vendor account, skip straight to my-hub.
   const { data: vendorMe, isLoading: isVendorLoading } = useQuery<VendorMeState>({
@@ -116,11 +126,25 @@ export default function VendorProvision() {
   return (
     <div className="min-h-screen flex flex-col items-center justify-center bg-[#faf8f5] px-4">
       <div className="w-full max-w-md">
-        {/* Invite badges */}
-        {(hasFoundingToken || hasMarqueeToken) && (
+        {/* Invite badge — shows validity once the server confirms the token */}
+        {tokenState === "checking" && (
+          <div className="mb-6 flex justify-center">
+            <span className="inline-flex items-center gap-1.5 rounded-full bg-stone-100 px-3 py-1 text-sm font-medium text-stone-500">
+              Checking invite…
+            </span>
+          </div>
+        )}
+        {tokenState === "valid" && (
           <div className="mb-6 flex justify-center">
             <span className="inline-flex items-center gap-1.5 rounded-full bg-amber-100 px-3 py-1 text-sm font-semibold text-amber-800">
-              ★ {hasMarqueeToken ? "Marquee" : "Founding"} Vendor invite active
+              ★ {activeType === "marquee" ? "Marquee" : "Founding"} Vendor invite active
+            </span>
+          </div>
+        )}
+        {tokenState === "invalid" && (
+          <div className="mb-6 flex justify-center">
+            <span className="inline-flex items-center gap-1.5 rounded-full bg-red-50 px-3 py-1 text-sm font-semibold text-red-700">
+              ⚠ Invite link is inactive or expired
             </span>
           </div>
         )}

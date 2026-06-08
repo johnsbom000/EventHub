@@ -1826,7 +1826,7 @@ export function registerAdminRoutes(app: Express): void {
       const alreadySentRows = await db
         .select({ email: marqueeEmailInvites.email })
         .from(marqueeEmailInvites)
-        .where(and(inArray(marqueeEmailInvites.email, emails), eq(marqueeEmailInvites.accepted, true)));
+        .where(and(inArray(marqueeEmailInvites.email, emails), eq(marqueeEmailInvites.sentSuccessfully, true)));
       const alreadySent = new Set(alreadySentRows.map((r) => r.email));
       const toSend = emails.filter((e) => !alreadySent.has(e));
 
@@ -1850,15 +1850,15 @@ export function registerAdminRoutes(app: Express): void {
             const [existing] = await db
               .select({ id: marqueeEmailInvites.id })
               .from(marqueeEmailInvites)
-              .where(and(eq(marqueeEmailInvites.email, email), eq(marqueeEmailInvites.accepted, false)))
+              .where(and(eq(marqueeEmailInvites.email, email), eq(marqueeEmailInvites.sentSuccessfully, false)))
               .orderBy(desc(marqueeEmailInvites.sentAt))
               .limit(1);
             if (existing) {
               await db.update(marqueeEmailInvites)
-                .set({ accepted: result.sent, sentAt: new Date(), sentBy: adminEmail })
+                .set({ sentSuccessfully: result.sent, sentAt: new Date(), sentBy: adminEmail })
                 .where(eq(marqueeEmailInvites.id, existing.id));
             } else {
-              await db.insert(marqueeEmailInvites).values({ email, sentBy: adminEmail, accepted: result.sent });
+              await db.insert(marqueeEmailInvites).values({ email, sentBy: adminEmail, sentSuccessfully: result.sent });
             }
             return { email, ...result };
           })
@@ -1990,7 +1990,7 @@ export function registerAdminRoutes(app: Express): void {
       const alreadySentRows = await db
         .select({ email: foundingEmailInvites.email })
         .from(foundingEmailInvites)
-        .where(and(inArray(foundingEmailInvites.email, emails), eq(foundingEmailInvites.accepted, true)));
+        .where(and(inArray(foundingEmailInvites.email, emails), eq(foundingEmailInvites.sentSuccessfully, true)));
       const alreadySent = new Set(alreadySentRows.map((r) => r.email));
       const toSend = emails.filter((e) => !alreadySent.has(e));
 
@@ -2014,15 +2014,15 @@ export function registerAdminRoutes(app: Express): void {
             const [existing] = await db
               .select({ id: foundingEmailInvites.id })
               .from(foundingEmailInvites)
-              .where(and(eq(foundingEmailInvites.email, email), eq(foundingEmailInvites.accepted, false)))
+              .where(and(eq(foundingEmailInvites.email, email), eq(foundingEmailInvites.sentSuccessfully, false)))
               .orderBy(desc(foundingEmailInvites.sentAt))
               .limit(1);
             if (existing) {
               await db.update(foundingEmailInvites)
-                .set({ accepted: result.sent, sentAt: new Date(), sentBy: adminEmail })
+                .set({ sentSuccessfully: result.sent, sentAt: new Date(), sentBy: adminEmail })
                 .where(eq(foundingEmailInvites.id, existing.id));
             } else {
-              await db.insert(foundingEmailInvites).values({ email, sentBy: adminEmail, accepted: result.sent });
+              await db.insert(foundingEmailInvites).values({ email, sentBy: adminEmail, sentSuccessfully: result.sent });
             }
             return { email, ...result };
           })

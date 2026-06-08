@@ -209,7 +209,6 @@ export default function VendorShell({ children, onOpenAccountSettings }: VendorS
     if (tourTimerRef.current) clearTimeout(tourTimerRef.current);
     tourTimerRef.current = window.setTimeout(() => {
       if (!hasTourBeenSeen(key)) {
-        markTourSeen(key);
         setActiveTourKey(key);
       }
     }, 600);
@@ -219,7 +218,10 @@ export default function VendorShell({ children, onOpenAccountSettings }: VendorS
     };
   }, [location]);
 
-  const handleTourDismiss = () => setActiveTourKey(null);
+  const handleTourDismiss = () => {
+    if (activeTourKey) markTourSeen(activeTourKey);
+    setActiveTourKey(null);
+  };
 
   const displayName = activeProfileName || vendorAccount?.email || "Vendor";
   const initials = getInitialsFromName(displayName);

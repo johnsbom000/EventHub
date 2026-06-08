@@ -1004,6 +1004,37 @@ export function registerVendorRoutes(app: Express): void {
     marqueeInviteToken: z.string().max(64).optional(),
   });
 
+  // Validate an invite token before the vendor starts onboarding.
+  // No auth required — called client-side on mount when a token is found in localStorage.
+  app.get("/api/invite/validate", async (req, res) => {
+    const token = typeof req.query.token === "string" ? req.query.token.trim() : "";
+    const type  = typeof req.query.type  === "string" ? req.query.type.trim()  : "";
+
+    if (!token || !["founding", "marquee"].includes(type)) {
+      return res.status(400).json({ valid: false, error: "token and type (founding|marquee) are required" });
+    }
+
+    try {
+      if (type === "founding") {
+        const [invite] = await db
+          .select({ id: foundingVendorInvites.id })
+          .from(foundingVendorInvites)
+          .where(and(eq(foundingVendorInvites.token, token), eq(foundingVendorInvites.active, true)))
+          .limit(1);
+        return res.json({ valid: Boolean(invite), program: "founding" });
+      } else {
+        const [invite] = await db
+          .select({ id: marqueeVendorInvites.id })
+          .from(marqueeVendorInvites)
+          .where(and(eq(marqueeVendorInvites.token, token), eq(marqueeVendorInvites.active, true)))
+          .limit(1);
+        return res.json({ valid: Boolean(invite), program: "marquee" });
+      }
+    } catch (err: any) {
+      return res.status(500).json({ valid: false, error: "Server error" });
+    }
+  });
+
   // Provision a minimal vendor account immediately after auth.
   // Creates the DB row with just email + businessName so vendors aren't lost
   // if they close the tab before completing full onboarding. Full onboarding
@@ -1451,23 +1482,23 @@ export function registerVendorRoutes(app: Express): void {
       }
 
       // Apply Founding Vendor status if a valid global invite token was used.
+      // Awaited so the grant completes before the response is sent — callers can rely on
+      // isFoundingVendor being set immediately after onboarding.
       if (isFirstTimeOnboarding && onboardingData.foundingInviteToken) {
-        void (async () => {
-          try {
-            const token = onboardingData.foundingInviteToken!.trim();
-            const [invite] = await db
-              .select({ id: foundingVendorInvites.id })
-              .from(foundingVendorInvites)
-              .where(
-                and(
-                  eq(foundingVendorInvites.token, token),
-                  eq(foundingVendorInvites.active, true)
-                )
+        try {
+          const token = onboardingData.foundingInviteToken.trim();
+          const [invite] = await db
+            .select({ id: foundingVendorInvites.id })
+            .from(foundingVendorInvites)
+            .where(
+              and(
+                eq(foundingVendorInvites.token, token),
+                eq(foundingVendorInvites.active, true)
               )
-              .limit(1);
-            if (!invite) return;
+            )
+            .limit(1);
 
-            // Assign the next slot number in a transaction to prevent race conditions
+          if (invite) {
             let granted = false;
             await db.transaction(async (tx) => {
               const [counts] = await tx
@@ -1492,36 +1523,37 @@ export function registerVendorRoutes(app: Express): void {
               if (updated) granted = true;
             });
 
-            // Increment the redemption counter only if the slot was actually granted
             if (granted) {
               await db
                 .update(foundingVendorInvites)
                 .set({ redemptionCount: drizzleSql`${foundingVendorInvites.redemptionCount} + 1` })
                 .where(eq(foundingVendorInvites.id, invite.id));
             }
-          } catch (fvErr: any) {
-            logger.warn("[founding vendor grant] failed:", fvErr?.message || fvErr);
+          } else {
+            logger.warn(`[founding vendor grant] token invalid or inactive — vendorId=${account.id} token=${token}`);
           }
-        })();
+        } catch (fvErr: any) {
+          logger.warn("[founding vendor grant] failed:", fvErr?.message || fvErr);
+        }
       }
 
       // Apply Marquee Vendor status if a valid global invite token was used.
+      // Awaited so the grant completes before the response is sent.
       if (isFirstTimeOnboarding && onboardingData.marqueeInviteToken) {
-        void (async () => {
-          try {
-            const token = onboardingData.marqueeInviteToken!.trim();
-            const [invite] = await db
-              .select({ id: marqueeVendorInvites.id })
-              .from(marqueeVendorInvites)
-              .where(
-                and(
-                  eq(marqueeVendorInvites.token, token),
-                  eq(marqueeVendorInvites.active, true)
-                )
+        try {
+          const token = onboardingData.marqueeInviteToken.trim();
+          const [invite] = await db
+            .select({ id: marqueeVendorInvites.id })
+            .from(marqueeVendorInvites)
+            .where(
+              and(
+                eq(marqueeVendorInvites.token, token),
+                eq(marqueeVendorInvites.active, true)
               )
-              .limit(1);
-            if (!invite) return;
+            )
+            .limit(1);
 
+          if (invite) {
             let granted = false;
             await db.transaction(async (tx) => {
               const [countRow] = await tx
@@ -1529,7 +1561,11 @@ export function registerVendorRoutes(app: Express): void {
                 .from(vendorAccounts)
                 .where(and(eq(vendorAccounts.isMarqueeVendor, true), isNull(vendorAccounts.deletedAt)));
               const currentCount = countRow?.count ?? 0;
-              if (currentCount >= MARQUEE_VENDOR_MAX_SPOTS) return;
+
+              if (currentCount >= MARQUEE_VENDOR_MAX_SPOTS) {
+                logger.warn(`[marquee vendor grant] cap reached — grant skipped, vendorId=${account.id} count=${currentCount}/${MARQUEE_VENDOR_MAX_SPOTS}`);
+                return;
+              }
 
               const nextSlot = currentCount + 1;
               let referralCode: string | undefined;
@@ -1542,7 +1578,10 @@ export function registerVendorRoutes(app: Express): void {
                   .limit(1);
                 if (!existing) { referralCode = candidate; break; }
               }
-              if (!referralCode) return;
+              if (!referralCode) {
+                logger.warn(`[marquee vendor grant] referral code collision — grant skipped, vendorId=${account.id}`);
+                return;
+              }
 
               const [updated] = await tx
                 .update(vendorAccounts)
@@ -1564,10 +1603,12 @@ export function registerVendorRoutes(app: Express): void {
                 .set({ redemptionCount: drizzleSql`${marqueeVendorInvites.redemptionCount} + 1` })
                 .where(eq(marqueeVendorInvites.id, invite.id));
             }
-          } catch (mvErr: any) {
-            logger.warn("[marquee vendor grant] failed:", mvErr?.message || mvErr);
+          } else {
+            logger.warn(`[marquee vendor grant] token invalid or inactive — vendorId=${account.id} token=${token}`);
           }
-        })();
+        } catch (mvErr: any) {
+          logger.warn("[marquee vendor grant] failed:", mvErr?.message || mvErr);
+        }
       }
 
       logEvent("vendor_signup_completed", "vendor", account.id, {

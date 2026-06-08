@@ -250,7 +250,7 @@ export const vendorAccounts = pgTable(
   {
     id: varchar("id").primaryKey().default(sql`gen_random_uuid()`),
     userId: varchar("user_id").references(() => users.id), // Canonical vendor ownership link
-    activeProfileId: varchar("active_profile_id"),
+    activeProfileId: varchar("active_profile_id").references((): AnyPgColumn => vendorProfiles.id, { onDelete: "set null" }),
     email: text("email").notNull().unique(),
     auth0Sub: text("auth0_sub"), // Migration-window fallback for identity linking
     businessName: text("business_name").notNull(),
@@ -1411,6 +1411,7 @@ export const vendorReferrals = pgTable(
   (table) => ({
     referrerIdx: index("vendor_referrals_referrer_idx").on(table.referrerVendorId),
     referredIdx: index("vendor_referrals_referred_idx").on(table.referredVendorId),
+    uniquePair: uniqueIndex("vendor_referrals_unique_pair").on(table.referrerVendorId, table.referredVendorId),
   })
 );
 
@@ -1445,7 +1446,7 @@ export const marqueeEmailInvites = pgTable("marquee_email_invites", {
   email: varchar("email", { length: 255 }).notNull(),
   sentAt: timestamp("sent_at", { withTimezone: true }).notNull().defaultNow(),
   sentBy: varchar("sent_by", { length: 255 }),
-  accepted: boolean("accepted").notNull().default(false),
+  sentSuccessfully: boolean("sent_successfully").notNull().default(false),
 });
 
 export type MarqueeEmailInvite = typeof marqueeEmailInvites.$inferSelect;
@@ -1456,7 +1457,7 @@ export const foundingEmailInvites = pgTable("founding_email_invites", {
   email: varchar("email", { length: 255 }).notNull(),
   sentAt: timestamp("sent_at", { withTimezone: true }).notNull().defaultNow(),
   sentBy: varchar("sent_by", { length: 255 }),
-  accepted: boolean("accepted").notNull().default(false),
+  sentSuccessfully: boolean("sent_successfully").notNull().default(false),
 });
 
 export type FoundingEmailInvite = typeof foundingEmailInvites.$inferSelect;
