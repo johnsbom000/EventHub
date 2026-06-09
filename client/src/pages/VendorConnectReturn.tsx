@@ -8,7 +8,7 @@ export default function VendorConnectReturn() {
   useEffect(() => {
     // Stripe Connect onboarding complete (or exited) — redirect back to payments
     // so the vendor can see their updated connect status.
-    setLocation("/vendor/payments");
+    setLocation("/vendor/payments?stripe_setup=success");
   }, [setLocation]);
 
   return (

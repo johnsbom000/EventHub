@@ -1890,7 +1890,9 @@ function CheckoutContent({
                 </div>
               </div>
 
-              <p className="text-sm text-muted-foreground">{t("checkout.testCardNote")}</p>
+              {import.meta.env.DEV && (
+                <p className="text-sm text-muted-foreground">Dev only — Stripe test card: 4242 4242 4242 4242</p>
+              )}
 
               {hasAttemptedSubmit && !cardComplete && !submitError && (
                 <p className="text-xs text-red-600">Please enter your card details.</p>
