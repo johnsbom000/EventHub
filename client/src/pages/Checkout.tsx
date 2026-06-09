@@ -4,7 +4,7 @@ import { useQuery } from "@tanstack/react-query";
 import { useAuth0 } from "@auth0/auth0-react";
 import { CardElement, Elements, useElements, useStripe } from "@stripe/react-stripe-js";
 import { loadStripe } from "@stripe/stripe-js";
-import { ChevronLeft, Calendar, CheckCircle2, MapPin } from "lucide-react";
+import { ChevronLeft, AlertCircle, Calendar, CheckCircle2, MapPin } from "lucide-react";
 import { useTranslation } from "react-i18next";
 
 import { Button } from "@/components/ui/button";
@@ -354,6 +354,20 @@ function CheckoutContent({
   const elements = useElements();
   const { isAuthenticated, loginWithRedirect, getAccessTokenSilently, user } = useAuth0();
   const { toast } = useToast();
+
+  const emailUnverified = isAuthenticated && user?.email_verified === false;
+
+  const handleVerifyEmail = async () => {
+    const returnTo = `${window.location.pathname}${window.location.search}${window.location.hash}`;
+    try {
+      await loginWithRedirect({
+        appState: { returnTo },
+        authorizationParams: { prompt: "login" },
+      });
+    } catch {
+      // ignore — user can try again
+    }
+  };
 
   // Fetch vendor account so we can use the owner's real name when a vendor is the one booking.
   const { data: vendorMe } = useQuery<{
@@ -1222,7 +1236,11 @@ function CheckoutContent({
       if (typeof message === "string" && message.includes("Booking not found")) {
         persistPendingPaymentDraft(null);
       }
-      setSubmitError(e?.message || "Checkout failed");
+      if (typeof message === "string" && message.toLowerCase().includes("email address must be verified")) {
+        setSubmitError("__email_unverified__");
+      } else {
+        setSubmitError(message);
+      }
     } finally {
       setSubmitStage("idle");
       setIsSubmitting(false);
@@ -1876,39 +1894,56 @@ function CheckoutContent({
                 </p>
               ) : null}
 
-              <div className="space-y-2">
-                <Label>{t("checkout.cardNumber")}</Label>
-                <div className={`rounded-md border p-3 ${hasAttemptedSubmit && !cardComplete ? "border-red-500" : "border-border"}`}>
-                  <CardElement
-                    options={{ hidePostalCode: true, disableLink: true }}
-                    onChange={(event) => {
-                      setCardComplete(Boolean(event.complete));
-                      if (event.error?.message) setSubmitError(event.error.message);
-                      else if (submitError && submitError.toLowerCase().includes("card")) setSubmitError(null);
-                    }}
-                  />
+              {(emailUnverified || submitError === "__email_unverified__") ? (
+                <div className="rounded-lg border border-amber-300 bg-amber-50 p-4 flex gap-3">
+                  <AlertCircle className="mt-0.5 h-5 w-5 shrink-0 text-amber-600" />
+                  <div className="space-y-2">
+                    <p className="text-sm font-medium text-amber-900">Email verification required</p>
+                    <p className="text-sm text-amber-800">
+                      You need to verify your email address before booking. Check your inbox for a verification link from EventHub, then click below to log back in and continue.
+                    </p>
+                    <Button size="sm" variant="outline" className="border-amber-400 text-amber-900 hover:bg-amber-100" onClick={handleVerifyEmail}>
+                      I've verified — log in again
+                    </Button>
+                  </div>
                 </div>
-              </div>
+              ) : (
+                <>
+                  <div className="space-y-2">
+                    <Label>{t("checkout.cardNumber")}</Label>
+                    <div className={`rounded-md border p-3 ${hasAttemptedSubmit && !cardComplete ? "border-red-500" : "border-border"}`}>
+                      <CardElement
+                        options={{ hidePostalCode: true, disableLink: true }}
+                        onChange={(event) => {
+                          setCardComplete(Boolean(event.complete));
+                          if (event.error?.message) setSubmitError(event.error.message);
+                          else if (submitError && submitError.toLowerCase().includes("card")) setSubmitError(null);
+                        }}
+                      />
+                    </div>
+                  </div>
 
-              {import.meta.env.DEV && (
-                <p className="text-sm text-muted-foreground">Dev only — Stripe test card: 4242 4242 4242 4242</p>
+                  {import.meta.env.DEV && (
+                    <p className="text-sm text-muted-foreground">Dev only — Stripe test card: 4242 4242 4242 4242</p>
+                  )}
+
+                  {hasAttemptedSubmit && !cardComplete && !submitError && (
+                    <p className="text-xs text-red-600">Please enter your card details.</p>
+                  )}
+                  {submitError && submitError !== "__email_unverified__" ? <p className="text-sm text-red-600">{submitError}</p> : null}
+                  {pendingPaymentDraft && !submitError ? (
+                    <p className="text-sm text-amber-700">
+                      {t("checkout.pendingPaymentNote")}
+                    </p>
+                  ) : null}
+
+                  {!stripeConfigured || stripeConfigError ? (
+                    <p className="text-sm text-red-600">
+                      {stripeConfigError || "Stripe is not configured for checkout. Add `VITE_STRIPE_PUBLISHABLE_KEY`."}
+                    </p>
+                  ) : null}
+                </>
               )}
-
-              {hasAttemptedSubmit && !cardComplete && !submitError && (
-                <p className="text-xs text-red-600">Please enter your card details.</p>
-              )}
-              {submitError ? <p className="text-sm text-red-600">{submitError}</p> : null}
-              {pendingPaymentDraft && !submitError ? (
-                <p className="text-sm text-amber-700">
-                  {t("checkout.pendingPaymentNote")}
-                </p>
-              ) : null}
-
-              {!stripeConfigured || stripeConfigError ? (
-                <p className="text-sm text-red-600">
-                  {stripeConfigError || "Stripe is not configured for checkout. Add `VITE_STRIPE_PUBLISHABLE_KEY`."}
-                </p>
-              ) : null}
 
               <p className="text-xs text-muted-foreground leading-relaxed">
                 {t("checkout.termsDisclaimer").split("Terms of Service")[0]}
@@ -1924,7 +1959,7 @@ function CheckoutContent({
 
               <Button
                 className="w-full h-12 text-base"
-                disabled={isSubmitting}
+                disabled={isSubmitting || emailUnverified || submitError === "__email_unverified__"}
                 onClick={handleSubmitOrder}
                 data-testid="button-place-order"
               >
