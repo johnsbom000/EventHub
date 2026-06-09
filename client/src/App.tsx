@@ -190,10 +190,10 @@ function RootEntry() {
       </div>
     );
   }
-  if (isAuthenticated && (isVendorOnly || isVendorOnlyLoading)) return null; // [vendor-only restrictions] remove this line
+  if (isAuthenticated && (isVendorOnly || isVendorOnlyLoading)) return <TemporaryLanding />; // [vendor-only restrictions] remove this line
 
   // MARKETPLACE_HIDDEN: restore `return <Home />;` when going live
-  return null;
+  return <TemporaryLanding />;
 }
 
 // [vendor-only restrictions] remove this entire VendorOnlyGuard component

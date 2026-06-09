@@ -91,7 +91,7 @@ class ErrorBoundary extends Component<{ children: ReactNode }, { hasError: boole
   }
 }
 function AuthTokenBridge() {
-  const { getAccessTokenSilently } = useAuth0();
+  const { getAccessTokenSilently, logout } = useAuth0();
 
   const tokenGetter = React.useCallback(async () => {
     try {
@@ -104,11 +104,16 @@ function AuthTokenBridge() {
       });
 
       return token || null;
-    } catch {
-      // Not logged in yet or transient Auth0 failure.
+    } catch (err: any) {
+      // When the stored session is dead (expired refresh token), Auth0 throws
+      // login_required. Clear the stale localStorage entry so the user sees
+      // a clean login prompt rather than a zombie session with 401 loops.
+      if (err?.error === "login_required" || err?.error === "consent_required") {
+        logout({ logoutParams: { returnTo: window.location.origin } });
+      }
       return null;
     }
-  }, [getAccessTokenSilently]);
+  }, [getAccessTokenSilently, logout]);
 
   // Register during render so first protected queries don't race a post-render effect.
   setTokenGetter(tokenGetter);
@@ -144,6 +149,7 @@ root.render(
           clientId={AUTH0_CLIENT_ID}
           cacheLocation="localstorage"
           useRefreshTokens={true}
+          useRefreshTokensFallback={false}
           authorizationParams={{
             redirect_uri: window.location.origin,
             audience: "https://eventhub-api",

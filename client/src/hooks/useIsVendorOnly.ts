@@ -8,7 +8,7 @@ type CustomerMeMinimal = {
 export function useIsVendorOnly(): { isVendorOnly: boolean; isLoading: boolean } {
   const { isAuthenticated, isLoading: authLoading } = useAuth0();
 
-  const { data, isLoading: queryLoading } = useQuery<CustomerMeMinimal>({
+  const { data, isLoading: queryLoading, isError } = useQuery<CustomerMeMinimal>({
     queryKey: ["/api/customer/me"],
     enabled: isAuthenticated && !authLoading,
     retry: false,
@@ -16,6 +16,7 @@ export function useIsVendorOnly(): { isVendorOnly: boolean; isLoading: boolean }
 
   return {
     isVendorOnly: Boolean(data?.vendorOnlySignup),
-    isLoading: authLoading || (isAuthenticated && queryLoading),
+    // Exclude error state from "loading" so a failed query doesn't block navigation forever.
+    isLoading: authLoading || (isAuthenticated && queryLoading && !isError),
   };
 }
