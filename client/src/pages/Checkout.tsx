@@ -1214,11 +1214,7 @@ function CheckoutContent({
       if (typeof message === "string" && message.includes("Booking not found")) {
         persistPendingPaymentDraft(null);
       }
-      if (typeof message === "string" && message.toLowerCase().includes("email address must be verified")) {
-        setSubmitError("Please verify your email address before booking. Check your inbox for a verification email and try again.");
-      } else {
-        setSubmitError(message);
-      }
+      setSubmitError(message);
     } finally {
       setSubmitStage("idle");
       setIsSubmitting(false);

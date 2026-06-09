@@ -165,14 +165,6 @@ export async function requireAuth0(req: Request, res: Response, next: NextFuncti
       }
     }
 
-    // Reject unverified email addresses on email-bearing tokens.
-    // This prevents an attacker from creating an Auth0 account with someone
-    // else's email (unverified) and hitting the email-based account fallback.
-    if (auth0.email && auth0.email_verified !== true) {
-      logger.info({ sub: auth0.sub, email: auth0.email, email_verified: auth0.email_verified }, "[auth0] 403 email_verified check failed");
-      return res.status(403).json({ error: "Email address must be verified before accessing this resource" });
-    }
-
     // Attach to request for downstream middleware/routes
     logger.info({ sub: auth0.sub, email: auth0.email ?? "(none)" }, "[auth0] token verified");
     (req as any).auth0 = auth0;
