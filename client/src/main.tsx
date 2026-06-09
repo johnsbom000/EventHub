@@ -92,6 +92,7 @@ class ErrorBoundary extends Component<{ children: ReactNode }, { hasError: boole
 }
 function AuthTokenBridge() {
   const { getAccessTokenSilently, logout } = useAuth0();
+  const [needsLogout, setNeedsLogout] = React.useState(false);
 
   const tokenGetter = React.useCallback(async () => {
     try {
@@ -106,14 +107,21 @@ function AuthTokenBridge() {
       return token || null;
     } catch (err: any) {
       // When the stored session is dead (expired refresh token), Auth0 throws
-      // login_required. Clear the stale localStorage entry so the user sees
-      // a clean login prompt rather than a zombie session with 401 loops.
+      // login_required. Signal via state so logout fires in an effect rather
+      // than as a side effect inside the queryFn.
       if (err?.error === "login_required" || err?.error === "consent_required") {
-        logout({ logoutParams: { returnTo: window.location.origin } });
+        setNeedsLogout(true);
       }
       return null;
     }
-  }, [getAccessTokenSilently, logout]);
+  }, [getAccessTokenSilently]);
+
+  // Flush the stale localStorage session in a proper React effect rather than
+  // from inside the async token getter (side effects in queryFns cause issues).
+  React.useEffect(() => {
+    if (!needsLogout) return;
+    logout({ logoutParams: { returnTo: window.location.origin } });
+  }, [needsLogout, logout]);
 
   // Register during render so first protected queries don't race a post-render effect.
   setTokenGetter(tokenGetter);
