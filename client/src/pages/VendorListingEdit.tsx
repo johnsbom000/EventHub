@@ -1070,6 +1070,8 @@ export default function VendorListingEdit() {
       ? parseMoneyStringToOptionalNumber(deliverySetupDraft?.takedownFeeAmount)
       : null;
 
+    const priceDollars = parseMoneyStringToOptionalNumber(draft.pricing?.rate);
+
     const nextListingData = {
       ...(listing?.listingData || {}),
       category: hasCategory ? draft.category : undefined,
@@ -1096,6 +1098,7 @@ export default function VendorListingEdit() {
         unit: draft.pricing?.unit ?? draft.pricingUnit ?? "per_day",
       },
       pricingUnit: draft.pricingUnit ?? draft.pricing?.unit ?? "per_day",
+      priceCents: priceDollars != null ? Math.round(priceDollars * 100) : undefined,
       minimumHours: draft.minimumHours,
       photos: {
         names: safePhotoNames,
@@ -1549,20 +1552,6 @@ export default function VendorListingEdit() {
         <div className="flex flex-col flex-1">
           <header className="flex items-center justify-end border-b border-[rgba(74,106,125,0.22)] bg-[#ffffff] p-4">
             <div className="flex items-center gap-2">
-              <Button
-                className={activeFillButtonClass}
-                onClick={() => {
-                  if (activeTab === "packages") {
-                    packagesStepRef.current?.submitIfEditing();
-                  } else {
-                    saveMutation.mutate();
-                  }
-                }}
-                disabled={saveMutation.isPending || !draft}
-              >
-                {saveMutation.isPending ? t("vendorListingEdit.saving") : t("vendorListingEdit.saveChanges")}
-              </Button>
-
               {(showPublishAction || (isActive && isDirty)) && (
                 <Button
                   disabled={!canPublish || publishMutation.isPending || !draft}
