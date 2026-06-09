@@ -15,7 +15,7 @@ export async function getBookingChatContextById(bookingId: string): Promise<Book
       coalesce(b.vendor_account_id, listing_owner.account_id, legacy_owner.account_id) as "vendorAccountId",
       va.business_name as "vendorName",
       va.email as "vendorEmail",
-      coalesce(b.event_date::text, e.date) as "eventDate",
+      coalesce(b.event_date::text, e.date::text) as "eventDate",
       e.path as "eventTitle",
       b.status as "status",
       b.payment_status as "paymentStatus",
@@ -57,7 +57,7 @@ export async function listCustomerBookingChatContexts(customerId: string): Promi
       coalesce(b.vendor_account_id, listing_owner.account_id, legacy_owner.account_id) as "vendorAccountId",
       va.business_name as "vendorName",
       va.email as "vendorEmail",
-      coalesce(b.event_date::text, e.date) as "eventDate",
+      coalesce(b.event_date::text, e.date::text) as "eventDate",
       e.path as "eventTitle",
       (
         select coalesce(
@@ -109,7 +109,7 @@ export async function listVendorBookingChatContexts(vendorAccountId: string): Pr
       coalesce(b.vendor_account_id, listing_owner.account_id, legacy_owner.account_id) as "vendorAccountId",
       va.business_name as "vendorName",
       va.email as "vendorEmail",
-      coalesce(b.event_date::text, e.date) as "eventDate",
+      coalesce(b.event_date::text, e.date::text) as "eventDate",
       e.path as "eventTitle",
       (
         select coalesce(

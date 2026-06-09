@@ -40,9 +40,18 @@ export async function up() {
   // Concurrent onboardings using the same referral code could otherwise insert
   // duplicate rows since the application-level check is not atomic.
   await db.execute(sql`
-    ALTER TABLE vendor_referrals
-      ADD CONSTRAINT IF NOT EXISTS vendor_referrals_unique_pair
-        UNIQUE (referrer_vendor_id, referred_vendor_id);
+    DO $$
+    BEGIN
+      IF NOT EXISTS (
+        SELECT 1 FROM information_schema.table_constraints
+        WHERE constraint_name = 'vendor_referrals_unique_pair'
+          AND table_name = 'vendor_referrals'
+      ) THEN
+        ALTER TABLE vendor_referrals
+          ADD CONSTRAINT vendor_referrals_unique_pair
+            UNIQUE (referrer_vendor_id, referred_vendor_id);
+      END IF;
+    END $$;
   `);
 
   // FK from vendor_accounts.active_profile_id → vendor_profiles.id.
