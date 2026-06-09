@@ -9,6 +9,7 @@ import { LanguageProvider } from "./context/LanguageContext";
 import { Auth0Context, Auth0Provider, initialContext, type Auth0ContextInterface } from "@auth0/auth0-react";
 import { useAuth0 } from "@auth0/auth0-react";
 import { setTokenGetter } from "@/lib/authToken";
+import { setGlobal401Callback } from "@/lib/queryClient";
 import { installRuntimeFetchBaseUrl } from "@/lib/runtimeUrls";
 import "./lib/i18n"; // initialise i18next before any component renders
 
@@ -91,8 +92,20 @@ class ErrorBoundary extends Component<{ children: ReactNode }, { hasError: boole
   }
 }
 function AuthTokenBridge() {
-  const { getAccessTokenSilently, logout } = useAuth0();
+  const { getAccessTokenSilently, logout, isAuthenticated } = useAuth0();
   const [needsLogout, setNeedsLogout] = React.useState(false);
+
+  // When authenticated, register a callback so any 401 from the server triggers
+  // a logout. This catches stale sessions synced across devices (iCloud / Google
+  // account) where Auth0's localStorage tokens are present but server-rejected.
+  React.useEffect(() => {
+    if (!isAuthenticated) {
+      setGlobal401Callback(null);
+      return;
+    }
+    setGlobal401Callback(() => setNeedsLogout(true));
+    return () => setGlobal401Callback(null);
+  }, [isAuthenticated]);
 
   const tokenGetter = React.useCallback(async () => {
     try {

@@ -2,6 +2,15 @@ import { QueryClient, QueryFunction } from "@tanstack/react-query";
 import { getFreshAccessToken } from "@/lib/authToken";
 import { isApiLikeUrl, resolveRuntimeUrl } from "@/lib/runtimeUrls";
 
+// Called whenever any API response returns 401. AuthTokenBridge registers this
+// when the user appears authenticated so stale sessions (e.g. synced via iCloud
+// or Google account across devices) trigger a clean logout immediately.
+let global401Callback: (() => void) | null = null;
+
+export function setGlobal401Callback(fn: (() => void) | null) {
+  global401Callback = fn;
+}
+
 export class ApiRequestError extends Error {
   status: number;
   responseText: string;
@@ -47,6 +56,7 @@ async function buildHeaders(url: string, data?: unknown): Promise<HeadersInit> {
 
 async function throwIfResNotOk(res: Response) {
   if (!res.ok) {
+    if (res.status === 401) global401Callback?.();
     const text = (await res.text()) || res.statusText;
     throw new ApiRequestError(res.status, text);
   }
@@ -87,6 +97,7 @@ export const getQueryFn: <T>(options: {
     });
 
     if (unauthorizedBehavior === "returnNull" && res.status === 401) {
+      global401Callback?.();
       return null as any;
     }
 
