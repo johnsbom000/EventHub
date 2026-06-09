@@ -550,7 +550,7 @@ export default function ListingDetailPage() {
    if (window.history.length > 1) {
      window.history.back();
    } else {
-     setLocation("/browse");
+     setLocation("/"); // MARKETPLACE_HIDDEN: restore "/browse" when going live
    }
  }}
  className="flex items-center text-muted-foreground hover:text-foreground"

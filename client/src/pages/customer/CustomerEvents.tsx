@@ -515,7 +515,7 @@ function PlannedEventSection({
  ) : isEmpty ? (
  <p className="text-sm text-[#4a6a7d]/60">
  {t("customerEvents.noSavedVendors")}{" "}
- <a href="/browse" className="text-[#e07a6a] underline-offset-2 hover:underline">
+ <a href="/" className="text-[#e07a6a] underline-offset-2 hover:underline">{/* MARKETPLACE_HIDDEN: restore href="/browse" when going live */}
  {t("customerEvents.browseVendors")}
  </a>{" "}
  and heart listings to save them here.
@@ -775,8 +775,9 @@ export default function CustomerEvents({ customer, newBookingId, pendingReason }
  Browse vendors, heart listings, and create a named event to start
  planning.
  </p>
+ {/* MARKETPLACE_HIDDEN: restore href="/browse" when going live */}
  <a
- href="/browse"
+ href="/"
  className="mt-1 rounded-full bg-[#e07a6a] px-5 py-2 text-sm font-medium text-white hover:bg-[#c9685a]"
  >
  {t("customerEvents.browseVendors")}

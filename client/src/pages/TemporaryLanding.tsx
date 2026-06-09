@@ -4,11 +4,10 @@ import { useToast } from "@/hooks/use-toast";
 import BrandWordmark from "@/components/BrandWordmark";
 import AuthModal from "@/components/AuthModal";
 
-type Step = "question" | "signup" | "not-vendor";
+type Step = "question" | "signup";
 type AuthTab = "login" | "signup";
 
 const VENDOR_INTENT_RETURN_TO = "/vendor/provision";
-const CUSTOMER_DASHBOARD_RETURN_TO = "/dashboard";
 const ROOT_RETURN_TO = "/";
 
 const FAKE_LISTINGS = [
@@ -28,7 +27,7 @@ const FAKE_LISTINGS = [
   { title: "Wine Barrel Rental",              price: "$220",   photo: "https://images.unsplash.com/photo-1510812431401-41d2bd2722f3?w=400&h=420&fit=crop", aspect: "20/21"},
 ];
 
-function QuestionStep({ onVendor, onCustomer, onSignIn }: { onVendor: () => void; onCustomer: () => void; onSignIn: () => void }) {
+function QuestionStep({ onVendor, onSignIn }: { onVendor: () => void; onSignIn: () => void }) {
   return (
     <>
       <BrandWordmark
@@ -37,26 +36,16 @@ function QuestionStep({ onVendor, onCustomer, onSignIn }: { onVendor: () => void
         hubClassName="text-[#4a6a7d] font-normal"
       />
       <p className="mt-2 mb-8 font-sans text-[1.5rem] leading-[1.55] text-[#4a6a7d]">
-        What describes you?
+        List your event services on EventHub.
       </p>
-      <div className="grid grid-cols-2 gap-3 mb-4">
-        <button
-          type="button"
-          onClick={onCustomer}
-          className="flex flex-col items-center gap-1.5 rounded-[10px] border-[1.5px] border-[rgba(74,106,125,0.2)] bg-white px-3 py-5 font-sans text-[1.5rem] font-semibold text-[#2a3a42] transition-colors hover:border-[#4a6a7d] hover:bg-[#f8fafb]"
-        >
-          Planning an event
-          <span className="text-[1.1rem] font-normal text-[#7c8c94]">Find vendors to book</span>
-        </button>
-        <button
-          type="button"
-          onClick={onVendor}
-          className="flex flex-col items-center gap-1.5 rounded-[10px] bg-[#2a3a42] px-3 py-5 font-sans text-[1.5rem] font-semibold text-white transition-colors hover:bg-[#3a4f59]"
-        >
-          Event vendor
-          <span className="text-[1.1rem] font-normal text-[rgba(255,255,255,0.65)]">List your services</span>
-        </button>
-      </div>
+      <button
+        type="button"
+        onClick={onVendor}
+        className="mb-4 flex w-full flex-col items-center gap-1.5 rounded-[10px] bg-[#2a3a42] px-3 py-5 font-sans text-[1.5rem] font-semibold text-white transition-colors hover:bg-[#3a4f59]"
+      >
+        Get started as a vendor
+        <span className="text-[1.1rem] font-normal text-[rgba(255,255,255,0.65)]">List your services</span>
+      </button>
       <p className="font-sans text-[1.2rem] text-[#9aacb4]">
         Already have an account?{" "}
         <button type="button" onClick={onSignIn} className="font-semibold text-[#4a6a7d] hover:underline">
@@ -126,43 +115,6 @@ function SignupStep({
         &amp;{" "}
         <a href="#" className="text-[#4a6a7d] hover:underline">Privacy Policy</a>
       </p>
-    </>
-  );
-}
-
-function NotVendorStep({
-  onBack,
-  onCreateAccount,
-}: {
-  onBack: () => void;
-  onCreateAccount: () => void;
-}) {
-  return (
-    <>
-      <button
-        type="button"
-        onClick={onBack}
-        className="absolute left-5 top-5 flex items-center gap-1 rounded-md px-2 py-1 font-sans text-[1.2rem] text-[#4a6a7d] hover:bg-[#f0f4f7]"
-      >
-        ← Back
-      </button>
-      <BrandWordmark
-        className="mb-7 mt-2 text-[2.7rem] leading-none"
-        eventClassName="text-[#e07a6a] font-normal italic"
-        hubClassName="text-[#4a6a7d] font-normal"
-      />
-      <div className="rounded-[10px] bg-[#f5f8fa] px-5 py-4 text-center font-sans text-[1.5rem] font-bold leading-[1.55] text-[#2a3a42]">
-        Know an event vendor? Send them our way!<br />
-      </div>
-      <div className="mt-5 flex items-center justify-center gap-5 font-sans text-[1.2rem] text-[#9aacb4]">
-        <button
-          type="button"
-          onClick={onCreateAccount}
-          className="font-semibold text-[#4a6a7d] hover:underline"
-        >
-          Create account
-        </button>
-      </div>
     </>
   );
 }
@@ -353,7 +305,6 @@ const handleEmail = () =>
     });
 
   const handleSignIn = () => openAuthModal("login", ROOT_RETURN_TO);
-  const handleCustomerCreateAccount = () => openAuthModal("signup", CUSTOMER_DASHBOARD_RETURN_TO);
 
   return (
     <div className="relative h-screen overflow-hidden bg-white">
@@ -364,7 +315,6 @@ const handleEmail = () =>
           {step === "question" && (
             <QuestionStep
               onVendor={() => setStep("signup")}
-              onCustomer={handleCustomerCreateAccount}
               onSignIn={handleSignIn}
             />
           )}
@@ -373,12 +323,6 @@ const handleEmail = () =>
               onBack={() => setStep("question")}
               onGoogle={handleGoogle}
               onEmail={handleEmail}
-            />
-          )}
-          {step === "not-vendor" && (
-            <NotVendorStep
-              onBack={() => setStep("question")}
-              onCreateAccount={handleCustomerCreateAccount}
             />
           )}
         </div>

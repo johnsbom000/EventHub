@@ -319,15 +319,7 @@ export default function CustomerDashboard() {
           </div>
 
           <div className="flex items-center gap-3">
-            <Button
-              variant="default"
-              className="no-global-scale editorial-login-btn min-h-0 h-[27px] min-w-[136px] rounded-[7px] px-3.5 py-0 text-[12.5px] leading-none gap-1 [&_svg]:!size-2"
-              onClick={() => setLocation("/")}
-              data-testid="button-back-marketplace"
-            >
-              <ArrowLeft />
-              {t("customerDashboard.backToMarketplace")}
-            </Button>
+            {/* MARKETPLACE_HIDDEN: restore button when going live */}
             <DropdownMenu>
               <DropdownMenuTrigger asChild>
                 <Button

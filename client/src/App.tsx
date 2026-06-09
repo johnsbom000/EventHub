@@ -174,7 +174,14 @@ function RootEntry() {
     setLocation("/vendor/dashboard");
   }, [isAuthLoading, isAuthenticated, vendorIntent, isVendorOnly, setLocation]);
 
-  if (isAuthLoading) return <Home />;
+  // MARKETPLACE_HIDDEN: remove this effect and restore `return <Home />;` at the bottom when going live
+  useEffect(() => {
+    if (isAuthLoading || !isAuthenticated || vendorIntent || isVendorOnly) return;
+    setLocation("/dashboard");
+  }, [isAuthLoading, isAuthenticated, vendorIntent, isVendorOnly, setLocation]);
+
+  // MARKETPLACE_HIDDEN: restore `return <Home />;` when going live
+  if (isAuthLoading) return <TemporaryLanding />;
   if (!isAuthenticated) return <TemporaryLanding />;
   if (vendorIntent && vendorDetection.status === "loading") {
     return (
@@ -185,7 +192,8 @@ function RootEntry() {
   }
   if (isAuthenticated && isVendorOnly) return null; // [vendor-only restrictions] remove this line
 
-  return <Home />;
+  // MARKETPLACE_HIDDEN: restore `return <Home />;` when going live
+  return null;
 }
 
 // [vendor-only restrictions] remove this entire VendorOnlyGuard component
@@ -201,6 +209,13 @@ function VendorOnlyGuard({ children }: { children: React.ReactNode }) {
   return <>{children}</>;
 }
 
+// MARKETPLACE_HIDDEN: remove this component when going live
+function MarketplaceRedirect() {
+  const [, setLocation] = useLocation();
+  useEffect(() => { setLocation("/"); }, [setLocation]);
+  return null;
+}
+
 function Router() {
   return (
     <>
@@ -209,12 +224,14 @@ function Router() {
         <Route path="/" component={RootEntry} />
         <Route path="/post-login" component={PostLogin} />
         {/* [vendor-only restrictions] unwrap VendorOnlyGuard from all routes below that have it */}
-        <Route path="/marketplace" component={() => <VendorOnlyGuard><Home /></VendorOnlyGuard>} />
+        {/* MARKETPLACE_HIDDEN: restore <VendorOnlyGuard><Home /></VendorOnlyGuard> when going live */}
+        <Route path="/marketplace" component={MarketplaceRedirect} />
 
         {/* Customer */}
         <Route path="/dashboard" component={() => <VendorOnlyGuard><CustomerDashboard /></VendorOnlyGuard>} />
         <Route path="/dashboard/:section" component={() => <VendorOnlyGuard><CustomerDashboard /></VendorOnlyGuard>} />
-        <Route path="/browse" component={() => <VendorOnlyGuard><BrowseVendors /></VendorOnlyGuard>} />
+        {/* MARKETPLACE_HIDDEN: restore <VendorOnlyGuard><BrowseVendors /></VendorOnlyGuard> when going live */}
+        <Route path="/browse" component={MarketplaceRedirect} />
         <Route path="/listing/:id" component={ListingDetail} />
         <Route path="/booking/:bookingId" component={() => <VendorOnlyGuard><CustomerBookingDetail /></VendorOnlyGuard>} />
         <Route path="/checkout/:listingId" component={() => <VendorOnlyGuard><Checkout /></VendorOnlyGuard>} />

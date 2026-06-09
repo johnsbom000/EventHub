@@ -22,7 +22,7 @@ export default function CustomerPlanEvent() {
         {/* Browse Vendors Option */}
         <Card
           className="rounded-xl border-0 bg-transparent shadow-none hover-elevate cursor-pointer group"
-          onClick={() => setLocation("/browse")}
+          onClick={() => setLocation("/")} // MARKETPLACE_HIDDEN: restore "/browse" when going live
         >
           <CardHeader className="pb-4">
             <div className="h-12 w-12 rounded-full bg-primary/10 flex items-center justify-center mb-4">
