@@ -133,7 +133,7 @@ function AuthTokenBridge() {
   // from inside the async token getter (side effects in queryFns cause issues).
   React.useEffect(() => {
     if (!needsLogout) return;
-    logout({ logoutParams: { returnTo: window.location.origin } });
+    logout({ openUrl: false });
   }, [needsLogout, logout]);
 
   // Register during render so first protected queries don't race a post-render effect.
