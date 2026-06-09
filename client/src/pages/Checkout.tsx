@@ -4,10 +4,11 @@ import { useQuery } from "@tanstack/react-query";
 import { useAuth0 } from "@auth0/auth0-react";
 import { CardElement, Elements, useElements, useStripe } from "@stripe/react-stripe-js";
 import { loadStripe } from "@stripe/stripe-js";
-import { ChevronLeft, AlertCircle, Calendar, CheckCircle2, MapPin } from "lucide-react";
+import { ChevronLeft, Calendar, CheckCircle2, MapPin } from "lucide-react";
 import { useTranslation } from "react-i18next";
 
 import { Button } from "@/components/ui/button";
+import AuthModal from "@/components/AuthModal";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
 import { Textarea } from "@/components/ui/textarea";
@@ -349,10 +350,11 @@ function CheckoutContent({
   const [promoError, setPromoError] = useState<string | null>(null);
   const [promoLoading, setPromoLoading] = useState(false);
   const [bookingPendingReason, setBookingPendingReason] = useState<string | null>(null);
+  const [authModalOpen, setAuthModalOpen] = useState(false);
 
   const stripe = useStripe();
   const elements = useElements();
-  const { isAuthenticated, loginWithRedirect, getAccessTokenSilently, user } = useAuth0();
+  const { isAuthenticated, getAccessTokenSilently, user } = useAuth0();
   const { toast } = useToast();
 
   // Fetch vendor account so we can use the owner's real name when a vendor is the one booking.
@@ -1005,17 +1007,7 @@ function CheckoutContent({
     }
 
     if (!isAuthenticated) {
-      const returnTo = `${window.location.pathname}${window.location.search}${window.location.hash}`;
-      try {
-        await loginWithRedirect({
-          appState: { returnTo },
-          authorizationParams: {
-            prompt: "login",
-          },
-        });
-      } catch (error: any) {
-        setSubmitError(error?.message || "Unable to start login. Please try again.");
-      }
+      setAuthModalOpen(true);
       return;
     }
 
@@ -1223,7 +1215,7 @@ function CheckoutContent({
         persistPendingPaymentDraft(null);
       }
       if (typeof message === "string" && message.toLowerCase().includes("email address must be verified")) {
-        setSubmitError("__email_unverified__");
+        setSubmitError("Please verify your email address before booking. Check your inbox for a verification email and try again.");
       } else {
         setSubmitError(message);
       }
@@ -1260,6 +1252,7 @@ function CheckoutContent({
   const cover = effectiveData.photos?.[0];
 
   return (
+    <>
     <div className="w-full min-h-screen">
       <div className="mx-auto flex w-full max-w-[1600px] flex-col px-4 py-4 sm:px-6">
       <button
@@ -1902,26 +1895,7 @@ function CheckoutContent({
                 <p className="text-xs text-red-600">Please enter your card details.</p>
               )}
 
-              {submitError === "__email_unverified__" ? (
-                <div className="rounded-lg border border-amber-300 bg-amber-50 p-4 flex gap-3">
-                  <AlertCircle className="mt-0.5 h-5 w-5 shrink-0 text-amber-600" />
-                  <div className="space-y-1">
-                    <p className="text-sm font-medium text-amber-900">Email not verified</p>
-                    <p className="text-sm text-amber-800">
-                      Please check your inbox{user?.email ? ` at ${user.email}` : ""} for a verification email sent when you signed up. Open it in another tab, click the link, then come back here and try again — your order details are still saved.
-                    </p>
-                    <button
-                      type="button"
-                      className="text-sm underline text-amber-900 hover:text-amber-700"
-                      onClick={() => setSubmitError(null)}
-                    >
-                      Try again
-                    </button>
-                  </div>
-                </div>
-              ) : submitError ? (
-                <p className="text-sm text-red-600">{submitError}</p>
-              ) : null}
+              {submitError ? <p className="text-sm text-red-600">{submitError}</p> : null}
 
               {pendingPaymentDraft && !submitError ? (
                 <p className="text-sm text-amber-700">
@@ -1970,5 +1944,13 @@ function CheckoutContent({
     </div>
     </div>
     </div>
+
+    <AuthModal
+      open={authModalOpen}
+      onOpenChange={setAuthModalOpen}
+      defaultTab="login"
+      returnTo={`${window.location.pathname}${window.location.search}${window.location.hash}`}
+    />
+    </>
   );
 }
