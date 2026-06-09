@@ -111,9 +111,9 @@ function SignupStep({
 
       <p className="font-sans text-[1.2rem] leading-[1.4] text-[#6e7590]">
         By signing up you agree to our{" "}
-        <a href="#" className="text-[#4a6a7d] hover:underline">Terms</a>{" "}
+        <a href="/terms" className="text-[#4a6a7d] hover:underline">Terms</a>{" "}
         &amp;{" "}
-        <a href="#" className="text-[#4a6a7d] hover:underline">Privacy Policy</a>
+        <a href="/privacy" className="text-[#4a6a7d] hover:underline">Privacy Policy</a>
       </p>
     </>
   );
@@ -230,8 +230,12 @@ function FakeBackground() {
               </ul>
             </div>
           </div>
-          <div className="mt-8 border-t border-[rgba(245,240,232,0.16)] pt-8 text-center">
-            <p className="font-sans text-[0.87rem] text-[rgba(245,240,232,0.3)]">© 2025 Event Hub. All rights reserved.</p>
+          <div className="mt-8 border-t border-[rgba(245,240,232,0.16)] pt-8 text-center space-y-2">
+            <div className="flex justify-center gap-6">
+              <a href="/terms" className="font-sans text-[0.87rem] text-[rgba(245,240,232,0.55)] hover:text-[rgba(245,240,232,0.9)]">Terms of Service</a>
+              <a href="/privacy" className="font-sans text-[0.87rem] text-[rgba(245,240,232,0.55)] hover:text-[rgba(245,240,232,0.9)]">Privacy Policy</a>
+            </div>
+            <p className="font-sans text-[0.87rem] text-[rgba(245,240,232,0.3)]">© {new Date().getFullYear()} Event Hub. All rights reserved.</p>
           </div>
         </div>
       </footer>

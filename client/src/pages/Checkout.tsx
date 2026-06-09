@@ -996,6 +996,11 @@ function CheckoutContent({
 
     if (!listingId || (!data && !isAlaCarte)) return;
 
+    if (!isAuthenticated) {
+      setAuthModalOpen(true);
+      return;
+    }
+
     if (!canSubmit && !isSubmitting) {
       setHasAttemptedSubmit(true);
       toast({
@@ -1003,11 +1008,6 @@ function CheckoutContent({
         description: "Complete all highlighted fields before placing your order.",
         variant: "destructive",
       });
-      return;
-    }
-
-    if (!isAuthenticated) {
-      setAuthModalOpen(true);
       return;
     }
 
