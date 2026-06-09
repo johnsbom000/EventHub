@@ -308,7 +308,7 @@ const handleEmail = () =>
       },
     });
 
-  const handleSignIn = () => openAuthModal("login", ROOT_RETURN_TO);
+  const handleSignIn = () => openAuthModal("login", "/vendor/provision");
 
   return (
     <div className="relative h-screen overflow-hidden bg-white">

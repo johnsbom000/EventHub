@@ -382,6 +382,7 @@ export function registerVendorRoutes(app: Express): void {
       serviceAddress: z.string().nullable().optional(),
       operatingTimezone: z.string().optional(),
       photos: z.array(z.string()).optional(),
+      galleryPhotos: z.array(z.string()).optional(),
       serviceDescription: z.string().optional(),
     })
     .passthrough();
@@ -1099,6 +1100,33 @@ export function registerVendorRoutes(app: Express): void {
         })
         .returning();
 
+      // Atomically create/update the users row so vendorOnlySignup is reliably set
+      // without depending on a separate client-side mark-vendor-only call.
+      const [upsertedUser] = await db
+        .insert(users)
+        .values({
+          name: normalizedName,
+          displayName: normalizedName,
+          email,
+          role: "customer",
+          auth0Sub: auth0Sub ?? null,
+          vendorOnlySignup: true,
+          lastLoginAt: new Date(),
+        })
+        .onConflictDoUpdate({
+          target: users.email,
+          set: { vendorOnlySignup: true, updatedAt: new Date() },
+        })
+        .returning({ id: users.id });
+
+      // Link the vendor account to the users row if not already linked.
+      if (upsertedUser?.id && !created.userId) {
+        await db
+          .update(vendorAccounts)
+          .set({ userId: upsertedUser.id })
+          .where(eq(vendorAccounts.id, created.id));
+      }
+
       logger.info(`[vendor-provision] Created stub account ${created.id} for ${email}`);
 
       return res.status(200).json({
@@ -1774,6 +1802,7 @@ export function registerVendorRoutes(app: Express): void {
         updates.operatingTimezone = normalizeIanaTimeZone(payload.operatingTimezone, existing.operatingTimezone);
       }
       if (payload.photos !== undefined) updates.photos = payload.photos;
+      if (payload.galleryPhotos !== undefined) updates.galleryPhotos = payload.galleryPhotos;
       if (payload.serviceDescription !== undefined) updates.serviceDescription = payload.serviceDescription ?? "";
 
       if (payload.onlineProfiles !== undefined) {
@@ -3715,6 +3744,7 @@ export function registerVendorRoutes(app: Express): void {
           eventsServedTotal,
           avgResponseMinutes: Number.isFinite(avgResponseMinutes as number) ? avgResponseMinutes : null,
           activeListingsCount: listingsWithVendorMeta.length,
+          galleryPhotos: (selectedProfile.galleryPhotos ?? []).map((p: string) => resolveStoredUploadPath(p) ?? p),
           rating,
           reviewCount,
           reviewBreakdown,

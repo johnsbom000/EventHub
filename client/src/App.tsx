@@ -114,7 +114,7 @@ function RootEntry() {
   const { isAuthenticated, isLoading: isAuthLoading } = useAuth0();
   const { toast } = useToast();
   const hasShownToastRef = useRef(false);
-  const { isVendorOnly } = useIsVendorOnly();
+  const { isVendorOnly, isLoading: isVendorOnlyLoading } = useIsVendorOnly();
 
   // "Become a Vendor" flow — check vendor status and redirect to dashboard/onboarding.
   const [vendorIntent] = useState(() => {
@@ -170,15 +170,15 @@ function RootEntry() {
 
   // [vendor-only restrictions] remove this entire effect
   useEffect(() => {
-    if (isAuthLoading || !isAuthenticated || vendorIntent || !isVendorOnly) return;
+    if (isAuthLoading || !isAuthenticated || vendorIntent || isVendorOnlyLoading || !isVendorOnly) return;
     setLocation("/vendor/dashboard");
-  }, [isAuthLoading, isAuthenticated, vendorIntent, isVendorOnly, setLocation]);
+  }, [isAuthLoading, isAuthenticated, vendorIntent, isVendorOnlyLoading, isVendorOnly, setLocation]);
 
   // MARKETPLACE_HIDDEN: remove this effect and restore `return <Home />;` at the bottom when going live
   useEffect(() => {
-    if (isAuthLoading || !isAuthenticated || vendorIntent || isVendorOnly) return;
+    if (isAuthLoading || !isAuthenticated || vendorIntent || isVendorOnlyLoading || isVendorOnly) return;
     setLocation("/dashboard");
-  }, [isAuthLoading, isAuthenticated, vendorIntent, isVendorOnly, setLocation]);
+  }, [isAuthLoading, isAuthenticated, vendorIntent, isVendorOnlyLoading, isVendorOnly, setLocation]);
 
   // MARKETPLACE_HIDDEN: restore `return <Home />;` when going live
   if (isAuthLoading) return <TemporaryLanding />;
@@ -190,7 +190,7 @@ function RootEntry() {
       </div>
     );
   }
-  if (isAuthenticated && isVendorOnly) return null; // [vendor-only restrictions] remove this line
+  if (isAuthenticated && (isVendorOnly || isVendorOnlyLoading)) return null; // [vendor-only restrictions] remove this line
 
   // MARKETPLACE_HIDDEN: restore `return <Home />;` when going live
   return null;

@@ -40,6 +40,15 @@ export default function VendorProvision() {
       .catch(() => setTokenState("invalid"));
   }, []);
 
+  // Create the users row immediately on landing so the account exists in Neon
+  // even if the user closes the tab before submitting the business name form.
+  useQuery({
+    queryKey: ["/api/customer/me"],
+    enabled: isAuthenticated && !isAuthLoading,
+    retry: false,
+    staleTime: Infinity,
+  });
+
   // If they already have a vendor account, skip straight to my-hub.
   const { data: vendorMe, isLoading: isVendorLoading } = useQuery<VendorMeState>({
     queryKey: ["/api/vendor/me"],
@@ -96,9 +105,6 @@ export default function VendorProvision() {
         }
         throw new Error(err?.error || "Failed to create vendor account");
       }
-
-      // Mark as vendor-only so customer routes are restricted appropriately.
-      void apiRequest("POST", "/api/me/mark-vendor-only").catch(() => {});
 
       await qc.invalidateQueries({ queryKey: ["/api/vendor/me"] });
       await qc.invalidateQueries({ queryKey: ["/api/customer/me"] });
