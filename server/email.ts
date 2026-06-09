@@ -37,6 +37,15 @@ function resendConfig(): { apiKey: string; from: string } | null {
   return { apiKey, from };
 }
 
+export async function sendViaResendRaw(params: {
+  to: string;
+  subject: string;
+  html: string;
+  text?: string;
+}): Promise<EmailResult> {
+  return sendViaResend(params);
+}
+
 async function sendViaResend(params: {
   to: string;
   subject: string;

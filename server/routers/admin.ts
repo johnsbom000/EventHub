@@ -1770,6 +1770,26 @@ export function registerAdminRoutes(app: Express): void {
     }
   });
 
+  // POST /api/admin/test-email — send a test email to verify Resend is configured
+  app.post("/api/admin/test-email", adminRateLimiter, requireAdminAuth, async (req: any, res: any) => {
+    try {
+      const adminEmail = (req.adminAuth as { email?: string } | undefined)?.email;
+      if (!adminEmail) return res.status(400).json({ error: "Could not determine admin email" });
+
+      const { sendViaResendRaw } = await import("../email");
+      const result = await sendViaResendRaw({
+        to: adminEmail,
+        subject: "EventHub — Resend test email",
+        html: "<p>If you received this, Resend is configured correctly in production.</p>",
+        text: "If you received this, Resend is configured correctly in production.",
+      });
+
+      return res.json(result);
+    } catch (err: any) {
+      return respondWithInternalServerError(req, res, err);
+    }
+  });
+
   // POST /api/admin/jobs/run-completion — manually fire the booking auto-completion job
   app.post("/api/admin/jobs/run-completion", adminRateLimiter, requireAdminAuth, async (_req: any, res: any) => {
     try {
