@@ -258,21 +258,14 @@ export default function Navigation({
          </Button>
         </Link>
 
-        {/* [vendor-only restrictions] remove the !isVendorOnly wrapper, keep the inner ternary as-is */}
-        {!isVendorOnly && (location.startsWith("/dashboard") ? (
-         <Link href="/" className="hidden sm:inline-flex">
-          <Button variant="ghost" size="default" className={backToMarketplaceNavButtonClass} data-testid="link-vendor-back-to-marketplace">
-           <Store />
-           {t("nav.vendor.backToMarketplace")}
-          </Button>
-         </Link>
-        ) : (
+        {/* MARKETPLACE_HIDDEN: restore !isVendorOnly wrapper + inner ternary when going live */}
+        {!isVendorOnly && (
          <Link href="/dashboard/events" className="hidden sm:inline-flex">
           <Button variant="ghost" size="default" className={navActionButtonClass} data-testid="link-vendor-my-events">
            {t("nav.vendor.myEvents")}
           </Button>
          </Link>
-        ))}
+        )}
 
         <DropdownMenu>
          <DropdownMenuTrigger asChild>
@@ -352,14 +345,8 @@ export default function Navigation({
          </Button>
         )}
 
-        {location.startsWith("/dashboard") ? (
-         <Link href="/" className="hidden sm:inline-flex">
-          <Button variant="ghost" size="default" className={backToMarketplaceNavButtonClass} data-testid="link-back-to-marketplace">
-           <Store />
-           {t("nav.customer.backToMarketplace")}
-          </Button>
-         </Link>
-        ) : (
+        {/* MARKETPLACE_HIDDEN: restore location.startsWith check + back-to-marketplace link when going live */}
+        {location.startsWith("/dashboard") ? null : (
          <Link href="/dashboard" className="hidden sm:inline-flex">
           <Button variant="ghost" size="default" className={navActionButtonClass} data-testid="link-my-events">
            {t("nav.customer.myEvents")}
