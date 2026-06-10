@@ -6,6 +6,7 @@ import type { TourStep } from "@/lib/vendorTourContent";
 type VendorTourModalProps = {
   steps: TourStep[];
   onDismiss: () => void;
+  showOverlay?: boolean;
 };
 
 function injectHighlightStyles() {
@@ -29,7 +30,7 @@ function injectHighlightStyles() {
   document.head.appendChild(style);
 }
 
-export default function VendorTourModal({ steps, onDismiss }: VendorTourModalProps) {
+export default function VendorTourModal({ steps, onDismiss, showOverlay = false }: VendorTourModalProps) {
   const [stepIndex, setStepIndex] = useState(0);
   const [, setLocation] = useLocation();
 
@@ -68,8 +69,8 @@ export default function VendorTourModal({ steps, onDismiss }: VendorTourModalPro
     setLocation(href);
   };
 
-  return (
-    <div className="fixed bottom-4 left-3 right-3 z-[90] rounded-[20px] bg-[#ffffff] shadow-[0_8px_40px_rgba(0,0,0,0.18)] border border-[rgba(74,106,125,0.18)] sm:bottom-6 sm:left-auto sm:right-6 sm:w-[360px]">
+  const card = (
+    <div className="rounded-[20px] bg-[#ffffff] shadow-[0_8px_40px_rgba(0,0,0,0.18)] border border-[rgba(74,106,125,0.18)]">
       {/* Top bar */}
       <div className="flex items-center justify-between px-5 pt-4 pb-0">
         <span className="text-[1.2rem] font-semibold text-[#7c8095]">
@@ -158,6 +159,27 @@ export default function VendorTourModal({ steps, onDismiss }: VendorTourModalPro
           </button>
         )}
       </div>
+    </div>
+  );
+
+  if (showOverlay) {
+    return (
+      <div className="fixed inset-0 z-[89] flex items-center justify-center p-4">
+        <div
+          className="absolute inset-0 bg-black/50"
+          onClick={onDismiss}
+          aria-hidden="true"
+        />
+        <div className="relative z-[90] w-full max-w-[440px]">
+          {card}
+        </div>
+      </div>
+    );
+  }
+
+  return (
+    <div className="fixed bottom-4 left-3 right-3 z-[90] sm:bottom-6 sm:left-auto sm:right-6 sm:w-[360px]">
+      {card}
     </div>
   );
 }

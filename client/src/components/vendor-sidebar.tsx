@@ -28,8 +28,8 @@ interface VendorAccount {
 // Stable keys — used for routing, test IDs, and translation lookup.
 // Do NOT use translated strings here.
 const menuItems = [
- { key: "myHub",         url: "/vendor/shop",           icon: Store },
  { key: "dashboard",     url: "/vendor/dashboard",      icon: Home },
+ { key: "myHub",         url: "/vendor/shop",           icon: Store },
  { key: "bookings",      url: "/vendor/bookings",       icon: Calendar },
  { key: "listings",      url: "/vendor/listings",       icon: LayoutGrid },
  { key: "messages",      url: "/vendor/messages",       icon: MessageSquare },

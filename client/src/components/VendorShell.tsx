@@ -46,8 +46,8 @@ import { useQuery, useQueryClient } from "@tanstack/react-query";
 import { useTranslation } from "react-i18next";
 
 const vendorMobileNavItems = [
-  { key: "myHub",         url: "/vendor/shop",          icon: Store },
   { key: "dashboard",     url: "/vendor/dashboard",     icon: Home },
+  { key: "myHub",         url: "/vendor/shop",          icon: Store },
   { key: "bookings",      url: "/vendor/bookings",      icon: Calendar },
   { key: "listings",      url: "/vendor/listings",      icon: LayoutGrid },
   { key: "messages",      url: "/vendor/messages",      icon: MessageSquare },
@@ -515,6 +515,7 @@ export default function VendorShell({ children, onOpenAccountSettings }: VendorS
         <VendorTourModal
           key={activeTourKey}
           steps={VENDOR_TOURS[activeTourKey].steps}
+          showOverlay={VENDOR_TOURS[activeTourKey].overlay}
           onDismiss={handleTourDismiss}
         />
       )}

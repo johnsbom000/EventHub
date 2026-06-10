@@ -379,9 +379,18 @@ async function buildCroppedShopPhotoDataUrl(
   return encodeCanvasForTarget(canvas, SHOP_PHOTO_TARGET_BYTES);
 }
 
+function dataUrlToBlob(dataUrl: string): Blob {
+  const [header, b64] = dataUrl.split(",");
+  const mime = header.match(/:(.*?);/)?.[1] ?? "image/jpeg";
+  const binary = atob(b64);
+  const bytes = new Uint8Array(binary.length);
+  for (let i = 0; i < binary.length; i++) bytes[i] = binary.charCodeAt(i);
+  return new Blob([bytes], { type: mime });
+}
+
 async function uploadShopPhotoDataUrl(dataUrl: string): Promise<string> {
   const token = await getFreshAccessToken();
-  const blob = await fetch(dataUrl).then((response) => response.blob());
+  const blob = dataUrlToBlob(dataUrl);
   const extension = blob.type.includes("png") ? "png" : blob.type.includes("webp") ? "webp" : "jpg";
   const file = new File([blob], `shop-photo-${Date.now()}.${extension}`, { type: blob.type || "image/jpeg" });
   const formData = new FormData();

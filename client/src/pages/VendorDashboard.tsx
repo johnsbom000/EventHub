@@ -1415,7 +1415,7 @@ export default function VendorDashboard() {
  </div>
  ) : null}
 
- <div className="rounded-xl border border-[hsl(var(--secondary-accent)/0.45)] bg-[hsl(var(--secondary-accent)/0.12)] p-6">
+ <div className="rounded-xl border border-[hsl(var(--secondary-accent)/0.45)] bg-[hsl(var(--secondary-accent)/0.12)] p-6" data-testid="section-google-calendar">
  <h2 className="font-heading text-[20px] leading-none tracking-tight">{t("vendorDashboard.googleCalendar")}</h2>
  <div className="mt-4 text-sm">
  <span className="font-medium text-foreground">{t("vendorDashboard.statusLabel")} </span>
