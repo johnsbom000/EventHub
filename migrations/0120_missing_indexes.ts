@@ -53,13 +53,6 @@ export async function up() {
       where vendor_account_id is not null;
   `);
 
-  // payment_schedules
-  await db.execute(sql`
-    create unique index if not exists idx_payment_schedules_booking_installment_unique
-      on payment_schedules (booking_id, installment_number)
-      where installment_number is not null;
-  `);
-
   // listing_traffic
   await db.execute(sql`
     create index if not exists idx_listing_traffic_listing_event_time
@@ -90,10 +83,6 @@ export async function down() {
 
   await db.execute(sql`
     drop index if exists idx_listing_traffic_listing_event_time;
-  `);
-
-  await db.execute(sql`
-    drop index if exists idx_payment_schedules_booking_installment_unique;
   `);
 
   await db.execute(sql`
