@@ -96,13 +96,6 @@ export function VendorTimezoneModal({ open, onClose }: VendorTimezoneModalProps)
             <Button onClick={handleSave} disabled={saving || !timezone}>
               {saving ? "Saving…" : "Save timezone"}
             </Button>
-            <button
-              type="button"
-              onClick={handleConfirmUtc}
-              className="text-sm text-muted-foreground hover:text-foreground text-center underline-offset-4 hover:underline"
-            >
-              My timezone is actually UTC
-            </button>
           </div>
         </div>
       </DialogContent>

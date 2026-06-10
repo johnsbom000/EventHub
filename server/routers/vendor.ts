@@ -1127,7 +1127,42 @@ export function registerVendorRoutes(app: Express): void {
           .where(eq(vendorAccounts.id, created.id));
       }
 
+      // Create a minimal vendor profile immediately so PATCH /api/vendor/profile
+      // (timezone, etc.) works from the moment the vendor enters their business name.
+      // Onboarding/complete will update this row with full profile details later.
+      const [newProfile] = await db
+        .insert(vendorProfiles)
+        .values({
+          accountId: created.id,
+          profileName: normalizedName,
+          experience: 0,
+          address: "",
+          city: "",
+          travelMode: "travel-to-guests",
+          serviceDescription: "",
+        })
+        .returning();
+
+      await db
+        .update(vendorAccounts)
+        .set({ activeProfileId: newProfile.id })
+        .where(eq(vendorAccounts.id, created.id));
+
       logger.info(`[vendor-provision] Created stub account ${created.id} for ${email}`);
+
+      // Fire-and-forget: send vendor welcome email on first account creation.
+      void (async () => {
+        try {
+          const serverUrl = appUrl();
+          await sendVendorWelcomeEmail(created.email!, {
+            recipientName: created.businessName || "Vendor",
+            businessName: created.businessName || "Your Business",
+            serverUrl,
+          });
+        } catch (emailError: any) {
+          logger.warn("[vendor welcome email] failed:", emailError?.message || emailError);
+        }
+      })();
 
       return res.status(200).json({
         vendorAccountId: created.id,
@@ -1459,22 +1494,7 @@ export function registerVendorRoutes(app: Express): void {
 
       const isUpgrade = Boolean(customerAuth || vendorAuth);
 
-      // Fire-and-forget: send vendor welcome email (first-time onboarding only)
       const isFirstTimeOnboarding = existingProfiles.length === 0;
-      if (account.email && isFirstTimeOnboarding) {
-        void (async () => {
-          try {
-            const serverUrl = appUrl();
-            await sendVendorWelcomeEmail(account.email!, {
-              recipientName: account.businessName || "Vendor",
-              businessName: account.businessName || "Your Business",
-              serverUrl,
-            });
-          } catch (emailError: any) {
-            logger.warn("[vendor welcome email] failed:", emailError?.message || emailError);
-          }
-        })();
-      }
 
       // Track vendor referrals: if a valid referral code was provided by a new vendor,
       // record the relationship so we can reward the referring vendor later.
