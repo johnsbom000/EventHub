@@ -64,6 +64,7 @@ type VendorShellProps = {
 };
 
 type VendorHeaderAccount = {
+  id?: string | null;
   businessName?: string | null;
   email?: string | null;
   operatingTimezone?: string | null;
@@ -150,7 +151,7 @@ export default function VendorShell({ children, onOpenAccountSettings }: VendorS
 
   const isVendorOnly = Boolean(vendorAccount?.vendorOnlySignup); // [vendor-only restrictions] remove this line
 
-  const showTimezoneModal = useShowTimezoneModal(vendorAccount?.operatingTimezone);
+  const showTimezoneModal = useShowTimezoneModal(vendorAccount?.operatingTimezone, vendorAccount?.id);
   const [tzModalDismissed, setTzModalDismissed] = useState(false);
 
   const switchVendorProfile = async (profileId: string) => {
@@ -204,11 +205,11 @@ export default function VendorShell({ children, onOpenAccountSettings }: VendorS
 
   useEffect(() => {
     const key = getTourKey(location);
-    if (!key) return;
+    if (!key || !vendorAccount?.id) return;
 
     if (tourTimerRef.current) clearTimeout(tourTimerRef.current);
     tourTimerRef.current = window.setTimeout(() => {
-      if (!hasTourBeenSeen(key)) {
+      if (!hasTourBeenSeen(key, vendorAccount.id)) {
         setActiveTourKey(key);
       }
     }, 600);
@@ -216,10 +217,10 @@ export default function VendorShell({ children, onOpenAccountSettings }: VendorS
     return () => {
       if (tourTimerRef.current) clearTimeout(tourTimerRef.current);
     };
-  }, [location]);
+  }, [location, vendorAccount?.id]);
 
   const handleTourDismiss = () => {
-    if (activeTourKey) markTourSeen(activeTourKey);
+    if (activeTourKey) markTourSeen(activeTourKey, vendorAccount?.id);
     setActiveTourKey(null);
   };
 
@@ -521,6 +522,7 @@ export default function VendorShell({ children, onOpenAccountSettings }: VendorS
       <VendorTimezoneModal
         open={showTimezoneModal && !tzModalDismissed}
         onClose={() => setTzModalDismissed(true)}
+        accountId={vendorAccount?.id}
       />
     </SidebarProvider>
   );

@@ -141,10 +141,12 @@ export function getTourKey(pathname: string): string | null {
   return null;
 }
 
-export function hasTourBeenSeen(key: string): boolean {
-  return window.localStorage.getItem(`eh:tour:${key}`) === "1";
+export function hasTourBeenSeen(key: string, accountId?: string | null): boolean {
+  const prefix = accountId ? `${accountId}:` : "";
+  return window.localStorage.getItem(`eh:tour:${prefix}${key}`) === "1";
 }
 
-export function markTourSeen(key: string): void {
-  window.localStorage.setItem(`eh:tour:${key}`, "1");
+export function markTourSeen(key: string, accountId?: string | null): void {
+  const prefix = accountId ? `${accountId}:` : "";
+  window.localStorage.setItem(`eh:tour:${prefix}${key}`, "1");
 }

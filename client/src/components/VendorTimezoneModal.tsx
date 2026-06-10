@@ -13,21 +13,24 @@ import { Label } from "@/components/ui/label";
 import { TimezoneSelect, detectBrowserTimezone } from "@/components/TimezoneSelect";
 import { Clock } from "lucide-react";
 
-const DISMISSED_KEY = "eventhub.vendor.tz.confirmed";
+function dismissedKey(accountId?: string | null) {
+  return accountId ? `eventhub.vendor.tz.confirmed:${accountId}` : "eventhub.vendor.tz.confirmed";
+}
 
-export function useShowTimezoneModal(operatingTimezone: string | undefined | null): boolean {
+export function useShowTimezoneModal(operatingTimezone: string | undefined | null, accountId?: string | null): boolean {
   if (typeof window === "undefined") return false;
   if (!operatingTimezone || operatingTimezone !== "UTC") return false;
-  if (localStorage.getItem(DISMISSED_KEY)) return false;
+  if (localStorage.getItem(dismissedKey(accountId))) return false;
   return true;
 }
 
 interface VendorTimezoneModalProps {
   open: boolean;
   onClose: () => void;
+  accountId?: string | null;
 }
 
-export function VendorTimezoneModal({ open, onClose }: VendorTimezoneModalProps) {
+export function VendorTimezoneModal({ open, onClose, accountId }: VendorTimezoneModalProps) {
   const { getAccessTokenSilently } = useAuth0();
   const queryClient = useQueryClient();
   const [timezone, setTimezone] = useState(detectBrowserTimezone);
@@ -50,7 +53,7 @@ export function VendorTimezoneModal({ open, onClose }: VendorTimezoneModalProps)
         body: JSON.stringify({ operatingTimezone: timezone }),
       });
       if (!res.ok) throw new Error("Failed to save timezone");
-      localStorage.setItem(DISMISSED_KEY, "1");
+      localStorage.setItem(dismissedKey(accountId), "1");
       await queryClient.invalidateQueries({ queryKey: ["/api/vendor/me"] });
       await queryClient.invalidateQueries({ queryKey: ["/api/vendor/profile"] });
       onClose();
@@ -62,7 +65,7 @@ export function VendorTimezoneModal({ open, onClose }: VendorTimezoneModalProps)
   };
 
   const handleConfirmUtc = () => {
-    localStorage.setItem(DISMISSED_KEY, "1");
+    localStorage.setItem(dismissedKey(accountId), "1");
     onClose();
   };
 
