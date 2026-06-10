@@ -9,6 +9,7 @@ export type TourStep = {
 export type PageTour = {
   steps: TourStep[];
   overlay?: boolean;
+  allowClose?: boolean;
 };
 
 export const VENDOR_TOURS: Record<string, PageTour> = {
@@ -33,7 +34,7 @@ export const VENDOR_TOURS: Record<string, PageTour> = {
       {
         title: "Stripe Payouts",
         body: "EventHub processes payments through Stripe. Once you connect your Stripe account, your earnings are paid out automatically on a rolling schedule.",
-        highlightSelector: "[data-testid='button-complete-setup']",
+        highlightSelector: "[data-testid='section-stripe-setup']",
       },
       {
         title: "Connect Your Calendar",
@@ -122,6 +123,7 @@ export const VENDOR_TOURS: Record<string, PageTour> = {
   },
 
   disputes: {
+    allowClose: true,
     steps: [
       {
         title: "Disputes",

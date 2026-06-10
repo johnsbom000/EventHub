@@ -7,6 +7,7 @@ type VendorTourModalProps = {
   steps: TourStep[];
   onDismiss: () => void;
   showOverlay?: boolean;
+  showCloseButton?: boolean;
 };
 
 function injectHighlightStyles() {
@@ -30,7 +31,7 @@ function injectHighlightStyles() {
   document.head.appendChild(style);
 }
 
-export default function VendorTourModal({ steps, onDismiss, showOverlay = false }: VendorTourModalProps) {
+export default function VendorTourModal({ steps, onDismiss, showOverlay = false, showCloseButton = false }: VendorTourModalProps) {
   const [stepIndex, setStepIndex] = useState(0);
   const [, setLocation] = useLocation();
 
@@ -76,14 +77,16 @@ export default function VendorTourModal({ steps, onDismiss, showOverlay = false 
         <span className="text-[1.2rem] font-semibold text-[#7c8095]">
           {hasMultipleSteps ? `${stepIndex + 1} of ${steps.length}` : "Quick tip"}
         </span>
-        <button
-          type="button"
-          aria-label="Skip tour"
-          onClick={onDismiss}
-          className="flex h-8 w-8 items-center justify-center rounded-full text-[#9aacb4] transition-colors hover:bg-[rgba(74,106,125,0.1)] hover:text-[#4a6a7d]"
-        >
-          <X className="h-4 w-4" />
-        </button>
+        {showCloseButton && (
+          <button
+            type="button"
+            aria-label="Close tour"
+            onClick={onDismiss}
+            className="flex h-8 w-8 items-center justify-center rounded-full text-[#9aacb4] transition-colors hover:bg-[rgba(74,106,125,0.1)] hover:text-[#4a6a7d]"
+          >
+            <X className="h-4 w-4" />
+          </button>
+        )}
       </div>
 
       {/* Content */}
@@ -164,13 +167,9 @@ export default function VendorTourModal({ steps, onDismiss, showOverlay = false 
 
   if (showOverlay) {
     return (
-      <div className="fixed inset-0 z-[89] flex items-center justify-center p-4">
-        <div
-          className="absolute inset-0 bg-black/50"
-          onClick={onDismiss}
-          aria-hidden="true"
-        />
-        <div className="relative z-[90] w-full max-w-[440px]">
+      <div className="fixed inset-0 z-[110] flex items-center justify-center p-4">
+        <div className="absolute inset-0 bg-black/50" aria-hidden="true" />
+        <div className="relative z-[111] w-full max-w-[440px]">
           {card}
         </div>
       </div>
@@ -178,7 +177,7 @@ export default function VendorTourModal({ steps, onDismiss, showOverlay = false 
   }
 
   return (
-    <div className="fixed bottom-4 left-3 right-3 z-[90] sm:bottom-6 sm:left-auto sm:right-6 sm:w-[360px]">
+    <div className="fixed bottom-4 left-3 right-3 z-[110] sm:bottom-6 sm:left-auto sm:right-6 sm:w-[360px]">
       {card}
     </div>
   );

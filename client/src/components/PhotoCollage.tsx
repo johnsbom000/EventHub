@@ -1,15 +1,13 @@
 import { useEffect, useState } from "react";
 import { ChevronLeft } from "lucide-react";
 
-const DEFAULT_HEIGHT_CLASS = "h-[60vh] min-h-[320px] max-h-[520px]";
-
 type PhotoCollageProps = {
   photos: string[];
   title: string;
-  heightClass?: string;
+  heightClass?: string; // retained for API compatibility, unused
 };
 
-export default function PhotoCollage({ photos, title, heightClass = DEFAULT_HEIGHT_CLASS }: PhotoCollageProps) {
+export default function PhotoCollage({ photos, title }: PhotoCollageProps) {
   const [galleryOpen, setGalleryOpen] = useState(false);
 
   useEffect(() => {
@@ -23,136 +21,45 @@ export default function PhotoCollage({ photos, title, heightClass = DEFAULT_HEIG
 
   if (photos.length === 0) return null;
 
-  const previewPhotos = photos.slice(0, 5);
-  const splitGalleryPhotos = photos.slice(1, Math.min(photos.length, 4));
-  const marketplaceGridPhotos = previewPhotos.slice(1, 5);
+  const previewPhotos = photos.slice(0, 4);
+  const remaining = photos.length - previewPhotos.length;
 
   return (
     <>
-      <div className="relative">
-        <div className={`relative overflow-hidden rounded-2xl ${heightClass}`}>
-          {/* Mobile: stable hero-first preview */}
-          <div className="md:hidden h-full">
-            <button
-              className="relative block h-full w-full overflow-hidden bg-transparent"
-              onClick={() => setGalleryOpen(true)}
-              title="Show all photos"
-            >
-              <img
-                src={photos[0]}
-                alt={title}
-                className="absolute inset-0 h-full w-full object-cover"
-              />
-            </button>
-          </div>
-
-          {/* Desktop/tablet: adaptive layouts by photo count */}
-          <div className="hidden h-full md:block">
-            {/* 1 photo: full-width hero */}
-            {photos.length === 1 && (
+      <div className="space-y-3">
+        <div className="grid grid-cols-2 grid-rows-2 gap-2 h-72">
+          {previewPhotos.map((src, i) => {
+            const isLast = i === previewPhotos.length - 1 && remaining > 0;
+            return (
               <button
-                className="relative block h-full w-full overflow-hidden bg-transparent"
+                key={`${src}-${i}`}
+                type="button"
+                className="relative overflow-hidden rounded-lg bg-muted focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring"
                 onClick={() => setGalleryOpen(true)}
                 title="Show all photos"
               >
                 <img
-                  src={photos[0]}
-                  alt={title}
+                  src={src}
+                  alt={`${title} photo ${i + 1}`}
                   className="absolute inset-0 h-full w-full object-cover"
                 />
+                {isLast && (
+                  <div className="absolute inset-0 flex items-center justify-center rounded-lg bg-black/50 text-sm font-medium text-white">
+                    +{remaining} more
+                  </div>
+                )}
               </button>
-            )}
-
-            {/* 2-4 photos: split hero + right stack */}
-            {photos.length >= 2 && photos.length <= 4 && (
-              <div className="grid h-full grid-cols-[2fr_1fr] gap-2">
-                <button
-                  className="relative block h-full w-full overflow-hidden bg-transparent"
-                  onClick={() => setGalleryOpen(true)}
-                  title="Show all photos"
-                >
-                  <img
-                    src={photos[0]}
-                    alt={title}
-                    className="absolute inset-0 h-full w-full object-cover"
-                  />
-                </button>
-
-                <div
-                  className={`grid h-full gap-2 ${
-                    photos.length === 2
-                      ? "grid-rows-1"
-                      : photos.length === 3
-                        ? "grid-rows-2"
-                        : "grid-rows-3"
-                  }`}
-                >
-                  {splitGalleryPhotos.map((src: string, i: number) => (
-                    <button
-                      key={`${src}-${i}`}
-                      className="relative block h-full w-full overflow-hidden bg-transparent"
-                      onClick={() => setGalleryOpen(true)}
-                      title="Show all photos"
-                    >
-                      <img
-                        src={src}
-                        alt={`${title} photo ${i + 2}`}
-                        className="absolute inset-0 h-full w-full object-cover"
-                      />
-                    </button>
-                  ))}
-                </div>
-              </div>
-            )}
-
-            {/* 5+ photos: marketplace grid */}
-            {photos.length >= 5 && (
-              <div className="grid h-full grid-cols-4 grid-rows-2 gap-2">
-                <button
-                  className="relative col-span-2 row-span-2 block h-full w-full overflow-hidden bg-transparent"
-                  onClick={() => setGalleryOpen(true)}
-                  title="Show all photos"
-                >
-                  <img
-                    src={photos[0]}
-                    alt={title}
-                    className="absolute inset-0 h-full w-full object-cover"
-                  />
-                </button>
-
-                {marketplaceGridPhotos.map((src: string, i: number) => (
-                  <button
-                    key={`${src}-${i}`}
-                    className="relative block h-full w-full overflow-hidden bg-transparent"
-                    onClick={() => setGalleryOpen(true)}
-                    title="Show all photos"
-                  >
-                    <img
-                      src={src}
-                      alt={`${title} photo ${i + 2}`}
-                      className="absolute inset-0 h-full w-full object-cover"
-                    />
-                    {i === marketplaceGridPhotos.length - 1 && photos.length > 5 && (
-                      <div className="absolute inset-0 flex items-center justify-center bg-black/40 text-white text-sm font-medium">
-                        +{photos.length - 5} more
-                      </div>
-                    )}
-                  </button>
-                ))}
-              </div>
-            )}
-          </div>
-
-          {/* Show all photos button */}
-          <div className="absolute bottom-4 right-4">
-            <button
-              onClick={() => setGalleryOpen(true)}
-              className="bg-white/95 hover:bg-white text-foreground border border-border rounded-lg px-3 py-2 text-sm font-medium shadow-sm"
-            >
-              Show all photos
-            </button>
-          </div>
+            );
+          })}
         </div>
+
+        <button
+          type="button"
+          onClick={() => setGalleryOpen(true)}
+          className="rounded-lg border border-border bg-white/95 px-3 py-2 text-sm font-medium text-foreground shadow-sm hover:bg-white"
+        >
+          Show all photos
+        </button>
       </div>
 
       {/* Full-screen gallery */}
@@ -176,19 +83,23 @@ export default function PhotoCollage({ photos, title, heightClass = DEFAULT_HEIG
 
           <div className="h-[calc(100vh-73px)] overflow-y-auto">
             <div className="max-w-6xl mx-auto px-4 sm:px-6 py-6">
-              <div className="columns-1 sm:columns-2 lg:columns-3 gap-3 [column-fill:_balance]">
-                {photos.map((src: string, i: number) => (
-                  <figure
-                    key={`${src}-${i}`}
-                    className="mb-3 break-inside-avoid overflow-hidden rounded-xl bg-background"
-                  >
-                    <img
-                      src={src}
-                      alt={`${title} photo ${i + 1}`}
-                      className="block w-full h-auto object-contain"
-                      loading="lazy"
-                    />
-                  </figure>
+              <div className="flex gap-3">
+                {[0, 1].map((col) => (
+                  <div key={col} className="flex flex-1 flex-col gap-3">
+                    {photos.filter((_, i) => i % 2 === col).map((src, i) => (
+                      <figure
+                        key={`${src}-${i}`}
+                        className="overflow-hidden rounded-xl"
+                      >
+                        <img
+                          src={src}
+                          alt={`${title} photo ${i * 2 + col + 1}`}
+                          className="block w-full h-auto"
+                          loading="lazy"
+                        />
+                      </figure>
+                    ))}
+                  </div>
                 ))}
               </div>
             </div>

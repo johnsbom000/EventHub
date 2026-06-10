@@ -537,6 +537,29 @@ export default function MyHub() {
   const [galleryUploading, setGalleryUploading] = useState(false);
   const galleryInputRef = useRef<HTMLInputElement | null>(null);
 
+  const saveGalleryPhotosMutation = useMutation({
+    mutationFn: async (photos: string[]) => {
+      const token = await getFreshAccessToken();
+      const res = await fetch("/api/vendor/profile", {
+        method: "PATCH",
+        credentials: "include",
+        headers: {
+          "Content-Type": "application/json",
+          ...(token ? { Authorization: `Bearer ${token}` } : {}),
+        },
+        body: JSON.stringify({ galleryPhotos: photos }),
+      });
+      if (!res.ok) {
+        const payload = await res.json().catch(() => ({}));
+        throw new Error((payload as any)?.error || `Failed to save gallery (${res.status})`);
+      }
+    },
+    onSuccess: () => {
+      void queryClient.invalidateQueries({ queryKey: ["/api/vendor/profile"] });
+      void queryClient.invalidateQueries({ queryKey: ["/api/vendors/public/shop", vendorId] });
+    },
+  });
+
   const [validationError, setValidationError] = useState("");
   const [profileBlockModal, setProfileBlockModal] = useState<{
     open: boolean; field?: string; reason?: string; warningNumber?: number | null; suspended?: boolean; suspensionEndsAt?: string | null;
@@ -1317,6 +1340,7 @@ export default function MyHub() {
     if (remaining <= 0) return;
     const filesToProcess = Array.from(files).slice(0, remaining);
     setGalleryUploading(true);
+    const accumulated = [...galleryPhotosDraft];
     try {
       for (const file of filesToProcess) {
         if (!ACCEPTED_SHOP_PHOTO_TYPES.has(file.type)) {
@@ -1333,7 +1357,11 @@ export default function MyHub() {
           continue;
         }
         const url = await uploadShopPhotoDataUrl(optimized.src);
-        setGalleryPhotosDraft((prev) => [...prev, url]);
+        accumulated.push(url);
+      }
+      if (accumulated.length !== galleryPhotosDraft.length) {
+        setGalleryPhotosDraft(accumulated);
+        saveGalleryPhotosMutation.mutate(accumulated);
       }
     } catch (error) {
       toast({
@@ -2112,8 +2140,12 @@ export default function MyHub() {
                         <button
                           type="button"
                           className="absolute right-1 top-1 rounded-full bg-black/50 p-0.5 text-white hover:bg-black/70"
-                          onClick={() => setGalleryPhotosDraft((prev) => prev.filter((_, j) => j !== i))}
-                          disabled={saveMutation.isPending || galleryUploading}
+                          onClick={() => {
+                            const next = galleryPhotosDraft.filter((_, j) => j !== i);
+                            setGalleryPhotosDraft(next);
+                            saveGalleryPhotosMutation.mutate(next);
+                          }}
+                          disabled={saveMutation.isPending || galleryUploading || saveGalleryPhotosMutation.isPending}
                           aria-label="Remove photo"
                         >
                           <X className="h-3 w-3" />

@@ -1115,7 +1115,7 @@ export function registerVendorRoutes(app: Express): void {
         })
         .onConflictDoUpdate({
           target: users.email,
-          set: { vendorOnlySignup: true, updatedAt: new Date() },
+          set: { updatedAt: new Date() },
         })
         .returning({ id: users.id });
 
