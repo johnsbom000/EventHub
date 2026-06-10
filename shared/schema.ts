@@ -354,6 +354,7 @@ export const vendorProfiles = pgTable("vendor_profiles", {
   serviceRadius: integer("service_radius"), // in miles (for travel-to-guests)
   serviceAddress: text("service_address"), // (for guests-come-to-me)
   photos: text("photos").array().default(sql`'{}'`),
+  galleryPhotos: text("gallery_photos").array().notNull().default(sql`'{}'`),
   serviceDescription: text("service_description").notNull(),
   createdAt: timestamp("created_at").defaultNow().notNull(),
   updatedAt: timestamp("updated_at").defaultNow().notNull(),

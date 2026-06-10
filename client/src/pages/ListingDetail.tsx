@@ -5,11 +5,11 @@ import { apiRequest } from "@/lib/queryClient";
 import HeartBoardPopover from "@/components/HeartBoardPopover";
 import ListingCard from "@/components/ListingCard";
 import MasonryListingGrid from "@/components/MasonryListingGrid";
+import PhotoCollage from "@/components/PhotoCollage";
 import { ChevronLeft, Heart, MapPin, Shield, Star, CheckCircle, XCircle, Truck, Wrench, Plus, Minus } from "lucide-react";
 import { useAuth0 } from "@auth0/auth0-react";
 import { format } from "date-fns";
 import {
- coverRatioToAspectRatio,
  getCoverPhotoIndex,
  getCoverPhotoRatio,
  moveCoverToFront,
@@ -21,7 +21,6 @@ import { TimeInput } from "@/components/ui/TimeInput";
 import { trackEvent } from "@/lib/analytics";
 
 type RouteParams = { id: string };
-const LISTING_DETAIL_GALLERY_HEIGHT_CLASS = "h-[60vh] min-h-[320px] max-h-[520px]";
 
 // --- Small helpers ---
 function isNonEmptyString(v: unknown): v is string {
@@ -188,7 +187,6 @@ export default function ListingDetailPage() {
  const [, params] = useRoute<RouteParams>("/listing/:id");
  const listingId = params?.id;
 
- const [galleryOpen, setGalleryOpen] = useState(false);
  const [heartOpen, setHeartOpen] = useState(false);
  const [reportSent, setReportSent] = useState(false);
  const [selectedPackageId, setSelectedPackageId] = useState<string | null>(null);
@@ -506,15 +504,6 @@ export default function ListingDetailPage() {
  },
  });
 
- useEffect(() => {
- if (!galleryOpen) return;
- const previousOverflow = document.body.style.overflow;
- document.body.style.overflow = "hidden";
- return () => {
- document.body.style.overflow = previousOverflow;
- };
- }, [galleryOpen]);
-
  if (!listingId) return <div className="no-global-scale p-6">{t("listing.missingListingId")}</div>;
  if (isLoading) return <div className="no-global-scale p-6">Loading…</div>;
  if (error) return <div className="no-global-scale p-6">{t("listing.errorLoading")}</div>;
@@ -522,24 +511,6 @@ export default function ListingDetailPage() {
 
  const photos = Array.isArray(data.photos) ? data.photos : [];
  const hasPhotos = photos.length > 0;
- const previewPhotos = photos.slice(0, 5);
- const splitGalleryPhotos = photos.slice(1, Math.min(photos.length, 4));
- const marketplaceGridPhotos = previewPhotos.slice(1, 5);
- const coverAspectRatio = coverRatioToAspectRatio(data.coverPhotoRatio);
- const usesSavedCoverAspectRatio = photos.length === 1;
- const photoRenderMetaByUrl = (data.photoRenderMetaByUrl ?? {}) as Record<string, PhotoRenderMeta>;
-
- const getPhotoObjectPositionStyle = (src: string): React.CSSProperties | undefined => {
- const meta = photoRenderMetaByUrl[src] ?? photoRenderMetaByUrl[canonicalPhotoUrl(src)];
- if (!meta?.objectPosition) return undefined;
- return { objectPosition: meta.objectPosition };
- };
-
- const getPhotoSavedAspect = (src: string): number | undefined => {
- const meta = photoRenderMetaByUrl[src] ?? photoRenderMetaByUrl[canonicalPhotoUrl(src)];
- if (!meta?.aspect || !Number.isFinite(meta.aspect) || meta.aspect <= 0) return undefined;
- return meta.aspect;
- };
 
  return (
  <div className="no-global-scale max-w-6xl mx-auto px-4 sm:px-6 lg:px-8 py-8 pb-24 lg:pb-8">
@@ -585,132 +556,13 @@ export default function ListingDetailPage() {
  </div>
 
  {/* Photo collage (Airbnb-style) */}
- <div className="relative">
  {hasPhotos ? (
- <div className={`relative overflow-hidden rounded-2xl ${LISTING_DETAIL_GALLERY_HEIGHT_CLASS}`}>
- {/* Mobile: stable hero-first preview */}
- <div className="md:hidden h-full">
- <button
- className="relative block h-full w-full overflow-hidden bg-transparent"
- style={usesSavedCoverAspectRatio ? { aspectRatio: coverAspectRatio } : undefined}
- onClick={() => setGalleryOpen(true)}
- title={t("listing.showAllPhotos")}
- >
- <img
- src={photos[0]}
- alt={data.title}
- className="absolute inset-0 h-full w-full object-cover"
- style={getPhotoObjectPositionStyle(photos[0])}
- />
- </button>
- </div>
-
- {/* Desktop/tablet: adaptive layouts by photo count */}
- <div className="hidden h-full md:block">
- {/* 1 photo: full-width hero */}
- {photos.length === 1 && (
- <button
- className="relative block h-full w-full overflow-hidden bg-transparent"
- style={usesSavedCoverAspectRatio ? { aspectRatio: coverAspectRatio } : undefined}
- onClick={() => setGalleryOpen(true)}
- title={t("listing.showAllPhotos")}
- >
- <img
- src={photos[0]}
- alt={data.title}
- className="absolute inset-0 h-full w-full object-cover"
- style={getPhotoObjectPositionStyle(photos[0])}
- />
- </button>
- )}
-
- {/* 2-4 photos: split hero + right stack */}
- {photos.length >= 2 && photos.length <= 4 && (
- <div className="grid h-full grid-cols-[2fr_1fr] gap-2">
- <button
- className="relative block h-full w-full overflow-hidden bg-transparent"
- onClick={() => setGalleryOpen(true)}
- title={t("listing.showAllPhotos")}
- >
- <img
- src={photos[0]}
- alt={data.title}
- className="absolute inset-0 h-full w-full object-cover"
- style={getPhotoObjectPositionStyle(photos[0])}
- />
- </button>
-
- <div className={`grid h-full gap-2 ${photos.length === 2 ? "grid-rows-1" : photos.length === 3 ? "grid-rows-2" : "grid-rows-3"}`}>
- {splitGalleryPhotos.map((src: string, i: number) => (
- <button
- key={`${src}-${i}`}
- className="relative block h-full w-full overflow-hidden bg-transparent"
- onClick={() => setGalleryOpen(true)}
- title={t("listing.showAllPhotos")}
- >
- <img
- src={src}
- alt={`${data.title} photo ${i + 2}`}
- className="absolute inset-0 h-full w-full object-cover"
- style={getPhotoObjectPositionStyle(src)}
- />
- </button>
- ))}
- </div>
- </div>
- )}
-
- {/* 5+ photos: marketplace grid */}
- {photos.length >= 5 && (
- <div className="grid h-full grid-cols-4 grid-rows-2 gap-2">
- <button
- className="relative col-span-2 row-span-2 block h-full w-full overflow-hidden bg-transparent"
- onClick={() => setGalleryOpen(true)}
- title={t("listing.showAllPhotos")}
- >
- <img
- src={photos[0]}
- alt={data.title}
- className="absolute inset-0 h-full w-full object-cover"
- style={getPhotoObjectPositionStyle(photos[0])}
- />
- </button>
-
- {marketplaceGridPhotos.map((src: string, i: number) => (
- <button
- key={`${src}-${i}`}
- className="relative block h-full w-full overflow-hidden bg-transparent"
- onClick={() => setGalleryOpen(true)}
- title={t("listing.showAllPhotos")}
- >
- <img
- src={src}
- alt={`${data.title} photo ${i + 2}`}
- className="absolute inset-0 h-full w-full object-cover"
- style={getPhotoObjectPositionStyle(src)}
- />
- </button>
- ))}
- </div>
- )}
- </div>
-
- {/* Show all photos button */}
- <div className="absolute bottom-4 right-4">
- <button
- onClick={() => setGalleryOpen(true)}
- className="bg-white/95 hover:bg-white text-foreground border border-border rounded-lg px-3 py-2 text-sm font-medium shadow-sm"
- >
- {t("listing.showAllPhotos")}
- </button>
- </div>
- </div>
+ <PhotoCollage photos={photos} title={data.title} />
  ) : (
  <div className="rounded-2xl bg-muted h-[320px] md:h-[420px] flex items-center justify-center text-muted-foreground">
  {t("listing.noPhotosYet")}
  </div>
  )}
- </div>
 
  {/* Main layout: content + sticky reservation */}
  <div className="mt-8 grid grid-cols-1 lg:grid-cols-[1fr_360px] gap-10 items-start">
@@ -1258,55 +1110,6 @@ export default function ListingDetailPage() {
  </div>
  )}
 
- {/* Full-screen gallery */}
- {galleryOpen && (
- <div className="fixed inset-0 z-50 bg-background">
- <header className="sticky top-0 z-10 bg-background/95 backdrop-blur">
- <div className="max-w-6xl mx-auto px-4 sm:px-6 py-4 flex items-center justify-between gap-3">
- <button
- onClick={() => setGalleryOpen(false)}
- className="inline-flex items-center gap-2 rounded-lg px-3 py-2 text-sm font-medium hover:bg-muted"
- >
- <ChevronLeft className="w-4 h-4" />
- Back
- </button>
- <div className="text-sm text-muted-foreground">
- {photos.length} photo{photos.length === 1 ? "" : "s"}
- </div>
- <div className="w-10" aria-hidden="true" />
- </div>
- </header>
-
- <div className="h-[calc(100vh-73px)] overflow-y-auto">
- <div className="max-w-6xl mx-auto px-4 sm:px-6 py-6">
- {hasPhotos ? (
- <div className="columns-1 sm:columns-2 lg:columns-3 gap-3 [column-fill:_balance]">
- {photos.map((src: string, i: number) => {
- const savedAspect = getPhotoSavedAspect(src);
- return (
- <figure
- key={`${src}-${i}`}
- className={`mb-3 break-inside-avoid overflow-hidden rounded-xl bg-background ${savedAspect ? "relative" : ""}`}
- style={savedAspect ? { aspectRatio: String(savedAspect) } : undefined}
- >
- <img
- src={src}
- alt={`${data.title} photo ${i + 1}`}
- className={savedAspect ? "absolute inset-0 block w-full h-full object-contain" : "block w-full h-auto object-contain"}
- style={getPhotoObjectPositionStyle(src)}
- loading="lazy"
- />
- </figure>
- );
- })}
- </div>
- ) : (
- <div className="text-muted-foreground">{t("listing.noPhotosYet")}</div>
- )}
- </div>
- </div>
- </div>
- )}
  </div>
  );
 }
@@ -1389,7 +1192,7 @@ function ReservationCard({
      return;
    }
    if (!vendorId) return;
-   setLocationInner(`/dashboard/customer/messages?vendorId=${encodeURIComponent(vendorId)}`);
+   setLocationInner(`/dashboard/messages?vendorId=${encodeURIComponent(vendorId)}`);
  }
 
  // Active sale for this listing

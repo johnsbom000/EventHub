@@ -6,6 +6,7 @@ import { ArrowLeft, ArrowRight, Star } from "lucide-react";
 
 import Navigation from "@/components/Navigation";
 import Footer from "@/components/Footer";
+import PhotoCollage from "@/components/PhotoCollage";
 import MasonryListingGrid from "@/components/MasonryListingGrid";
 import ListingCard from "@/components/ListingCard";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
@@ -56,6 +57,7 @@ type VendorShopResponse = {
  activeListingsCount?: number | null;
  eventsServedTotal?: number | null;
  avgResponseMinutes?: number | null;
+ galleryPhotos?: string[] | null;
  rating?: number | null;
  reviewCount?: number | null;
  reviewBreakdown?: Record<string, number> | null;
@@ -343,6 +345,8 @@ export default function VendorHub() {
  const homeState = asTrimmedString(vendor?.homeState);
  const funFacts = asTrimmedString(vendor?.funFacts);
  const hasOwnerOptionalDetails = hobbies.length > 0 || Boolean(likesDislikes || homeState || funFacts);
+ const galleryPhotos = (vendor?.galleryPhotos ?? []).filter(Boolean) as string[];
+ const hasGallery = galleryPhotos.length > 0;
  const hasAvgResponseTime = Number.isFinite(Number(vendor?.avgResponseMinutes)) && Number(vendor?.avgResponseMinutes) > 0;
  const reviewBreakdownRaw = vendor?.reviewBreakdown || {};
  const reviewBreakdown = {
@@ -423,7 +427,7 @@ export default function VendorHub() {
  <>
  <section className="vendor-hub-hero">
  {hasVisibleCoverImage ? (
- <div className="relative w-full overflow-visible bg-[#ffffff]" style={{ height: "450px" }}>
+ <div className="relative h-[180px] w-full overflow-visible bg-[#ffffff] sm:h-[280px] lg:h-[450px]">
  <img
  src={resolvedCoverImageUrl}
  alt={`${vendor.businessName} cover`}
@@ -620,6 +624,11 @@ export default function VendorHub() {
  <p className="text-[1.25rem] font-semibold text-[#2a3a42] ">{eventsServedTotal}+ {t("vendorHub.events")}</p>
  </div>
  ) : null}
+ {hasGallery && (
+ <a href="#gallery" className="inline-block text-sm font-medium text-[#4a6a7d] hover:underline">
+ Photo Gallery
+ </a>
+ )}
  </div>
  </section>
 
@@ -680,6 +689,19 @@ export default function VendorHub() {
  </div>
  </section>
  ) : null}
+
+ {hasGallery && (
+ <section id="gallery" className="border-t border-[rgba(74,106,125,0.24)] py-6">
+ <div className="space-y-4">
+ <h3 className="text-3xl font-semibold text-[#2a3a42]">Photo Gallery</h3>
+ <PhotoCollage
+ photos={galleryPhotos}
+ title={vendor.businessName}
+ heightClass="h-[50vh] min-h-[280px] max-h-[460px]"
+ />
+ </div>
+ </section>
+ )}
 
  <section className="space-y-4 border-t border-[rgba(74,106,125,0.24)] pt-6">
  <div className="flex items-center justify-between">

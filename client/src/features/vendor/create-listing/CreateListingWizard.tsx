@@ -1681,11 +1681,26 @@ export function CreateListingWizard({ onClose, initialListingType, parentListing
  }, [hasMeaningfulData, listingId]);
 
  const handleCreateNewAddon = async () => {
- // Save the current listing silently before opening the nested wizard
- try {
-   await ensureListingSaved({ forceCreate: true });
- } catch {
-   // non-blocking — open the add-on wizard regardless
+ let parentId = listingId ?? listingIdRef.current;
+ if (!parentId) {
+   try {
+     parentId = await ensureListingSaved({ forceCreate: true });
+   } catch {
+     toast({
+       title: "Save required",
+       description: "Couldn't save your listing. Please try again.",
+       variant: "destructive",
+     });
+     return;
+   }
+ }
+ if (!parentId) {
+   toast({
+     title: "Save required",
+     description: "Please save your listing before adding add-ons.",
+     variant: "destructive",
+   });
+   return;
  }
  setCreatingAddon(true);
  };

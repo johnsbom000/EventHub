@@ -3,7 +3,7 @@ import { useEffect, useMemo, useRef, useState } from "react";
 import { useAuth0 } from "@auth0/auth0-react";
 import { useLocation } from "wouter";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
-import { AlertCircle, Copy, Eye, ImagePlus, Trash2 } from "lucide-react";
+import { AlertCircle, Copy, Eye, ImagePlus, Trash2, X } from "lucide-react";
 
 import VendorShell from "@/components/VendorShell";
 import ListingCard from "@/components/ListingCard";
@@ -72,6 +72,7 @@ type VendorProfile = {
   city?: string | null;
   serviceRadius?: number | null;
   onlineProfiles?: Record<string, unknown> | null;
+  galleryPhotos?: string[] | null;
 };
 
 type VendorListing = {
@@ -523,6 +524,10 @@ export default function MyHub() {
   const [isPreparingPhoto, setIsPreparingPhoto] = useState(false);
   const [isUploadingPhoto, setIsUploadingPhoto] = useState(false);
   const [shopPhotoDirty, setShopPhotoDirty] = useState(false);
+  const [galleryPhotosDraft, setGalleryPhotosDraft] = useState<string[]>([]);
+  const [galleryUploading, setGalleryUploading] = useState(false);
+  const galleryInputRef = useRef<HTMLInputElement | null>(null);
+
   const [validationError, setValidationError] = useState("");
   const [profileBlockModal, setProfileBlockModal] = useState<{
     open: boolean; field?: string; reason?: string; warningNumber?: number | null; suspended?: boolean; suspensionEndsAt?: string | null;
@@ -672,6 +677,10 @@ export default function MyHub() {
   }, [persistedFunFacts]);
 
   useEffect(() => {
+    setGalleryPhotosDraft(Array.isArray(vendorProfile?.galleryPhotos) ? vendorProfile.galleryPhotos : []);
+  }, [vendorProfile?.galleryPhotos]);
+
+  useEffect(() => {
     let cancelled = false;
     if (!persistedProfileImageUrl) {
       setShopPhotoSource(null);
@@ -791,7 +800,8 @@ export default function MyHub() {
     asTrimmedString(homeStateDraft) !== persistedHomeState ||
     asTrimmedString(funFactsDraft) !== persistedFunFacts ||
     shopPhotoDirty ||
-    coverPhotoDirty;
+    coverPhotoDirty ||
+    JSON.stringify(galleryPhotosDraft) !== JSON.stringify(vendorProfile?.galleryPhotos ?? []);
 
   const getValidationErrorMessage = () => {
     if (!asTrimmedString(businessNameDraft)) return "Business name is required.";
@@ -1038,6 +1048,7 @@ export default function MyHub() {
           serviceDescription: asTrimmedString(aboutBusinessDraft),
           serviceRadius: normalizedServiceRadius ? Number(normalizedServiceRadius) : null,
           onlineProfiles: onlineProfilesUpdate,
+          galleryPhotos: galleryPhotosDraft,
         }),
       });
 
@@ -1289,6 +1300,40 @@ export default function MyHub() {
       });
     } finally {
       setIsPreparingPhoto(false);
+    }
+  };
+
+  const handleGalleryPhotoFiles = async (files: FileList) => {
+    const remaining = 20 - galleryPhotosDraft.length;
+    if (remaining <= 0) return;
+    const filesToProcess = Array.from(files).slice(0, remaining);
+    setGalleryUploading(true);
+    try {
+      for (const file of filesToProcess) {
+        if (!ACCEPTED_SHOP_PHOTO_TYPES.has(file.type)) {
+          toast({ title: "Unsupported format", description: "Use PNG, JPG, WEBP, or GIF.", variant: "destructive" });
+          continue;
+        }
+        if (file.size > MAX_SHOP_PHOTO_SOURCE_BYTES) {
+          toast({ title: "Image too large", description: "Please choose a photo under 20MB.", variant: "destructive" });
+          continue;
+        }
+        const optimized = await optimizeShopPhoto(file);
+        if (estimateDataUrlBytes(optimized.src) > MAX_SHOP_PHOTO_BYTES) {
+          toast({ title: "Image too large", description: "Optimized photo must be 2MB or less.", variant: "destructive" });
+          continue;
+        }
+        const url = await uploadShopPhotoDataUrl(optimized.src);
+        setGalleryPhotosDraft((prev) => [...prev, url]);
+      }
+    } catch (error) {
+      toast({
+        title: "Upload failed",
+        description: error instanceof Error ? error.message : "Unable to process image.",
+        variant: "destructive",
+      });
+    } finally {
+      setGalleryUploading(false);
     }
   };
 
@@ -2042,6 +2087,59 @@ export default function MyHub() {
                   />
                 </div>
 
+              </CardContent>
+            </Card>
+
+            <Card>
+              <CardHeader>
+                <CardTitle>Gallery Photos</CardTitle>
+              </CardHeader>
+              <CardContent className="space-y-4">
+                {galleryPhotosDraft.length > 0 && (
+                  <div className="grid grid-cols-3 gap-2">
+                    {galleryPhotosDraft.map((url, i) => (
+                      <div key={`${url}-${i}`} className="relative aspect-square overflow-hidden rounded-md bg-muted">
+                        <img src={url} alt={`Gallery photo ${i + 1}`} className="absolute inset-0 h-full w-full object-cover" />
+                        <button
+                          type="button"
+                          className="absolute right-1 top-1 rounded-full bg-black/50 p-0.5 text-white hover:bg-black/70"
+                          onClick={() => setGalleryPhotosDraft((prev) => prev.filter((_, j) => j !== i))}
+                          disabled={saveMutation.isPending || galleryUploading}
+                          aria-label="Remove photo"
+                        >
+                          <X className="h-3 w-3" />
+                        </button>
+                      </div>
+                    ))}
+                  </div>
+                )}
+
+                <input
+                  ref={galleryInputRef}
+                  type="file"
+                  accept="image/png,image/jpeg,image/jpg,image/webp,image/gif"
+                  multiple
+                  className="hidden"
+                  onChange={(e) => {
+                    if (e.target.files?.length) {
+                      void handleGalleryPhotoFiles(e.target.files);
+                      e.target.value = "";
+                    }
+                  }}
+                />
+                <Button
+                  type="button"
+                  variant="outline"
+                  size="sm"
+                  onClick={() => galleryInputRef.current?.click()}
+                  disabled={saveMutation.isPending || galleryUploading || galleryPhotosDraft.length >= 20}
+                >
+                  <ImagePlus className="mr-2 h-4 w-4" />
+                  {galleryUploading ? "Uploading…" : "Add Photos"}
+                </Button>
+                {galleryPhotosDraft.length >= 20 && (
+                  <p className="text-xs text-muted-foreground">Maximum of 20 gallery photos reached.</p>
+                )}
               </CardContent>
             </Card>
           </aside>
