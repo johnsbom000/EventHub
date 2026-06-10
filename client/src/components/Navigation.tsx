@@ -338,7 +338,7 @@ export default function Navigation({
           variant="ghost"
           size="default"
           className={`hidden sm:inline-flex ${navActionButtonClass}`}
-          onClick={() => setLocation("/vendor/onboarding")}
+          onClick={() => setLocation("/vendor/provision")}
           data-testid="button-become-vendor-nav"
          >
           {t("nav.customer.becomeVendor")}
@@ -385,7 +385,7 @@ export default function Navigation({
            </DropdownMenuItem>
           )}
           <DropdownMenuSeparator />
-          <DropdownMenuItem onClick={() => setLocation("/vendor/onboarding")} data-testid="menu-item-become-vendor">
+          <DropdownMenuItem onClick={() => setLocation("/vendor/provision")} data-testid="menu-item-become-vendor">
            <Briefcase className="mr-2 h-4 w-4" />
            <span>{t("nav.customer.becomeVendor")}</span>
           </DropdownMenuItem>

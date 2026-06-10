@@ -202,12 +202,24 @@ export default function VendorShell({ children, onOpenAccountSettings }: VendorS
   // Tour system
   const [activeTourKey, setActiveTourKey] = useState<string | null>(null);
   const tourTimerRef = useRef<number | null>(null);
+  const timezoneModalDone = !showTimezoneModal || tzModalDismissed;
 
   useEffect(() => {
     const key = getTourKey(location);
-    if (!key || !vendorAccount?.id) return;
 
     if (tourTimerRef.current) clearTimeout(tourTimerRef.current);
+
+    // Mark the current tour as seen if the user navigated away from its page
+    setActiveTourKey((currentKey) => {
+      if (currentKey && currentKey !== key) {
+        markTourSeen(currentKey, vendorAccount?.id);
+        return null;
+      }
+      return currentKey;
+    });
+
+    if (!key || !vendorAccount?.id || !timezoneModalDone) return;
+
     tourTimerRef.current = window.setTimeout(() => {
       if (!hasTourBeenSeen(key, vendorAccount.id)) {
         setActiveTourKey(key);
@@ -217,7 +229,7 @@ export default function VendorShell({ children, onOpenAccountSettings }: VendorS
     return () => {
       if (tourTimerRef.current) clearTimeout(tourTimerRef.current);
     };
-  }, [location, vendorAccount?.id]);
+  }, [location, vendorAccount?.id, timezoneModalDone]);
 
   const handleTourDismiss = () => {
     if (activeTourKey) markTourSeen(activeTourKey, vendorAccount?.id);
@@ -516,6 +528,7 @@ export default function VendorShell({ children, onOpenAccountSettings }: VendorS
           key={activeTourKey}
           steps={VENDOR_TOURS[activeTourKey].steps}
           showOverlay={VENDOR_TOURS[activeTourKey].overlay}
+          showCloseButton={VENDOR_TOURS[activeTourKey].allowClose}
           onDismiss={handleTourDismiss}
         />
       )}

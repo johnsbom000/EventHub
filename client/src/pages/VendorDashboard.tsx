@@ -1401,7 +1401,7 @@ export default function VendorDashboard() {
  )}
 
  {showStripeSetupCard ? (
- <div className="rounded-xl border border-[hsl(var(--secondary-accent)/0.45)] bg-[hsl(var(--secondary-accent)/0.12)] p-6">
+ <div className="rounded-xl border border-[hsl(var(--secondary-accent)/0.45)] bg-[hsl(var(--secondary-accent)/0.12)] p-6" data-testid="section-stripe-setup">
  <h2 className="font-heading text-[20px] leading-none tracking-tight">{t("vendorDashboard.completeSetup")}</h2>
  <div className="mt-6">
  <Button
