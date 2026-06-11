@@ -118,10 +118,21 @@ export default function EmailVerificationGate({ children }: { children: React.Re
           automatically once you're verified.
         </p>
 
-        <div className="mb-6 flex items-center gap-2 text-sm text-muted-foreground">
+        <div className="mb-2 flex items-center gap-2 text-sm text-muted-foreground">
           <Loader2 className="h-4 w-4 animate-spin" />
           {continuing ? "Verified! Taking you in…" : "Waiting for verification…"}
         </div>
+        <p className="mb-6 text-xs text-muted-foreground">
+          Already verified and still stuck?{" "}
+          <button
+            type="button"
+            onClick={() => window.location.reload()}
+            className="underline hover:text-[#16222D]"
+          >
+            Refresh this page
+          </button>
+          .
+        </p>
 
         {resendState === "sent" && (
           <div className="mb-4 rounded-lg border border-green-200 bg-green-50 p-3 text-sm text-green-900">
