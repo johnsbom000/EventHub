@@ -5,9 +5,8 @@ import { Button } from "@/components/ui/button";
 import { getFreshAccessToken } from "@/lib/authToken";
 import { setGlobalEmailUnverifiedCallback } from "@/lib/queryClient";
 
-const AUTH0_DOMAIN = String(import.meta.env.VITE_AUTH0_DOMAIN || "").trim();
-// Auth0's /userinfo is rate-limited per user (~5/min) — poll conservatively and
-// also re-check when the tab regains focus (user returning from their inbox).
+// Poll conservatively and also re-check when the tab regains focus (the user
+// returning after verifying in their inbox / on their phone).
 const POLL_INTERVAL_MS = 15_000;
 const RESEND_COOLDOWN_MS = 60_000;
 
@@ -37,7 +36,7 @@ export default function EmailVerificationGate({ children }: { children: React.Re
   }, []);
 
   useEffect(() => {
-    if (!blocked || !AUTH0_DOMAIN) return;
+    if (!blocked) return;
 
     let cancelled = false;
 
@@ -45,19 +44,20 @@ export default function EmailVerificationGate({ children }: { children: React.Re
       if (checkingRef.current || cancelled) return;
       checkingRef.current = true;
       try {
-        const token = await getFreshAccessToken();
-        if (!token) return;
-        const res = await fetch(`https://${AUTH0_DOMAIN}/userinfo`, {
+        // Mint a FRESH token (email_verified is frozen in the token at issuance,
+        // so the cached one still says false) and ask the SERVER directly. We
+        // only reload when the server actually accepts the request — that
+        // guarantees the reloaded app won't immediately 403 again, which is what
+        // caused the reload loop when we keyed off Auth0's /userinfo instead.
+        const token = await getFreshAccessToken({ forceRefresh: true });
+        if (!token || cancelled) return;
+        const res = await fetch("/api/customer/me", {
           headers: { Authorization: `Bearer ${token}` },
+          credentials: "include",
         });
-        if (!res.ok) return;
-        const profile = (await res.json()) as { email_verified?: boolean };
-        if (cancelled || profile?.email_verified !== true) return;
+        if (cancelled || !res.ok) return;
 
-        // Verified — mint a fresh token (claims are baked in at issuance, so the
-        // cached one still says false) and restart the app clean.
         setContinuing(true);
-        await getFreshAccessToken({ forceRefresh: true });
         window.location.reload();
       } catch {
         // Network hiccup — next poll retries.

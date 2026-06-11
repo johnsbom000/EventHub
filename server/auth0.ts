@@ -104,9 +104,14 @@ type UserInfoProfile = {
 };
 
 // In-process cache for /userinfo responses — avoids one external HTTP call per request.
-// Key: auth0 sub. TTL: 5 minutes (short enough to pick up email-verify changes quickly).
+// Key: auth0 sub. Result-dependent TTL: a VERIFIED profile is cached normally,
+// but an UNVERIFIED one is cached only briefly so a user who just clicked the
+// verification link is recognised within seconds — WITHOUT re-hitting /userinfo
+// on every request (which would blow Auth0's /userinfo rate limit and trap the
+// session in a 403 loop).
 const _userInfoCache = new Map<string, { profile: UserInfoProfile; expiresAt: number }>();
-const USERINFO_CACHE_TTL_MS = 5 * 60 * 1000;
+const USERINFO_VERIFIED_TTL_MS = 5 * 60 * 1000;
+const USERINFO_UNVERIFIED_TTL_MS = 15 * 1000;
 
 async function fetchUserInfoProfile(accessToken: string): Promise<UserInfoProfile | null> {
   const controller = new AbortController();
@@ -135,22 +140,15 @@ async function fetchUserInfoProfile(accessToken: string): Promise<UserInfoProfil
   }
 }
 
-async function fetchUserInfoProfileCached(
-  sub: string,
-  accessToken: string,
-  opts?: { bypassCache?: boolean }
-): Promise<UserInfoProfile | null> {
+async function fetchUserInfoProfileCached(sub: string, accessToken: string): Promise<UserInfoProfile | null> {
   const now = Date.now();
-  if (opts?.bypassCache) {
-    _userInfoCache.delete(sub);
-  } else {
-    const cached = _userInfoCache.get(sub);
-    if (cached && cached.expiresAt > now) return cached.profile;
-  }
+  const cached = _userInfoCache.get(sub);
+  if (cached && cached.expiresAt > now) return cached.profile;
 
   const profile = await fetchUserInfoProfile(accessToken);
   if (profile) {
-    _userInfoCache.set(sub, { profile, expiresAt: now + USERINFO_CACHE_TTL_MS });
+    const ttl = profile.email_verified === true ? USERINFO_VERIFIED_TTL_MS : USERINFO_UNVERIFIED_TTL_MS;
+    _userInfoCache.set(sub, { profile, expiresAt: now + ttl });
   }
   return profile;
 }
@@ -268,14 +266,18 @@ export async function requireAuth0(req: Request, res: Response, next: NextFuncti
       family_name: payload.family_name,
     };
 
-    // Fallback: resolve missing profile claims via /userinfo.
-    // Also fetch when email_verified is undefined — API-audience access tokens
-    // often omit it, but /userinfo always includes it.
-    if (!auth0.email || auth0.email_verified === undefined || !auth0.name || !auth0.given_name || !auth0.family_name || !auth0.nickname) {
+    // Fallback: resolve missing profile claims via /userinfo. Crucially we also
+    // fetch whenever email_verified is not positively true (undefined OR false):
+    // API-audience tokens often omit it, and the token claim is frozen at
+    // issuance, so a user who just verified would otherwise stay locked out
+    // until their token expires. /userinfo reflects the LIVE profile, and its
+    // cache uses a short TTL for unverified results (see fetchUserInfoProfileCached),
+    // so this is recognised within seconds without a per-request /userinfo storm.
+    if (!auth0.email || auth0.email_verified !== true || !auth0.name || !auth0.given_name || !auth0.family_name || !auth0.nickname) {
       const userInfo = await fetchUserInfoProfileCached(payload.sub, token);
       if (userInfo) {
         if (!auth0.email && userInfo.email) auth0.email = userInfo.email;
-        if (auth0.email_verified === undefined && userInfo.email_verified !== undefined) auth0.email_verified = userInfo.email_verified;
+        if (auth0.email_verified !== true && userInfo.email_verified !== undefined) auth0.email_verified = userInfo.email_verified;
         if (!auth0.name && userInfo.name) auth0.name = userInfo.name;
         if (!auth0.nickname && userInfo.nickname) auth0.nickname = userInfo.nickname;
         if (!auth0.given_name && userInfo.given_name) auth0.given_name = userInfo.given_name;
@@ -284,23 +286,10 @@ export async function requireAuth0(req: Request, res: Response, next: NextFuncti
     }
 
     // SECURITY GATE: require a verified email before any protected route runs.
-    // The /userinfo fallback above has already resolved email_verified as far as
-    // possible; if it is anything other than true (false OR still undefined) we
-    // fail closed. This blocks vendor-account takeover via an unverified
-    // email/password identity. Social logins (e.g. Google) return
-    // email_verified:true and are unaffected.
-    if (auth0.email_verified !== true) {
-      // Before rejecting, re-check /userinfo with the cache bypassed: the cached
-      // snapshot (5-min TTL) may predate a verification the user completed
-      // seconds ago, and token claims are frozen at issuance. Only unverified
-      // sessions pay this extra call, and it lets them through the instant
-      // Auth0 reports verified.
-      const fresh = await fetchUserInfoProfileCached(payload.sub, token, { bypassCache: true });
-      if (fresh?.email_verified === true) {
-        auth0.email_verified = true;
-        if (!auth0.email && fresh.email) auth0.email = fresh.email;
-      }
-    }
+    // email_verified has been resolved from the token and/or /userinfo above; if
+    // it is anything other than true we fail closed. This blocks vendor-account
+    // takeover via an unverified email/password identity. Social logins (e.g.
+    // Google) return email_verified:true and are unaffected.
     if (auth0.email_verified !== true) {
       logger.warn({ sub: auth0.sub }, "[auth0] rejected unverified email");
       return res.status(403).json(EMAIL_NOT_VERIFIED_RESPONSE);
