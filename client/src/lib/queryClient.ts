@@ -11,6 +11,17 @@ export function setGlobal401Callback(fn: (() => void) | null) {
   global401Callback = fn;
 }
 
+// Called whenever any API response is 403 email_not_verified. The server gates
+// all protected routes on Auth0 email verification, so a session whose email is
+// unverified would otherwise see every request fail with no way forward.
+// EmailVerificationGate registers this and swaps the app for a recovery screen
+// (verify → continue, or log out).
+let globalEmailUnverifiedCallback: (() => void) | null = null;
+
+export function setGlobalEmailUnverifiedCallback(fn: (() => void) | null) {
+  globalEmailUnverifiedCallback = fn;
+}
+
 export class ApiRequestError extends Error {
   status: number;
   responseText: string;
@@ -58,6 +69,9 @@ async function throwIfResNotOk(res: Response) {
   if (!res.ok) {
     if (res.status === 401) global401Callback?.();
     const text = (await res.text()) || res.statusText;
+    if (res.status === 403 && text.includes('"email_not_verified"')) {
+      globalEmailUnverifiedCallback?.();
+    }
     throw new ApiRequestError(res.status, text);
   }
 }

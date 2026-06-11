@@ -8,6 +8,7 @@ import { Toaster } from "@/components/ui/toaster";
 import { ScrollToTop } from "@/components/ScrollToTop";
 import { TooltipProvider } from "@/components/ui/tooltip";
 import { useTrackPageView } from "@/hooks/useTrackPageView";
+import EmailVerificationGate from "@/components/EmailVerificationGate";
 
 import Home from "@/pages/Home";
 import TemporaryLanding from "@/pages/TemporaryLanding";
@@ -343,7 +344,9 @@ export default function App() {
     <QueryClientProvider client={queryClient}>
       <TooltipProvider>
         <Toaster />
-        <AppContent />
+        <EmailVerificationGate>
+          <AppContent />
+        </EmailVerificationGate>
       </TooltipProvider>
     </QueryClientProvider>
   );

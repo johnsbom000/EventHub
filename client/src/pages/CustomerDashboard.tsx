@@ -287,6 +287,17 @@ export default function CustomerDashboard() {
             <p className="text-muted-foreground">
               {errorMessage}
             </p>
+            <div className="mt-4 flex gap-3">
+              <Button onClick={() => window.location.reload()} variant="outline">
+                Refresh
+              </Button>
+              <Button
+                onClick={() => logout({ logoutParams: { returnTo: window.location.origin } })}
+                variant="outline"
+              >
+                Log out
+              </Button>
+            </div>
           </div>
         </div>
       </div>
