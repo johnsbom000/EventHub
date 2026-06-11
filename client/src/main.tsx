@@ -107,10 +107,13 @@ function AuthTokenBridge() {
     return () => setGlobal401Callback(null);
   }, [isAuthenticated]);
 
-  const tokenGetter = React.useCallback(async () => {
+  const tokenGetter = React.useCallback(async (opts?: { forceRefresh?: boolean }) => {
     try {
       // Always attempt; Auth0 handles cached token reads/refresh internally.
+      // forceRefresh skips the cache so a new token (with fresh claims like
+      // email_verified) is minted — used after the user verifies their email.
       const token = await getAccessTokenSilently({
+        cacheMode: opts?.forceRefresh ? "off" : "on",
         authorizationParams: {
           audience: "https://eventhub-api",
           scope: "openid profile email",
