@@ -1602,7 +1602,10 @@ app.post(
         try {
           const auth0 = await verifyAuth0Token(token);
           const email = typeof auth0?.email === "string" ? auth0.email.trim().toLowerCase() : "";
-          if (email) {
+          // Fail closed: only resolve a real account for analytics when the email
+          // is verified. An unverified identity records anonymous analytics
+          // (userId null) and can never be a backdoor for account resolution.
+          if (email && auth0?.email_verified === true) {
             const OWNER_EMAILS = [
               "johnsbom000@gmail.com",
               "boman@griffjohnson.com",
@@ -1665,7 +1668,9 @@ app.post(
         try {
           const auth0 = await verifyAuth0Token(token);
           const email = typeof auth0?.email === "string" ? auth0.email.trim().toLowerCase() : "";
-          if (email) {
+          // Fail closed: only attribute an event to a real account when the email
+          // is verified; otherwise the event is logged as a system/anonymous actor.
+          if (email && auth0?.email_verified === true) {
             const [user] = await db
               .select({ id: users.id, role: users.role })
               .from(users)
@@ -1741,7 +1746,7 @@ app.post(
   // POST /api/feedback — submit a feature request or bug report
   app.post("/api/feedback", mutationRateLimiter, requireAuth0, async (req: any, res: any) => {
     try {
-      const auth0 = req.auth0 as { sub?: string; email?: string; name?: string } | undefined;
+      const auth0 = req.auth0 as { sub?: string; email?: string; email_verified?: boolean; name?: string } | undefined;
       const body = req.body as { type?: string; title?: string; description?: string; attachmentUrl?: string };
 
       if (!body.type || !["feature_request", "bug_report"].includes(body.type)) {
@@ -1758,7 +1763,7 @@ app.post(
       let submitterEmail: string | null = auth0?.email ?? null;
 
       const vendorResolution = auth0?.sub
-        ? await resolveVendorAccountForAuth0Identity({ auth0Sub: auth0.sub, email: auth0.email, context: "feedback" })
+        ? await resolveVendorAccountForAuth0Identity({ auth0Sub: auth0.sub, email: auth0.email, context: "feedback", emailVerified: auth0?.email_verified === true })
         : null;
 
       if (vendorResolution?.account && !vendorResolution.account.deletedAt) {

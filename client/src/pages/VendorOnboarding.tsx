@@ -1,6 +1,6 @@
 // client/src/pages/VendorOnboarding.tsx
 
-import { useEffect, useRef, useState } from "react";
+import { useEffect, useState } from "react";
 import { useLocation } from "wouter";
 import { BadgeCheck, Building2, Check, ClipboardList, Sparkles } from "lucide-react";
 import { useMutation } from "@tanstack/react-query";
@@ -132,7 +132,6 @@ function getStepMeta(stepLabel: string): {
  };
 }
 
-const STORAGE_KEY = "vendorOnboarding:v1";
 const REFERRAL_STORAGE_KEY = "eventhub:pending-referral";
 const FOUNDING_TOKEN_STORAGE_KEY = "eventhub:founding-invite-token";
 const MARQUEE_TOKEN_STORAGE_KEY = "eventhub:marquee-invite-token";
@@ -250,16 +249,6 @@ export default function VendorOnboarding() {
  const isCreatingAdditionalProfile =
  typeof window !== "undefined" &&
  new URLSearchParams(window.location.search).get("createProfile") === "1";
- const preserveDraftOnUnmountRef = useRef(false);
-
- // If the user leaves the onboarding page entirely, start fresh next time.
- useEffect(() => {
- return () => {
- if (!preserveDraftOnUnmountRef.current) {
- localStorage.removeItem(STORAGE_KEY);
- }
- };
- }, []);
 
  // Capture ?ref=, ?fv=, and ?mv= params on mount, persist to localStorage, and strip from URL.
  useEffect(() => {
@@ -302,87 +291,9 @@ export default function VendorOnboarding() {
  // eslint-disable-next-line react-hooks/exhaustive-deps
  }, []);
 
- const [currentStep, setCurrentStep] = useState<number>(() => {
- // If arriving via an invite link, always start fresh — never inherit another user's draft.
- const urlParams = new URLSearchParams(window.location.search);
- if (urlParams.get("mv") || urlParams.get("fv")) {
-  localStorage.removeItem(STORAGE_KEY);
-  return 1;
- }
- try {
- const raw = localStorage.getItem(STORAGE_KEY);
- if (!raw) return 1;
- const parsed = JSON.parse(raw);
- const step = Number(parsed?.currentStep);
- return step >= 1 && step <= STEPS.length ? step : 1;
- } catch {
- return 1;
- }
- });
-
- const [formData, setFormData] = useState<VendorOnboardingData>(() => {
- try {
- const raw = localStorage.getItem(STORAGE_KEY);
- if (!raw) return DEFAULT_ONBOARDING_DATA;
- const parsed = JSON.parse(raw);
-
- const merged: VendorOnboardingData = {
- ...DEFAULT_ONBOARDING_DATA,
- ...(parsed?.formData || {}),
- };
-
- // Enforce vendorType in single vendor mode (even if older localStorage had something else)
- if (SINGLE_VENDOR_MODE) merged.vendorType = SINGLE_VENDOR_TYPE;
-
- // Seed referral code from standalone key if not already in the draft
- const pendingReferral = localStorage.getItem(REFERRAL_STORAGE_KEY);
- if (pendingReferral && !merged.referralCode) {
-  merged.referralCode = pendingReferral;
- }
-
- // Seed founding invite token from standalone key if not already in the draft
- const pendingFoundingToken = localStorage.getItem(FOUNDING_TOKEN_STORAGE_KEY);
- if (pendingFoundingToken && !merged.foundingInviteToken) {
-  merged.foundingInviteToken = pendingFoundingToken;
- }
-
- // Seed marquee invite token from standalone key if not already in the draft
- const pendingMarqueeToken = localStorage.getItem(MARQUEE_TOKEN_STORAGE_KEY);
- if (pendingMarqueeToken && !merged.marqueeInviteToken) {
-  merged.marqueeInviteToken = pendingMarqueeToken;
- }
-
- return merged;
- } catch {
- return DEFAULT_ONBOARDING_DATA;
- }
- });
-
- const [completedStepIds, setCompletedStepIds] = useState<number[]>(() => {
- try {
- const raw = localStorage.getItem(STORAGE_KEY);
- if (!raw) return [];
- const parsed = JSON.parse(raw);
- const explicit: number[] = Array.isArray(parsed?.completedStepIds)
- ? (parsed.completedStepIds as unknown[])
- .map((value: unknown) => Number(value))
- .filter((value: number) => Number.isInteger(value) && value >= 1 && value <= STEPS.length)
- : [];
- if (explicit.length > 0) {
- return Array.from(new Set<number>(explicit)).sort((a: number, b: number) => a - b);
- }
-
- // Backward compatibility for localStorage created before completion-tracking existed.
- const inferredCurrentStep = Number(parsed?.currentStep);
- const inferred: number[] = [];
- if (inferredCurrentStep >= 2) inferred.push(1);
- if (inferredCurrentStep >= 3) inferred.push(2);
- if (inferredCurrentStep >= 4) inferred.push(3);
- return inferred;
- } catch {
- return [];
- }
- });
+ const [currentStep, setCurrentStep] = useState<number>(1);
+ const [formData, setFormData] = useState<VendorOnboardingData>(DEFAULT_ONBOARDING_DATA);
+ const [completedStepIds, setCompletedStepIds] = useState<number[]>([]);
  const [isFinalizingOnboarding, setIsFinalizingOnboarding] = useState(false);
  const [pendingFinalAction, setPendingFinalAction] = useState<"createListing" | "myHub" | "dashboard" | null>(null);
  const [businessNameError, setBusinessNameError] = useState<string | null>(null);
@@ -399,14 +310,6 @@ export default function VendorOnboarding() {
  }
  // eslint-disable-next-line react-hooks/exhaustive-deps
  }, []);
-
- useEffect(() => {
- const t = setTimeout(() => {
- localStorage.setItem(STORAGE_KEY, JSON.stringify({ currentStep, formData, completedStepIds }));
- }, 250);
-
- return () => clearTimeout(t);
- }, [currentStep, formData, completedStepIds]);
 
  useEffect(() => {
  trackEvent("vendor_onboarding_step_viewed", { step: currentStep });
@@ -534,9 +437,7 @@ export default function VendorOnboarding() {
  setPendingFinalAction(createListing ? "createListing" : destination);
 
  const finishAndNavigate = async () => {
- preserveDraftOnUnmountRef.current = false;
  await completeOnboardingMutation.mutateAsync(formData);
- localStorage.removeItem(STORAGE_KEY);
  localStorage.removeItem(REFERRAL_STORAGE_KEY);
  localStorage.removeItem(FOUNDING_TOKEN_STORAGE_KEY);
  localStorage.removeItem(MARQUEE_TOKEN_STORAGE_KEY);
@@ -547,13 +448,7 @@ export default function VendorOnboarding() {
  }
  };
 
- // Redirect to Auth0 login when not authenticated. loginWithRedirect uses a
- // full-page redirect (no popup), so there is no window.opener chain to break —
- // the same approach used by AuthModal, which works on all browsers and devices.
- // The draft is preserved in localStorage; onRedirectCallback returns the user
- // here and they re-submit while authenticated.
  if (!isAuthenticated) {
- preserveDraftOnUnmountRef.current = true;
  setIsFinalizingOnboarding(false);
  setPendingFinalAction(null);
  trackEvent("vendor_signup_started", { step: currentStep });

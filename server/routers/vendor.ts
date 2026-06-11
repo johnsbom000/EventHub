@@ -1042,7 +1042,7 @@ export function registerVendorRoutes(app: Express): void {
   // (profiles, photos, address) remains required before publishing a listing.
   app.post("/api/vendor/provision", onboardingRateLimiter, requireAuth0, async (req, res) => {
     try {
-      const auth0 = (req as any).auth0 as { sub: string; email?: string } | undefined;
+      const auth0 = (req as any).auth0 as { sub: string; email?: string; email_verified?: boolean } | undefined;
       const rawEmail = auth0?.email;
       const email = rawEmail ? rawEmail.toLowerCase().trim() : undefined;
       const auth0Sub = auth0?.sub;
@@ -1056,9 +1056,33 @@ export function registerVendorRoutes(app: Express): void {
         auth0Sub,
         email,
         context: "/api/vendor/provision",
+        emailVerified: auth0?.email_verified === true,
       });
       const existingAccount = vendorResolution.account;
       if (existingAccount && !existingAccount.deletedAt) {
+        // Re-assert vendorOnlySignup + users linkage so a retry heals any
+        // partially-provisioned state from an earlier failed call.
+        let linkedUserId = existingAccount.userId ?? vendorResolution.resolvedUserId ?? null;
+        if (!linkedUserId) {
+          const [userByEmail] = await db
+            .select({ id: users.id })
+            .from(users)
+            .where(drizzleSql`lower(${users.email}) = ${email}`)
+            .limit(1);
+          linkedUserId = userByEmail?.id ?? null;
+        }
+        if (linkedUserId) {
+          await db
+            .update(users)
+            .set({ vendorOnlySignup: true, updatedAt: new Date() })
+            .where(and(eq(users.id, linkedUserId), eq(users.vendorOnlySignup, false)));
+          if (!existingAccount.userId) {
+            await db
+              .update(vendorAccounts)
+              .set({ userId: linkedUserId })
+              .where(eq(vendorAccounts.id, existingAccount.id));
+          }
+        }
         return res.status(200).json({
           vendorAccountId: existingAccount.id,
           businessName: existingAccount.businessName,
@@ -1115,7 +1139,7 @@ export function registerVendorRoutes(app: Express): void {
         })
         .onConflictDoUpdate({
           target: users.email,
-          set: { updatedAt: new Date() },
+          set: { vendorOnlySignup: true, updatedAt: new Date() },
         })
         .returning({ id: users.id });
 
@@ -1148,7 +1172,7 @@ export function registerVendorRoutes(app: Express): void {
         .set({ activeProfileId: newProfile.id })
         .where(eq(vendorAccounts.id, created.id));
 
-      logger.info(`[vendor-provision] Created stub account ${created.id} for ${email}`);
+      logger.info(`[vendor-provision] Created stub account ${created.id}`);
 
       // Fire-and-forget: send vendor welcome email on first account creation.
       void (async () => {
@@ -1179,7 +1203,7 @@ export function registerVendorRoutes(app: Express): void {
     try {
       const customerAuth = (req as any).customerAuth;
       const vendorAuth = (req as any).vendorAuth;
-      const auth0 = (req as any).auth0 as { sub: string; email?: string } | undefined;
+      const auth0 = (req as any).auth0 as { sub: string; email?: string; email_verified?: boolean } | undefined;
 
       const onboardingData = completeOnboardingSchema.parse(req.body);
       const normalizedProfileName = normalizeProfileNameText(onboardingData.businessName, 120);
@@ -1201,6 +1225,7 @@ export function registerVendorRoutes(app: Express): void {
         auth0Sub,
         email,
         context: "/api/vendor/onboarding/complete",
+        emailVerified: auth0?.email_verified === true,
       });
       let account = vendorResolution.account;
 
@@ -4397,7 +4422,7 @@ export function registerVendorRoutes(app: Express): void {
           b.listing_title_snapshot as "listingTitleSnapshot",
           coalesce(b.vendor_profile_id, listing_owner.profile_id) as "vendorProfileId",
           b.created_at as "createdAt",
-          coalesce(b.event_date::text, e.date) as "eventDate",
+          coalesce(b.event_date::text, e.date::text) as "eventDate",
           b.event_location as "eventLocation"
         from bookings b
         left join events e on e.id = b.event_id
@@ -4568,7 +4593,7 @@ export function registerVendorRoutes(app: Express): void {
           b.google_sync_status as "googleSyncStatus",
           b.google_event_id as "googleEventId",
           b.google_calendar_id as "googleCalendarId",
-          coalesce(b.event_date::text, e.date) as "eventDate",
+          coalesce(b.event_date::text, e.date::text) as "eventDate",
           coalesce(b.event_start_time, e.start_time) as "eventStartTime",
           b.event_end_time as "eventEndTime",
           b.event_timezone as "eventTimezone",
@@ -4668,7 +4693,7 @@ export function registerVendorRoutes(app: Express): void {
           b.listing_title_snapshot as "listingTitleSnapshot",
           b.booked_quantity as "bookedQuantity",
           coalesce(b.vendor_profile_id, listing_owner.profile_id) as "vendorProfileId",
-          coalesce(b.event_date::text, e.date) as "eventDate",
+          coalesce(b.event_date::text, e.date::text) as "eventDate",
           b.event_end_time as "eventEndTime"
         from bookings b
         left join events e on e.id = b.event_id
@@ -5423,7 +5448,7 @@ export function registerVendorRoutes(app: Express): void {
           b.subtotal_amount_cents as "subtotalAmountCents",
           b.customer_fee_amount_cents as "customerFeeAmountCents",
           coalesce(b.vendor_profile_id, listing_owner.profile_id) as "vendorProfileId",
-          coalesce(b.event_date::text, e.date) as "eventDate",
+          coalesce(b.event_date::text, e.date::text) as "eventDate",
           b.created_at as "createdAt",
           b.payout_status as "payoutStatus",
           b.payout_eligible_at as "payoutEligibleAt",

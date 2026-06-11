@@ -60,7 +60,29 @@ export function verifyAuth0Token(token: string): Promise<Auth0Payload> {
           return reject(err);
         }
 
-        resolve(decoded as Auth0Payload);
+        // Auth0 emits email / email_verified / profile fields as namespaced
+        // custom claims on the access token (a bare claim name is silently
+        // dropped by Auth0). Hoist them into the standard fields so downstream
+        // code reads them with no extra /userinfo round-trip. No-op if
+        // AUTH0_CLAIMS_NAMESPACE is unset or the claim is absent, so the
+        // /userinfo fallback still covers those.
+        const claims = decoded as Record<string, any>;
+        const ns = (process.env.AUTH0_CLAIMS_NAMESPACE || "").replace(/\/+$/, "");
+        if (ns) {
+          if (claims.email === undefined && claims[`${ns}/email`] !== undefined) {
+            claims.email = claims[`${ns}/email`];
+          }
+          if (claims.email_verified === undefined && claims[`${ns}/email_verified`] !== undefined) {
+            claims.email_verified = claims[`${ns}/email_verified`];
+          }
+          for (const field of ["name", "given_name", "family_name", "nickname"] as const) {
+            if (claims[field] === undefined && claims[`${ns}/${field}`] !== undefined) {
+              claims[field] = claims[`${ns}/${field}`];
+            }
+          }
+        }
+
+        resolve(claims as Auth0Payload);
       }
     );
   });
@@ -126,6 +148,35 @@ async function fetchUserInfoProfileCached(sub: string, accessToken: string): Pro
 }
 
 /**
+ * Resolve whether the identity behind this token has a verified email.
+ *
+ * Returns true ONLY when verification is positively confirmed — from the token
+ * claim, or from the /userinfo fallback when the claim is absent (API-audience
+ * access tokens commonly omit email_verified). An undefined/unknown result is
+ * treated as NOT verified (fail closed), never as verified.
+ *
+ * Exported so paths that verify tokens directly (e.g. analytics ingestion and
+ * the Google OAuth start, which bypass requireAuth0) can apply the same gate.
+ */
+export async function resolveEmailVerified(
+  payload: Pick<Auth0Payload, "sub" | "email_verified">,
+  accessToken: string
+): Promise<boolean> {
+  if (payload.email_verified === true) return true;
+  if (payload.email_verified === false) return false;
+  // Claim absent — consult /userinfo before deciding.
+  const userInfo = await fetchUserInfoProfileCached(payload.sub, accessToken);
+  return userInfo?.email_verified === true;
+}
+
+// Stable machine code so the frontend can prompt "verify your email" instead of
+// treating this like an auth failure (a bare 401 triggers the auto-logout path).
+export const EMAIL_NOT_VERIFIED_RESPONSE = {
+  error: "email_not_verified",
+  message: "Please verify your email address to continue.",
+} as const;
+
+/**
  * Express middleware: requires a valid Auth0 Bearer token.
  * Attaches payload to (req as any).auth0
  * If email is missing from token payload, tries /userinfo (with timeout).
@@ -165,8 +216,19 @@ export async function requireAuth0(req: Request, res: Response, next: NextFuncti
       }
     }
 
+    // SECURITY GATE: require a verified email before any protected route runs.
+    // The /userinfo fallback above has already resolved email_verified as far as
+    // possible; if it is anything other than true (false OR still undefined) we
+    // fail closed. This blocks vendor-account takeover via an unverified
+    // email/password identity. Social logins (e.g. Google) return
+    // email_verified:true and are unaffected.
+    if (auth0.email_verified !== true) {
+      logger.warn({ sub: auth0.sub }, "[auth0] rejected unverified email");
+      return res.status(403).json(EMAIL_NOT_VERIFIED_RESPONSE);
+    }
+
     // Attach to request for downstream middleware/routes
-    logger.info({ sub: auth0.sub, email: auth0.email ?? "(none)" }, "[auth0] token verified");
+    logger.debug({ sub: auth0.sub }, "[auth0] token verified");
     (req as any).auth0 = auth0;
 
     // Update last_login_at (non-blocking)

@@ -574,7 +574,17 @@ export function registerPaymentRoutes(app: Express): void {
         .returning({ id: stripeWebhookEvents.id });
 
       if (insertedRows.length === 0) {
-        return res.json({ received: true, duplicate: true });
+        // The event was received before, but only skip it if that earlier
+        // delivery actually finished processing. If processed_at is still
+        // null, the prior attempt failed — let this retry process it.
+        const [existingEvent] = await db
+          .select({ processedAt: stripeWebhookEvents.processedAt })
+          .from(stripeWebhookEvents)
+          .where(eq(stripeWebhookEvents.eventId, event.id))
+          .limit(1);
+        if (existingEvent?.processedAt) {
+          return res.json({ received: true, duplicate: true });
+        }
       }
 
       const eventType = asTrimmedString(event?.type);
@@ -1248,6 +1258,13 @@ export function registerPaymentRoutes(app: Express): void {
           );
         }
       }
+
+      // Mark the event processed only after every handler above succeeded, so
+      // a failure leaves processed_at null and Stripe's retry is not deduped.
+      await db
+        .update(stripeWebhookEvents)
+        .set({ processedAt: new Date() })
+        .where(eq(stripeWebhookEvents.eventId, event.id));
 
       return res.json({ received: true });
     } catch {

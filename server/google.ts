@@ -883,6 +883,12 @@ async function refreshGoogleAccessToken(
 
   if (!tokenResponse.ok) {
     const errorText = await tokenResponse.text().catch(() => "");
+    // Surface Google's actual reason (invalid_grant / invalid_client / etc.).
+    // The body is Google's OAuth error JSON — no user PII.
+    logger.warn(
+      { status: tokenResponse.status, body: errorText, accountId: account.id },
+      "[google] token refresh failed"
+    );
     throw new GoogleCalendarConnectionError(
       `Google token refresh failed${errorText ? `: ${errorText}` : ""}`,
       {
