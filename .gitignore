@@ -37,3 +37,10 @@ yarn-debug.log*
 yarn-error.log*
 pnpm-debug.log*
 .gstack/
+
+# local working docs & tool state (private — repo is public)
+.wrangler/
+AUDIT-REPORT.md
+EVENTHUB.md
+MARKETING.md
+STRATEGY.md
