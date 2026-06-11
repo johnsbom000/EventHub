@@ -80,7 +80,7 @@ export async function ensureStripeWebhookTable() {
           event_type text not null,
           livemode boolean not null default false,
           payload jsonb not null default '{}'::jsonb,
-          processed_at timestamptz not null default now()
+          processed_at timestamptz
         )
       `);
       await db.execute(drizzleSql`
@@ -373,10 +373,10 @@ export async function cleanupExpiredStreamChannels() {
   const rows: any = await db.execute(drizzleSql`
     select
       b.id as "bookingId",
-      coalesce(b.event_date::text, e.date) as "eventDate"
+      coalesce(b.event_date::text, e.date::text) as "eventDate"
     from bookings b
     left join events e on e.id = b.event_id
-    where coalesce(b.event_date::text, e.date) is not null
+    where coalesce(b.event_date::text, e.date::text) is not null
     order by b.created_at desc
     limit 500
   `);

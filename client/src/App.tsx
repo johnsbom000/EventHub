@@ -311,6 +311,13 @@ function AppContent() {
   const [location] = useLocation();
   useTrackPageView();
 
+  // One-time eviction of stale onboarding drafts that may contain PII (business
+  // address, phone, email). The draft key was removed in favour of stateless
+  // sessions; this clears any data already stored in existing browsers.
+  useEffect(() => {
+    localStorage.removeItem("vendorOnboarding:v1");
+  }, []);
+
   useEffect(() => {
     const pathname = location.split("?")[0] || "/";
     const isExcludedRoute =

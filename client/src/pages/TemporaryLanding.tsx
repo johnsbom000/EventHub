@@ -314,7 +314,7 @@ const handleEmail = () =>
     <div className="relative h-screen overflow-hidden bg-white">
       <FakeBackground />
 
-      <div className="fixed inset-0 z-50 flex items-center justify-center">
+      <div className="fixed inset-0 z-50 flex flex-col items-center justify-center gap-4">
         <div className="relative w-full max-w-[560px] rounded-[20px] bg-white px-11 pb-11 pt-12 text-center shadow-[0_24px_80px_rgba(42,58,66,0.28)]">
           {step === "question" && (
             <QuestionStep
@@ -329,6 +329,10 @@ const handleEmail = () =>
               onEmail={handleEmail}
             />
           )}
+        </div>
+        <div className="flex gap-5">
+          <a href="/privacy" className="font-sans text-[1.1rem] text-[#4a6a7d] hover:underline">Privacy Policy</a>
+          <a href="/terms" className="font-sans text-[1.1rem] text-[#4a6a7d] hover:underline">Terms of Service</a>
         </div>
       </div>
 

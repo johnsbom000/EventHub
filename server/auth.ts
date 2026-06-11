@@ -181,6 +181,10 @@ type ResolveVendorAccountIdentityParams = {
   auth0Sub?: string | null;
   email?: string | null;
   context?: string;
+  // Defense in depth: an email is only trusted to resolve or rebind an account
+  // when Auth0 has positively verified it. Defaults to NOT verified so the
+  // resolver is safe even if a caller forgets to run requireAuth0 first.
+  emailVerified?: boolean;
 };
 
 export async function resolveVendorAccountForAuth0Identity(
@@ -190,6 +194,9 @@ export async function resolveVendorAccountForAuth0Identity(
   const normalizedSub = auth0Sub || null;
   const normalizedEmail = normalizeAuthIdentityEmail(params.email);
   const context = params.context || "unknown";
+  // Fail closed: only an explicitly-verified email may be used for the email
+  // fallback match or an auth0Sub rebind.
+  const emailVerified = params.emailVerified === true;
 
   const finalize = (
     account: typeof vendorAccounts.$inferSelect | null,
@@ -270,7 +277,12 @@ export async function resolveVendorAccountForAuth0Identity(
     }
   }
 
-  if (normalizedEmail) {
+  // EMAIL FALLBACK — only ever runs for a verified email. An unverified or
+  // unknown-verification email must never resolve an account by address, since
+  // that would let an attacker take over a vendor account by signing up with the
+  // victim's email on an unverified identity. Sub-based resolution above is
+  // unaffected (a fresh attacker identity has a different sub).
+  if (normalizedEmail && emailVerified) {
     const accountsByEmail = await db
       .select()
       .from(vendorAccounts)
@@ -301,10 +313,14 @@ export async function resolveVendorAccountForAuth0Identity(
         return finalize(null, "none", resolvedUserId, false, false);
       }
 
-      // Email is verified by Auth0 upstream (requireAuth0 rejects email_verified !== true),
-      // so a matching email is sufficient proof of ownership regardless of which login
+      // This branch only runs when emailVerified === true (guarded above), so a
+      // matching email is genuine proof of ownership regardless of which login
       // method (Google, email/password, etc.) the user chose this session.
-      // Pass trustedEmailMatch so the heal can overwrite a stale auth0Sub.
+      // Verification is enforced in two places: requireAuth0 rejects
+      // email_verified !== true at the gate, and this resolver independently
+      // refuses to email-match an unverified identity. Pass trustedEmailMatch so
+      // the heal can overwrite a stale auth0Sub — safe only because the email is
+      // verified.
       const healed = await maybeHealVendorAccountLinks(account, {
         auth0Sub: normalizedSub,
         resolvedUserId,
@@ -340,8 +356,9 @@ const ADMIN_EMAILS: ReadonlySet<string> = new Set(
 
 export async function requireAdminAuth(req: Request, res: Response, next: NextFunction) {
   try {
-    // Step 1: Verify Auth0 token. requireAuth0 rejects expired tokens and
-    // unverified emails — so auth0.email is safe to trust after this.
+    // Step 1: Verify Auth0 token. requireAuth0 rejects expired tokens and now
+    // also rejects unverified emails (403 email_not_verified) before reaching
+    // here — so auth0.email is safe to trust for the allowlist check below.
     let authed = false;
     await new Promise<void>((resolve) => {
       requireAuth0(req, res, () => {
@@ -431,7 +448,7 @@ export async function requireDualAuthAuth0(
     if (!authed) return; // requireAuth0 already responded with 401
 
 
-    const auth0 = (req as any).auth0 as { sub: string; email?: string };
+    const auth0 = (req as any).auth0 as { sub: string; email?: string; email_verified?: boolean };
     const sub = auth0?.sub;
     const email = auth0?.email;
 
@@ -439,6 +456,7 @@ export async function requireDualAuthAuth0(
       auth0Sub: sub,
       email,
       context: "requireDualAuthAuth0",
+      emailVerified: auth0?.email_verified === true,
     });
 
     if (vendorResolution.account) {

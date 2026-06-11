@@ -132,7 +132,7 @@ import {
   requireAdminAuth,
   resolveVendorAccountForAuth0Identity,
 } from "../auth";
-import { requireAuth0, verifyAuth0Token } from "../auth0"; // ✅ Auth0 middleware
+import { requireAuth0, verifyAuth0Token, resolveEmailVerified, EMAIL_NOT_VERIFIED_RESPONSE } from "../auth0"; // ✅ Auth0 middleware
 import { z } from "zod";
 import { db } from "../db";
 import { eq, and, or, ne, not, isNull, inArray, sql as drizzleSql, count, sum, gte, lte, desc, asc } from "drizzle-orm";
@@ -351,11 +351,24 @@ export function registerGoogleRoutes(app: Express): void {
     let vendorAccountId = "";
 
     try {
-      const auth0 = await verifyAuth0Token(authHeader.slice("Bearer ".length).trim());
+      const accessToken = authHeader.slice("Bearer ".length).trim();
+      const auth0 = await verifyAuth0Token(accessToken);
+
+      // This route bypasses requireAuth0, so apply the same email-verification
+      // gate here: never start an OAuth connect flow — or resolve/rebind a
+      // vendor account — for an unverified identity. Uses the /userinfo fallback
+      // so genuinely-verified users whose token omits the claim are not blocked.
+      const emailVerified = await resolveEmailVerified(auth0, accessToken);
+      if (!emailVerified) {
+        logger.warn("Google OAuth start rejected: unverified email");
+        return res.status(403).json(EMAIL_NOT_VERIFIED_RESPONSE);
+      }
+
       const vendorResolution = await resolveVendorAccountForAuth0Identity({
         auth0Sub: auth0.sub,
         email: auth0.email,
         context: "/api/google/oauth/start",
+        emailVerified,
       });
       const vendorAccount = vendorResolution.account;
 

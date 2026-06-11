@@ -840,7 +840,9 @@ export const stripeWebhookEvents = pgTable("stripe_webhook_events", {
   eventType: text("event_type").notNull(),
   livemode: boolean("livemode").notNull().default(false),
   payload: jsonb("payload").notNull().default(sql`'{}'::jsonb`),
-  processedAt: timestamp("processed_at").defaultNow().notNull(),
+  // Null until the event has been successfully processed; a non-null value is
+  // what marks a redelivery as a true duplicate (migration 0126).
+  processedAt: timestamp("processed_at"),
   expiresAt: timestamp("expires_at").notNull().default(sql`now() + interval '90 days'`),
 });
 

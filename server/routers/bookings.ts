@@ -826,7 +826,7 @@ export function registerBookingRoutes(app: Express): void {
         e.id as "id",
         coalesce(
           nullif(e.path, ''),
-          concat('Event on ', coalesce(b.event_date, e.date, 'TBD'))
+          concat('Event on ', coalesce(b.event_date::text, e.date::text, 'TBD'))
         ) as "title",
         count(distinct b.id)::int as "bookingCount",
         max(b.created_at) as "lastUsedAt"

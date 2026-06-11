@@ -407,7 +407,8 @@ export function BookingChatWorkspace({ role, initialBookingId, initialVendorId }
         ? `${bootstrapPathPrefix}/inquiry/${conversationKey}/bootstrap`
         : `${bootstrapPathPrefix}/${conversationKey}/bootstrap`;
       const response = await apiRequest("POST", url);
-      return (await response.json()) as ChatBootstrapResponse;
+      const data = (await response.json()) as ChatBootstrapResponse;
+      return { ...data, bootstrapUrl: url };
     },
   });
 
@@ -590,7 +591,19 @@ export function BookingChatWorkspace({ role, initialBookingId, initialVendorId }
       }
 
       if (!nextClient.userID) {
-        await nextClient.connectUser(bootstrap.streamUser, bootstrap.streamToken);
+        // Server tokens expire (24h), so hand Stream a token provider: the
+        // first call reuses the bootstrap token, and when Stream reports the
+        // token expired it calls again and we fetch a fresh one.
+        let usedBootstrapToken = false;
+        await nextClient.connectUser(bootstrap.streamUser, async () => {
+          if (!usedBootstrapToken) {
+            usedBootstrapToken = true;
+            return bootstrap.streamToken;
+          }
+          const response = await apiRequest("POST", bootstrap.bootstrapUrl);
+          const fresh = (await response.json()) as ChatBootstrapResponse;
+          return fresh.streamToken;
+        });
       }
 
       const channel = nextClient.channel(bootstrap.channel.type, bootstrap.channel.id);

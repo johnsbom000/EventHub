@@ -126,18 +126,19 @@ export async function getVendorAccountFromRequest(req: any) {
  */
 export async function requireVendorAccountAuth0(req: any, res: any, next: any) {
   try {
-    const auth0 = req.auth0 as { sub?: string; email?: string } | undefined;
-    logger.info({ sub: auth0?.sub, email: auth0?.email }, "[vendor-auth]");
+    const auth0 = req.auth0 as { sub?: string; email?: string; email_verified?: boolean } | undefined;
+    logger.debug({ sub: auth0?.sub }, "[vendor-auth]");
     const resolution = await resolveVendorAccountForAuth0Identity({
       auth0Sub: auth0?.sub,
       email: auth0?.email,
       context: "requireVendorAccountAuth0",
+      emailVerified: auth0?.email_verified === true,
     });
     const account = resolution.account;
 
     if (!account) {
       // Auth0 is valid, but user doesn't have a vendor account row yet
-      logger.info({ sub: auth0?.sub, email: auth0?.email }, "[vendor-auth] 404 — no account found");
+      logger.info({ sub: auth0?.sub }, "[vendor-auth] 404 — no account found");
       return res.status(404).json({ error: "Vendor account not found for this Auth0 user" });
     }
     if (account.deletedAt) {

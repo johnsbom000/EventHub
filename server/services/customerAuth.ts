@@ -147,11 +147,13 @@ export async function resolvePreferredCustomerName(params: {
 export async function resolveVendorBusinessNameForIdentity(params: {
   sub?: string;
   email?: string;
+  emailVerified?: boolean;
 }): Promise<string | null> {
   const resolution = await resolveVendorAccountForAuth0Identity({
     auth0Sub: params.sub,
     email: params.email,
     context: "resolveVendorBusinessNameForIdentity",
+    emailVerified: params.emailVerified === true,
   });
   const name = resolution.account?.businessName?.trim();
   return name || null;
@@ -164,6 +166,7 @@ export async function resolveCustomerAuthFromRequest(
   const auth0 = req?.auth0 as {
     sub?: string;
     email?: string;
+    email_verified?: boolean;
     name?: string;
     nickname?: string;
     given_name?: string;
@@ -171,6 +174,7 @@ export async function resolveCustomerAuthFromRequest(
   } | undefined;
   const sub = auth0?.sub?.trim();
   const emailFromAuth0 = auth0?.email?.toLowerCase().trim();
+  const emailVerified = auth0?.email_verified === true;
   const auth0Name =
     auth0?.name?.trim() ||
     [auth0?.given_name, auth0?.family_name].filter(Boolean).join(" ").trim() ||
@@ -274,7 +278,7 @@ export async function resolveCustomerAuthFromRequest(
     email,
     auth0Name,
   });
-  const vendorBusinessName = await resolveVendorBusinessNameForIdentity({ sub, email });
+  const vendorBusinessName = await resolveVendorBusinessNameForIdentity({ sub, email, emailVerified });
 
   if (!userRow && opts?.createIfMissing) {
     const generatedName = preferredName || toHumanNameFromEmail(email) || "Customer";

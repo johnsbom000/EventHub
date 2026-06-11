@@ -4,6 +4,9 @@ const STREAM_CHANNEL_TYPE = "messaging";
 const BOOKING_CHANNEL_PREFIX = "booking_";
 const INQUIRY_CHANNEL_PREFIX = "inquiry_";
 const RETENTION_DAYS_AFTER_EVENT = 30;
+// User tokens expire after this lifetime; the client's token provider fetches
+// a fresh one from the API on connect and whenever Stream reports expiry.
+const STREAM_TOKEN_TTL_SECONDS = 24 * 60 * 60;
 
 let cachedClient: StreamChat | null = null;
 
@@ -44,6 +47,13 @@ function safeDisplayName(value: string | null | undefined, fallback: string) {
 function isChannelExistsError(error: unknown) {
   const message = String((error as any)?.message || "").toLowerCase();
   return message.includes("already exists");
+}
+
+function createExpiringUserToken(client: StreamChat, streamUserId: string) {
+  const nowSeconds = Math.floor(Date.now() / 1000);
+  // Backdate iat slightly so minor clock skew between this server and Stream
+  // can't make a fresh token "not yet valid".
+  return client.createToken(streamUserId, nowSeconds + STREAM_TOKEN_TTL_SECONDS, nowSeconds - 60);
 }
 
 export function isStreamChatConfigured() {
@@ -184,7 +194,7 @@ export async function ensureStreamBookingChannel(params: {
     vendorStreamUserId,
     retentionExpiresAt: retentionIso,
     tokenForUser(streamUserId: string) {
-      return client.createToken(streamUserId);
+      return createExpiringUserToken(client, streamUserId);
     },
   };
 }
@@ -263,7 +273,7 @@ export async function ensureStreamInquiryChannel(params: {
     customerStreamUserId,
     vendorStreamUserId,
     tokenForUser(streamUserId: string) {
-      return client.createToken(streamUserId);
+      return createExpiringUserToken(client, streamUserId);
     },
   };
 }
