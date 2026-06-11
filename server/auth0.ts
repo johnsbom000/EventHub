@@ -135,10 +135,18 @@ async function fetchUserInfoProfile(accessToken: string): Promise<UserInfoProfil
   }
 }
 
-async function fetchUserInfoProfileCached(sub: string, accessToken: string): Promise<UserInfoProfile | null> {
+async function fetchUserInfoProfileCached(
+  sub: string,
+  accessToken: string,
+  opts?: { bypassCache?: boolean }
+): Promise<UserInfoProfile | null> {
   const now = Date.now();
-  const cached = _userInfoCache.get(sub);
-  if (cached && cached.expiresAt > now) return cached.profile;
+  if (opts?.bypassCache) {
+    _userInfoCache.delete(sub);
+  } else {
+    const cached = _userInfoCache.get(sub);
+    if (cached && cached.expiresAt > now) return cached.profile;
+  }
 
   const profile = await fetchUserInfoProfile(accessToken);
   if (profile) {
@@ -175,6 +183,65 @@ export const EMAIL_NOT_VERIFIED_RESPONSE = {
   error: "email_not_verified",
   message: "Please verify your email address to continue.",
 } as const;
+
+// ── Management API: resend verification email ────────────────────────────────
+// Requires an Auth0 M2M application authorized for the Management API with the
+// update:users scope. Configured via AUTH0_MGMT_CLIENT_ID / AUTH0_MGMT_CLIENT_SECRET.
+// Absent credentials degrade gracefully (callers surface "not configured").
+
+let _mgmtToken: { token: string; expiresAt: number } | null = null;
+
+async function getManagementToken(): Promise<string | null> {
+  const clientId = (process.env.AUTH0_MGMT_CLIENT_ID || "").trim();
+  const clientSecret = (process.env.AUTH0_MGMT_CLIENT_SECRET || "").trim();
+  if (!clientId || !clientSecret) return null;
+
+  const now = Date.now();
+  if (_mgmtToken && _mgmtToken.expiresAt > now + 60_000) return _mgmtToken.token;
+
+  const resp = await fetch(`https://${AUTH0_DOMAIN}/oauth/token`, {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({
+      grant_type: "client_credentials",
+      client_id: clientId,
+      client_secret: clientSecret,
+      audience: `https://${AUTH0_DOMAIN}/api/v2/`,
+    }),
+  });
+  if (!resp.ok) {
+    logger.warn({ status: resp.status }, "[auth0] management token request failed");
+    return null;
+  }
+  const data = (await resp.json()) as { access_token?: string; expires_in?: number };
+  if (!data.access_token) return null;
+  _mgmtToken = {
+    token: data.access_token,
+    expiresAt: now + Math.max(60, data.expires_in ?? 3600) * 1000,
+  };
+  return _mgmtToken.token;
+}
+
+export async function sendVerificationEmailForUser(
+  sub: string
+): Promise<{ ok: true } | { ok: false; reason: "not_configured" | "request_failed" }> {
+  const mgmtToken = await getManagementToken();
+  if (!mgmtToken) return { ok: false, reason: "not_configured" };
+
+  const resp = await fetch(`https://${AUTH0_DOMAIN}/api/v2/jobs/verification-email`, {
+    method: "POST",
+    headers: {
+      "Content-Type": "application/json",
+      Authorization: `Bearer ${mgmtToken}`,
+    },
+    body: JSON.stringify({ user_id: sub }),
+  });
+  if (!resp.ok) {
+    logger.warn({ status: resp.status, sub }, "[auth0] resend verification email failed");
+    return { ok: false, reason: "request_failed" };
+  }
+  return { ok: true };
+}
 
 /**
  * Express middleware: requires a valid Auth0 Bearer token.
@@ -222,6 +289,18 @@ export async function requireAuth0(req: Request, res: Response, next: NextFuncti
     // fail closed. This blocks vendor-account takeover via an unverified
     // email/password identity. Social logins (e.g. Google) return
     // email_verified:true and are unaffected.
+    if (auth0.email_verified !== true) {
+      // Before rejecting, re-check /userinfo with the cache bypassed: the cached
+      // snapshot (5-min TTL) may predate a verification the user completed
+      // seconds ago, and token claims are frozen at issuance. Only unverified
+      // sessions pay this extra call, and it lets them through the instant
+      // Auth0 reports verified.
+      const fresh = await fetchUserInfoProfileCached(payload.sub, token, { bypassCache: true });
+      if (fresh?.email_verified === true) {
+        auth0.email_verified = true;
+        if (!auth0.email && fresh.email) auth0.email = fresh.email;
+      }
+    }
     if (auth0.email_verified !== true) {
       logger.warn({ sub: auth0.sub }, "[auth0] rejected unverified email");
       return res.status(403).json(EMAIL_NOT_VERIFIED_RESPONSE);
