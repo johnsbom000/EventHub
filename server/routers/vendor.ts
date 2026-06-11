@@ -1074,8 +1074,13 @@ export function registerVendorRoutes(app: Express): void {
         if (linkedUserId) {
           await db
             .update(users)
-            .set({ vendorOnlySignup: true, updatedAt: new Date() })
-            .where(and(eq(users.id, linkedUserId), eq(users.vendorOnlySignup, false)));
+            .set({ vendorOnlySignup: true, vendorIntentPending: false, updatedAt: new Date() })
+            .where(
+              and(
+                eq(users.id, linkedUserId),
+                or(eq(users.vendorOnlySignup, false), eq(users.vendorIntentPending, true))
+              )
+            );
           if (!existingAccount.userId) {
             await db
               .update(vendorAccounts)
@@ -1139,7 +1144,7 @@ export function registerVendorRoutes(app: Express): void {
         })
         .onConflictDoUpdate({
           target: users.email,
-          set: { vendorOnlySignup: true, updatedAt: new Date() },
+          set: { vendorOnlySignup: true, vendorIntentPending: false, updatedAt: new Date() },
         })
         .returning({ id: users.id });
 

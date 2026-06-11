@@ -94,6 +94,9 @@ export const users = pgTable(
     preferredLanguage: varchar("preferred_language", { length: 10 }).notNull().default("en"),
     stripeCustomerId: text("stripe_customer_id"),
     vendorOnlySignup: boolean("vendor_only_signup").notNull().default(false),
+    // One-shot re-engagement flag: redirect to /vendor/provision on next
+    // sign-in, then cleared immediately. Set manually, never by app flows.
+    vendorIntentPending: boolean("vendor_intent_pending").notNull().default(false),
     createdAt: timestamp("created_at").defaultNow().notNull(),
     updatedAt: timestamp("updated_at").defaultNow().notNull(),
   },

@@ -1,7 +1,7 @@
 import { Switch, Route, useLocation } from "wouter";
 import React, { useEffect, useRef, useState } from "react";
 import { QueryClientProvider, useQuery } from "@tanstack/react-query";
-import { queryClient } from "./lib/queryClient";
+import { queryClient, apiRequest, getQueryFn } from "./lib/queryClient";
 import { useAuth0 } from "@auth0/auth0-react";
 
 import { Toaster } from "@/components/ui/toaster";
@@ -47,6 +47,46 @@ import MarqueeVendorProgram from "@/pages/MarqueeVendorProgram";
 import FoundingVendorProgram from "@/pages/FoundingVendorProgram";
 import VendorProvision from "@/pages/VendorProvision";
 
+type CustomerMeIntent = {
+  vendorIntentPending?: boolean;
+};
+
+// Clears the one-shot vendor-intent flag (server + cache) at the moment a
+// redirect to /vendor/provision fires, so the redirect can never fire twice —
+// even if the user leaves without submitting a business name.
+function consumeVendorIntentFlag() {
+  queryClient.setQueryData<CustomerMeIntent | null>(["/api/customer/me"], (old) =>
+    old ? { ...old, vendorIntentPending: false } : old
+  );
+  apiRequest("POST", "/api/me/consume-vendor-intent").catch(() => {});
+}
+
+// Sends flagged customers (vendorIntentPending) to the business-name page on
+// sign-ins that don't pass through /post-login (e.g. signing in from a listing
+// page). Inert for everyone else: the flag defaults to false and is only set
+// manually for specific re-engagement targets.
+function VendorIntentRedirect() {
+  const [location, setLocation] = useLocation();
+  const { isAuthenticated, isLoading: isAuthLoading } = useAuth0();
+  const { data: customerMe } = useQuery<CustomerMeIntent | null>({
+    queryKey: ["/api/customer/me"],
+    enabled: isAuthenticated && !isAuthLoading,
+    retry: false,
+    queryFn: getQueryFn({ on401: "returnNull" }),
+  });
+
+  useEffect(() => {
+    if (isAuthLoading || !isAuthenticated || !customerMe?.vendorIntentPending) return;
+    const pathname = location.split("?")[0] || "/";
+    // /post-login owns its own redirect decision; never hijack vendor pages.
+    if (pathname === "/post-login" || pathname.startsWith("/vendor")) return;
+    consumeVendorIntentFlag();
+    setLocation("/vendor/provision");
+  }, [isAuthLoading, isAuthenticated, customerMe, location, setLocation]);
+
+  return null;
+}
+
 // Handles the post-sign-in redirect for normal logins (not "Become a Vendor").
 // AuthModal routes here via appState.returnTo so this mounts fresh after
 // onRedirectCallback fires — avoiding the useState timing race in RootEntry.
@@ -58,7 +98,7 @@ function PostLogin() {
   // Provision the DB user row immediately on first login, in parallel with the
   // vendor check. Without this, users who bounce before Navigation renders never
   // get a row — they exist in Auth0 but not in our database.
-  useQuery({
+  const { data: customerMe, isLoading: isCustomerMeLoading } = useQuery<CustomerMeIntent | null>({
     queryKey: ["/api/customer/me"],
     enabled: isAuthenticated && !isAuthLoading,
     retry: false,
@@ -88,20 +128,28 @@ function PostLogin() {
     if (isAuthLoading) return;
     if (!isAuthenticated) { setLocation("/"); return; }
     if (vendorDetection.status === "loading") return;
+    // Wait for the intent flag before routing a non-vendor, so a flagged
+    // customer can't land on /dashboard first.
+    if (vendorDetection.status === "non_vendor" && isCustomerMeLoading) return;
     if (hasRedirectedRef.current) return;
     hasRedirectedRef.current = true;
 
     if (vendorDetection.status === "vendor") {
       setLocation("/vendor/my-hub");
     } else if (vendorDetection.status === "non_vendor") {
-      setLocation("/dashboard");
+      if (customerMe?.vendorIntentPending) {
+        consumeVendorIntentFlag();
+        setLocation("/vendor/provision");
+      } else {
+        setLocation("/dashboard");
+      }
     } else {
       const lastKnownVendorAccount =
         typeof window !== "undefined" &&
         window.localStorage.getItem("eventhub:last-known-vendor-account") === "1";
       setLocation(lastKnownVendorAccount ? "/vendor/my-hub" : "/dashboard");
     }
-  }, [isAuthLoading, isAuthenticated, vendorDetection, setLocation]);
+  }, [isAuthLoading, isAuthenticated, vendorDetection, customerMe, isCustomerMeLoading, setLocation]);
 
   return (
     <div className="min-h-screen bg-background flex items-center justify-center">
@@ -221,6 +269,7 @@ function Router() {
   return (
     <>
       <ScrollToTop />
+      <VendorIntentRedirect />
       <Switch>
         <Route path="/" component={RootEntry} />
         <Route path="/post-login" component={PostLogin} />

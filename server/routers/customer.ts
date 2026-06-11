@@ -414,10 +414,30 @@ export function registerCustomerRoutes(app: Express): void {
         defaultLocation,
         createdAt: user.createdAt,
         vendorOnlySignup: user.vendorOnlySignup,
+        vendorIntentPending: user.vendorIntentPending,
       });
     } catch (error: any) {
       logRouteError("/api/customer/me", error);
       res.status(500).json({ error: "Unable to load account" });
+    }
+  });
+
+  // Clears the one-shot vendor-intent flag the moment the client performs the
+  // /vendor/provision redirect, so the redirect can never fire twice.
+  app.post("/api/me/consume-vendor-intent", mutationRateLimiter, requireCustomerAnyAuth, async (req, res) => {
+    try {
+      const customerAuth = await resolveCustomerAuthFromRequest(req, { createIfMissing: true });
+      if (!customerAuth?.id) {
+        return res.status(401).json({ error: "Authentication required" });
+      }
+      await db
+        .update(users)
+        .set({ vendorIntentPending: false, updatedAt: new Date() })
+        .where(eq(users.id, customerAuth.id));
+      res.json({ ok: true });
+    } catch (error: any) {
+      logRouteError("/api/me/consume-vendor-intent", error);
+      res.status(500).json({ error: "Failed to update account" });
     }
   });
 
