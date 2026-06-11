@@ -137,7 +137,7 @@ import {
   requireAdminAuth,
   resolveVendorAccountForAuth0Identity,
 } from "../auth";
-import { requireAuth0, verifyAuth0Token } from "../auth0"; // ✅ Auth0 middleware
+import { requireAuth0, verifyAuth0Token, sendVerificationEmailForUser } from "../auth0"; // ✅ Auth0 middleware
 import { z } from "zod";
 import { db } from "../db";
 import { eq, and, or, ne, not, isNull, inArray, sql as drizzleSql, count, sum, gte, lte, desc, asc } from "drizzle-orm";
@@ -1697,6 +1697,35 @@ app.post(
       res.status(204).end();
     } catch {
       res.status(204).end();
+    }
+  });
+
+  // ── Resend verification email ───────────────────────────────────────────────
+  // Deliberately NOT behind requireAuth0: that middleware rejects unverified
+  // emails (403 email_not_verified), and unverified users are exactly who needs
+  // this. The token is still fully verified; only its sub is used, so a caller
+  // can only ever resend their own verification email.
+  app.post("/api/auth/resend-verification-email", onboardingRateLimiter, async (req, res) => {
+    try {
+      const authHeader = req.headers.authorization || "";
+      if (!authHeader.startsWith("Bearer ")) {
+        return res.status(401).json({ error: "Missing Authorization Bearer token" });
+      }
+      const auth0 = await verifyAuth0Token(authHeader.slice("Bearer ".length).trim());
+      if (!auth0?.sub) {
+        return res.status(401).json({ error: "Invalid Auth0 token" });
+      }
+
+      const result = await sendVerificationEmailForUser(auth0.sub);
+      if (!result.ok) {
+        if (result.reason === "not_configured") {
+          return res.status(503).json({ error: "resend_not_configured" });
+        }
+        return res.status(502).json({ error: "resend_failed" });
+      }
+      return res.json({ sent: true });
+    } catch {
+      return res.status(401).json({ error: "Invalid Auth0 token" });
     }
   });
 

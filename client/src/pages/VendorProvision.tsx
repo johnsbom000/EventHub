@@ -3,7 +3,7 @@ import { useLocation } from "wouter";
 import { useAuth0 } from "@auth0/auth0-react";
 import { useQuery, useQueryClient } from "@tanstack/react-query";
 import { getFreshAccessToken } from "@/lib/authToken";
-import { apiRequest } from "@/lib/queryClient";
+import { apiRequest, notifyEmailUnverified } from "@/lib/queryClient";
 import { useToast } from "@/hooks/use-toast";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
@@ -23,9 +23,6 @@ export default function VendorProvision() {
   const [businessName, setBusinessName] = useState("");
   const [nameError, setNameError] = useState<string | null>(null);
   const [isSubmitting, setIsSubmitting] = useState(false);
-  // Set when the server rejects with 403 email_not_verified (new email/password
-  // signups must click Auth0's verification link before they can provision).
-  const [emailUnverified, setEmailUnverified] = useState(false);
   const inputRef = useRef<HTMLInputElement>(null);
 
   const foundingToken = typeof window !== "undefined" ? localStorage.getItem(FOUNDING_TOKEN_KEY) : null;
@@ -88,9 +85,7 @@ export default function VendorProvision() {
     setIsSubmitting(true);
 
     try {
-      // After the user verifies their email, the cached Auth0 token still
-      // carries email_verified:false — force-mint a fresh one on retry.
-      const token = await getFreshAccessToken(emailUnverified ? { forceRefresh: true } : undefined);
+      const token = await getFreshAccessToken();
       if (!token) throw new Error("auth_required");
 
       const res = await fetch("/api/vendor/provision", {
@@ -105,7 +100,9 @@ export default function VendorProvision() {
       if (!res.ok) {
         const err = await res.json().catch(() => ({} as any));
         if (res.status === 403 && err?.error === "email_not_verified") {
-          setEmailUnverified(true);
+          // Hand off to the EmailVerificationGate, which auto-detects
+          // verification and reloads back to this page.
+          notifyEmailUnverified();
           return;
         }
         if (res.status === 409 && err?.code === "business_name_taken") {
@@ -114,8 +111,6 @@ export default function VendorProvision() {
         }
         throw new Error(err?.error || "Failed to create vendor account");
       }
-
-      setEmailUnverified(false);
 
       await qc.invalidateQueries({ queryKey: ["/api/vendor/me"] });
       await qc.invalidateQueries({ queryKey: ["/api/customer/me"] });
@@ -193,26 +188,12 @@ export default function VendorProvision() {
               )}
             </div>
 
-            {emailUnverified && (
-              <div className="rounded-lg border border-amber-200 bg-amber-50 p-4 text-sm text-amber-900">
-                <p className="font-semibold mb-1">Verify your email to continue</p>
-                <p>
-                  We sent a verification link to your inbox (check spam too). Click the
-                  link in that email, then come back here and press the button below.
-                </p>
-              </div>
-            )}
-
             <Button
               type="submit"
               className="w-full h-11 text-base font-semibold bg-[#16222D] hover:bg-[#243341] text-white"
               disabled={isSubmitting || businessName.trim().length < 2}
             >
-              {isSubmitting
-                ? "Creating your account…"
-                : emailUnverified
-                  ? "I've verified my email — continue →"
-                  : "Get started →"}
+              {isSubmitting ? "Creating your account…" : "Get started →"}
             </Button>
           </form>
         </div>

@@ -22,6 +22,12 @@ export function setGlobalEmailUnverifiedCallback(fn: (() => void) | null) {
   globalEmailUnverifiedCallback = fn;
 }
 
+// For callers using raw fetch (outside apiRequest/getQueryFn) that detect the
+// 403 themselves and want to hand off to the EmailVerificationGate.
+export function notifyEmailUnverified() {
+  globalEmailUnverifiedCallback?.();
+}
+
 export class ApiRequestError extends Error {
   status: number;
   responseText: string;
