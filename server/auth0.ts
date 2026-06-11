@@ -241,6 +241,68 @@ export async function sendVerificationEmailForUser(
   return { ok: true };
 }
 
+// ── Authoritative email-verification check (Management API) ───────────────────
+// The token's email_verified claim is frozen at issuance and Auth0's /userinfo
+// caches for minutes, so a JUST-verified user can be wrongly rejected for a long
+// time. The Management API reads the LIVE user record, eliminating that lag.
+// Requires the M2M app to also have the read:users scope.
+//
+// Cached (verified result long, unverified short) and in-flight de-duplicated so
+// a burst of concurrent requests triggers at most one Management API call.
+const _verifiedCache = new Map<string, { verified: boolean; expiresAt: number }>();
+const _verifiedInflight = new Map<string, Promise<boolean>>();
+const VERIFIED_TTL_MS = 5 * 60 * 1000;
+const UNVERIFIED_TTL_MS = 10 * 1000;
+
+async function fetchEmailVerifiedFromManagementApi(sub: string): Promise<boolean> {
+  const mgmtToken = await getManagementToken();
+  if (!mgmtToken) return false; // not configured — caller falls back to its prior decision
+  try {
+    const resp = await fetch(
+      `https://${AUTH0_DOMAIN}/api/v2/users/${encodeURIComponent(sub)}?fields=email_verified&include_fields=true`,
+      { headers: { Authorization: `Bearer ${mgmtToken}` } }
+    );
+    if (!resp.ok) {
+      logger.warn({ status: resp.status, sub }, "[auth0] management user lookup failed");
+      return false;
+    }
+    const data = (await resp.json()) as { email_verified?: boolean };
+    return data?.email_verified === true;
+  } catch (e: any) {
+    logger.warn("[auth0] management user lookup exception:", e?.name || "", e?.message || e);
+    return false;
+  }
+}
+
+/**
+ * Returns the user's LIVE email_verified status from the Management API.
+ * Returns false when M2M is not configured or the lookup fails — the caller
+ * keeps its earlier (token/userinfo) decision and fails closed.
+ */
+export async function isEmailVerifiedLive(sub: string): Promise<boolean> {
+  const now = Date.now();
+  const cached = _verifiedCache.get(sub);
+  if (cached && cached.expiresAt > now) return cached.verified;
+
+  const inflight = _verifiedInflight.get(sub);
+  if (inflight) return inflight;
+
+  const promise = (async () => {
+    const verified = await fetchEmailVerifiedFromManagementApi(sub);
+    _verifiedCache.set(sub, {
+      verified,
+      expiresAt: Date.now() + (verified ? VERIFIED_TTL_MS : UNVERIFIED_TTL_MS),
+    });
+    return verified;
+  })();
+  _verifiedInflight.set(sub, promise);
+  try {
+    return await promise;
+  } finally {
+    _verifiedInflight.delete(sub);
+  }
+}
+
 /**
  * Express middleware: requires a valid Auth0 Bearer token.
  * Attaches payload to (req as any).auth0
@@ -285,11 +347,23 @@ export async function requireAuth0(req: Request, res: Response, next: NextFuncti
       }
     }
 
+    // Authoritative final check: the token claim is frozen at issuance and
+    // /userinfo lags by minutes, so before rejecting we consult the LIVE user
+    // record via the Management API (cached + de-duplicated). This lets a
+    // just-verified user in within seconds instead of waiting out those caches.
+    // No-op when M2M isn't configured (returns false → prior decision stands).
+    if (auth0.email_verified !== true && auth0.sub) {
+      if (await isEmailVerifiedLive(auth0.sub)) {
+        auth0.email_verified = true;
+      }
+    }
+
     // SECURITY GATE: require a verified email before any protected route runs.
-    // email_verified has been resolved from the token and/or /userinfo above; if
-    // it is anything other than true we fail closed. This blocks vendor-account
-    // takeover via an unverified email/password identity. Social logins (e.g.
-    // Google) return email_verified:true and are unaffected.
+    // email_verified has been resolved from the token, /userinfo, and the live
+    // Management API record above; if it is anything other than true we fail
+    // closed. This blocks vendor-account takeover via an unverified
+    // email/password identity. Social logins (e.g. Google) return
+    // email_verified:true and are unaffected.
     if (auth0.email_verified !== true) {
       logger.warn({ sub: auth0.sub }, "[auth0] rejected unverified email");
       return res.status(403).json(EMAIL_NOT_VERIFIED_RESPONSE);
