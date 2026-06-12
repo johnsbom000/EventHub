@@ -75,12 +75,11 @@ type SavedListing = any;
 // ── Helpers ────────────────────────────────────────────────────────────────
 
 function formatUsd(cents: number) {
- const normalized =
- Number.isInteger(cents) && cents >= 10_000 ? cents : Math.round(cents * 100);
+ // Booking amounts (bookings.total_amount) are always stored in cents.
  return new Intl.NumberFormat("en-US", {
  style: "currency",
  currency: "USD",
- }).format(normalized / 100);
+ }).format((cents || 0) / 100);
 }
 
 function vendorLabel(b: CustomerBooking) {
