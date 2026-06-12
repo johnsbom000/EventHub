@@ -136,6 +136,24 @@ function parseAddressFromLabel(label: string): {
   return { streetAddress, city, state, zipCode };
 }
 
+// Nominatim sometimes returns a result with city/state/zip but no structured
+// `street` field. The label is comma-separated, most-specific first
+// ("2556, East Arbor Drive, St. George, ..."), so we can recover the street
+// from it: combine a leading house number with the following road segment.
+function deriveStreetFromLabel(label: string, knownCity?: string): string {
+  const parts = label.split(",").map((p) => p.trim()).filter(Boolean);
+  if (parts.length === 0) return "";
+
+  let street = parts[0];
+  if (/^\d+[a-z]?$/i.test(parts[0]) && parts[1]) {
+    street = `${parts[0]} ${parts[1]}`;
+  }
+
+  // Never echo the city back into the street box.
+  if (knownCity && street.toLowerCase() === knownCity.toLowerCase()) return "";
+  return street;
+}
+
 function parseOptionalNumber(value: unknown): number | null {
   if (typeof value === "number" && Number.isFinite(value)) return value;
   if (typeof value === "string") {
@@ -1357,7 +1375,9 @@ function CheckoutContent({
                       setDeliveryZip("");
                       return;
                     }
-                    setDeliveryAddress(loc.street || "");
+                    setDeliveryAddress(
+                      loc.street || deriveStreetFromLabel(loc.label, loc.city)
+                    );
                     setDeliveryCity(loc.city || "");
                     setDeliveryState(loc.state || "");
                     setDeliveryZip(loc.postalCode || "");

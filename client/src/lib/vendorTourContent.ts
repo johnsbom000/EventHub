@@ -157,12 +157,6 @@ export function getTourKey(pathname: string): string | null {
   return null;
 }
 
-export function hasTourBeenSeen(key: string, accountId?: string | null): boolean {
-  const prefix = accountId ? `${accountId}:` : "";
-  return window.localStorage.getItem(`eh:tour:${prefix}${key}`) === "1";
-}
-
-export function markTourSeen(key: string, accountId?: string | null): void {
-  const prefix = accountId ? `${accountId}:` : "";
-  window.localStorage.setItem(`eh:tour:${prefix}${key}`, "1");
-}
+// Tour "seen" state is tracked server-side on vendor_accounts.seen_tour_keys
+// (see VendorShell). The previous localStorage helpers were removed because
+// localStorage is per-device and cleared on logout, which caused tours to replay.

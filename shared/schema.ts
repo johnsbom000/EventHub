@@ -296,6 +296,9 @@ export const vendorAccounts = pgTable(
     foundingRateEndsAt: timestamp("founding_rate_ends_at"),
     foundingVisibilityEndsAt: timestamp("founding_visibility_ends_at"),
     foundingReferralBonusBookingsRemaining: integer("founding_referral_bonus_bookings_remaining").notNull().default(0),
+    // Per-page dashboard tours this vendor has already seen (migration 0128).
+    // Server-backed so each tour shows once per account across devices/sessions.
+    seenTourKeys: text("seen_tour_keys").array().notNull().default(sql`'{}'`),
   },
   (table) => ({
     userIdActiveUniqueIdx: uniqueIndex("vendor_accounts_user_id_active_unique_idx")
