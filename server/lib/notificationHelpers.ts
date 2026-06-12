@@ -1,7 +1,17 @@
 import { type InsertNotification, type Notification, notifications } from "@shared/schema";
 import { randomUUID } from "crypto";
 import { db } from "../db";
-import { and, desc, eq, gt, inArray, isNull, ne, or, sql as drizzleSql } from "drizzle-orm";
+import { and, count, desc, eq, gt, inArray, isNull, ne, or, sql as drizzleSql } from "drizzle-orm";
+
+export const VENDOR_BOOKING_NOTIFICATION_TYPES = [
+  "new_booking",
+  "booking_confirmed",
+  "booking_cancelled",
+  "booking_rescheduled",
+  "travel_fee_proposed",
+  "travel_fee_accepted",
+  "travel_fee_declined",
+] as const;
 
 export async function createNotification(
   insertNotification: InsertNotification
@@ -99,5 +109,52 @@ export async function bulkArchiveNotifications(
       )
     )
     .returning({ id: notifications.id });
+  return rows.length;
+}
+
+export async function getUnreadNotificationCountByTypes(
+  recipientId: string,
+  recipientType: "customer" | "vendor",
+  types: readonly string[]
+): Promise<number> {
+  if (types.length === 0) return 0;
+
+  const [row] = await db
+    .select({ count: count() })
+    .from(notifications)
+    .where(
+      and(
+        eq(notifications.recipientId, recipientId),
+        eq(notifications.recipientType, recipientType),
+        eq(notifications.read, false),
+        ne(notifications.archived, true),
+        inArray(notifications.type, [...types] as Notification["type"][]),
+        or(isNull(notifications.expiresAt), gt(notifications.expiresAt, drizzleSql`now()`))
+      )
+    );
+
+  return Math.max(0, Number(row?.count || 0));
+}
+
+export async function markUnreadNotificationsReadByTypes(
+  recipientId: string,
+  recipientType: "customer" | "vendor",
+  types: readonly string[]
+): Promise<number> {
+  if (types.length === 0) return 0;
+
+  const rows = await db
+    .update(notifications)
+    .set({ read: true })
+    .where(
+      and(
+        eq(notifications.recipientId, recipientId),
+        eq(notifications.recipientType, recipientType),
+        eq(notifications.read, false),
+        inArray(notifications.type, [...types] as Notification["type"][])
+      )
+    )
+    .returning({ id: notifications.id });
+
   return rows.length;
 }

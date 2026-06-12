@@ -4480,6 +4480,13 @@ Template for new entries:
 - Impact: Vendors now see `Photos` labels only, and the media step no longer includes the deferred video notice block.
 - Revisit trigger: If video uploads are introduced, re-add user-facing video guidance with production-ready copy tied to actual capability.
 
+## [2026-06-12] Drive the Vendor Bookings & Jobs badge from unread booking notifications
+- Context: Customer cancellations created unread vendor notifications and updated the Notifications badge, but the Bookings & Jobs sidebar icon had no badge wiring. The existing pending-booking count could not represent cancellations or other booking updates.
+- Decision: Count unread booking-related vendor notification records for the Bookings & Jobs badge, poll that count in the vendor sidebar, and mark only booking-related notifications read when the vendor visits `/vendor/bookings`.
+- Why: Notification records already represent account-scoped booking updates across devices and include customer cancellations, new bookings, reschedules, and travel-fee responses. Reusing them avoids a separate browser-only baseline or duplicate database state.
+- Impact: New booking updates increment both the Notifications and Bookings & Jobs badges. Visiting Bookings & Jobs clears the booking badge and acknowledges those booking notifications without affecting unrelated notification categories.
+- Revisit trigger: If notification read state and page-specific acknowledgement need to be independent, introduce dedicated per-account page-visit cursors rather than sharing notification read state.
+
 ## [2026-06-03] Align Step 3 onboarding terms checkbox with confirm cards
 - Context: In vendor onboarding Step 3, the terms agreement checkbox sat farther left than the `Business Details` confirm card and visually crowded the fixed bottom action buttons.
 - Decision: Add desktop-only left padding to the agreement row so its checkbox aligns with the confirm card column, and add bottom margin to lift only that row above the unchanged fixed action buttons.

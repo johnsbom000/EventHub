@@ -1,7 +1,7 @@
 import { Calendar, Home, LayoutGrid, MessageSquare, DollarSign, Star, Bell, Store, Tag, Scale, AlertTriangle } from "lucide-react";
 import { useEffect } from "react";
 import { Link, useLocation } from "wouter";
-import { useQuery } from "@tanstack/react-query";
+import { useQuery, useQueryClient } from "@tanstack/react-query";
 import { useTranslation } from "react-i18next";
 import {
  Sidebar,
@@ -18,6 +18,7 @@ import { useAuth0 } from "@auth0/auth0-react";
 import { cn } from "@/lib/utils";
 import { useResettableBadgeCount } from "@/hooks/useResettableBadgeCount";
 import { SidebarCountBadge } from "@/components/sidebar-count-badge";
+import { apiRequest } from "@/lib/queryClient";
 
 interface VendorAccount {
  businessName: string;
@@ -50,6 +51,7 @@ export function VendorSidebar({ className, showWarningBadge = false, onWarningBa
  const [location] = useLocation();
  const { t } = useTranslation();
  const { isAuthenticated, isLoading: isAuthLoading, getAccessTokenSilently } = useAuth0();
+ const queryClient = useQueryClient();
 
  const { data: vendorAccount } = useQuery<VendorAccount>({
  queryKey: ["/api/vendor/me", isAuthenticated ? "auth" : "anon"],
@@ -112,6 +114,31 @@ export function VendorSidebar({ className, showWarningBadge = false, onWarningBa
  dismissNotifCount();
  }, [dismissNotifCount, location]);
 
+ const { data: bookingUnreadData } = useQuery<{ unreadCount: number }>({
+ queryKey: ["/api/vendor/bookings/unread-count"],
+ enabled: isAuthenticated && !isAuthLoading,
+ refetchInterval: (query) => (query.state.status === "error" ? false : 10000),
+ staleTime: 10_000,
+ });
+ const bookingUnreadCount = Math.max(0, Number(bookingUnreadData?.unreadCount || 0));
+
+ useEffect(() => {
+ if (!location.startsWith("/vendor/bookings") || bookingUnreadCount <= 0) return;
+
+ queryClient.setQueryData(["/api/vendor/bookings/unread-count"], { unreadCount: 0 });
+ void apiRequest("POST", "/api/vendor/bookings/mark-seen")
+ .then(() =>
+ Promise.all([
+ queryClient.invalidateQueries({ queryKey: ["/api/vendor/bookings/unread-count"] }),
+ queryClient.invalidateQueries({ queryKey: ["/api/vendor/notifications/unread-count"] }),
+ queryClient.invalidateQueries({ queryKey: ["/api/vendor/notifications"] }),
+ ])
+ )
+ .catch(() => {
+ queryClient.invalidateQueries({ queryKey: ["/api/vendor/bookings/unread-count"] });
+ });
+ }, [bookingUnreadCount, location, queryClient]);
+
  return (
  <Sidebar
  collapsible="none"
@@ -158,6 +185,9 @@ export function VendorSidebar({ className, showWarningBadge = false, onWarningBa
  ) : null}
  {item.key === "notifications" && visibleNotifCount > 0 ? (
  <SidebarCountBadge count={visibleNotifCount} className="text-[#f5f0e8]" />
+ ) : null}
+ {item.key === "bookings" && bookingUnreadCount > 0 ? (
+ <SidebarCountBadge count={bookingUnreadCount} className="text-[#f5f0e8]" />
  ) : null}
  </span>
  <span className="sr-only">{label}</span>

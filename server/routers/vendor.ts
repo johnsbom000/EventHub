@@ -100,7 +100,16 @@ import { registerCircumventionRoutes } from "../routers/circumvention";
 import { registerBookingRoutes } from "../routers/bookings";
 import { registerPaymentRoutes } from "../routers/payments";
 import { registerMiscRoutes } from "../routers/misc";
-import { createNotification, getNotificationsByRecipient, bulkMarkNotificationsRead, bulkArchiveNotifications, markNotificationAsRead } from "../lib/notificationHelpers";
+import {
+  VENDOR_BOOKING_NOTIFICATION_TYPES,
+  createNotification,
+  getNotificationsByRecipient,
+  getUnreadNotificationCountByTypes,
+  markUnreadNotificationsReadByTypes,
+  bulkMarkNotificationsRead,
+  bulkArchiveNotifications,
+  markNotificationAsRead,
+} from "../lib/notificationHelpers";
 import crypto from "crypto";
 import {
   insertVendorAccountSchema,
@@ -4712,6 +4721,39 @@ export function registerVendorRoutes(app: Express): void {
         );
 
       return res.json({ pendingCount: row?.count ?? 0 });
+    } catch (error: any) {
+      return respondWithInternalServerError(req, res, error);
+    }
+  });
+
+  app.get("/api/vendor/bookings/unread-count", ...requireVendorAuth0, async (req, res) => {
+    try {
+      const account = await getVendorAccountFromRequest(req);
+      if (!account?.id) return res.json({ unreadCount: 0 });
+
+      const unreadCount = await getUnreadNotificationCountByTypes(
+        account.id,
+        "vendor",
+        VENDOR_BOOKING_NOTIFICATION_TYPES
+      );
+      return res.json({ unreadCount });
+    } catch (error: any) {
+      logRouteError("/api/vendor/bookings/unread-count", error);
+      return res.json({ unreadCount: 0 });
+    }
+  });
+
+  app.post("/api/vendor/bookings/mark-seen", mutationRateLimiter, ...requireVendorAuth0, async (req, res) => {
+    try {
+      const account = await getVendorAccountFromRequest(req);
+      if (!account?.id) return res.status(403).json({ error: "Vendor account required" });
+
+      const updated = await markUnreadNotificationsReadByTypes(
+        account.id,
+        "vendor",
+        VENDOR_BOOKING_NOTIFICATION_TYPES
+      );
+      return res.json({ updated });
     } catch (error: any) {
       return respondWithInternalServerError(req, res, error);
     }
