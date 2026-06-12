@@ -223,13 +223,9 @@ function RootEntry() {
     setLocation("/vendor/dashboard");
   }, [isAuthLoading, isAuthenticated, vendorIntent, isVendorOnlyLoading, isVendorOnly, setLocation]);
 
-  // MARKETPLACE_HIDDEN: remove this effect and restore `return <Home />;` at the bottom when going live
-  useEffect(() => {
-    if (isAuthLoading || !isAuthenticated || vendorIntent || isVendorOnlyLoading || isVendorOnly) return;
-    setLocation("/dashboard");
-  }, [isAuthLoading, isAuthenticated, vendorIntent, isVendorOnlyLoading, isVendorOnly, setLocation]);
-
-  // MARKETPLACE_HIDDEN: restore `return <Home />;` when going live
+  // Public visitors (and users still loading auth) see the vendor-acquisition
+  // landing. Authenticated customers with a profile fall through to the
+  // marketplace (Home) below.
   if (isAuthLoading) return <TemporaryLanding />;
   if (!isAuthenticated) return <TemporaryLanding />;
   if (vendorIntent && vendorDetection.status === "loading") {
@@ -239,10 +235,21 @@ function RootEntry() {
       </div>
     );
   }
-  if (isAuthenticated && (isVendorOnly || isVendorOnlyLoading)) return <TemporaryLanding />; // [vendor-only restrictions] remove this line
+  // While resolving vendor-only status, show a neutral loader rather than
+  // flashing the public landing before the marketplace renders.
+  if (isVendorOnlyLoading) {
+    return (
+      <div className="min-h-screen bg-background flex items-center justify-center">
+        <p className="text-sm text-muted-foreground">Loading…</p>
+      </div>
+    );
+  }
+  // Vendor-only signups don't get the customer marketplace; the effect above
+  // redirects them to /vendor/dashboard.
+  if (isVendorOnly) return <TemporaryLanding />; // [vendor-only restrictions]
 
-  // MARKETPLACE_HIDDEN: restore `return <Home />;` when going live
-  return <TemporaryLanding />;
+  // Authenticated customers with a profile get the vendor marketplace.
+  return <Home />;
 }
 
 // [vendor-only restrictions] remove this entire VendorOnlyGuard component
@@ -258,11 +265,29 @@ function VendorOnlyGuard({ children }: { children: React.ReactNode }) {
   return <>{children}</>;
 }
 
-// MARKETPLACE_HIDDEN: remove this component when going live
-function MarketplaceRedirect() {
+// Gates the customer-facing marketplace (Home + Browse) to authenticated
+// customers with a profile. Public visitors are sent to the landing funnel;
+// vendor-only signups are sent to their own dashboard.
+function CustomerMarketplaceGuard({ children }: { children: React.ReactNode }) {
+  const { isAuthenticated, isLoading: authLoading } = useAuth0();
+  const { isVendorOnly, isLoading: voLoading } = useIsVendorOnly();
   const [, setLocation] = useLocation();
-  useEffect(() => { setLocation("/"); }, [setLocation]);
-  return null;
+
+  useEffect(() => {
+    if (authLoading || voLoading) return;
+    if (!isAuthenticated) { setLocation("/"); return; }
+    if (isVendorOnly) { setLocation("/vendor/dashboard"); return; }
+  }, [authLoading, voLoading, isAuthenticated, isVendorOnly, setLocation]);
+
+  if (authLoading || voLoading) {
+    return (
+      <div className="min-h-screen bg-background flex items-center justify-center">
+        <p className="text-sm text-muted-foreground">Loading…</p>
+      </div>
+    );
+  }
+  if (!isAuthenticated || isVendorOnly) return null;
+  return <>{children}</>;
 }
 
 function Router() {
@@ -274,14 +299,14 @@ function Router() {
         <Route path="/" component={RootEntry} />
         <Route path="/post-login" component={PostLogin} />
         {/* [vendor-only restrictions] unwrap VendorOnlyGuard from all routes below that have it */}
-        {/* MARKETPLACE_HIDDEN: restore <VendorOnlyGuard><Home /></VendorOnlyGuard> when going live */}
-        <Route path="/marketplace" component={MarketplaceRedirect} />
+        {/* Marketplace is open to authenticated customers with a profile (not the public). */}
+        <Route path="/marketplace" component={() => <CustomerMarketplaceGuard><Home /></CustomerMarketplaceGuard>} />
 
         {/* Customer */}
         <Route path="/dashboard" component={() => <VendorOnlyGuard><CustomerDashboard /></VendorOnlyGuard>} />
         <Route path="/dashboard/:section" component={() => <VendorOnlyGuard><CustomerDashboard /></VendorOnlyGuard>} />
-        {/* MARKETPLACE_HIDDEN: restore <VendorOnlyGuard><BrowseVendors /></VendorOnlyGuard> when going live */}
-        <Route path="/browse" component={MarketplaceRedirect} />
+        {/* Browse is open to authenticated customers with a profile (not the public). */}
+        <Route path="/browse" component={() => <CustomerMarketplaceGuard><BrowseVendors /></CustomerMarketplaceGuard>} />
         <Route path="/listing/:id" component={ListingDetail} />
         <Route path="/booking/:bookingId" component={() => <VendorOnlyGuard><CustomerBookingDetail /></VendorOnlyGuard>} />
         <Route path="/checkout/:listingId" component={() => <VendorOnlyGuard><Checkout /></VendorOnlyGuard>} />

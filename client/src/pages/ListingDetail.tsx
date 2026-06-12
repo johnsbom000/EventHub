@@ -1311,8 +1311,19 @@ function ReservationCard({
  value={date}
  onChange={(e) => setDate(e.target.value)}
  min={new Date().toISOString().split("T")[0]}
+ onClick={(e) => {
+   // Open the native date picker when anywhere in the field is clicked,
+   // not just the calendar icon. showPicker() is a no-op/throws on
+   // browsers that don't support it, so guard and swallow.
+   const input = e.currentTarget as HTMLInputElement & { showPicker?: () => void };
+   try {
+     input.showPicker?.();
+   } catch {
+     /* not supported / not allowed — fall back to default icon behavior */
+   }
+ }}
  className={[
- "w-full rounded-md border bg-background px-3 py-2 text-sm",
+ "w-full cursor-pointer rounded-md border bg-background px-3 py-2 text-sm",
  vacationConflict ? "border-destructive" : "border-border",
  ].join(" ")}
  />
