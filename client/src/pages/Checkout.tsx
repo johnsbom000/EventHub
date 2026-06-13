@@ -4,7 +4,7 @@ import { useQuery } from "@tanstack/react-query";
 import { useAuth0 } from "@auth0/auth0-react";
 import { CardElement, Elements, useElements, useStripe } from "@stripe/react-stripe-js";
 import { loadStripe } from "@stripe/stripe-js";
-import { ChevronLeft, Calendar, CheckCircle2, MapPin } from "lucide-react";
+import { ChevronLeft, Calendar, CheckCircle2, MapPin, ShieldCheck } from "lucide-react";
 import { useTranslation } from "react-i18next";
 
 import { Button } from "@/components/ui/button";
@@ -667,11 +667,27 @@ function CheckoutContent({
         setupFeeAmountCents,
         takedownFeeEnabled,
         takedownFeeAmountCents,
+        cancellationPolicy:
+          (typeof raw?.cancellationPolicy === "string" && raw.cancellationPolicy.trim()) ||
+          (typeof ld?.cancellationPolicy === "string" && ld.cancellationPolicy.trim()) ||
+          "cancel_anytime",
+        cancellationPolicyHours:
+          parseOptionalNumber(raw?.cancellationPolicyDays) ??
+          parseOptionalNumber(ld?.cancellationPolicyHours) ??
+          48,
         securityDepositEnabled: parseBooleanLike(raw?.securityDepositEnabled ?? ld?.securityDepositEnabled),
         securityDepositCents: parseOptionalNumber(raw?.securityDepositCents ?? ld?.securityDepositCents) ?? null,
         // Package children — used to resolve selected package price in checkout
         packages: Array.isArray(raw?.packages)
-          ? (raw.packages as Array<{ id: string; title: string | null; priceCents: number | null; pricingUnit: string | null; whatsIncluded: string[] }>)
+          ? (raw.packages as Array<{
+              id: string;
+              title: string | null;
+              priceCents: number | null;
+              pricingUnit: string | null;
+              whatsIncluded: string[];
+              cancellationPolicy?: string | null;
+              cancellationPolicyDays?: number | null;
+            }>)
           : [],
         attachedAddons: Array.isArray(raw?.attachedAddons)
           ? (raw.attachedAddons as Array<{ id: string; title: string | null; priceCents: number | null }>)
@@ -852,11 +868,30 @@ function CheckoutContent({
 
   // When a package is selected, use that package's price/unit instead of the container's.
   const selectedPackage = selectedPackageId && data?.packages
-    ? (data.packages as Array<{ id: string; title: string | null; priceCents: number | null; pricingUnit: string | null }>).find((p) => p.id === selectedPackageId) ?? null
+    ? (data.packages as Array<{
+        id: string;
+        title: string | null;
+        priceCents: number | null;
+        pricingUnit: string | null;
+        cancellationPolicy?: string | null;
+        cancellationPolicyDays?: number | null;
+      }>).find((p) => p.id === selectedPackageId) ?? null
     : null;
   const effectivePriceCents = selectedPackage?.priceCents ?? data?.priceCents ?? 0;
   const effectivePricingUnit: "per_day" | "per_hour" =
     selectedPackage?.pricingUnit === "per_hour" ? "per_hour" : (data?.pricingUnit as "per_day" | "per_hour") ?? "per_day";
+  const effectiveCancellationPolicy =
+    selectedPackage?.cancellationPolicy || data?.cancellationPolicy || "cancel_anytime";
+  const effectiveCancellationPolicyWindow =
+    selectedPackage?.cancellationPolicyDays ?? data?.cancellationPolicyHours ?? 48;
+  const cancellationPolicyDescription =
+    effectiveCancellationPolicy === "no_cancellations"
+      ? t("checkout.cancellationPolicyNoRefund")
+      : effectiveCancellationPolicy === "cancel_within_hours"
+        ? t("checkout.cancellationPolicyWithinHours", { hours: effectiveCancellationPolicyWindow })
+        : effectiveCancellationPolicy === "cancel_within_days"
+          ? t("checkout.cancellationPolicyWithinDays", { days: effectiveCancellationPolicyWindow })
+          : t("checkout.cancellationPolicyAnytime");
 
   const isHourlyBooking = effectivePricingUnit === "per_hour";
   const shouldShowPerDayLogistics = Boolean(data && !isHourlyBooking);
@@ -1888,6 +1923,20 @@ function CheckoutContent({
                   Security deposit of {formatUsdFromCents(securityDepositCents)} is charged separately after booking confirmation and refunded after your event.
                 </p>
               ) : null}
+
+              <div className="border-t border-[rgba(74,106,125,0.22)] pt-4">
+                <div className="flex items-start gap-3">
+                  <ShieldCheck className="mt-0.5 h-5 w-5 shrink-0 text-[#4a6a7d]" />
+                  <div>
+                    <div className="text-sm font-semibold text-foreground">
+                      {t("checkout.cancellationPolicy")}
+                    </div>
+                    <p className="mt-1 text-sm leading-relaxed text-muted-foreground">
+                      {cancellationPolicyDescription}
+                    </p>
+                  </div>
+                </div>
+              </div>
 
               <div className="space-y-2">
                 <Label>{t("checkout.cardNumber")}</Label>

@@ -702,7 +702,12 @@ export function registerPaymentRoutes(app: Express): void {
             }, now);
 
             if (eventType === "payment_intent.succeeded") {
-              if (isPaymentSucceededStatus(payment.status)) return;
+              if (
+                isPaymentSucceededStatus(payment.status) ||
+                isPaymentRefundedOrPartiallyRefundedStatus(payment.status)
+              ) {
+                return;
+              }
 
               await tx
                 .update(payments)

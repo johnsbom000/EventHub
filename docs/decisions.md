@@ -4480,6 +4480,20 @@ Template for new entries:
 - Impact: Vendors now see `Photos` labels only, and the media step no longer includes the deferred video notice block.
 - Revisit trigger: If video uploads are introduced, re-add user-facing video guidance with production-ready copy tied to actual capability.
 
+## [2026-06-13] Disclose listing cancellation policy at checkout and reconcile Stripe before cancellation refunds
+- Context: Checkout did not display the vendor-selected listing/package cancellation policy. A customer could also cancel immediately after Stripe confirmation but before the success webhook updated local payment rows, causing cancellation to incorrectly report that no payment was collected and skip the refund.
+- Decision: Return canonical cancellation-policy fields from the public listing endpoint, show the effective listing or selected-package policy in checkout, and retrieve unsettled PaymentIntents from Stripe before deciding refund eligibility. Refund only the policy-authorized service amount, refund the security-deposit amount independently, and prevent late success webhooks from overwriting refunded payment rows.
+- Why: The booking snapshot remains the authoritative policy for refunds, while direct Stripe reconciliation closes the confirmation/webhook race without weakening idempotency or payout controls.
+- Impact: Customers see the applicable cancellation terms before paying. Immediate cancellations now issue Stripe refunds according to the booking policy even when the webhook has not yet arrived, and security deposits are returned without accidentally refunding other non-refundable charge portions.
+- Revisit trigger: If cancellation policies gain partial-percentage tiers or exact sub-day cutoffs, replace calendar-day tiers with timestamp-based policy evaluation and display the precise event-time deadline at checkout.
+
+## [2026-06-13] Display booking IDs as customer receipt references
+- Context: Customers could open and manage bookings, but the canonical booking identifier was only present in URLs and API data, making support, refund, and dispute references difficult to communicate.
+- Decision: Show the full, selectable booking ID on every booking row in My Events and near the top of the customer booking details card.
+- Why: The booking ID serves as the durable receipt and support reference for a transaction.
+- Impact: Customers can copy the same canonical identifier from both summary and detail views without changing booking navigation or actions.
+- Revisit trigger: If human-friendly receipt numbers are introduced, display those prominently while retaining the canonical booking ID for internal support.
+
 ## [2026-06-12] Drive the Vendor Bookings & Jobs badge from unread booking notifications
 - Context: Customer cancellations created unread vendor notifications and updated the Notifications badge, but the Bookings & Jobs sidebar icon had no badge wiring. The existing pending-booking count could not represent cancellations or other booking updates.
 - Decision: Count unread booking-related vendor notification records for the Bookings & Jobs badge, poll that count in the vendor sidebar, and mark only booking-related notifications read when the vendor visits `/vendor/bookings`.
