@@ -1,7 +1,11 @@
 import assert from "node:assert/strict";
 
 import { calculateRefund } from "../server/lib/calculateRefund";
-import { policyFromListingWizard } from "../server/lib/cancellationPolicyPresets";
+import {
+  policyFromListingWizard,
+  resolveListingPolicyColumns,
+} from "../server/lib/cancellationPolicyPresets";
+import { buildCanonicalListingColumns } from "../server/lib/routeUtils";
 
 const cancellationDate = new Date("2026-06-12T12:00:00.000Z");
 
@@ -28,5 +32,61 @@ assert.equal(insideWindow.grossRefundCents, 0);
 
 const partialAmount = calculate("cancel_anytime", null, "2026-06-13", 5_525);
 assert.equal(partialAmount.grossRefundCents, 5_525);
+
+// ── resolveListingPolicyColumns: wizard payload → persisted columns ──────────
+assert.deepEqual(resolveListingPolicyColumns("cancel_within_hours", 48), {
+  cancellationPolicy: "cancel_within_hours",
+  cancellationPolicyDays: 48,
+});
+// hours window only applies to windowed policies; ignored for anytime/none
+assert.deepEqual(resolveListingPolicyColumns("cancel_anytime", 48), {
+  cancellationPolicy: "cancel_anytime",
+  cancellationPolicyDays: null,
+});
+assert.deepEqual(resolveListingPolicyColumns("no_cancellations", null), {
+  cancellationPolicy: "no_cancellations",
+  cancellationPolicyDays: null,
+});
+// string window is coerced; invalid/zero windows drop to null
+assert.deepEqual(resolveListingPolicyColumns("cancel_within_hours", "48"), {
+  cancellationPolicy: "cancel_within_hours",
+  cancellationPolicyDays: 48,
+});
+assert.deepEqual(resolveListingPolicyColumns("cancel_within_hours", 0), {
+  cancellationPolicy: "cancel_within_hours",
+  cancellationPolicyDays: null,
+});
+// unknown / missing policy defaults to the historical full-refund-anytime value
+assert.deepEqual(resolveListingPolicyColumns("garbage", 10), {
+  cancellationPolicy: "cancel_anytime",
+  cancellationPolicyDays: null,
+});
+assert.deepEqual(resolveListingPolicyColumns(undefined, undefined), {
+  cancellationPolicy: "cancel_anytime",
+  cancellationPolicyDays: null,
+});
+
+// ── buildCanonicalListingColumns: persists policy from listingData ───────────
+const classification = { category: null, subcategory: null } as const;
+
+const created = buildCanonicalListingColumns({
+  listingDataRaw: { cancellationPolicy: "cancel_within_hours", cancellationPolicyHours: 48 },
+  classification,
+});
+assert.equal(created.cancellationPolicy, "cancel_within_hours");
+assert.equal(created.cancellationPolicyDays, 48);
+
+// missing policy in listingData → default, not undefined (prevents NULL columns)
+const noPolicy = buildCanonicalListingColumns({ listingDataRaw: {}, classification });
+assert.equal(noPolicy.cancellationPolicy, "cancel_anytime");
+assert.equal(noPolicy.cancellationPolicyDays, null);
+
+// partial update without a policy falls back to the existing column (no wipe)
+const preserved = buildCanonicalListingColumns({
+  listingDataRaw: { title: "Edited title" },
+  existingCanonical: { cancellationPolicy: "no_cancellations" },
+  classification,
+});
+assert.equal(preserved.cancellationPolicy, "no_cancellations");
 
 console.log("cancellation-policy-refunds tests passed");

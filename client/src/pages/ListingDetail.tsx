@@ -466,8 +466,10 @@ export default function ListingDetailPage() {
  },
  shopActive,
  vacationBlocks,
- cancellationPolicy: (ld?.cancellationPolicy ?? raw?.cancellationPolicy ?? "cancel_anytime") as string,
- cancellationPolicyHours: Number(ld?.cancellationPolicyHours ?? raw?.cancellationPolicyHours ?? 48),
+ // Columns are the single source of truth (set on every listing save + backfilled).
+ // listing_data is a legacy fallback only for any not-yet-backfilled rows.
+ cancellationPolicy: (raw?.cancellationPolicy ?? ld?.cancellationPolicy ?? "cancel_anytime") as string,
+ cancellationPolicyHours: Number(raw?.cancellationPolicyDays ?? ld?.cancellationPolicyHours ?? 48),
  securityDepositEnabled: parseBooleanLike(raw?.securityDepositEnabled ?? ld?.securityDepositEnabled) === true,
  securityDepositCents: toFiniteNumber(raw?.securityDepositCents ?? ld?.securityDepositCents),
  listingType: (raw?.listingType ?? "single") as string,

@@ -1977,7 +1977,7 @@ function CheckoutContent({
               <p className="text-xs text-muted-foreground leading-relaxed">
                 {t("checkout.termsDisclaimer").split("Terms of Service")[0]}
                 <a href="/terms" target="_blank" rel="noopener noreferrer" className="underline underline-offset-2 hover:text-foreground">
-                  {t("terms.title") || "Terms of Service"}
+                  {t("terms.pageTitle")}
                 </a>
                 {t("checkout.termsDisclaimer").split("Terms of Service")[1]}{" "}
                 <a href="/privacy" target="_blank" rel="noopener noreferrer" className="underline underline-offset-2 hover:text-foreground">
