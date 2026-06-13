@@ -297,8 +297,12 @@ export const vendorAccounts = pgTable(
     foundingVisibilityEndsAt: timestamp("founding_visibility_ends_at"),
     foundingReferralBonusBookingsRemaining: integer("founding_referral_bonus_bookings_remaining").notNull().default(0),
     // Per-page dashboard tours this vendor has already seen (migration 0128).
-    // Server-backed so each tour shows once per account across devices/sessions.
+    // DORMANT: superseded by dashboardTourCompletedAt (migration 0133). No longer
+    // read or written; kept to avoid dropping a live column.
     seenTourKeys: text("seen_tour_keys").array().notNull().default(sql`'{}'`),
+    // When the vendor finished/dismissed the one-time onboarding tour shown on
+    // their first dashboard visit (migration 0133). NULL = not completed yet.
+    dashboardTourCompletedAt: timestamp("dashboard_tour_completed_at"),
   },
   (table) => ({
     userIdActiveUniqueIdx: uniqueIndex("vendor_accounts_user_id_active_unique_idx")

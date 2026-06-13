@@ -3,7 +3,7 @@ import { SidebarProvider } from "@/components/ui/sidebar";
 import { Button } from "@/components/ui/button";
 import VendorTourModal from "@/components/VendorTourModal";
 import { VendorTimezoneModal, useShowTimezoneModal } from "@/components/VendorTimezoneModal";
-import { getTourKey, VENDOR_TOURS } from "@/lib/vendorTourContent";
+import { ONBOARDING_TOUR } from "@/lib/vendorTourContent";
 import {
   ArrowLeft,
   Bell,
@@ -70,7 +70,7 @@ type VendorHeaderAccount = {
   operatingTimezone?: string | null;
   vendorOnlySignup?: boolean;
   onboardingCompleted?: boolean;
-  seenTourKeys?: string[];
+  dashboardTourCompletedAt?: string | null;
 };
 
 const VENDOR_ME_SHELL_QUERY_KEY = ["/api/vendor/me", "shell-header"] as const;
@@ -202,99 +202,50 @@ export default function VendorShell({ children, onOpenAccountSettings }: VendorS
   const [showWarningBanner, setShowWarningBanner] = useState(false);
   const [mobileNavOpen, setMobileNavOpen] = useState(false);
 
-  // Tour system
-  const [activeTourKey, setActiveTourKey] = useState<string | null>(null);
+  // One-time onboarding tour — shown once on the vendor's first dashboard visit,
+  // then recorded server-side (dashboard_tour_completed_at) so it never reappears.
+  const [showTour, setShowTour] = useState(false);
   const tourTimerRef = useRef<number | null>(null);
   const timezoneModalDone = !showTimezoneModal || tzModalDismissed;
-  const seenTourKeys = vendorAccount?.seenTourKeys;
+  const tourCompleted = Boolean(vendorAccount?.dashboardTourCompletedAt);
+  const isDashboard = location.split("?")[0].split("#")[0] === "/vendor/dashboard";
 
-  // Optimistically mark tours as seen in the /api/vendor/me cache, then persist
-  // server-side (fire-and-forget). The server is the source of truth; the
-  // optimistic write keeps a tour from re-triggering mid-session before refetch.
-  const markToursSeen = useCallback(
-    (keys: string[]) => {
-      if (keys.length === 0) return;
-      queryClient.setQueryData<VendorHeaderAccount>(VENDOR_ME_SHELL_QUERY_KEY, (prev) => {
-        if (!prev) return prev;
-        const existing = new Set(prev.seenTourKeys ?? []);
-        const next = Array.from(existing);
-        let changed = false;
-        for (const k of keys) {
-          if (!existing.has(k)) {
-            next.push(k);
-            changed = true;
-          }
-        }
-        return changed ? { ...prev, seenTourKeys: next } : prev;
-      });
-      apiRequest("POST", "/api/vendor/tour/seen", { tourKeys: keys }).catch(() => {
-        // Optimistic cache already updated; a failed write only means the tour
-        // could reappear later until the next successful write.
-      });
-    },
-    [queryClient]
-  );
+  // Record tour completion: optimistically stamp the /api/vendor/me cache, then
+  // persist (fire-and-forget). The optimistic write keeps the tour from
+  // re-triggering mid-session before the next refetch. Recorded on dismiss/finish
+  // — not at show-time — so an accidental refresh doesn't burn a vendor's only
+  // onboarding (closing the tab without dismissing replays once, by design).
+  const markTourComplete = useCallback(() => {
+    queryClient.setQueryData<VendorHeaderAccount>(VENDOR_ME_SHELL_QUERY_KEY, (prev) =>
+      prev && !prev.dashboardTourCompletedAt
+        ? { ...prev, dashboardTourCompletedAt: new Date().toISOString() }
+        : prev
+    );
+    apiRequest("POST", "/api/vendor/tour/complete").catch(() => {
+      // Optimistic cache already updated; a failed write only means the tour
+      // could reappear later until the next successful write.
+    });
+  }, [queryClient]);
 
   useEffect(() => {
-    const key = getTourKey(location);
-
     if (tourTimerRef.current) clearTimeout(tourTimerRef.current);
 
-    // Close any open tour when navigating to a different page.
-    setActiveTourKey((currentKey) => (currentKey && currentKey !== key ? null : currentKey));
+    // Only ever trigger on the first dashboard visit, and only once.
+    if (!isDashboard || tourCompleted || !vendorAccount?.id || !timezoneModalDone) {
+      setShowTour(false);
+      return;
+    }
 
-    if (!key || !vendorAccount?.id || !timezoneModalDone) return;
-    if (seenTourKeys?.includes(key)) return;
-
-    tourTimerRef.current = window.setTimeout(() => {
-      setActiveTourKey(key);
-      // Mark seen at show-time so each tour shows once per vendor — even if the
-      // page is closed without dismissing (the close-tab loophole that caused
-      // replays before this was server-backed).
-      markToursSeen([key]);
-    }, 600);
+    tourTimerRef.current = window.setTimeout(() => setShowTour(true), 600);
 
     return () => {
       if (tourTimerRef.current) clearTimeout(tourTimerRef.current);
     };
-  }, [location, vendorAccount?.id, seenTourKeys, timezoneModalDone, markToursSeen]);
-
-  // One-time migration: import legacy localStorage tour-seen flags to the server
-  // so vendors who already dismissed tours don't see them reappear after deploy.
-  useEffect(() => {
-    const accountId = vendorAccount?.id;
-    if (!accountId) return;
-    const sentinelKey = `eh:tour:migrated:${accountId}`;
-    if (window.localStorage.getItem(sentinelKey) === "1") return;
-
-    const validKeys = new Set(Object.keys(VENDOR_TOURS));
-    const alreadySeen = new Set(seenTourKeys ?? []);
-    const toMigrate = new Set<string>();
-
-    for (let i = 0; i < window.localStorage.length; i++) {
-      const storageKey = window.localStorage.key(i);
-      if (!storageKey || !storageKey.startsWith("eh:tour:") || storageKey === sentinelKey) continue;
-      if (window.localStorage.getItem(storageKey) !== "1") continue;
-
-      // Keys look like `eh:tour:<accountId>:<tourKey>` or legacy `eh:tour:<tourKey>`.
-      const rest = storageKey.slice("eh:tour:".length);
-      let tourKey: string | null = null;
-      if (rest.startsWith(`${accountId}:`)) {
-        tourKey = rest.slice(accountId.length + 1);
-      } else if (!rest.includes(":")) {
-        tourKey = rest; // legacy account-less form
-      }
-      if (tourKey && validKeys.has(tourKey) && !alreadySeen.has(tourKey)) {
-        toMigrate.add(tourKey);
-      }
-    }
-
-    window.localStorage.setItem(sentinelKey, "1");
-    if (toMigrate.size > 0) markToursSeen(Array.from(toMigrate));
-  }, [vendorAccount?.id, seenTourKeys, markToursSeen]);
+  }, [isDashboard, tourCompleted, vendorAccount?.id, timezoneModalDone]);
 
   const handleTourDismiss = () => {
-    setActiveTourKey(null);
+    setShowTour(false);
+    markTourComplete();
   };
 
   const displayName = activeProfileName || vendorAccount?.email || "Vendor";
@@ -584,12 +535,11 @@ export default function VendorShell({ children, onOpenAccountSettings }: VendorS
         </div>
       </div>
 
-      {activeTourKey && VENDOR_TOURS[activeTourKey] && (
+      {showTour && (
         <VendorTourModal
-          key={activeTourKey}
-          steps={VENDOR_TOURS[activeTourKey].steps}
-          showOverlay={VENDOR_TOURS[activeTourKey].overlay}
-          showCloseButton={VENDOR_TOURS[activeTourKey].allowClose}
+          steps={ONBOARDING_TOUR.steps}
+          showOverlay={ONBOARDING_TOUR.overlay}
+          showCloseButton={ONBOARDING_TOUR.allowClose}
           onDismiss={handleTourDismiss}
         />
       )}

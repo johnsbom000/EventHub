@@ -838,7 +838,7 @@ export function registerVendorRoutes(app: Express): void {
         __marker: "vendor_me_route_hit",
         vendorOnlySignup,
         onboardingCompleted: Boolean(account.onboardingCompletedAt),
-        seenTourKeys: account.seenTourKeys ?? [],
+        dashboardTourCompletedAt: account.dashboardTourCompletedAt ?? null,
       });
     } catch (error: any) {
       logRouteError("/api/vendor/me", error);
@@ -3985,59 +3985,27 @@ export function registerVendorRoutes(app: Express): void {
     }
   });
 
-  // POST /api/vendor/tour/seen  — mark one or more per-page dashboard tours as seen.
-  // Idempotently unions keys onto vendor_accounts.seen_tour_keys so each tour shows
-  // once per account across devices/sessions. Single dismiss sends one key; the
-  // client backfill from legacy localStorage sends many.
-  const VALID_TOUR_KEYS = new Set([
-    "my-hub",
-    "dashboard",
-    "bookings",
-    "listings",
-    "messages",
-    "payments",
-    "discounts",
-    "reviews",
-    "notifications",
-    "disputes",
-  ]);
-
-  app.post("/api/vendor/tour/seen", mutationRateLimiter, ...requireVendorAuth0, async (req, res) => {
+  // POST /api/vendor/tour/complete — mark the one-time onboarding tour finished.
+  // Idempotent: COALESCE preserves the original completion time on re-fire, so the
+  // tour never shows again once set. No request body required.
+  app.post("/api/vendor/tour/complete", mutationRateLimiter, ...requireVendorAuth0, async (req, res) => {
     try {
       const vendorAuth = (req as any).vendorAuth;
-      const { tourKeys } = req.body ?? {};
-
-      if (!Array.isArray(tourKeys) || tourKeys.length === 0 || tourKeys.length > 50) {
-        return res.status(400).json({ error: "tourKeys must be a non-empty array" });
-      }
-
-      const keys = Array.from(
-        new Set(
-          tourKeys.filter((k): k is string => typeof k === "string" && VALID_TOUR_KEYS.has(k))
-        )
-      );
-
-      if (keys.length === 0) {
-        return res.status(400).json({ error: "No valid tour keys provided" });
-      }
 
       const updated = await db
         .update(vendorAccounts)
         .set({
-          seenTourKeys: drizzleSql`(
-            SELECT array_agg(DISTINCT k)
-            FROM unnest(array_cat(${vendorAccounts.seenTourKeys}, ${keys}::text[])) AS k
-          )`,
+          dashboardTourCompletedAt: drizzleSql`COALESCE(${vendorAccounts.dashboardTourCompletedAt}, now())`,
         })
         .where(eq(vendorAccounts.id, vendorAuth.id))
-        .returning({ seenTourKeys: vendorAccounts.seenTourKeys });
+        .returning({ dashboardTourCompletedAt: vendorAccounts.dashboardTourCompletedAt });
 
       if (updated.length === 0) {
         return res.status(404).json({ error: "Vendor account not found" });
       }
-      return res.json({ seenTourKeys: updated[0].seenTourKeys ?? [] });
+      return res.json({ dashboardTourCompletedAt: updated[0].dashboardTourCompletedAt ?? null });
     } catch (error: any) {
-      logRouteError("/api/vendor/tour/seen POST", error);
+      logRouteError("/api/vendor/tour/complete POST", error);
       return res.status(500).json({ error: "Unable to record tour state" });
     }
   });
