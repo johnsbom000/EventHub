@@ -5099,7 +5099,9 @@ export function registerVendorRoutes(app: Express): void {
   });
 
   // DELETE /api/vendor/bookings/:id
-  // Vendor dismisses an expired or failed booking so it no longer appears in their list.
+  // Vendor archives a finished booking (cancelled/completed/expired/failed) so it no longer
+  // appears in their list. The row stays in the DB (vendor_dismissed_at is set); the list query
+  // filters on vendor_dismissed_at is null.
   app.delete("/api/vendor/bookings/:id", mutationRateLimiter, ...requireVendorAuth0, async (req, res) => {
     try {
       const vendorAuth = (req as any).vendorAuth;
@@ -5121,8 +5123,9 @@ export function registerVendorRoutes(app: Express): void {
       if (booking.vendorAccountId !== vendorAccountId) {
         return res.status(403).json({ error: "Not your booking" });
       }
-      if (booking.status !== "expired" && booking.status !== "failed") {
-        return res.status(400).json({ error: "Only expired or failed bookings can be dismissed" });
+      const ARCHIVABLE_STATUSES = new Set(["cancelled", "completed", "expired", "failed"]);
+      if (!ARCHIVABLE_STATUSES.has(String(booking.status || ""))) {
+        return res.status(400).json({ error: "Only finished bookings (cancelled, completed, expired, or failed) can be archived" });
       }
 
       await db

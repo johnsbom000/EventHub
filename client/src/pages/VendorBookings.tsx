@@ -18,7 +18,6 @@ import {
 import { Textarea } from "@/components/ui/textarea";
 import { Calendar, ChevronLeft, ChevronRight, Clock, Globe, MapPin, MessageSquare } from "lucide-react";
 import VendorShell from "@/components/VendorShell";
-import EventLinkPicker from "@/components/EventLinkPicker";
 import { apiRequest } from "@/lib/queryClient";
 import { useToast } from "@/hooks/use-toast";
 import { useFeeRates } from "@/hooks/useFeeRates";
@@ -166,6 +165,9 @@ export default function VendorBookings() {
   const [proposalReason, setProposalReason] = useState("");
   const [proposalError, setProposalError] = useState<string | null>(null);
 
+  // Archive confirmation modal state
+  const [archiveModalBookingId, setArchiveModalBookingId] = useState<string | null>(null);
+
   // Cancellation reason modal state
   const [cancelModalBookingId, setCancelModalBookingId] = useState<string | null>(null);
   const [cancelReasonSelected, setCancelReasonSelected] = useState("");
@@ -222,6 +224,27 @@ export default function VendorBookings() {
       setCancelModalBookingId(null);
       setCancelReasonSelected("");
       setCancelReasonOther("");
+    },
+  });
+
+  const archiveMutation = useMutation({
+    mutationFn: async (bookingId: string) => {
+      const res = await apiRequest("DELETE", `/api/vendor/bookings/${bookingId}`);
+      if (!res.ok) {
+        const body = await res.json().catch(() => ({}));
+        throw new Error(body?.error || "Failed to archive booking");
+      }
+      return res.json();
+    },
+    onSuccess: async () => {
+      toast({ title: "Booking archived", description: "It no longer appears in your list." });
+      await queryClient.invalidateQueries({ queryKey: ["/api/vendor/bookings"] });
+    },
+    onError: (err: Error) => {
+      toast({ title: "Couldn't archive booking", description: err.message, variant: "destructive" });
+    },
+    onSettled: () => {
+      setArchiveModalBookingId(null);
     },
   });
 
@@ -778,7 +801,12 @@ export default function VendorBookings() {
                         </span>
                       ) : null}
                     </div>
-                    <EventLinkPicker bookingId={item.id} currentEventTitle={item.raw.customerEventTitle} />
+                    {item.raw.customerEventTitle ? (
+                      <div className="mt-1 inline-flex items-center gap-1.5 text-sm text-muted-foreground">
+                        <Calendar className="h-3.5 w-3.5 shrink-0" />
+                        <span className="truncate">{item.raw.customerEventTitle}</span>
+                      </div>
+                    ) : null}
                     <div className="mt-1 text-sm">
                       <span className="text-muted-foreground">{t("vendorBookings.estimatedPayoutLabel")} </span>
                       <span className="font-medium">{formatUsd(item.estimatedPayoutCents || 0)}</span>
@@ -804,6 +832,19 @@ export default function VendorBookings() {
                             Message Customer
                           </Button>
                         )}
+                      {(item.status === "cancelled" ||
+                        item.status === "completed" ||
+                        item.status === "expired" ||
+                        item.status === "failed") && (
+                        <Button
+                          size="sm"
+                          variant="outline"
+                          onClick={() => setArchiveModalBookingId(item.id)}
+                          disabled={archiveMutation.isPending}
+                        >
+                          Archive
+                        </Button>
+                      )}
                     </div>
                     {expandedBookingId === item.id ? (
                       <div className="mt-3 rounded-md border bg-muted/30 p-3 space-y-3">
@@ -1005,6 +1046,39 @@ export default function VendorBookings() {
                               </Button>
                             </div>
                           </div>
+                        ) : item.raw.travelFeeProposal?.status === "pending" ? (
+                          <p className="pt-1 text-sm font-medium text-amber-800">
+                            Proposal sent — awaiting customer response · {formatUsd(item.raw.travelFeeProposal.amountCents)}
+                          </p>
+                        ) : item.raw.travelFeeProposal?.status === "declined" ? (
+                          <div className="space-y-2 pt-1">
+                            <p className="text-sm text-amber-800">
+                              The customer declined your {formatUsd(item.raw.travelFeeProposal.amountCents)} proposal.
+                            </p>
+                            <div className="flex flex-wrap gap-2">
+                              <Button
+                                size="sm"
+                                variant="outline"
+                                className="h-7 text-xs border-amber-300 hover:bg-amber-100"
+                                onClick={() => {
+                                  setProposalAmount("");
+                                  setProposalReason("");
+                                  setProposalError(null);
+                                  setProposalBookingId(item.id);
+                                }}
+                              >
+                                Propose a new fee
+                              </Button>
+                              <Button
+                                size="sm"
+                                variant="outline"
+                                className="h-7 text-xs"
+                                onClick={() => setCancelModalBookingId(item.id)}
+                              >
+                                Cancel event
+                              </Button>
+                            </div>
+                          </div>
                         ) : (
                           <Button
                             size="sm"
@@ -1030,6 +1104,41 @@ export default function VendorBookings() {
           </CardContent>
         </Card>
       </div>
+
+      {/* Archive confirmation modal */}
+      <Dialog
+        open={Boolean(archiveModalBookingId)}
+        onOpenChange={(open) => {
+          if (!open) setArchiveModalBookingId(null);
+        }}
+      >
+        <DialogContent className="sm:max-w-md">
+          <DialogTitle>Archive this booking?</DialogTitle>
+          <DialogDescription>
+            It will be removed from your bookings list. This won't notify the customer or change
+            the booking — it just hides it from your view.
+          </DialogDescription>
+          <div className="mt-4 flex justify-end gap-2">
+            <Button
+              variant="outline"
+              size="sm"
+              onClick={() => setArchiveModalBookingId(null)}
+            >
+              Go back
+            </Button>
+            <Button
+              size="sm"
+              disabled={archiveMutation.isPending}
+              onClick={() => {
+                if (!archiveModalBookingId) return;
+                archiveMutation.mutate(archiveModalBookingId);
+              }}
+            >
+              {archiveMutation.isPending ? "Archiving…" : "Archive"}
+            </Button>
+          </div>
+        </DialogContent>
+      </Dialog>
 
       {/* Cancellation reason modal */}
       <Dialog
