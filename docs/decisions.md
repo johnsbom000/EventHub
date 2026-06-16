@@ -16,12 +16,12 @@ Template for new entries:
 
 ---
 
-## [2026-06-16] Preserve listing photo ratios in collage previews
-- Context: Listing detail photo previews used a fixed 2x2 crop grid, which flattened photos into wide strips and changed the visual composition of the original images.
-- Decision: Render listing preview photos as a responsive masonry-style collage with natural image heights instead of fixed crop tiles.
-- Why: Vendors expect uploaded photos to retain their original ratios, while customers still need a compact collage preview with access to the full gallery.
-- Impact: Listing detail previews preserve each photo's aspect ratio and arrange the first photos into a collage pattern; the full-screen gallery behavior remains unchanged.
-- Revisit trigger: If vendor-uploaded image metadata starts storing intrinsic dimensions server-side, use those dimensions to reserve exact collage space before images load.
+## [2026-06-16] Airbnb-style bounded listing photo collage
+- Context: Listing previews briefly used a natural-ratio masonry, but with no height cap the images rendered enormous and dominated the page above the fold.
+- Decision: Render previews as an Airbnb-style collage — one large hero photo on the left plus a 2x2 grid of the next four photos on the right — bounded to a fixed banner height (300/360/460px across breakpoints), with `object-cover` tiles and a "Show all photos" button overlaying the full gallery.
+- Why: A bounded, uniform collage keeps the layout compact and predictable; uneven aspect ratios can't tile cleanly, so tiles are cropped to fit while the full uncropped images remain viewable in the gallery overlay.
+- Impact: Listing detail and vendor gallery previews stay a fixed-height banner; on `<sm` it collapses to the single hero photo. Supersedes the earlier natural-ratio masonry approach.
+- Revisit trigger: If we want uncropped ratios in the preview itself, store intrinsic image dimensions server-side and reserve exact collage space before load.
 
 ---
 
