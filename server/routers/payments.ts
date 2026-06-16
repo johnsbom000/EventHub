@@ -60,7 +60,13 @@ import {
   processSinglePayoutCandidate,
   ensurePaymentRecordForIntentInTx,
   initializeBookingPayment,
+  applyPaymentIntentSuccessInTx,
+  applyPaymentIntentFailureInTx,
 } from "../services/paymentService";
+import {
+  firePaymentSucceededSideEffects,
+  reconcilePaymentIntent,
+} from "../services/paymentReconcile";
 import {
   type VendorListingMatchContext,
   type GoogleEventMappingContext,
@@ -395,6 +401,76 @@ export function registerPaymentRoutes(app: Express): void {
     }
   );
 
+  // ─────────────────────────────────────────────────────────────────────────────
+  // POST /api/bookings/:bookingId/reconcile-payment
+  // Synchronous fallback the client calls right after confirmCardPayment succeeds.
+  // Authoritatively checks Stripe and marks the booking paid without waiting for
+  // the webhook — so a lost/late webhook can't leave a paid booking stuck pending
+  // (and then get reaped by the expiry job). Idempotent and safe to retry.
+  // ─────────────────────────────────────────────────────────────────────────────
+  app.post(
+    "/api/bookings/:bookingId/reconcile-payment",
+    paymentRateLimiter,
+    requireCustomerAnyAuth,
+    async (req, res) => {
+      try {
+        const { bookingId } = req.params;
+        const customerAuth = await resolveCustomerAuthFromRequest(req, { createIfMissing: false });
+        if (!customerAuth?.id) {
+          return res.status(401).json({ error: "Customer authentication required" });
+        }
+
+        // Verify the caller owns the booking and grab its PaymentIntent id from
+        // the booking-type payment row (populated at initialize-payment). We never
+        // trust a client-supplied PaymentIntent id.
+        const [row] = await db
+          .select({
+            customerId: bookings.customerId,
+            status: bookings.status,
+            paymentStatus: bookings.paymentStatus,
+            paymentIntentId: payments.stripePaymentIntentId,
+          })
+          .from(bookings)
+          .leftJoin(
+            payments,
+            and(eq(payments.bookingId, bookings.id), eq(payments.paymentType, "booking"))
+          )
+          .where(eq(bookings.id, bookingId))
+          .limit(1);
+
+        if (!row) {
+          return res.status(404).json({ error: "Booking not found" });
+        }
+        if (row.customerId !== customerAuth.id) {
+          return res.status(403).json({ error: "You do not have access to this booking" });
+        }
+
+        const paymentIntentId = asTrimmedString(row.paymentIntentId);
+        if (!paymentIntentId) {
+          // Nothing initialized yet — nothing to reconcile.
+          return res.json({ status: row.status, paymentStatus: row.paymentStatus, reconciled: false });
+        }
+
+        await reconcilePaymentIntent(paymentIntentId, { source: "sync_reconcile" });
+
+        // Return the freshest booking state after reconciliation.
+        const [updated] = await db
+          .select({ status: bookings.status, paymentStatus: bookings.paymentStatus })
+          .from(bookings)
+          .where(eq(bookings.id, bookingId))
+          .limit(1);
+
+        return res.json({
+          status: updated?.status ?? row.status,
+          paymentStatus: updated?.paymentStatus ?? row.paymentStatus,
+          reconciled: true,
+        });
+      } catch (error: any) {
+        return respondWithInternalServerError(req, res, error);
+      }
+    }
+  );
+
   // ---------------------------------------------------------------------------
   // Hosted Checkout Session — marketplace destination charge
   // ---------------------------------------------------------------------------
@@ -645,331 +721,54 @@ export function registerPaymentRoutes(app: Express): void {
             }
           }
 
-          await db.transaction(async (tx) => {
-            const payment = await ensurePaymentRecordForIntentInTx(tx, {
-              paymentIntentId,
-              fallbackBookingId,
-              fallbackPaymentType,
-              fallbackAmount,
-              fallbackTotalAmount,
-              fallbackPlatformFeeAmount,
-              fallbackVendorGrossAmount,
-              fallbackVendorNetPayoutAmount,
-              fallbackStripeProcessingFeeEstimate,
-              fallbackStripeConnectedAccountId,
-            });
-            if (!payment?.id || !payment.bookingId) return;
-
-            const now = new Date();
-            const [bookingRow] = await tx
-              .select({
-                id: bookings.id,
-                status: bookings.status,
-                cancellationReason: bookings.cancellationReason,
-                bookingEndAt: bookings.bookingEndAt,
-                totalAmount: bookings.totalAmount,
-                platformFee: bookings.platformFee,
-                subtotalAmountCents: bookings.subtotalAmountCents,
-                vendorPayout: bookings.vendorPayout,
-                instantBookSnapshot: bookings.instantBookSnapshot,
-                outsideServiceRadius: bookings.outsideServiceRadius,
-              })
-              .from(bookings)
-              .where(eq(bookings.id, payment.bookingId))
-              .limit(1);
-            if (!bookingRow?.id) return;
-            const disputeCaseStatus = await getDisputeCaseStatusInTx(tx, payment.bookingId);
-
-            const payoutEligibility = computePayoutEligibility({
-              bookingStatus: bookingRow.status,
-              paymentStatus: eventType === "payment_intent.payment_failed" ? "failed" : "succeeded",
-              payoutStatus: payment.payoutStatus,
-              payoutBlockedReason: payment.payoutBlockedReason,
-              disputeStatus: payment.disputeStatus,
-              disputeCaseStatus,
-              paidOutAt: payment.paidOutAt,
-              payoutEligibleAt: payment.payoutEligibleAt,
-              bookingEndAt: bookingRow.bookingEndAt,
-              totalAmount: payment.totalAmount ?? parseIntegerValue(bookingRow.totalAmount) ?? payment.amount,
-              refundedAmount: payment.refundAmount,
-              vendorNetPayoutAmount: payment.vendorNetPayoutAmount,
-              actualStripeFeeAmount: actualStripeFeeAmount ?? payment.actualStripeFeeAmount,
-              stripeConnectedAccountId:
-                payment.stripeConnectedAccountId ?? fallbackStripeConnectedAccountId,
-              stripeChargeId: payment.stripeChargeId ?? latestChargeId,
-              stripeTransferId: payment.stripeTransferId,
-              vendorAbsorbsStripeFees: VENDOR_ABSORBS_STRIPE_FEES,
-            }, now);
-
-            if (eventType === "payment_intent.succeeded") {
-              if (isPaymentSucceededStatus(payment.status)) return;
-
-              await tx
-                .update(payments)
-                .set({
-                  status: "succeeded",
-                  paidAt: now,
-                  stripeChargeId: latestChargeId || payment.stripeChargeId || null,
-                  actualStripeFeeAmount:
-                    actualStripeFeeAmount ??
-                    parseIntegerValue(payment.actualStripeFeeAmount) ??
-                    parseIntegerValue(fallbackStripeProcessingFeeEstimate),
-                  totalAmount:
-                    parseIntegerValue(payment.totalAmount) ??
-                    parseIntegerValue(bookingRow.totalAmount) ??
-                    parseIntegerValue(payment.amount) ??
-                    null,
-                  platformFeeAmount:
-                    parseIntegerValue(payment.platformFeeAmount) ??
-                    parseIntegerValue(bookingRow.platformFee) ??
-                    null,
-                  vendorGrossAmount:
-                    parseIntegerValue(payment.vendorGrossAmount) ??
-                    parseIntegerValue(bookingRow.subtotalAmountCents),
-                  vendorNetPayoutAmount:
-                    parseIntegerValue(payment.vendorNetPayoutAmount) ??
-                    parseIntegerValue(bookingRow.vendorPayout) ??
-                    null,
-                  stripeProcessingFeeEstimate:
-                    parseIntegerValue(payment.stripeProcessingFeeEstimate) ??
-                    parseIntegerValue(fallbackStripeProcessingFeeEstimate),
-                  stripeConnectedAccountId:
-                    payment.stripeConnectedAccountId ?? fallbackStripeConnectedAccountId,
-                  payoutStatus: payoutEligibility.payoutStatus,
-                  payoutEligibleAt: payoutEligibility.payoutEligibleAt,
-                  payoutBlockedReason: payoutEligibility.payoutBlockedReason,
-                  payoutAdjustedAmount: payoutEligibility.adjustedPayoutAmount,
-                  disputeStatus: null,
-                })
-                .where(eq(payments.id, payment.id));
-
-              // Mark the security deposit row (same PaymentIntent, separate row) as
-              // succeeded so the auto-refund job and cancellation logic can find it.
-              await tx
-                .update(payments)
-                .set({
-                  status: "succeeded",
-                  paidAt: now,
-                  stripeChargeId: latestChargeId || null,
-                })
-                .where(
-                  and(
-                    eq(payments.stripePaymentIntentId, paymentIntentId),
-                    eq(payments.paymentType, "security_deposit")
-                  )
-                );
-
-              const nextBookingPaymentStatus = await recomputeBookingPaymentStatusInTx(
-                tx,
-                payment.bookingId
-              );
-              const bookingStatus = normalizePaymentStateValue(bookingRow.status);
-              if (
-                bookingStatus === "cancelled" ||
-                bookingStatus === "expired" ||
-                bookingStatus === "failed"
-              ) {
-                await tx
-                  .update(bookings)
-                  .set({
-                    cancellationReason:
-                      bookingRow.cancellationReason ||
-                      `payment_succeeded_after_${bookingStatus || "closure"}`,
-                    paymentStatus: nextBookingPaymentStatus as any,
-                    updatedAt: now,
-                  })
-                  .where(eq(bookings.id, bookingRow.id));
-              } else {
-                // Request-to-book listings (instantBookSnapshot = false) must stay
-                // "pending" after payment — the vendor needs to explicitly accept.
-                // Instant-book listings outside the service radius also stay
-                // "pending" because the vendor must confirm the out-of-area booking.
-                // Only instant-book listings within the service radius are auto-confirmed.
-                const isInstantBook = bookingRow.instantBookSnapshot !== false;
-                const requiresVendorConfirmation = !isInstantBook || bookingRow.outsideServiceRadius === true;
-                await tx
-                  .update(bookings)
-                  .set({
-                    ...(!requiresVendorConfirmation
-                      ? { status: "confirmed" as const, confirmedAt: now }
-                      : {}),
-                    paymentStatus: nextBookingPaymentStatus as any,
-                    updatedAt: now,
-                  })
-                  .where(eq(bookings.id, bookingRow.id));
-              }
-              return;
-            }
-
-            if (isPaymentSucceededStatus(payment.status) || isPaymentRefundedOrPartiallyRefundedStatus(payment.status)) {
-              return;
-            }
-
-            await tx
-              .update(payments)
-              .set({
-                status: "failed",
-                payoutStatus: "cancelled",
-                payoutBlockedReason: "payment_failed",
-                payoutAdjustedAmount: 0,
-              })
-              .where(eq(payments.id, payment.id));
-
-            const nextBookingPaymentStatus = await recomputeBookingPaymentStatusInTx(
-              tx,
-              payment.bookingId
-            );
-            if (nextBookingPaymentStatus === "failed") {
-              await markBookingAsPaymentFailedInTx(tx, payment.bookingId, "stripe_payment_failed");
-            }
-          });
-
-          if (eventType === "payment_intent.succeeded" && fallbackPaymentType === "booking" && fallbackBookingId) {
-            logEvent("booking_paid", "system", null, {
-              booking_id: fallbackBookingId,
-              payment_intent_id: paymentIntentId,
-            });
-          }
-
-          // Notify vendor of payment received (booking payments only, fire-and-forget)
-          if (eventType === "payment_intent.succeeded" && fallbackPaymentType === "booking" && fallbackBookingId) {
-            void (async () => {
-              try {
-                const paymentRows: any = await db.execute(drizzleSql`
-                  select
-                    b.vendor_account_id as "vendorAccountId",
-                    b.event_date        as "eventDate",
-                    coalesce(b.listing_title_snapshot, '') as "listingTitle"
-                  from payments p
-                  join bookings b on b.id = p.booking_id
-                  where p.stripe_payment_intent_id = ${paymentIntentId}
-                    and p.payment_type = 'booking'
-                  limit 1
-                `);
-                const pr = extractRows<{ vendorAccountId: string; eventDate: string; listingTitle: string }>(paymentRows)[0];
-                if (!pr?.vendorAccountId) return;
-                await createNotification({
-                  recipientId: pr.vendorAccountId,
-                  recipientType: "vendor",
-                  type: "payment_received",
-                  title: "Payment received",
-                  message: `Payment for ${pr.listingTitle || "your service"} on ${pr.eventDate} has been received.`,
-                  link: `/vendor/bookings?bookingId=${encodeURIComponent(fallbackBookingId)}`,
-                  read: false,
-                });
-              } catch {}
-            })();
-          }
-
-          // Fire-and-forget: send payment receipt to customer + booking confirmed to vendor
+          // Apply the outcome via the shared reconcile logic so the webhook, the
+          // synchronous post-checkout endpoint, and the expiry guard all behave
+          // identically. `alreadyProcessed` lets us fire one-time side effects
+          // exactly once even if another path won the race.
+          let succeededResult: { bookingId: string | null; alreadyProcessed: boolean } | null = null;
           if (eventType === "payment_intent.succeeded") {
-            void (async () => {
-              try {
-                const serverUrl = appUrl();
-                const receiptRows: any = await db.execute(drizzleSql`
-                  select
-                    u.email          as "customerEmail",
-                    u.name           as "customerName",
-                    va.email         as "vendorEmail",
-                    va.business_name as "vendorName",
-                    b.event_date     as "eventDate",
-                    b.listing_title_snapshot as "listingTitle",
-                    b.subtotal_amount_cents   as "subtotalCents",
-                    b.customer_fee_amount_cents as "feeCents",
-                    (b.total_amount - coalesce(b.security_deposit_cents, 0)) as "totalCents",
-                    p.stripe_payment_intent_id as "paymentIntentId"
-                  from payments p
-                  join bookings b on b.id = p.booking_id
-                  join users u on u.id = b.customer_id
-                  join vendor_accounts va on va.id = b.vendor_account_id
-                  where p.stripe_payment_intent_id = ${paymentIntentId}
-                  limit 1
-                `);
-                const receipt = extractRows<{
-                  customerEmail: string;
-                  customerName: string;
-                  vendorEmail: string | null;
-                  vendorName: string;
-                  eventDate: string;
-                  listingTitle: string | null;
-                  subtotalCents: number | null;
-                  feeCents: number | null;
-                  totalCents: number;
-                  paymentIntentId: string;
-                }>(receiptRows)[0];
-                const receiptAddonRows: any = fallbackBookingId ? await db.execute(drizzleSql`
-                  SELECT title, unit_price_cents, total_price_cents
-                  FROM booking_items
-                  WHERE booking_id = ${fallbackBookingId} AND item_type = 'addon'
-                  ORDER BY created_at ASC
-                `) : { rows: [] };
-                const receiptAddOns = (receiptAddonRows.rows as any[]).map((r: any) => ({
-                  title: String(r.title ?? "Add-on"),
-                  priceCents: Number(r.total_price_cents ?? r.unit_price_cents ?? 0),
-                }));
+            succeededResult = await db.transaction(async (tx) =>
+              applyPaymentIntentSuccessInTx(tx, {
+                paymentIntentId,
+                latestChargeId,
+                actualStripeFeeAmount,
+                fallbackBookingId,
+                fallbackPaymentType,
+                fallbackAmount,
+                fallbackTotalAmount,
+                fallbackPlatformFeeAmount,
+                fallbackVendorGrossAmount,
+                fallbackVendorNetPayoutAmount,
+                fallbackStripeProcessingFeeEstimate,
+                fallbackStripeConnectedAccountId,
+              })
+            );
+          } else {
+            await db.transaction(async (tx) =>
+              applyPaymentIntentFailureInTx(tx, {
+                paymentIntentId,
+                fallbackBookingId,
+                fallbackPaymentType,
+                fallbackAmount,
+                fallbackTotalAmount,
+                fallbackPlatformFeeAmount,
+                fallbackVendorGrossAmount,
+                fallbackVendorNetPayoutAmount,
+                fallbackStripeProcessingFeeEstimate,
+                fallbackStripeConnectedAccountId,
+              })
+            );
+          }
 
-                const emailTasks: Promise<any>[] = [];
-                if (receipt?.customerEmail) {
-                  emailTasks.push(
-                    sendPaymentReceiptEmail(receipt.customerEmail, {
-                      recipientName: receipt.customerName || "Customer",
-                      vendorName: receipt.vendorName || "Vendor",
-                      listingTitle: receipt.listingTitle || "Service",
-                      eventDate: receipt.eventDate,
-                      subtotalCents: receipt.subtotalCents ?? receipt.totalCents,
-                      platformFeeCents: receipt.feeCents ?? 0,
-                      totalCents: receipt.totalCents,
-                      paymentIntentId: receipt.paymentIntentId,
-                      addOns: receiptAddOns,
-                      serverUrl,
-                    })
-                  );
-                }
-                if (receipt?.vendorEmail) {
-                  emailTasks.push(
-                    sendBookingConfirmedEmail(receipt.vendorEmail, {
-                      recipientName: receipt.vendorName || "Vendor",
-                      counterpartName: receipt.customerName || "Customer",
-                      eventDate: receipt.eventDate,
-                      listingTitle: receipt.listingTitle || "Service",
-                      totalAmountCents: receipt.totalCents,
-                      addOns: receiptAddOns,
-                      role: "vendor",
-                      serverUrl,
-                    })
-                  );
-                }
-                await Promise.allSettled(emailTasks);
-              } catch (emailError: any) {
-                logger.warn("[payment email] failed:", emailError?.message || emailError);
-              }
-            })();
-
-            // Fire-and-forget: eagerly create the Stream Chat channel so the vendor
-            // can message the customer immediately after payment without waiting for
-            // the lazy bootstrap triggered on first chat open.
-            if (isStreamChatConfigured() && fallbackBookingId) {
-              void (async () => {
-                try {
-                  const chatCtx = await getBookingChatContextById(fallbackBookingId);
-                  if (chatCtx?.customerId && chatCtx?.vendorAccountId && chatCtx?.eventDate) {
-                    await ensureStreamBookingChannel({
-                      bookingId: chatCtx.bookingId,
-                      eventDate: chatCtx.eventDate,
-                      eventTitle: chatCtx.eventTitle,
-                      customerId: chatCtx.customerId,
-                      customerName: chatCtx.customerName,
-                      customerEmail: chatCtx.customerEmail,
-                      vendorAccountId: chatCtx.vendorAccountId,
-                      vendorName: chatCtx.vendorName,
-                      vendorEmail: chatCtx.vendorEmail,
-                    });
-                  }
-                } catch (streamErr: any) {
-                  logger.warn("[stream-chat] Failed to eagerly create booking channel:", streamErr?.message);
-                }
-              })();
-            }
+          // One-time side effects (notification, emails, chat) — fired only on a
+          // genuine transition to succeeded, so a later webhook re-delivery or a
+          // racing synchronous reconcile can't double-send.
+          if (succeededResult?.bookingId && !succeededResult.alreadyProcessed) {
+            firePaymentSucceededSideEffects({
+              paymentIntentId,
+              bookingId: succeededResult.bookingId,
+              paymentType: fallbackPaymentType,
+            });
           }
         }
       } else if (eventType === "charge.dispute.created" || eventType === "charge.dispute.closed") {

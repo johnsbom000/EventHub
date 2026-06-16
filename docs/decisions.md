@@ -16,6 +16,15 @@ Template for new entries:
 
 ---
 
+## [2026-06-16] Portal hero event-type dropdown outside scaled search container
+- Context: The landing hero search bar is rendered inside a scaled container, and the event-type Select menu was rendered inline with portal behavior disabled. On open, the dropdown appeared detached from its trigger.
+- Decision: Restore the normal portaled Select content for the hero event-type menu while keeping popper placement, width, and styling unchanged.
+- Why: Radix popper positioning works reliably from viewport coordinates when the floating content is not trapped inside the scaled hero container.
+- Impact: The event-type dropdown anchors under its hero search field instead of floating over the headline/search bar area.
+- Revisit trigger: If the hero scaling approach is removed, re-check all portaled popups for consistent alignment and collision behavior.
+
+---
+
 ## [2026-05-25] Anchor sidebar count badges to icon top-right corners
 - Context: Sidebar count badges were resettable, but their top-center placement made them look detached from the icon and could appear visually clipped near icon bounds.
 - Decision: Reuse a shared `SidebarCountBadge` component across vendor, customer, and admin sidebars, rendering it inside each icon wrapper at the icon's top-right corner with explicit high z-index and visible overflow.

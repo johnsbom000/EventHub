@@ -1201,6 +1201,27 @@ function CheckoutContent({
       const paymentIntentStatus = confirmResult.paymentIntent?.status || "";
       if (paymentIntentStatus === "succeeded" || paymentIntentStatus === "processing") {
         persistPendingPaymentDraft(null);
+
+        // Synchronous reconcile: confirmCardPayment talks straight to Stripe, so
+        // the server hasn't learned the payment succeeded yet — only the webhook
+        // would tell it. Proactively reconcile so the booking is marked paid even
+        // if the webhook is lost/late. Best-effort: if this fails we still redirect
+        // (the webhook + the expiry-guard worker are the backstops).
+        if (paymentIntentStatus === "succeeded") {
+          try {
+            await fetch(`/api/bookings/${encodeURIComponent(bookingId)}/reconcile-payment`, {
+              method: "POST",
+              headers: {
+                "Content-Type": "application/json",
+                Authorization: `Bearer ${token}`,
+              },
+              body: JSON.stringify({}),
+            });
+          } catch (reconcileErr) {
+            console.warn("[checkout] payment reconcile failed (backstops will cover):", reconcileErr);
+          }
+        }
+
         const pendingReasonParam = bookingPendingReason ? `&pendingReason=${encodeURIComponent(bookingPendingReason)}` : "";
         setLocation(`/dashboard/events?bookingId=${encodeURIComponent(bookingId)}${pendingReasonParam}`);
         return;
