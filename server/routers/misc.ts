@@ -520,8 +520,36 @@ app.post(
       const results = data.map((f) => {
         const addr = f.address ?? {};
         const houseNumber = (addr.house_number ?? "").trim();
-        const road = (addr.road ?? addr.pedestrian ?? addr.path ?? "").trim();
-        const street = houseNumber && road ? `${houseNumber} ${road}` : road || houseNumber;
+        // Nominatim puts the street name under different keys depending on the
+        // way type (footways, residential roads, etc.), so check all of them —
+        // otherwise venues/addresses come back with a blank street box even
+        // though city/state/zip parse fine.
+        const road = (
+          addr.road ??
+          addr.pedestrian ??
+          addr.footway ??
+          addr.path ??
+          addr.cycleway ??
+          addr.residential ??
+          addr.street ??
+          ""
+        ).trim();
+        // Named venues/POIs (parks, resorts, halls) often have no road at all.
+        // Fall back to the place name so the street box isn't left empty when
+        // the customer picks an event location by name.
+        const placeName = (
+          addr.amenity ??
+          addr.shop ??
+          addr.tourism ??
+          addr.leisure ??
+          addr.building ??
+          addr.office ??
+          ""
+        ).trim();
+        const street =
+          houseNumber && road
+            ? `${houseNumber} ${road}`
+            : road || houseNumber || placeName;
         // Nominatim city may appear under several keys depending on place type.
         const city =
           addr.city ?? addr.town ?? addr.village ?? addr.municipality ?? addr.hamlet ?? "";
