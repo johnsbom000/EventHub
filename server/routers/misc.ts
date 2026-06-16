@@ -1041,6 +1041,8 @@ app.post(
           takedownOffered: vendorListings.takedownOffered,
           takedownFeeEnabled: vendorListings.takedownFeeEnabled,
           takedownFeeAmountCents: vendorListings.takedownFeeAmountCents,
+          cancellationPolicy: vendorListings.cancellationPolicy,
+          cancellationPolicyDays: vendorListings.cancellationPolicyDays,
           securityDepositEnabled: vendorListings.securityDepositEnabled,
           securityDepositCents: vendorListings.securityDepositCents,
           photos: vendorListings.photos,

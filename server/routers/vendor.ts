@@ -100,7 +100,16 @@ import { registerCircumventionRoutes } from "../routers/circumvention";
 import { registerBookingRoutes } from "../routers/bookings";
 import { registerPaymentRoutes } from "../routers/payments";
 import { registerMiscRoutes } from "../routers/misc";
-import { createNotification, getNotificationsByRecipient, bulkMarkNotificationsRead, bulkArchiveNotifications, markNotificationAsRead } from "../lib/notificationHelpers";
+import {
+  VENDOR_BOOKING_NOTIFICATION_TYPES,
+  createNotification,
+  getNotificationsByRecipient,
+  getUnreadNotificationCountByTypes,
+  markUnreadNotificationsReadByTypes,
+  bulkMarkNotificationsRead,
+  bulkArchiveNotifications,
+  markNotificationAsRead,
+} from "../lib/notificationHelpers";
 import crypto from "crypto";
 import {
   insertVendorAccountSchema,
@@ -829,6 +838,7 @@ export function registerVendorRoutes(app: Express): void {
         __marker: "vendor_me_route_hit",
         vendorOnlySignup,
         onboardingCompleted: Boolean(account.onboardingCompletedAt),
+        dashboardTourCompletedAt: account.dashboardTourCompletedAt ?? null,
       });
     } catch (error: any) {
       logRouteError("/api/vendor/me", error);
@@ -2346,6 +2356,8 @@ export function registerVendorRoutes(app: Express): void {
             takedownOffered: (existingListing as any)?.takedownOffered,
             takedownFeeEnabled: (existingListing as any)?.takedownFeeEnabled,
             takedownFeeAmountCents: (existingListing as any)?.takedownFeeAmountCents,
+            cancellationPolicy: (existingListing as any)?.cancellationPolicy,
+            cancellationPolicyDays: (existingListing as any)?.cancellationPolicyDays,
             photos: existingListing?.photos,
           },
           classification: canonicalClassification,
@@ -2630,6 +2642,8 @@ export function registerVendorRoutes(app: Express): void {
           takedownOffered: (existingListing as any)?.takedownOffered,
           takedownFeeEnabled: (existingListing as any)?.takedownFeeEnabled,
           takedownFeeAmountCents: (existingListing as any)?.takedownFeeAmountCents,
+          cancellationPolicy: (existingListing as any)?.cancellationPolicy,
+          cancellationPolicyDays: (existingListing as any)?.cancellationPolicyDays,
           photos: existingListing?.photos,
         },
         classification: canonicalClassification,
@@ -3971,6 +3985,31 @@ export function registerVendorRoutes(app: Express): void {
     }
   });
 
+  // POST /api/vendor/tour/complete — mark the one-time onboarding tour finished.
+  // Idempotent: COALESCE preserves the original completion time on re-fire, so the
+  // tour never shows again once set. No request body required.
+  app.post("/api/vendor/tour/complete", mutationRateLimiter, ...requireVendorAuth0, async (req, res) => {
+    try {
+      const vendorAuth = (req as any).vendorAuth;
+
+      const updated = await db
+        .update(vendorAccounts)
+        .set({
+          dashboardTourCompletedAt: drizzleSql`COALESCE(${vendorAccounts.dashboardTourCompletedAt}, now())`,
+        })
+        .where(eq(vendorAccounts.id, vendorAuth.id))
+        .returning({ dashboardTourCompletedAt: vendorAccounts.dashboardTourCompletedAt });
+
+      if (updated.length === 0) {
+        return res.status(404).json({ error: "Vendor account not found" });
+      }
+      return res.json({ dashboardTourCompletedAt: updated[0].dashboardTourCompletedAt ?? null });
+    } catch (error: any) {
+      logRouteError("/api/vendor/tour/complete POST", error);
+      return res.status(500).json({ error: "Unable to record tour state" });
+    }
+  });
+
   // Public Listings (guest browsing)
   // Returns only active listings. No auth.
   // Supports server-side filtering via query params:
@@ -4659,6 +4698,39 @@ export function registerVendorRoutes(app: Express): void {
     }
   });
 
+  app.get("/api/vendor/bookings/unread-count", ...requireVendorAuth0, async (req, res) => {
+    try {
+      const account = await getVendorAccountFromRequest(req);
+      if (!account?.id) return res.json({ unreadCount: 0 });
+
+      const unreadCount = await getUnreadNotificationCountByTypes(
+        account.id,
+        "vendor",
+        VENDOR_BOOKING_NOTIFICATION_TYPES
+      );
+      return res.json({ unreadCount });
+    } catch (error: any) {
+      logRouteError("/api/vendor/bookings/unread-count", error);
+      return res.json({ unreadCount: 0 });
+    }
+  });
+
+  app.post("/api/vendor/bookings/mark-seen", mutationRateLimiter, ...requireVendorAuth0, async (req, res) => {
+    try {
+      const account = await getVendorAccountFromRequest(req);
+      if (!account?.id) return res.status(403).json({ error: "Vendor account required" });
+
+      const updated = await markUnreadNotificationsReadByTypes(
+        account.id,
+        "vendor",
+        VENDOR_BOOKING_NOTIFICATION_TYPES
+      );
+      return res.json({ updated });
+    } catch (error: any) {
+      return respondWithInternalServerError(req, res, error);
+    }
+  });
+
   app.patch("/api/vendor/bookings/:id", mutationRateLimiter, ...requireVendorAuth0, async (req, res) => {
     try {
       const vendorAuth = (req as any).vendorAuth;
@@ -5099,7 +5171,9 @@ export function registerVendorRoutes(app: Express): void {
   });
 
   // DELETE /api/vendor/bookings/:id
-  // Vendor dismisses an expired or failed booking so it no longer appears in their list.
+  // Vendor archives a finished booking (cancelled/completed/expired/failed) so it no longer
+  // appears in their list. The row stays in the DB (vendor_dismissed_at is set); the list query
+  // filters on vendor_dismissed_at is null.
   app.delete("/api/vendor/bookings/:id", mutationRateLimiter, ...requireVendorAuth0, async (req, res) => {
     try {
       const vendorAuth = (req as any).vendorAuth;
@@ -5121,8 +5195,9 @@ export function registerVendorRoutes(app: Express): void {
       if (booking.vendorAccountId !== vendorAccountId) {
         return res.status(403).json({ error: "Not your booking" });
       }
-      if (booking.status !== "expired" && booking.status !== "failed") {
-        return res.status(400).json({ error: "Only expired or failed bookings can be dismissed" });
+      const ARCHIVABLE_STATUSES = new Set(["cancelled", "completed", "expired", "failed"]);
+      if (!ARCHIVABLE_STATUSES.has(String(booking.status || ""))) {
+        return res.status(400).json({ error: "Only finished bookings (cancelled, completed, expired, or failed) can be archived" });
       }
 
       await db

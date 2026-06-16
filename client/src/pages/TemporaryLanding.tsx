@@ -27,7 +27,15 @@ const FAKE_LISTINGS = [
   { title: "Wine Barrel Rental",              price: "$220",   photo: "https://images.unsplash.com/photo-1510812431401-41d2bd2722f3?w=400&h=420&fit=crop", aspect: "20/21"},
 ];
 
-function QuestionStep({ onVendor, onSignIn }: { onVendor: () => void; onSignIn: () => void }) {
+function QuestionStep({
+  onVendor,
+  onCustomer,
+  onSignIn,
+}: {
+  onVendor: () => void;
+  onCustomer: () => void;
+  onSignIn: () => void;
+}) {
   return (
     <>
       <BrandWordmark
@@ -41,10 +49,18 @@ function QuestionStep({ onVendor, onSignIn }: { onVendor: () => void; onSignIn: 
       <button
         type="button"
         onClick={onVendor}
-        className="mb-4 flex w-full flex-col items-center gap-1.5 rounded-[10px] bg-[#2a3a42] px-3 py-5 font-sans text-[1.5rem] font-semibold text-white transition-colors hover:bg-[#3a4f59]"
+        className="mb-3 flex w-full flex-col items-center gap-1.5 rounded-[10px] bg-[#2a3a42] px-3 py-5 font-sans text-[1.5rem] font-semibold text-white transition-colors hover:bg-[#3a4f59]"
       >
         Get started as a vendor
         <span className="text-[1.1rem] font-normal text-[rgba(255,255,255,0.65)]">List your services</span>
+      </button>
+      <button
+        type="button"
+        onClick={onCustomer}
+        className="mb-4 flex w-full flex-col items-center gap-1 rounded-[10px] border-[2px] border-[rgba(74,106,125,0.22)] bg-white px-3 py-4 font-sans text-[1.35rem] font-semibold text-[#4a6a7d] transition-colors hover:border-[#4a6a7d] hover:bg-[#f8fafb]"
+      >
+        Plan an Event
+        <span className="text-[1rem] font-normal text-[#9aacb4]">Find &amp; book vendors</span>
       </button>
       <p className="font-sans text-[1.2rem] text-[#9aacb4]">
         Already have an account?{" "}
@@ -308,7 +324,15 @@ const handleEmail = () =>
       },
     });
 
-  const handleSignIn = () => openAuthModal("login", "/vendor/provision");
+  // Customers reuse the shared AuthModal (same component used at checkout). No
+  // vendor intent flag is set, so no vendor account is created — routing to "/"
+  // sends them through /post-login, which detects them as a non-vendor and lands
+  // them on /dashboard.
+  const handleCustomer = () => openAuthModal("signup", ROOT_RETURN_TO);
+
+  // Route sign-in through /post-login (via "/") so it detects vendor vs customer:
+  // existing vendors land on /vendor/my-hub, existing customers on /dashboard.
+  const handleSignIn = () => openAuthModal("login", ROOT_RETURN_TO);
 
   return (
     <div className="relative h-screen overflow-hidden bg-white">
@@ -319,6 +343,7 @@ const handleEmail = () =>
           {step === "question" && (
             <QuestionStep
               onVendor={() => setStep("signup")}
+              onCustomer={handleCustomer}
               onSignIn={handleSignIn}
             />
           )}

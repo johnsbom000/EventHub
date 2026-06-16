@@ -1,9 +1,9 @@
-import React, { useEffect, useRef, useState } from "react";
+import React, { useCallback, useEffect, useRef, useState } from "react";
 import { SidebarProvider } from "@/components/ui/sidebar";
 import { Button } from "@/components/ui/button";
 import VendorTourModal from "@/components/VendorTourModal";
 import { VendorTimezoneModal, useShowTimezoneModal } from "@/components/VendorTimezoneModal";
-import { getTourKey, hasTourBeenSeen, markTourSeen, VENDOR_TOURS } from "@/lib/vendorTourContent";
+import { ONBOARDING_TOUR } from "@/lib/vendorTourContent";
 import {
   ArrowLeft,
   Bell,
@@ -70,7 +70,10 @@ type VendorHeaderAccount = {
   operatingTimezone?: string | null;
   vendorOnlySignup?: boolean;
   onboardingCompleted?: boolean;
+  dashboardTourCompletedAt?: string | null;
 };
+
+const VENDOR_ME_SHELL_QUERY_KEY = ["/api/vendor/me", "shell-header"] as const;
 
 type VendorProfileSummary = {
   id: string;
@@ -106,7 +109,7 @@ export default function VendorShell({ children, onOpenAccountSettings }: VendorS
   const queryClient = useQueryClient();
 
   const { data: vendorAccount } = useQuery<VendorHeaderAccount>({
-    queryKey: ["/api/vendor/me", "shell-header"],
+    queryKey: VENDOR_ME_SHELL_QUERY_KEY,
     enabled: isAuthenticated && !isAuthLoading,
     retry: false,
     queryFn: async () => {
@@ -199,41 +202,50 @@ export default function VendorShell({ children, onOpenAccountSettings }: VendorS
   const [showWarningBanner, setShowWarningBanner] = useState(false);
   const [mobileNavOpen, setMobileNavOpen] = useState(false);
 
-  // Tour system
-  const [activeTourKey, setActiveTourKey] = useState<string | null>(null);
+  // One-time onboarding tour — shown once on the vendor's first dashboard visit,
+  // then recorded server-side (dashboard_tour_completed_at) so it never reappears.
+  const [showTour, setShowTour] = useState(false);
   const tourTimerRef = useRef<number | null>(null);
   const timezoneModalDone = !showTimezoneModal || tzModalDismissed;
+  const tourCompleted = Boolean(vendorAccount?.dashboardTourCompletedAt);
+  const isDashboard = location.split("?")[0].split("#")[0] === "/vendor/dashboard";
+
+  // Record tour completion: optimistically stamp the /api/vendor/me cache, then
+  // persist (fire-and-forget). The optimistic write keeps the tour from
+  // re-triggering mid-session before the next refetch. Recorded on dismiss/finish
+  // — not at show-time — so an accidental refresh doesn't burn a vendor's only
+  // onboarding (closing the tab without dismissing replays once, by design).
+  const markTourComplete = useCallback(() => {
+    queryClient.setQueryData<VendorHeaderAccount>(VENDOR_ME_SHELL_QUERY_KEY, (prev) =>
+      prev && !prev.dashboardTourCompletedAt
+        ? { ...prev, dashboardTourCompletedAt: new Date().toISOString() }
+        : prev
+    );
+    apiRequest("POST", "/api/vendor/tour/complete").catch(() => {
+      // Optimistic cache already updated; a failed write only means the tour
+      // could reappear later until the next successful write.
+    });
+  }, [queryClient]);
 
   useEffect(() => {
-    const key = getTourKey(location);
-
     if (tourTimerRef.current) clearTimeout(tourTimerRef.current);
 
-    // Mark the current tour as seen if the user navigated away from its page
-    setActiveTourKey((currentKey) => {
-      if (currentKey && currentKey !== key) {
-        markTourSeen(currentKey, vendorAccount?.id);
-        return null;
-      }
-      return currentKey;
-    });
+    // Only ever trigger on the first dashboard visit, and only once.
+    if (!isDashboard || tourCompleted || !vendorAccount?.id || !timezoneModalDone) {
+      setShowTour(false);
+      return;
+    }
 
-    if (!key || !vendorAccount?.id || !timezoneModalDone) return;
-
-    tourTimerRef.current = window.setTimeout(() => {
-      if (!hasTourBeenSeen(key, vendorAccount.id)) {
-        setActiveTourKey(key);
-      }
-    }, 600);
+    tourTimerRef.current = window.setTimeout(() => setShowTour(true), 600);
 
     return () => {
       if (tourTimerRef.current) clearTimeout(tourTimerRef.current);
     };
-  }, [location, vendorAccount?.id, timezoneModalDone]);
+  }, [isDashboard, tourCompleted, vendorAccount?.id, timezoneModalDone]);
 
   const handleTourDismiss = () => {
-    if (activeTourKey) markTourSeen(activeTourKey, vendorAccount?.id);
-    setActiveTourKey(null);
+    setShowTour(false);
+    markTourComplete();
   };
 
   const displayName = activeProfileName || vendorAccount?.email || "Vendor";
@@ -523,12 +535,11 @@ export default function VendorShell({ children, onOpenAccountSettings }: VendorS
         </div>
       </div>
 
-      {activeTourKey && VENDOR_TOURS[activeTourKey] && (
+      {showTour && (
         <VendorTourModal
-          key={activeTourKey}
-          steps={VENDOR_TOURS[activeTourKey].steps}
-          showOverlay={VENDOR_TOURS[activeTourKey].overlay}
-          showCloseButton={VENDOR_TOURS[activeTourKey].allowClose}
+          steps={ONBOARDING_TOUR.steps}
+          showOverlay={ONBOARDING_TOUR.overlay}
+          showCloseButton={ONBOARDING_TOUR.allowClose}
           onDismiss={handleTourDismiss}
         />
       )}
