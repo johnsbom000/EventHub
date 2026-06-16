@@ -23,34 +23,46 @@ export default function PhotoCollage({ photos, title }: PhotoCollageProps) {
 
   const previewPhotos = photos.slice(0, 4);
   const remaining = photos.length - previewPhotos.length;
+  const previewItems = previewPhotos.map((src, index) => ({ src, index }));
+  const previewColumns =
+    previewItems.length > 1
+      ? [
+          previewItems.filter((_, index) => index % 2 === 0),
+          previewItems.filter((_, index) => index % 2 === 1),
+        ]
+      : [previewItems];
 
   return (
     <>
       <div className="space-y-3">
-        <div className="grid grid-cols-2 grid-rows-2 gap-2 h-72">
-          {previewPhotos.map((src, i) => {
-            const isLast = i === previewPhotos.length - 1 && remaining > 0;
-            return (
-              <button
-                key={`${src}-${i}`}
-                type="button"
-                className="relative overflow-hidden rounded-lg bg-muted focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring"
-                onClick={() => setGalleryOpen(true)}
-                title="Show all photos"
-              >
-                <img
-                  src={src}
-                  alt={`${title} photo ${i + 1}`}
-                  className="absolute inset-0 h-full w-full object-cover"
-                />
-                {isLast && (
-                  <div className="absolute inset-0 flex items-center justify-center rounded-lg bg-black/50 text-sm font-medium text-white">
-                    +{remaining} more
-                  </div>
-                )}
-              </button>
-            );
-          })}
+        <div className="flex flex-col gap-3 md:flex-row md:items-start">
+          {previewColumns.map((column, columnIndex) => (
+            <div key={columnIndex} className="flex flex-1 flex-col gap-3">
+              {column.map(({ src, index }) => {
+                const isLast = index === previewPhotos.length - 1 && remaining > 0;
+                return (
+                  <button
+                    key={`${src}-${index}`}
+                    type="button"
+                    className="relative block w-full overflow-hidden rounded-lg bg-muted focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring"
+                    onClick={() => setGalleryOpen(true)}
+                    title="Show all photos"
+                  >
+                    <img
+                      src={src}
+                      alt={`${title} photo ${index + 1}`}
+                      className="block h-auto w-full"
+                    />
+                    {isLast && (
+                      <div className="absolute inset-0 flex items-center justify-center rounded-lg bg-black/50 text-sm font-medium text-white">
+                        +{remaining} more
+                      </div>
+                    )}
+                  </button>
+                );
+              })}
+            </div>
+          ))}
         </div>
 
         <button
