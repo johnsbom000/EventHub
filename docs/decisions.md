@@ -16,6 +16,24 @@ Template for new entries:
 
 ---
 
+## [2026-06-16] Airbnb-style bounded listing photo collage
+- Context: Listing previews briefly used a natural-ratio masonry, but with no height cap the images rendered enormous and dominated the page above the fold.
+- Decision: Render previews as an Airbnb-style collage — one large hero photo on the left plus a 2x2 grid of the next four photos on the right — bounded to a fixed banner height (300/360/460px across breakpoints), with `object-cover` tiles and a "Show all photos" button overlaying the full gallery.
+- Why: A bounded, uniform collage keeps the layout compact and predictable; uneven aspect ratios can't tile cleanly, so tiles are cropped to fit while the full uncropped images remain viewable in the gallery overlay.
+- Impact: Listing detail and vendor gallery previews stay a fixed-height banner; on `<sm` it collapses to the single hero photo. Supersedes the earlier natural-ratio masonry approach.
+- Revisit trigger: If we want uncropped ratios in the preview itself, store intrinsic image dimensions server-side and reserve exact collage space before load.
+
+---
+
+## [2026-06-16] Portal hero event-type dropdown outside scaled search container
+- Context: The landing hero search bar is rendered inside a scaled container, and the event-type Select menu was rendered inline with portal behavior disabled. On open, the dropdown appeared detached from its trigger.
+- Decision: Restore the normal portaled Select content for the hero event-type menu while keeping popper placement, width, and styling unchanged.
+- Why: Radix popper positioning works reliably from viewport coordinates when the floating content is not trapped inside the scaled hero container.
+- Impact: The event-type dropdown anchors under its hero search field instead of floating over the headline/search bar area.
+- Revisit trigger: If the hero scaling approach is removed, re-check all portaled popups for consistent alignment and collision behavior.
+
+---
+
 ## [2026-05-25] Anchor sidebar count badges to icon top-right corners
 - Context: Sidebar count badges were resettable, but their top-center placement made them look detached from the icon and could appear visually clipped near icon bounds.
 - Decision: Reuse a shared `SidebarCountBadge` component across vendor, customer, and admin sidebars, rendering it inside each icon wrapper at the icon's top-right corner with explicit high z-index and visible overflow.
@@ -4479,6 +4497,27 @@ Template for new entries:
 - Why: Current launch scope supports photos only; UI copy should match available functionality without TODO-oriented vendor-facing text.
 - Impact: Vendors now see `Photos` labels only, and the media step no longer includes the deferred video notice block.
 - Revisit trigger: If video uploads are introduced, re-add user-facing video guidance with production-ready copy tied to actual capability.
+
+## [2026-06-13] Disclose listing cancellation policy at checkout and reconcile Stripe before cancellation refunds
+- Context: Checkout did not display the vendor-selected listing/package cancellation policy. A customer could also cancel immediately after Stripe confirmation but before the success webhook updated local payment rows, causing cancellation to incorrectly report that no payment was collected and skip the refund.
+- Decision: Return canonical cancellation-policy fields from the public listing endpoint, show the effective listing or selected-package policy in checkout, and retrieve unsettled PaymentIntents from Stripe before deciding refund eligibility. Refund only the policy-authorized service amount, refund the security-deposit amount independently, and prevent late success webhooks from overwriting refunded payment rows.
+- Why: The booking snapshot remains the authoritative policy for refunds, while direct Stripe reconciliation closes the confirmation/webhook race without weakening idempotency or payout controls.
+- Impact: Customers see the applicable cancellation terms before paying. Immediate cancellations now issue Stripe refunds according to the booking policy even when the webhook has not yet arrived, and security deposits are returned without accidentally refunding other non-refundable charge portions.
+- Revisit trigger: If cancellation policies gain partial-percentage tiers or exact sub-day cutoffs, replace calendar-day tiers with timestamp-based policy evaluation and display the precise event-time deadline at checkout.
+
+## [2026-06-13] Display booking IDs as customer receipt references
+- Context: Customers could open and manage bookings, but the canonical booking identifier was only present in URLs and API data, making support, refund, and dispute references difficult to communicate.
+- Decision: Show the full, selectable booking ID on every booking row in My Events and near the top of the customer booking details card.
+- Why: The booking ID serves as the durable receipt and support reference for a transaction.
+- Impact: Customers can copy the same canonical identifier from both summary and detail views without changing booking navigation or actions.
+- Revisit trigger: If human-friendly receipt numbers are introduced, display those prominently while retaining the canonical booking ID for internal support.
+
+## [2026-06-12] Drive the Vendor Bookings & Jobs badge from unread booking notifications
+- Context: Customer cancellations created unread vendor notifications and updated the Notifications badge, but the Bookings & Jobs sidebar icon had no badge wiring. The existing pending-booking count could not represent cancellations or other booking updates.
+- Decision: Count unread booking-related vendor notification records for the Bookings & Jobs badge, poll that count in the vendor sidebar, and mark only booking-related notifications read when the vendor visits `/vendor/bookings`.
+- Why: Notification records already represent account-scoped booking updates across devices and include customer cancellations, new bookings, reschedules, and travel-fee responses. Reusing them avoids a separate browser-only baseline or duplicate database state.
+- Impact: New booking updates increment both the Notifications and Bookings & Jobs badges. Visiting Bookings & Jobs clears the booking badge and acknowledges those booking notifications without affecting unrelated notification categories.
+- Revisit trigger: If notification read state and page-specific acknowledgement need to be independent, introduce dedicated per-account page-visit cursors rather than sharing notification read state.
 
 ## [2026-06-03] Align Step 3 onboarding terms checkbox with confirm cards
 - Context: In vendor onboarding Step 3, the terms agreement checkbox sat farther left than the `Business Details` confirm card and visually crowded the fixed bottom action buttons.

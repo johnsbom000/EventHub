@@ -9,6 +9,7 @@ import {
   parseIntegerValue,
   normalizePaymentStateValue,
   isPaymentSucceededStatus,
+  isPaymentRefundedOrPartiallyRefundedStatus,
   estimateStripeProcessingFeeCents,
   deriveBookingPaymentStatusFromScheduleStatuses,
 } from "../lib/routeUtils";
@@ -743,6 +744,238 @@ export async function ensurePaymentRecordForIntentInTx(
     });
 
   return inserted ?? null;
+}
+
+/**
+ * Applies a succeeded PaymentIntent to the DB inside a transaction: marks the
+ * booking + security-deposit payment rows succeeded, recomputes the booking
+ * payment status, and confirms instant-book bookings.
+ *
+ * This is the single source of truth for "a payment succeeded" and is invoked
+ * by every confirmation path: the Stripe webhook, the synchronous post-checkout
+ * reconcile endpoint, and the self-healing expiry guard. It is idempotent — if
+ * the payment row is already `succeeded` it returns `alreadyProcessed: true`
+ * without re-applying, so callers can gate one-time side effects (emails,
+ * notifications, chat) on a genuine transition.
+ */
+export async function applyPaymentIntentSuccessInTx(
+  tx: any,
+  params: {
+    paymentIntentId: string;
+    latestChargeId?: string | null;
+    actualStripeFeeAmount?: number | null;
+    fallbackBookingId?: string | null;
+    fallbackPaymentType?: string | null;
+    fallbackAmount?: number | null;
+    fallbackTotalAmount?: number | null;
+    fallbackPlatformFeeAmount?: number | null;
+    fallbackVendorGrossAmount?: number | null;
+    fallbackVendorNetPayoutAmount?: number | null;
+    fallbackStripeProcessingFeeEstimate?: number | null;
+    fallbackStripeConnectedAccountId?: string | null;
+  }
+): Promise<{ bookingId: string | null; alreadyProcessed: boolean }> {
+  const {
+    paymentIntentId,
+    latestChargeId,
+    actualStripeFeeAmount,
+    fallbackStripeProcessingFeeEstimate,
+    fallbackStripeConnectedAccountId,
+  } = params;
+
+  const payment = await ensurePaymentRecordForIntentInTx(tx, {
+    paymentIntentId,
+    fallbackBookingId: params.fallbackBookingId,
+    fallbackPaymentType: params.fallbackPaymentType,
+    fallbackAmount: params.fallbackAmount,
+    fallbackTotalAmount: params.fallbackTotalAmount,
+    fallbackPlatformFeeAmount: params.fallbackPlatformFeeAmount,
+    fallbackVendorGrossAmount: params.fallbackVendorGrossAmount,
+    fallbackVendorNetPayoutAmount: params.fallbackVendorNetPayoutAmount,
+    fallbackStripeProcessingFeeEstimate,
+    fallbackStripeConnectedAccountId,
+  });
+  if (!payment?.id || !payment.bookingId) return { bookingId: null, alreadyProcessed: false };
+
+  // Idempotency: already applied by another confirmation path — skip re-applying
+  // and signal callers not to re-fire one-time side effects.
+  if (isPaymentSucceededStatus(payment.status)) {
+    return { bookingId: payment.bookingId, alreadyProcessed: true };
+  }
+
+  const now = new Date();
+  const [bookingRow] = await tx
+    .select({
+      id: bookings.id,
+      status: bookings.status,
+      cancellationReason: bookings.cancellationReason,
+      bookingEndAt: bookings.bookingEndAt,
+      totalAmount: bookings.totalAmount,
+      platformFee: bookings.platformFee,
+      subtotalAmountCents: bookings.subtotalAmountCents,
+      vendorPayout: bookings.vendorPayout,
+      instantBookSnapshot: bookings.instantBookSnapshot,
+      outsideServiceRadius: bookings.outsideServiceRadius,
+    })
+    .from(bookings)
+    .where(eq(bookings.id, payment.bookingId))
+    .limit(1);
+  if (!bookingRow?.id) return { bookingId: payment.bookingId, alreadyProcessed: false };
+
+  const disputeCaseStatus = await getDisputeCaseStatusInTx(tx, payment.bookingId);
+
+  const payoutEligibility = computePayoutEligibility({
+    bookingStatus: bookingRow.status,
+    paymentStatus: "succeeded",
+    payoutStatus: payment.payoutStatus,
+    payoutBlockedReason: payment.payoutBlockedReason,
+    disputeStatus: payment.disputeStatus,
+    disputeCaseStatus,
+    paidOutAt: payment.paidOutAt,
+    payoutEligibleAt: payment.payoutEligibleAt,
+    bookingEndAt: bookingRow.bookingEndAt,
+    totalAmount: payment.totalAmount ?? parseIntegerValue(bookingRow.totalAmount) ?? payment.amount,
+    refundedAmount: payment.refundAmount,
+    vendorNetPayoutAmount: payment.vendorNetPayoutAmount,
+    actualStripeFeeAmount: actualStripeFeeAmount ?? payment.actualStripeFeeAmount,
+    stripeConnectedAccountId: payment.stripeConnectedAccountId ?? fallbackStripeConnectedAccountId,
+    stripeChargeId: payment.stripeChargeId ?? latestChargeId,
+    stripeTransferId: payment.stripeTransferId,
+    vendorAbsorbsStripeFees: VENDOR_ABSORBS_STRIPE_FEES,
+  }, now);
+
+  await tx
+    .update(payments)
+    .set({
+      status: "succeeded",
+      paidAt: now,
+      stripeChargeId: latestChargeId || payment.stripeChargeId || null,
+      actualStripeFeeAmount:
+        actualStripeFeeAmount ??
+        parseIntegerValue(payment.actualStripeFeeAmount) ??
+        parseIntegerValue(fallbackStripeProcessingFeeEstimate),
+      totalAmount:
+        parseIntegerValue(payment.totalAmount) ??
+        parseIntegerValue(bookingRow.totalAmount) ??
+        parseIntegerValue(payment.amount) ??
+        null,
+      platformFeeAmount:
+        parseIntegerValue(payment.platformFeeAmount) ??
+        parseIntegerValue(bookingRow.platformFee) ??
+        null,
+      vendorGrossAmount:
+        parseIntegerValue(payment.vendorGrossAmount) ??
+        parseIntegerValue(bookingRow.subtotalAmountCents),
+      vendorNetPayoutAmount:
+        parseIntegerValue(payment.vendorNetPayoutAmount) ??
+        parseIntegerValue(bookingRow.vendorPayout) ??
+        null,
+      stripeProcessingFeeEstimate:
+        parseIntegerValue(payment.stripeProcessingFeeEstimate) ??
+        parseIntegerValue(fallbackStripeProcessingFeeEstimate),
+      stripeConnectedAccountId: payment.stripeConnectedAccountId ?? fallbackStripeConnectedAccountId,
+      payoutStatus: payoutEligibility.payoutStatus,
+      payoutEligibleAt: payoutEligibility.payoutEligibleAt,
+      payoutBlockedReason: payoutEligibility.payoutBlockedReason,
+      payoutAdjustedAmount: payoutEligibility.adjustedPayoutAmount,
+      disputeStatus: null,
+    })
+    .where(eq(payments.id, payment.id));
+
+  // Mark the security deposit row (same PaymentIntent, separate row) as
+  // succeeded so the auto-refund job and cancellation logic can find it.
+  await tx
+    .update(payments)
+    .set({
+      status: "succeeded",
+      paidAt: now,
+      stripeChargeId: latestChargeId || null,
+    })
+    .where(
+      and(
+        eq(payments.stripePaymentIntentId, paymentIntentId),
+        eq(payments.paymentType, "security_deposit")
+      )
+    );
+
+  const nextBookingPaymentStatus = await recomputeBookingPaymentStatusInTx(tx, payment.bookingId);
+  const bookingStatus = normalizePaymentStateValue(bookingRow.status);
+  if (bookingStatus === "cancelled" || bookingStatus === "expired" || bookingStatus === "failed") {
+    await tx
+      .update(bookings)
+      .set({
+        cancellationReason:
+          bookingRow.cancellationReason || `payment_succeeded_after_${bookingStatus || "closure"}`,
+        paymentStatus: nextBookingPaymentStatus as any,
+        updatedAt: now,
+      })
+      .where(eq(bookings.id, bookingRow.id));
+  } else {
+    // Request-to-book listings (instantBookSnapshot = false) must stay
+    // "pending" after payment — the vendor needs to explicitly accept.
+    // Instant-book listings outside the service radius also stay "pending"
+    // because the vendor must confirm the out-of-area booking. Only instant-book
+    // listings within the service radius are auto-confirmed.
+    const isInstantBook = bookingRow.instantBookSnapshot !== false;
+    const requiresVendorConfirmation = !isInstantBook || bookingRow.outsideServiceRadius === true;
+    await tx
+      .update(bookings)
+      .set({
+        ...(!requiresVendorConfirmation ? { status: "confirmed" as const, confirmedAt: now } : {}),
+        paymentStatus: nextBookingPaymentStatus as any,
+        updatedAt: now,
+      })
+      .where(eq(bookings.id, bookingRow.id));
+  }
+
+  return { bookingId: payment.bookingId, alreadyProcessed: false };
+}
+
+/**
+ * Applies a failed PaymentIntent to the DB inside a transaction. Mirrors the
+ * `payment_intent.payment_failed` webhook branch. Idempotent: never overrides a
+ * payment that already succeeded or was refunded.
+ */
+export async function applyPaymentIntentFailureInTx(
+  tx: any,
+  params: {
+    paymentIntentId: string;
+    fallbackBookingId?: string | null;
+    fallbackPaymentType?: string | null;
+    fallbackAmount?: number | null;
+    fallbackTotalAmount?: number | null;
+    fallbackPlatformFeeAmount?: number | null;
+    fallbackVendorGrossAmount?: number | null;
+    fallbackVendorNetPayoutAmount?: number | null;
+    fallbackStripeProcessingFeeEstimate?: number | null;
+    fallbackStripeConnectedAccountId?: string | null;
+  }
+): Promise<{ bookingId: string | null }> {
+  const payment = await ensurePaymentRecordForIntentInTx(tx, { ...params });
+  if (!payment?.id || !payment.bookingId) return { bookingId: null };
+
+  if (
+    isPaymentSucceededStatus(payment.status) ||
+    isPaymentRefundedOrPartiallyRefundedStatus(payment.status)
+  ) {
+    return { bookingId: payment.bookingId };
+  }
+
+  await tx
+    .update(payments)
+    .set({
+      status: "failed",
+      payoutStatus: "cancelled",
+      payoutBlockedReason: "payment_failed",
+      payoutAdjustedAmount: 0,
+    })
+    .where(eq(payments.id, payment.id));
+
+  const nextBookingPaymentStatus = await recomputeBookingPaymentStatusInTx(tx, payment.bookingId);
+  if (nextBookingPaymentStatus === "failed") {
+    await markBookingAsPaymentFailedInTx(tx, payment.bookingId, "stripe_payment_failed");
+  }
+  return { bookingId: payment.bookingId };
 }
 
 /**

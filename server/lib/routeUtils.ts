@@ -16,6 +16,7 @@ import {
   computeChatRetentionExpiry,
   isChatExpiredForEventDate,
 } from "../streamChat";
+import { resolveListingPolicyColumns } from "./cancellationPolicyPresets";
 
 // ─── Generic primitives ───────────────────────────────────────────────────────
 
@@ -859,6 +860,8 @@ export function buildCanonicalListingColumns(input: {
     takedownFeeEnabled?: unknown;
     takedownFeeAmountCents?: unknown;
     allowPreBookingContact?: unknown;
+    cancellationPolicy?: unknown;
+    cancellationPolicyDays?: unknown;
     photos?: unknown;
   };
   classification: {
@@ -1019,6 +1022,16 @@ export function buildCanonicalListingColumns(input: {
     asTrimmedString(existing?.description) ||
     null;
 
+  // Cancellation policy: prefer the wizard payload, fall back to the existing
+  // column so partial updates don't wipe a previously-set policy. The wizard
+  // sends the window in `cancellationPolicyHours`; the column stores that number.
+  const cancellationPolicyColumns = resolveListingPolicyColumns(
+    listingData?.cancellationPolicy ?? existing?.cancellationPolicy,
+    listingData?.cancellationPolicyHours ??
+      listingData?.cancellationPolicyDays ??
+      existing?.cancellationPolicyDays
+  );
+
   return {
     category: input.classification.category ?? normalizeListingCategory(existing?.category),
     subcategory: input.classification.subcategory ?? normalizeListingSubcategory(existing?.subcategory),
@@ -1073,6 +1086,8 @@ export function buildCanonicalListingColumns(input: {
     takedownOffered,
     takedownFeeEnabled,
     takedownFeeAmountCents: takedownFeeEnabled ? takedownFeeAmountCentsRaw ?? null : null,
+    cancellationPolicy: cancellationPolicyColumns.cancellationPolicy,
+    cancellationPolicyDays: cancellationPolicyColumns.cancellationPolicyDays,
     photos,
   };
 }

@@ -27,6 +27,7 @@ import { deleteStreamBookingChannel, isChatExpiredForEventDate, isStreamChatConf
 import { syncBookingToGoogleCalendarSafely, runGoogleBookingSyncVerificationForVendorAccount } from "./googleSyncService";
 import { renewExpiringGoogleCalendarWatchChannels } from "../google";
 import { processSinglePayoutCandidate } from "./paymentService";
+import { reconcilePaymentIntent } from "./paymentReconcile";
 import { runReviewPromptJob } from "../jobs/reviewPromptJob";
 import { runStripeWebhookCleanupJob } from "../jobs/stripeWebhookCleanup";
 
@@ -157,14 +158,20 @@ export async function assertCanonicalBookingSchemaReady() {
 
 export async function expireStalePendingBookings() {
   const now = new Date();
-  const expiredRows: any = await db.execute(drizzleSql`
-    update bookings b
-    set
-      status = 'expired',
-      payment_status = 'failed',
-      cancellation_reason = coalesce(nullif(trim(b.cancellation_reason), ''), ${BOOKING_PENDING_EXPIRY_REASON}),
-      cancelled_at = coalesce(b.cancelled_at, ${now}),
-      updated_at = ${now}
+
+  // Find candidates the SQL-only heuristic would have expired: stale, still
+  // payment_status='pending', with no succeeded payment row recorded yet.
+  const candidateRows: any = await db.execute(drizzleSql`
+    select
+      b.id as "bookingId",
+      (
+        select p.stripe_payment_intent_id
+        from payments p
+        where p.booking_id = b.id and p.payment_type = 'booking'
+        order by p.created_at desc
+        limit 1
+      ) as "paymentIntentId"
+    from bookings b
     where b.status in ('pending', 'confirmed')
       and b.payment_status = 'pending'
       and b.created_at < now() - (${BOOKING_PENDING_EXPIRY_MINUTES} * interval '1 minute')
@@ -174,29 +181,104 @@ export async function expireStalePendingBookings() {
         where p.booking_id = b.id
           and p.status in ('succeeded')
       )
-    returning b.id
   `);
 
-  const bookingIds = extractRows<{ id?: string | null }>(expiredRows)
-    .map((row) => asTrimmedString(row?.id))
-    .filter((id): id is string => Boolean(id));
+  const candidates = extractRows<{ bookingId?: string | null; paymentIntentId?: string | null }>(candidateRows)
+    .map((row) => ({
+      bookingId: asTrimmedString(row?.bookingId),
+      paymentIntentId: asTrimmedString(row?.paymentIntentId),
+    }))
+    .filter((c) => Boolean(c.bookingId));
 
-  if (bookingIds.length === 0) {
+  if (candidates.length === 0) {
+    return 0;
+  }
+
+  // Before expiring, ask Stripe the truth. A "pending" booking with a succeeded
+  // PaymentIntent means a confirmation path was lost (webhook + synchronous
+  // reconcile both missed) — heal it instead of killing a paid booking. Anything
+  // still in flight is left for the next cycle; only genuinely-abandoned
+  // PaymentIntents are expired.
+  const { stripe } = await import("../stripe");
+  const toExpire: string[] = [];
+  let reconciled = 0;
+  let skippedInFlight = 0;
+
+  for (const candidate of candidates) {
+    const bookingId = candidate.bookingId as string;
+    if (!candidate.paymentIntentId) {
+      // Never initialized payment — truly abandoned.
+      toExpire.push(bookingId);
+      continue;
+    }
+    try {
+      const intent = await stripe.paymentIntents.retrieve(candidate.paymentIntentId);
+      const status = asTrimmedString(intent?.status);
+      if (status === "succeeded") {
+        await reconcilePaymentIntent(candidate.paymentIntentId, { source: "expiry_guard" });
+        reconciled += 1;
+      } else if (
+        status === "processing" ||
+        status === "requires_action" ||
+        status === "requires_confirmation" ||
+        status === "requires_capture"
+      ) {
+        // Payment is still in flight — don't expire; revisit next cycle.
+        skippedInFlight += 1;
+      } else {
+        // requires_payment_method / canceled / unknown → abandoned.
+        toExpire.push(bookingId);
+      }
+    } catch (err: any) {
+      // Stripe lookup failed — fail safe toward NOT expiring a possibly-paid
+      // booking. It'll be re-evaluated on the next cycle.
+      skippedInFlight += 1;
+      logger.warn(
+        `[booking expiry] Stripe lookup failed for booking ${bookingId} (pi=${candidate.paymentIntentId}); skipping this cycle:`,
+        err?.message || err
+      );
+    }
+  }
+
+  if (reconciled > 0 || skippedInFlight > 0) {
+    logger.info(
+      `[booking expiry] guard: reconciled ${reconciled} paid-but-unsynced booking(s), skipped ${skippedInFlight} in-flight, expiring ${toExpire.length}`
+    );
+  }
+
+  if (toExpire.length === 0) {
     return 0;
   }
 
   await db
+    .update(bookings)
+    .set({
+      status: "expired",
+      paymentStatus: "failed",
+      cancellationReason: drizzleSql`coalesce(nullif(trim(${bookings.cancellationReason}), ''), ${BOOKING_PENDING_EXPIRY_REASON})`,
+      cancelledAt: drizzleSql`coalesce(${bookings.cancelledAt}, ${now})`,
+      updatedAt: now,
+    })
+    .where(
+      and(
+        inArray(bookings.id, toExpire),
+        inArray(bookings.status, ["pending", "confirmed"]),
+        eq(bookings.paymentStatus, "pending")
+      )
+    );
+
+  await db
     .update(payments)
     .set({ status: "failed" })
-    .where(and(inArray(payments.bookingId, bookingIds), eq(payments.status, "pending")));
+    .where(and(inArray(payments.bookingId, toExpire), eq(payments.status, "pending")));
 
   // Fire-and-forget: delete Google Calendar events for every expired booking.
   // Each sync call is independent — one failure doesn't block the others.
-  for (const bookingId of bookingIds) {
+  for (const bookingId of toExpire) {
     syncBookingToGoogleCalendarSafely(bookingId, "expireStalePendingBookings google-sync").catch(() => {});
   }
 
-  return bookingIds.length;
+  return toExpire.length;
 }
 
 export async function cancelUnansweredBookingRequests(): Promise<number> {

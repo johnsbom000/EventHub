@@ -136,7 +136,6 @@ export default function Hero() {
                     <SelectValue placeholder={t("hero.search.eventTypePlaceholder")} />
                   </SelectTrigger>
                   <SelectContent
-                    disablePortal
                     position="popper"
                     side="bottom"
                     align="start"

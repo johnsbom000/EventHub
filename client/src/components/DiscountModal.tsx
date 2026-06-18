@@ -19,6 +19,7 @@ import { useAuth0 } from "@auth0/auth0-react";
 interface Listing {
   id: string;
   title?: string;
+  status?: string;
   listingData?: { title?: string };
 }
 
@@ -63,7 +64,15 @@ export function DiscountModal({ open, onOpenChange, editingDiscount }: DiscountM
     queryKey: ["/api/vendor/listings"],
     enabled: isAuthenticated && open,
   });
-  const listings = Array.isArray(listingsData) ? listingsData : [];
+  // Only active listings can take bookings, so only those are eligible for a
+  // discount. Drafts/pending/inactive listings are excluded here. Keep any
+  // listing already attached to the discount being edited so it isn't silently
+  // dropped if its status later changed.
+  const listings = (Array.isArray(listingsData) ? listingsData : []).filter(
+    (l) =>
+      (l.status ?? "").toLowerCase() === "active" ||
+      selectedListingIds.includes(l.id),
+  );
 
   // Populate form when editing
   useEffect(() => {

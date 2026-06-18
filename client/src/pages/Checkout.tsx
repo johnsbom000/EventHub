@@ -4,7 +4,7 @@ import { useQuery } from "@tanstack/react-query";
 import { useAuth0 } from "@auth0/auth0-react";
 import { CardElement, Elements, useElements, useStripe } from "@stripe/react-stripe-js";
 import { loadStripe } from "@stripe/stripe-js";
-import { ChevronLeft, Calendar, CheckCircle2, MapPin } from "lucide-react";
+import { ChevronLeft, Calendar, CheckCircle2, MapPin, ShieldCheck } from "lucide-react";
 import { useTranslation } from "react-i18next";
 
 import { Button } from "@/components/ui/button";
@@ -134,6 +134,24 @@ function parseAddressFromLabel(label: string): {
   }
 
   return { streetAddress, city, state, zipCode };
+}
+
+// Nominatim sometimes returns a result with city/state/zip but no structured
+// `street` field. The label is comma-separated, most-specific first
+// ("2556, East Arbor Drive, St. George, ..."), so we can recover the street
+// from it: combine a leading house number with the following road segment.
+function deriveStreetFromLabel(label: string, knownCity?: string): string {
+  const parts = label.split(",").map((p) => p.trim()).filter(Boolean);
+  if (parts.length === 0) return "";
+
+  let street = parts[0];
+  if (/^\d+[a-z]?$/i.test(parts[0]) && parts[1]) {
+    street = `${parts[0]} ${parts[1]}`;
+  }
+
+  // Never echo the city back into the street box.
+  if (knownCity && street.toLowerCase() === knownCity.toLowerCase()) return "";
+  return street;
 }
 
 function parseOptionalNumber(value: unknown): number | null {
@@ -649,11 +667,27 @@ function CheckoutContent({
         setupFeeAmountCents,
         takedownFeeEnabled,
         takedownFeeAmountCents,
+        cancellationPolicy:
+          (typeof raw?.cancellationPolicy === "string" && raw.cancellationPolicy.trim()) ||
+          (typeof ld?.cancellationPolicy === "string" && ld.cancellationPolicy.trim()) ||
+          "cancel_anytime",
+        cancellationPolicyHours:
+          parseOptionalNumber(raw?.cancellationPolicyDays) ??
+          parseOptionalNumber(ld?.cancellationPolicyHours) ??
+          48,
         securityDepositEnabled: parseBooleanLike(raw?.securityDepositEnabled ?? ld?.securityDepositEnabled),
         securityDepositCents: parseOptionalNumber(raw?.securityDepositCents ?? ld?.securityDepositCents) ?? null,
         // Package children — used to resolve selected package price in checkout
         packages: Array.isArray(raw?.packages)
-          ? (raw.packages as Array<{ id: string; title: string | null; priceCents: number | null; pricingUnit: string | null; whatsIncluded: string[] }>)
+          ? (raw.packages as Array<{
+              id: string;
+              title: string | null;
+              priceCents: number | null;
+              pricingUnit: string | null;
+              whatsIncluded: string[];
+              cancellationPolicy?: string | null;
+              cancellationPolicyDays?: number | null;
+            }>)
           : [],
         attachedAddons: Array.isArray(raw?.attachedAddons)
           ? (raw.attachedAddons as Array<{ id: string; title: string | null; priceCents: number | null }>)
@@ -834,11 +868,30 @@ function CheckoutContent({
 
   // When a package is selected, use that package's price/unit instead of the container's.
   const selectedPackage = selectedPackageId && data?.packages
-    ? (data.packages as Array<{ id: string; title: string | null; priceCents: number | null; pricingUnit: string | null }>).find((p) => p.id === selectedPackageId) ?? null
+    ? (data.packages as Array<{
+        id: string;
+        title: string | null;
+        priceCents: number | null;
+        pricingUnit: string | null;
+        cancellationPolicy?: string | null;
+        cancellationPolicyDays?: number | null;
+      }>).find((p) => p.id === selectedPackageId) ?? null
     : null;
   const effectivePriceCents = selectedPackage?.priceCents ?? data?.priceCents ?? 0;
   const effectivePricingUnit: "per_day" | "per_hour" =
     selectedPackage?.pricingUnit === "per_hour" ? "per_hour" : (data?.pricingUnit as "per_day" | "per_hour") ?? "per_day";
+  const effectiveCancellationPolicy =
+    selectedPackage?.cancellationPolicy || data?.cancellationPolicy || "cancel_anytime";
+  const effectiveCancellationPolicyWindow =
+    selectedPackage?.cancellationPolicyDays ?? data?.cancellationPolicyHours ?? 48;
+  const cancellationPolicyDescription =
+    effectiveCancellationPolicy === "no_cancellations"
+      ? t("checkout.cancellationPolicyNoRefund")
+      : effectiveCancellationPolicy === "cancel_within_hours"
+        ? t("checkout.cancellationPolicyWithinHours", { hours: effectiveCancellationPolicyWindow })
+        : effectiveCancellationPolicy === "cancel_within_days"
+          ? t("checkout.cancellationPolicyWithinDays", { days: effectiveCancellationPolicyWindow })
+          : t("checkout.cancellationPolicyAnytime");
 
   const isHourlyBooking = effectivePricingUnit === "per_hour";
   const shouldShowPerDayLogistics = Boolean(data && !isHourlyBooking);
@@ -1201,6 +1254,27 @@ function CheckoutContent({
       const paymentIntentStatus = confirmResult.paymentIntent?.status || "";
       if (paymentIntentStatus === "succeeded" || paymentIntentStatus === "processing") {
         persistPendingPaymentDraft(null);
+
+        // Synchronous reconcile: confirmCardPayment talks straight to Stripe, so
+        // the server hasn't learned the payment succeeded yet — only the webhook
+        // would tell it. Proactively reconcile so the booking is marked paid even
+        // if the webhook is lost/late. Best-effort: if this fails we still redirect
+        // (the webhook + the expiry-guard worker are the backstops).
+        if (paymentIntentStatus === "succeeded") {
+          try {
+            await fetch(`/api/bookings/${encodeURIComponent(bookingId)}/reconcile-payment`, {
+              method: "POST",
+              headers: {
+                "Content-Type": "application/json",
+                Authorization: `Bearer ${token}`,
+              },
+              body: JSON.stringify({}),
+            });
+          } catch (reconcileErr) {
+            console.warn("[checkout] payment reconcile failed (backstops will cover):", reconcileErr);
+          }
+        }
+
         const pendingReasonParam = bookingPendingReason ? `&pendingReason=${encodeURIComponent(bookingPendingReason)}` : "";
         setLocation(`/dashboard/events?bookingId=${encodeURIComponent(bookingId)}${pendingReasonParam}`);
         return;
@@ -1357,7 +1431,9 @@ function CheckoutContent({
                       setDeliveryZip("");
                       return;
                     }
-                    setDeliveryAddress(loc.street || "");
+                    setDeliveryAddress(
+                      loc.street || deriveStreetFromLabel(loc.label, loc.city)
+                    );
                     setDeliveryCity(loc.city || "");
                     setDeliveryState(loc.state || "");
                     setDeliveryZip(loc.postalCode || "");
@@ -1869,6 +1945,20 @@ function CheckoutContent({
                 </p>
               ) : null}
 
+              <div className="border-t border-[rgba(74,106,125,0.22)] pt-4">
+                <div className="flex items-start gap-3">
+                  <ShieldCheck className="mt-0.5 h-5 w-5 shrink-0 text-[#4a6a7d]" />
+                  <div>
+                    <div className="text-sm font-semibold text-foreground">
+                      {t("checkout.cancellationPolicy")}
+                    </div>
+                    <p className="mt-1 text-sm leading-relaxed text-muted-foreground">
+                      {cancellationPolicyDescription}
+                    </p>
+                  </div>
+                </div>
+              </div>
+
               <div className="space-y-2">
                 <Label>{t("checkout.cardNumber")}</Label>
                 <div className={`rounded-md border p-3 ${hasAttemptedSubmit && !cardComplete ? "border-red-500" : "border-border"}`}>
@@ -1908,7 +1998,7 @@ function CheckoutContent({
               <p className="text-xs text-muted-foreground leading-relaxed">
                 {t("checkout.termsDisclaimer").split("Terms of Service")[0]}
                 <a href="/terms" target="_blank" rel="noopener noreferrer" className="underline underline-offset-2 hover:text-foreground">
-                  {t("terms.title") || "Terms of Service"}
+                  {t("terms.pageTitle")}
                 </a>
                 {t("checkout.termsDisclaimer").split("Terms of Service")[1]}{" "}
                 <a href="/privacy" target="_blank" rel="noopener noreferrer" className="underline underline-offset-2 hover:text-foreground">

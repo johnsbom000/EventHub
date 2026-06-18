@@ -466,8 +466,10 @@ export default function ListingDetailPage() {
  },
  shopActive,
  vacationBlocks,
- cancellationPolicy: (ld?.cancellationPolicy ?? raw?.cancellationPolicy ?? "cancel_anytime") as string,
- cancellationPolicyHours: Number(ld?.cancellationPolicyHours ?? raw?.cancellationPolicyHours ?? 48),
+ // Columns are the single source of truth (set on every listing save + backfilled).
+ // listing_data is a legacy fallback only for any not-yet-backfilled rows.
+ cancellationPolicy: (raw?.cancellationPolicy ?? ld?.cancellationPolicy ?? "cancel_anytime") as string,
+ cancellationPolicyHours: Number(raw?.cancellationPolicyDays ?? ld?.cancellationPolicyHours ?? 48),
  securityDepositEnabled: parseBooleanLike(raw?.securityDepositEnabled ?? ld?.securityDepositEnabled) === true,
  securityDepositCents: toFiniteNumber(raw?.securityDepositCents ?? ld?.securityDepositCents),
  listingType: (raw?.listingType ?? "single") as string,
@@ -1311,8 +1313,19 @@ function ReservationCard({
  value={date}
  onChange={(e) => setDate(e.target.value)}
  min={new Date().toISOString().split("T")[0]}
+ onClick={(e) => {
+   // Open the native date picker when anywhere in the field is clicked,
+   // not just the calendar icon. showPicker() is a no-op/throws on
+   // browsers that don't support it, so guard and swallow.
+   const input = e.currentTarget as HTMLInputElement & { showPicker?: () => void };
+   try {
+     input.showPicker?.();
+   } catch {
+     /* not supported / not allowed — fall back to default icon behavior */
+   }
+ }}
  className={[
- "w-full rounded-md border bg-background px-3 py-2 text-sm",
+ "w-full cursor-pointer rounded-md border bg-background px-3 py-2 text-sm",
  vacationConflict ? "border-destructive" : "border-border",
  ].join(" ")}
  />
