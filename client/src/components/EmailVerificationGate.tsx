@@ -1,6 +1,6 @@
 import { useEffect, useRef, useState } from "react";
 import { useAuth0 } from "@auth0/auth0-react";
-import { Loader2 } from "lucide-react";
+import { Loader2, RefreshCw } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { getFreshAccessToken } from "@/lib/authToken";
 import { setGlobalEmailUnverifiedCallback } from "@/lib/queryClient";
@@ -113,10 +113,13 @@ export default function EmailVerificationGate({ children }: { children: React.Re
           We sent a verification link to{" "}
           <span className="font-medium text-[#16222D]">{user?.email || "your inbox"}</span>.
         </p>
-        <p className="text-sm text-muted-foreground mb-6">
-          Click the link in that email (check spam too) — this page will continue
-          automatically once you're verified.
+        <p className="text-sm text-muted-foreground mb-3">
+          Click the link in that email (check spam too).
         </p>
+        <div className="mb-6 flex items-start gap-2 rounded-lg border border-amber-200 bg-amber-50 p-3 text-sm font-semibold text-amber-900">
+          <RefreshCw className="mt-0.5 h-4 w-4 shrink-0" />
+          <span>Manually refresh this page after verification.</span>
+        </div>
 
         <div className="mb-2 flex items-center gap-2 text-sm text-muted-foreground">
           <Loader2 className="h-4 w-4 animate-spin" />
