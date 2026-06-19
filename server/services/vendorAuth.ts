@@ -161,7 +161,7 @@ export async function requireVendorAccountAuth0(req: any, res: any, next: any) {
 
     return next();
   } catch (err: any) {
-    logger.error("requireVendorAccountAuth0 failed:", err?.message || err);
+    logger.error({ err }, "requireVendorAccountAuth0 failed");
     return res.status(500).json({ error: "Failed to resolve vendor account" });
   }
 }
