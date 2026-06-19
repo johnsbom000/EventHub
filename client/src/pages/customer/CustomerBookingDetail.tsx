@@ -16,6 +16,7 @@ import {
   CheckCircle,
   ChevronLeft,
   Clock,
+  Hash,
   MapPin,
   MessageSquare,
   Package,
@@ -73,6 +74,10 @@ interface BookingDetail {
   createdAt: string;
   confirmedAt: string | null;
   cancelledAt: string | null;
+}
+
+interface CancelBookingResult {
+  message?: string;
 }
 
 // ─── Helpers ──────────────────────────────────────────────────────────────────
@@ -248,6 +253,19 @@ function BookingCard({
 
       {/* Core booking info */}
       <dl className="space-y-3 text-sm">
+        {/* Booking ID */}
+        <div className="flex items-start gap-3">
+          <Hash className="h-4 w-4 mt-0.5 shrink-0 text-[#4a6a7d]" />
+          <div className="min-w-0">
+            <dt className="text-xs font-semibold uppercase tracking-wider text-[#4a6a7d]/70 mb-0.5">
+              Booking ID
+            </dt>
+            <dd className="select-text break-all font-mono text-xs font-medium text-[#2a3a42]">
+              {booking.id}
+            </dd>
+          </div>
+        </div>
+
         {/* Date */}
         <div className="flex items-start gap-3">
           <Calendar className="h-4 w-4 mt-0.5 shrink-0 text-[#4a6a7d]" />
@@ -424,15 +442,18 @@ export default function CustomerBookingDetail() {
         const body = await res.json().catch(() => ({}));
         throw new Error(body?.error || "Failed to cancel booking");
       }
-      return res.json();
+      return res.json() as Promise<CancelBookingResult>;
     },
-    onSuccess: () => {
+    onSuccess: (result) => {
       qc.invalidateQueries({ queryKey: [`/api/customer/bookings/${bookingId}`] });
       qc.invalidateQueries({ queryKey: ["/api/customer/bookings"] });
       setCancelModalOpen(false);
       setCancelReasonSelected("");
       setCancelReasonOther("");
-      toast({ title: "Booking cancelled", description: "The vendor has been notified." });
+      toast({
+        title: "Booking cancelled",
+        description: result.message || "The vendor has been notified.",
+      });
     },
     onError: (err: Error) => {
       toast({ title: "Error", description: err.message, variant: "destructive" });

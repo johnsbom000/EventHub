@@ -31,6 +31,48 @@ export interface PolicyValidationError {
   message: string;
 }
 
+/** Wizard policy values, in sync with the client listing wizard. */
+export const CANCELLATION_POLICY_VALUES = [
+  "cancel_anytime",
+  "cancel_within_hours",
+  "cancel_within_days",
+  "no_cancellations",
+] as const;
+
+export type ListingCancellationPolicyValue = (typeof CANCELLATION_POLICY_VALUES)[number];
+
+/**
+ * Resolve the persisted listing policy columns (`cancellation_policy` +
+ * `cancellation_policy_days`) from the wizard's `listingData` fields.
+ *
+ * The wizard sends `cancellationPolicy` plus a window number in
+ * `cancellationPolicyHours` (the column name says "days" but stores hours for
+ * `cancel_within_hours` — `policyFromListingWizard` divides by 24). Invalid or
+ * missing input defaults to `cancel_anytime` with no window, matching the
+ * historical full-refund-anytime default.
+ *
+ * @param policy - raw policy string (e.g. listingData.cancellationPolicy)
+ * @param window - raw window number; hours for cancel_within_hours, days for cancel_within_days
+ */
+export function resolveListingPolicyColumns(
+  policy: unknown,
+  window: unknown
+): { cancellationPolicy: ListingCancellationPolicyValue; cancellationPolicyDays: number | null } {
+  const policyRaw = typeof policy === "string" ? policy.trim() : "";
+  const resolvedPolicy: ListingCancellationPolicyValue =
+    (CANCELLATION_POLICY_VALUES as readonly string[]).includes(policyRaw)
+      ? (policyRaw as ListingCancellationPolicyValue)
+      : "cancel_anytime";
+
+  let cancellationPolicyDays: number | null = null;
+  if (resolvedPolicy === "cancel_within_hours" || resolvedPolicy === "cancel_within_days") {
+    const n = typeof window === "number" ? window : Number(window);
+    cancellationPolicyDays = Number.isFinite(n) && n > 0 ? Math.floor(n) : null;
+  }
+
+  return { cancellationPolicy: resolvedPolicy, cancellationPolicyDays };
+}
+
 /**
  * Convert the listing wizard's simple policy string + window into a full CancellationPolicy.
  * The `days` param stores hours for `cancel_within_hours` and days for `cancel_within_days`.

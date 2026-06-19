@@ -75,12 +75,11 @@ type SavedListing = any;
 // ── Helpers ────────────────────────────────────────────────────────────────
 
 function formatUsd(cents: number) {
- const normalized =
- Number.isInteger(cents) && cents >= 10_000 ? cents : Math.round(cents * 100);
+ // Booking amounts (bookings.total_amount) are always stored in cents.
  return new Intl.NumberFormat("en-US", {
  style: "currency",
  currency: "USD",
- }).format(normalized / 100);
+ }).format((cents || 0) / 100);
 }
 
 function vendorLabel(b: CustomerBooking) {
@@ -250,6 +249,10 @@ function BookingRow({ booking, isHighlighted }: { booking: CustomerBooking; isHi
        {booking.status}
      </Badge>
    </button>
+   <p className="mt-1 px-0.5 text-xs text-[#4a6a7d]/70">
+     Booking ID:{" "}
+     <span className="select-text break-all font-mono text-[#2a3a42]">{booking.id}</span>
+   </p>
    {canMessage && (
      <div className="mt-2">
        <button
@@ -570,6 +573,10 @@ function CompletedEventGroup({
  {t("customerEvents.completedBadge")}
  </Badge>
  </button>
+ <p className="mt-1 px-0.5 text-xs text-[#4a6a7d]/70">
+ Booking ID:{" "}
+ <span className="select-text break-all font-mono text-[#2a3a42]">{b.id}</span>
+ </p>
  <div className="mt-2 flex flex-wrap items-center gap-3">
    <ReviewPrompt booking={b} />
    {isChatWindowOpen(b.eventDate) && b.paymentStatus === "succeeded" && (

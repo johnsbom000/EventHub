@@ -526,19 +526,10 @@ export function registerBookingRoutes(app: Express): void {
         ? (booking.cancellationPolicySnapshot as CancellationPolicy)
         : policyFromListingWizard("cancel_anytime", null);
 
-      const cancellationDate = new Date();
-      const refundCalc = calculateRefund({
-        totalAmountCents: booking.totalAmount,
-        eventDate: booking.eventDate,
-        eventTimezone: booking.eventTimezone,
-        cancellationDate,
-        policy,
-      });
-
       // ── Find all payments for this booking ────────────────────────────────
       // Query all payment types separately so we refund the right amounts
       // to the right Stripe payment intents.
-      const allBookingPayments = await db
+      let allBookingPayments = await db
         .select({
           id: payments.id,
           paymentType: payments.paymentType,
@@ -548,32 +539,86 @@ export function registerBookingRoutes(app: Express): void {
           refundAmount: payments.refundAmount,
         })
         .from(payments)
-        .where(
-          and(
-            eq(payments.bookingId, bookingId),
-            or(
-              eq(payments.status, "succeeded"),
-              eq(payments.status, "partially_refunded")
-            )
-          )
-        )
+        .where(eq(payments.bookingId, bookingId))
         .orderBy(desc(payments.createdAt));
 
+      // Checkout returns as soon as Stripe confirms the PaymentIntent, while the
+      // webhook that marks local payment rows succeeded can arrive moments later.
+      // Reconcile Stripe before deciding that no payment was collected.
+      const unsettledIntentIds = Array.from(
+        new Set(
+          allBookingPayments
+            .filter(
+              (row) =>
+                !isPaymentSucceededStatus(row.status) &&
+                !isPaymentRefundedOrPartiallyRefundedStatus(row.status)
+            )
+            .map((row) => row.stripePaymentIntentId)
+            .filter(Boolean)
+        )
+      );
+
+      if (unsettledIntentIds.length > 0) {
+        const { stripeClient } = await import("../stripe");
+
+        for (const paymentIntentId of unsettledIntentIds) {
+          const intent = await stripeClient.paymentIntents.retrieve(paymentIntentId);
+          if (intent.status === "processing") {
+            return res.status(409).json({
+              error: "Payment is still processing. Please wait a moment and try cancelling again.",
+            });
+          }
+          if (intent.status !== "succeeded") continue;
+
+          const latestChargeId =
+            typeof intent.latest_charge === "string"
+              ? intent.latest_charge
+              : intent.latest_charge?.id ?? null;
+
+          await db
+            .update(payments)
+            .set({
+              status: "succeeded",
+              paidAt: new Date(),
+              stripeChargeId: latestChargeId,
+            })
+            .where(
+              and(
+                eq(payments.stripePaymentIntentId, paymentIntentId),
+                inArray(payments.status, ["pending", "failed"])
+              )
+            );
+
+          allBookingPayments = allBookingPayments.map((row) =>
+            row.stripePaymentIntentId === paymentIntentId &&
+            !isPaymentRefundedOrPartiallyRefundedStatus(row.status)
+              ? { ...row, status: "succeeded" as const }
+              : row
+          );
+        }
+      }
+
       const payment = allBookingPayments.find(
-        (p) => p.paymentType === "booking"
+        (p) =>
+          p.paymentType === "booking" &&
+          (isPaymentSucceededStatus(p.status) || isPaymentRefundedOrPartiallyRefundedStatus(p.status))
       );
       // Vendor-proposed travel fee (separate Stripe charge, same policy % applied)
       const travelFeePayments = allBookingPayments.filter(
-        (p) => p.paymentType === "travel_fee"
+        (p) =>
+          p.paymentType === "travel_fee" &&
+          (isPaymentSucceededStatus(p.status) || isPaymentRefundedOrPartiallyRefundedStatus(p.status))
       );
       // Security deposit (separate Stripe charge)
       const depositPayment = allBookingPayments.find(
-        (p) => p.paymentType === "security_deposit"
+        (p) =>
+          p.paymentType === "security_deposit" &&
+          (isPaymentSucceededStatus(p.status) || isPaymentRefundedOrPartiallyRefundedStatus(p.status))
       );
 
       const now = new Date();
 
-      if (!payment || !isPaymentSucceededStatus(payment.status)) {
+      if (!payment) {
         // No main payment collected yet — just cancel the booking.
         await db
           .update(bookings)
@@ -606,6 +651,15 @@ export function registerBookingRoutes(app: Express): void {
         return res.json({ success: true, bookingId, refundCents: 0, message: "Booking cancelled. No payment was collected." });
       }
 
+      const cancellationDate = new Date();
+      const refundCalc = calculateRefund({
+        totalAmountCents: payment.amount,
+        eventDate: booking.eventDate,
+        eventTimezone: booking.eventTimezone,
+        cancellationDate,
+        policy,
+      });
+
       // ── Safety cap: ensure refund never exceeds what was originally charged ─
       const safeRefundCents = (p: { amount: number; refundAmount: number | null }, requested: number) => {
         const alreadyRefunded = typeof p.refundAmount === "number" ? p.refundAmount : 0;
@@ -624,13 +678,12 @@ export function registerBookingRoutes(app: Express): void {
         ),
       }));
 
-      // Security deposit: refund immediately only if policy gives ANY refund (i.e.
-      // cancellation is within the allowed window). If policy = 0%, the deposit
-      // stays put and is handled by the 72h post-event auto-refund job.
+      // Security deposits protect against event damage, so they are refunded on
+      // cancellation independently of the listing's service cancellation policy.
       const refundDepositNow =
-        refundCalc.grossRefundPercentage > 0 &&
         !!depositPayment &&
-        isPaymentSucceededStatus(depositPayment.status);
+        (isPaymentSucceededStatus(depositPayment.status) ||
+          isPaymentRefundedOrPartiallyRefundedStatus(depositPayment.status));
       const depositRefundCents = refundDepositNow
         ? safeRefundCents(depositPayment!, depositPayment!.amount)
         : 0;
@@ -663,6 +716,7 @@ export function registerBookingRoutes(app: Express): void {
         if (refundDepositNow && depositRefundCents > 0) {
           await refundBookingPayment({
             paymentIntentId: depositPayment!.stripePaymentIntentId,
+            amount: depositRefundCents,
             reason: "requested_by_customer",
             idempotencyKey: `customer-cancel-deposit:${bookingId}:${depositPayment!.id}`,
           });
@@ -682,15 +736,24 @@ export function registerBookingRoutes(app: Express): void {
         // Update main booking payment
         const existingRefund = typeof payment.refundAmount === "number" ? payment.refundAmount : 0;
         const newBookingRefundTotal = existingRefund + bookingRefundCents;
-        const newPaymentStatus: string = newBookingRefundTotal >= payment.amount ? "refunded" : "partially_refunded";
+        const newPaymentStatus: string =
+          bookingRefundCents <= 0
+            ? payment.status
+            : newBookingRefundTotal >= payment.amount
+              ? "refunded"
+              : "partially_refunded";
 
         await tx
           .update(payments)
           .set({
             status: newPaymentStatus as any,
-            refundAmount: newBookingRefundTotal,
-            refundReason: reason ? `customer_cancel: ${reason}` : "customer_cancel",
-            refundedAt: now,
+            ...(bookingRefundCents > 0
+              ? {
+                  refundAmount: newBookingRefundTotal,
+                  refundReason: reason ? `customer_cancel: ${reason}` : "customer_cancel",
+                  refundedAt: now,
+                }
+              : {}),
             payoutStatus: "cancelled",
             payoutEligibleAt: null,
             payoutBlockedReason: "customer_cancellation",
