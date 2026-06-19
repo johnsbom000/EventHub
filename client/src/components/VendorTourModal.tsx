@@ -1,10 +1,12 @@
-import { useState, useEffect } from "react";
+import { useEffect } from "react";
 import { X } from "lucide-react";
-import { useLocation } from "wouter";
 import type { TourStep } from "@/lib/vendorTourContent";
 
 type VendorTourModalProps = {
-  steps: TourStep[];
+  step: TourStep;
+  stepIndex: number;
+  totalSteps: number;
+  onNext: () => void;
   onDismiss: () => void;
   showOverlay?: boolean;
   showCloseButton?: boolean;
@@ -31,21 +33,26 @@ function injectHighlightStyles() {
   document.head.appendChild(style);
 }
 
-export default function VendorTourModal({ steps, onDismiss, showOverlay = false, showCloseButton = false }: VendorTourModalProps) {
-  const [stepIndex, setStepIndex] = useState(0);
-  const [, setLocation] = useLocation();
+export default function VendorTourModal({
+  step,
+  stepIndex,
+  totalSteps,
+  onNext,
+  onDismiss,
+  showOverlay = false,
+  showCloseButton = false,
+}: VendorTourModalProps) {
+  const isLast = stepIndex === totalSteps - 1;
+  const hasMultipleSteps = totalSteps > 1;
+  const primaryLabel = step.primaryBtn || "Got it";
 
-  const currentStep = steps[stepIndex];
-  const isLast = stepIndex === steps.length - 1;
-  const hasMultipleSteps = steps.length > 1;
-  const hasNextUp = Boolean(currentStep.nextUp);
-  const hasPrimaryBtn = Boolean(currentStep.primaryBtn);
-
-  // Apply pulsing ring to the highlighted element for this step
+  // Apply pulsing ring to the highlighted element for this step. The selector
+  // may not be present yet (page still loading) — re-run on each step change and
+  // no-op when missing/invisible.
   useEffect(() => {
     injectHighlightStyles();
 
-    const selector = currentStep.highlightSelector;
+    const selector = step.highlightSelector;
     if (!selector) return;
 
     const el = document.querySelector(selector);
@@ -57,25 +64,14 @@ export default function VendorTourModal({ steps, onDismiss, showOverlay = false,
 
     el.classList.add("tour-highlight-active");
     return () => el.classList.remove("tour-highlight-active");
-  }, [currentStep.highlightSelector]);
-
-  const handleNext = () => {
-    if (!isLast) setStepIndex((i) => i + 1);
-  };
-
-  const handleNextUp = () => {
-    if (!currentStep.nextUp) return;
-    const href = currentStep.nextUp.href;
-    onDismiss();
-    setLocation(href);
-  };
+  }, [step.highlightSelector]);
 
   const card = (
     <div className="rounded-[20px] bg-[#ffffff] shadow-[0_8px_40px_rgba(0,0,0,0.18)] border border-[rgba(74,106,125,0.18)]">
       {/* Top bar */}
       <div className="flex items-center justify-between px-5 pt-4 pb-0">
         <span className="text-[1.2rem] font-semibold text-[#7c8095]">
-          {hasMultipleSteps ? `${stepIndex + 1} of ${steps.length}` : "Quick tip"}
+          {hasMultipleSteps ? `${stepIndex + 1} of ${totalSteps}` : "Quick tip"}
         </span>
         {showCloseButton && (
           <button
@@ -92,17 +88,17 @@ export default function VendorTourModal({ steps, onDismiss, showOverlay = false,
       {/* Content */}
       <div className="px-5 pt-3 pb-4">
         <h2 className="mb-2 font-sans text-[1.6rem] font-bold leading-snug text-[#20243d]">
-          {currentStep.title}
+          {step.title}
         </h2>
         <p className="font-sans text-[1.35rem] leading-relaxed text-[#4a5568]">
-          {currentStep.body}
+          {step.body}
         </p>
       </div>
 
       {/* Progress dots */}
       {hasMultipleSteps && (
         <div className="flex items-center justify-center gap-2 pb-3">
-          {steps.map((_, i) => (
+          {Array.from({ length: totalSteps }).map((_, i) => (
             <span
               key={i}
               className={`h-2 rounded-full transition-all ${
@@ -118,39 +114,10 @@ export default function VendorTourModal({ steps, onDismiss, showOverlay = false,
         {!isLast ? (
           <button
             type="button"
-            onClick={handleNext}
+            onClick={onNext}
             className="h-10 w-full rounded-[12px] bg-[#20243d] font-sans text-[1.35rem] font-semibold text-white transition-opacity hover:opacity-90"
           >
             Next
-          </button>
-        ) : !hasPrimaryBtn && !hasNextUp ? (
-          <p className="text-center font-sans text-[1.35rem] font-semibold text-[#4a6a7d]">
-            You are all set!
-          </p>
-        ) : hasPrimaryBtn && hasNextUp ? (
-          <div className="flex flex-col gap-2">
-            <button
-              type="button"
-              onClick={handleNextUp}
-              className="h-10 w-full rounded-[12px] bg-[#20243d] font-sans text-[1.35rem] font-semibold text-white transition-opacity hover:opacity-90"
-            >
-              {currentStep.nextUp!.label}
-            </button>
-            <button
-              type="button"
-              onClick={onDismiss}
-              className="h-10 w-full rounded-[12px] border-2 border-[rgba(74,106,125,0.3)] font-sans text-[1.35rem] font-semibold text-[#4a6a7d] transition-colors hover:border-[rgba(74,106,125,0.5)]"
-            >
-              {currentStep.primaryBtn}
-            </button>
-          </div>
-        ) : hasNextUp ? (
-          <button
-            type="button"
-            onClick={handleNextUp}
-            className="h-10 w-full rounded-[12px] bg-[#20243d] font-sans text-[1.35rem] font-semibold text-white transition-opacity hover:opacity-90"
-          >
-            {currentStep.nextUp!.label}
           </button>
         ) : (
           <button
@@ -158,7 +125,7 @@ export default function VendorTourModal({ steps, onDismiss, showOverlay = false,
             onClick={onDismiss}
             className="h-10 w-full rounded-[12px] bg-[#20243d] font-sans text-[1.35rem] font-semibold text-white transition-opacity hover:opacity-90"
           >
-            {currentStep.primaryBtn}
+            {primaryLabel}
           </button>
         )}
       </div>
