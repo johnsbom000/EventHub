@@ -5,6 +5,13 @@ import VendorTourModal from "@/components/VendorTourModal";
 import { VendorTimezoneModal, useShowTimezoneModal } from "@/components/VendorTimezoneModal";
 import { ONBOARDING_TOUR } from "@/lib/vendorTourContent";
 import {
+  isTourActive,
+  readTourStep,
+  startTourProgress,
+  writeTourStep,
+  clearTourProgress,
+} from "@/lib/vendorTourProgress";
+import {
   ArrowLeft,
   Bell,
   Calendar,
@@ -202,19 +209,26 @@ export default function VendorShell({ children, onOpenAccountSettings }: VendorS
   const [showWarningBanner, setShowWarningBanner] = useState(false);
   const [mobileNavOpen, setMobileNavOpen] = useState(false);
 
-  // One-time onboarding tour — shown once on the vendor's first dashboard visit,
-  // then recorded server-side (dashboard_tour_completed_at) so it never reappears.
-  const [showTour, setShowTour] = useState(false);
-  const tourTimerRef = useRef<number | null>(null);
+  // One-time onboarding tour — a guided walk that starts on the vendor's first
+  // dashboard visit and navigates across the real vendor pages (dashboard →
+  // bookings → listings → messages → dashboard). Each vendor page mounts its own
+  // VendorShell, so the in-flight tour state is persisted in localStorage (see
+  // vendorTourProgress) and resumed by whichever shell mounts next. Completion is
+  // recorded server-side (dashboard_tour_completed_at) so it never reappears.
+  const tourSteps = ONBOARDING_TOUR.steps;
+  const [tourActive, setTourActive] = useState(false);
+  const [tourStep, setTourStep] = useState(0);
+  const tourHydratedRef = useRef(false);
+  const tourStartTimerRef = useRef<number | null>(null);
+  const accountId = vendorAccount?.id;
   const timezoneModalDone = !showTimezoneModal || tzModalDismissed;
   const tourCompleted = Boolean(vendorAccount?.dashboardTourCompletedAt);
-  const isDashboard = location.split("?")[0].split("#")[0] === "/vendor/dashboard";
+  const currentPath = location.split("?")[0].split("#")[0];
+  const isDashboard = currentPath === "/vendor/dashboard";
 
   // Record tour completion: optimistically stamp the /api/vendor/me cache, then
   // persist (fire-and-forget). The optimistic write keeps the tour from
-  // re-triggering mid-session before the next refetch. Recorded on dismiss/finish
-  // — not at show-time — so an accidental refresh doesn't burn a vendor's only
-  // onboarding (closing the tab without dismissing replays once, by design).
+  // re-triggering mid-session before the next refetch.
   const markTourComplete = useCallback(() => {
     queryClient.setQueryData<VendorHeaderAccount>(VENDOR_ME_SHELL_QUERY_KEY, (prev) =>
       prev && !prev.dashboardTourCompletedAt
@@ -227,24 +241,60 @@ export default function VendorShell({ children, onOpenAccountSettings }: VendorS
     });
   }, [queryClient]);
 
+  // Resume: if a tour is already in flight (persisted), pick it up on whatever
+  // page this shell just mounted on. Runs once per mount, after the account id
+  // is known. This is what lets the tour continue after navigating to the
+  // bookings/listings/messages pages.
   useEffect(() => {
-    if (tourTimerRef.current) clearTimeout(tourTimerRef.current);
-
-    // Only ever trigger on the first dashboard visit, and only once.
-    if (!isDashboard || tourCompleted || !vendorAccount?.id || !timezoneModalDone) {
-      setShowTour(false);
-      return;
+    if (!accountId || tourCompleted || tourHydratedRef.current) return;
+    tourHydratedRef.current = true;
+    if (isTourActive(accountId)) {
+      setTourStep(readTourStep(accountId));
+      setTourActive(true);
     }
+  }, [accountId, tourCompleted]);
 
-    tourTimerRef.current = window.setTimeout(() => setShowTour(true), 600);
+  // Start: kick off the tour on the first dashboard visit, once the timezone
+  // modal is out of the way. A short delay lets the dashboard finish rendering
+  // so the highlighted sections exist.
+  useEffect(() => {
+    if (tourStartTimerRef.current) clearTimeout(tourStartTimerRef.current);
+    if (!isDashboard || tourCompleted || !accountId || !timezoneModalDone) return;
+    if (tourActive || isTourActive(accountId)) return; // already running / resuming
+
+    tourStartTimerRef.current = window.setTimeout(() => {
+      startTourProgress(accountId);
+      setTourStep(0);
+      setTourActive(true);
+    }, 400);
 
     return () => {
-      if (tourTimerRef.current) clearTimeout(tourTimerRef.current);
+      if (tourStartTimerRef.current) clearTimeout(tourStartTimerRef.current);
     };
-  }, [isDashboard, tourCompleted, vendorAccount?.id, timezoneModalDone]);
+  }, [isDashboard, tourCompleted, accountId, timezoneModalDone, tourActive]);
+
+  const currentTourStep = tourActive ? tourSteps[tourStep] : undefined;
+  // Only show the modal when the active step belongs to the page we're on, so we
+  // don't flash the next step on the old page before navigation completes.
+  const showTour = Boolean(currentTourStep && currentTourStep.page === currentPath);
+
+  const handleTourNext = () => {
+    const next = tourStep + 1;
+    if (next >= tourSteps.length) {
+      handleTourDismiss();
+      return;
+    }
+    writeTourStep(accountId, next);
+    setTourStep(next);
+    const nextPage = tourSteps[next].page;
+    if (nextPage && nextPage !== currentPath) {
+      setLocation(nextPage);
+    }
+  };
 
   const handleTourDismiss = () => {
-    setShowTour(false);
+    setTourActive(false);
+    clearTourProgress(accountId);
     markTourComplete();
   };
 
@@ -535,11 +585,14 @@ export default function VendorShell({ children, onOpenAccountSettings }: VendorS
         </div>
       </div>
 
-      {showTour && (
+      {showTour && currentTourStep && (
         <VendorTourModal
-          steps={ONBOARDING_TOUR.steps}
+          step={currentTourStep}
+          stepIndex={tourStep}
+          totalSteps={tourSteps.length}
           showOverlay={ONBOARDING_TOUR.overlay}
           showCloseButton={ONBOARDING_TOUR.allowClose}
+          onNext={handleTourNext}
           onDismiss={handleTourDismiss}
         />
       )}

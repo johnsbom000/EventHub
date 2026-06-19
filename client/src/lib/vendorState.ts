@@ -16,6 +16,7 @@ export type VendorMeState = {
   isFoundingVendor?: boolean | null;
   isMarqueeVendor?: boolean | null;
   vendorOnlySignup?: boolean | null;
+  dashboardTourCompletedAt?: string | null;
 };
 
 export type VendorDetectionStatus =

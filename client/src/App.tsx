@@ -135,7 +135,11 @@ function PostLogin() {
     hasRedirectedRef.current = true;
 
     if (vendorDetection.status === "vendor") {
-      setLocation("/vendor/my-hub");
+      // First-time vendors (onboarding tour not yet completed) land on the
+      // dashboard so the timezone modal + onboarding tour can fire. Established
+      // vendors keep landing on My Hub.
+      const tourCompleted = Boolean(vendorAccount?.dashboardTourCompletedAt);
+      setLocation(tourCompleted ? "/vendor/my-hub" : "/vendor/dashboard");
     } else if (vendorDetection.status === "non_vendor") {
       if (customerMe?.vendorIntentPending) {
         consumeVendorIntentFlag();

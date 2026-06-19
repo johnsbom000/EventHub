@@ -64,7 +64,10 @@ export default function VendorProvision() {
       return;
     }
     if (vendorMe?.hasVendorAccount) {
-      setLocation("/vendor/my-hub");
+      // Un-toured vendors land on the dashboard so the onboarding tour can fire;
+      // vendors who've already seen it keep going to My Hub.
+      const tourCompleted = Boolean(vendorMe?.dashboardTourCompletedAt);
+      setLocation(tourCompleted ? "/vendor/my-hub" : "/vendor/dashboard");
     }
   }, [isAuthLoading, isAuthenticated, isVendorLoading, vendorMe, setLocation]);
 
@@ -115,7 +118,9 @@ export default function VendorProvision() {
       await qc.invalidateQueries({ queryKey: ["/api/vendor/me"] });
       await qc.invalidateQueries({ queryKey: ["/api/customer/me"] });
 
-      setLocation("/vendor/my-hub");
+      // A freshly provisioned vendor has never seen the tour — send them to the
+      // dashboard so the timezone modal + onboarding tour fire.
+      setLocation("/vendor/dashboard");
     } catch (err: any) {
       toast({
         title: "Something went wrong",
