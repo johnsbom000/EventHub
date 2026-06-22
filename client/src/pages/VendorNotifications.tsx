@@ -741,10 +741,12 @@ export default function VendorNotifications() {
                   <span className="text-muted-foreground">{t("vendorNotifications.listingPrice")}</span>
                   <span>{formatUsd(activeBookingAmounts.listingPriceCents)}</span>
                 </div>
-                <div className="text-sm flex items-center justify-between gap-3">
-                  <span className="text-muted-foreground">{t("vendorNotifications.customerServiceFee")}</span>
-                  <span>{formatUsd(activeBookingAmounts.customerFeeCents)}</span>
-                </div>
+                {activeBookingAmounts.customerFeeCents > 0 ? (
+                  <div className="text-sm flex items-center justify-between gap-3">
+                    <span className="text-muted-foreground">{t("vendorNotifications.customerServiceFee")}</span>
+                    <span>{formatUsd(activeBookingAmounts.customerFeeCents)}</span>
+                  </div>
+                ) : null}
                 <div className="text-sm flex items-center justify-between gap-3">
                   <span className="text-muted-foreground">{t("vendorNotifications.customerTotal")}</span>
                   <span>{formatUsd(activeBookingAmounts.customerTotalCents)}</span>

@@ -16,8 +16,6 @@ export interface ListingPublic extends Pick<
   vendorId: string;   // vendorId
   vendorName?: string;
   vendorProfileImageUrl?: string | null;
-  isMarqueeVendor?: boolean;
-  marqueeCustomerFeeEndsAt?: string | null;
 
   // Optional computed fields for display (derived, not entered)
   coverPhoto?: string;      // first photo URL

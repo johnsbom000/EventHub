@@ -9,11 +9,6 @@ import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { type VendorMeState } from "@/lib/vendorState";
 
-const FOUNDING_TOKEN_KEY = "eventhub:founding-invite-token";
-const MARQUEE_TOKEN_KEY = "eventhub:marquee-invite-token";
-
-type TokenState = "checking" | "valid" | "invalid" | "none";
-
 export default function VendorProvision() {
   const [, setLocation] = useLocation();
   const { isAuthenticated, isLoading: isAuthLoading } = useAuth0();
@@ -24,21 +19,6 @@ export default function VendorProvision() {
   const [nameError, setNameError] = useState<string | null>(null);
   const [isSubmitting, setIsSubmitting] = useState(false);
   const inputRef = useRef<HTMLInputElement>(null);
-
-  const foundingToken = typeof window !== "undefined" ? localStorage.getItem(FOUNDING_TOKEN_KEY) : null;
-  const marqueeToken  = typeof window !== "undefined" ? localStorage.getItem(MARQUEE_TOKEN_KEY)  : null;
-  const activeToken   = marqueeToken || foundingToken;
-  const activeType    = marqueeToken ? "marquee" : foundingToken ? "founding" : null;
-
-  const [tokenState, setTokenState] = useState<TokenState>(activeToken ? "checking" : "none");
-
-  useEffect(() => {
-    if (!activeToken || !activeType) return;
-    fetch(`/api/invite/validate?token=${encodeURIComponent(activeToken)}&type=${activeType}`)
-      .then((r) => r.json())
-      .then((data: { valid: boolean }) => setTokenState(data.valid ? "valid" : "invalid"))
-      .catch(() => setTokenState("invalid"));
-  }, []);
 
   // Create the users row immediately on landing so the account exists in Neon
   // even if the user closes the tab before submitting the business name form.
@@ -143,28 +123,6 @@ export default function VendorProvision() {
   return (
     <div className="min-h-screen flex flex-col items-center justify-center bg-[#faf8f5] px-4">
       <div className="w-full max-w-md">
-        {/* Invite badge — shows validity once the server confirms the token */}
-        {tokenState === "checking" && (
-          <div className="mb-6 flex justify-center">
-            <span className="inline-flex items-center gap-1.5 rounded-full bg-stone-100 px-3 py-1 text-sm font-medium text-stone-500">
-              Checking invite…
-            </span>
-          </div>
-        )}
-        {tokenState === "valid" && (
-          <div className="mb-6 flex justify-center">
-            <span className="inline-flex items-center gap-1.5 rounded-full bg-amber-100 px-3 py-1 text-sm font-semibold text-amber-800">
-              ★ {activeType === "marquee" ? "Marquee" : "Founding"} Vendor invite active
-            </span>
-          </div>
-        )}
-        {tokenState === "invalid" && (
-          <div className="mb-6 flex justify-center">
-            <span className="inline-flex items-center gap-1.5 rounded-full bg-red-50 px-3 py-1 text-sm font-semibold text-red-700">
-              ⚠ Invite link is inactive or expired
-            </span>
-          </div>
-        )}
 
         <div className="rounded-2xl border border-[#e8e0d0] bg-white p-8 shadow-sm">
           <h1 className="font-playfair text-2xl font-semibold text-[#16222D] mb-1">

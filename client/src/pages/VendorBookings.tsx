@@ -881,10 +881,12 @@ export default function VendorBookings() {
                               <span>{formatUsd(a.priceCents)}</span>
                             </div>
                           ))}
-                          <div className="text-sm flex items-center justify-between gap-3">
-                            <span className="text-muted-foreground">{t("vendorBookings.customerServiceFee")}</span>
-                            <span>{formatUsd(item.customerFeeCents)}</span>
-                          </div>
+                          {item.customerFeeCents > 0 ? (
+                            <div className="text-sm flex items-center justify-between gap-3">
+                              <span className="text-muted-foreground">{t("vendorBookings.customerServiceFee")}</span>
+                              <span>{formatUsd(item.customerFeeCents)}</span>
+                            </div>
+                          ) : null}
                           <div className="text-sm flex items-center justify-between gap-3">
                             <span className="text-muted-foreground">{t("vendorBookings.customerTotal")}</span>
                             <span>{formatUsd(item.customerTotalCents)}</span>

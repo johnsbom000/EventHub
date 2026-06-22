@@ -7,7 +7,7 @@ import { Sheet, SheetContent, SheetTitle } from "@/components/ui/sheet";
 import {
   ArrowLeft, Menu,
   LayoutDashboard, TrendingUp, Calendar, AlertTriangle,
-  ArrowRightLeft, Users, LayoutGrid, Eye, Shield, Star,
+  ArrowRightLeft, Users, LayoutGrid, Eye, Shield,
   MessageSquarePlus, Activity, LogOut,
 } from "lucide-react";
 import { Link, useLocation } from "wouter";
@@ -24,7 +24,6 @@ const adminMobileNavItems = [
   { title: "Listings",    url: "/admin/listings",   icon: LayoutGrid },
   { title: "Traffic",     url: "/admin/traffic",    icon: Eye },
   { title: "Moderation",  url: "/admin/moderation", icon: Shield },
-  { title: "Marquee",     url: "/admin/marquee",    icon: Star },
   { title: "Feedback",    url: "/admin/feedback",   icon: MessageSquarePlus },
   { title: "Health",      url: "/admin/health",     icon: Activity },
 ];

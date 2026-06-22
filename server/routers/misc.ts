@@ -166,7 +166,6 @@ import {
   sendDisputeResponseEmail,
   sendTravelFeeProposedEmail,
   sendTravelFeeRespondedEmail,
-  sendMarqueeInviteEmail,
 } from "../email";
 import { calculateRefund } from "../lib/calculateRefund";
 import {
@@ -290,15 +289,6 @@ import {
 import {
   VENDOR_FEE_RATE,
   CUSTOMER_FEE_RATE,
-  MARQUEE_VENDOR_MAX_SPOTS,
-  MARQUEE_HOLIDAY_BOOKING_COUNT,
-  MARQUEE_HOLIDAY_DAYS,
-  MARQUEE_REFERRAL_BONUS_BOOKINGS,
-  MARQUEE_VENDOR_FEE_RATE,
-  MARQUEE_RATE_MONTHS,
-  MARQUEE_CUSTOMER_FEE_RATE,
-  MARQUEE_CUSTOMER_FEE_MONTHS,
-  MARQUEE_VISIBILITY_MONTHS,
   STRIPE_FEE_ESTIMATE_PERCENT,
   STRIPE_FEE_ESTIMATE_FIXED_CENTS,
   VENDOR_ABSORBS_STRIPE_FEES,
@@ -854,19 +844,13 @@ app.post(
 
       const whereClause = and(...(conditions as any[]));
 
-      // Sort order — "recommended" prioritises marquee vendors (within visibility window) first, then newest
-      const now = new Date();
+      // Sort order — "recommended" falls back to newest first.
       const orderBy: any[] =
         rawSort === "price-asc"
           ? [asc(vendorListings.priceCents)]
           : rawSort === "price-desc"
           ? [desc(vendorListings.priceCents)]
-          : [
-              desc(
-                drizzleSql`(${vendorAccounts.isMarqueeVendor} = true AND (${vendorAccounts.marqueeVisibilityEndsAt} IS NULL OR ${vendorAccounts.marqueeVisibilityEndsAt} > ${now}))`
-              ),
-              desc(vendorListings.createdAt),
-            ];
+          : [desc(vendorListings.createdAt)];
 
       const selectShape = {
         id: vendorListings.id,
@@ -911,8 +895,6 @@ app.post(
         vendorId: vendorAccounts.id,
         vendorName: vendorAccounts.businessName,
         vendorOnlineProfiles: vendorProfiles.onlineProfiles,
-        isMarqueeVendor: vendorAccounts.isMarqueeVendor,
-        marqueeCustomerFeeEndsAt: vendorAccounts.marqueeCustomerFeeEndsAt,
       };
 
       // Fetch page + total count in parallel

@@ -535,10 +535,13 @@ export async function createCheckoutSession(params: {
     mode: "payment",
 
     payment_intent_data: {
-      // application_fee_amount: the portion the platform retains.
-      // The remaining amount (amountCents − applicationFeeAmountCents − Stripe fee)
-      // is automatically transferred to the vendor's connected account.
-      application_fee_amount: applicationFeeAmountCents,
+      // application_fee_amount: the portion the platform retains. EventHub no
+      // longer charges a platform fee, so this is omitted when zero (Stripe
+      // rejects an application_fee_amount of 0). The vendor then receives the
+      // full amount minus only Stripe's own processing fee.
+      ...(applicationFeeAmountCents > 0
+        ? { application_fee_amount: applicationFeeAmountCents }
+        : {}),
 
       // Destination charge: funds flow to the platform first, then Stripe
       // transfers the net amount to the connected account automatically.

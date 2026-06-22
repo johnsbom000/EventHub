@@ -456,16 +456,10 @@ export default function TemporaryLanding() {
   useEffect(() => {
     const params = new URLSearchParams(window.location.search);
     const ref = params.get("ref");
-    const mv = params.get("mv");
-    const fv = params.get("fv");
     if (ref) localStorage.setItem("eventhub:pending-referral", ref.trim().toUpperCase());
-    if (mv) localStorage.setItem("eventhub:marquee-invite-token", mv.trim());
-    if (fv) localStorage.setItem("eventhub:founding-invite-token", fv.trim());
-    if (ref || mv || fv) {
+    if (ref) {
       const clean = new URLSearchParams(params);
       clean.delete("ref");
-      clean.delete("mv");
-      clean.delete("fv");
       const qs = clean.toString();
       window.history.replaceState(null, "", window.location.pathname + (qs ? `?${qs}` : ""));
     }

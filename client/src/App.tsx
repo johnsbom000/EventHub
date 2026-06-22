@@ -43,8 +43,7 @@ import { deriveVendorDetection, type VendorMeState } from "@/lib/vendorState";
 import { useIsVendorOnly } from "@/hooks/useIsVendorOnly";
 import { useToast } from "@/hooks/use-toast";
 import Privacy from "@/pages/Privacy";
-import MarqueeVendorProgram from "@/pages/MarqueeVendorProgram";
-import FoundingVendorProgram from "@/pages/FoundingVendorProgram";
+import LinkExpired from "@/pages/LinkExpired";
 import VendorProvision from "@/pages/VendorProvision";
 
 type CustomerMeIntent = {
@@ -337,9 +336,9 @@ function Router() {
         <Route path="/vendor/my-hub" component={MyHub} />
         <Route path="/my-hub" component={MyHub} />
 
-        {/* Program pages */}
-        <Route path="/vendor/marquee" component={MarqueeVendorProgram} />
-        <Route path="/vendor/founding" component={FoundingVendorProgram} />
+        {/* Retired vendor programs — old invite links now show an expired notice */}
+        <Route path="/vendor/marquee" component={LinkExpired} />
+        <Route path="/vendor/founding" component={LinkExpired} />
 
         {/* Legal */}
         <Route path="/terms" component={Terms} />

@@ -6,7 +6,8 @@ interface FeeRates {
   customerFeeRate: number;
 }
 
-const FALLBACK: FeeRates = { vendorFeeRate: 0.08, customerFeeRate: 0.05 };
+// EventHub charges no platform or service fees.
+const FALLBACK: FeeRates = { vendorFeeRate: 0, customerFeeRate: 0 };
 
 export function useFeeRates(): FeeRates {
   const { data } = useQuery<FeeRates>({

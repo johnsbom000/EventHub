@@ -143,9 +143,6 @@ import {
   type TravelFeeProposal,
   listingReviews,
   reviewReplies,
-  vendorReferrals,
-  foundingVendorInvites,
-  marqueeVendorInvites,
   vendorInquiries,
 } from "@shared/schema";
 import {
@@ -182,7 +179,6 @@ import {
   sendDisputeResponseEmail,
   sendTravelFeeProposedEmail,
   sendTravelFeeRespondedEmail,
-  sendMarqueeInviteEmail,
 } from "../email";
 import { calculateRefund } from "../lib/calculateRefund";
 import {
@@ -310,20 +306,6 @@ import {
 import {
   VENDOR_FEE_RATE,
   CUSTOMER_FEE_RATE,
-  MARQUEE_VENDOR_MAX_SPOTS,
-  MARQUEE_HOLIDAY_BOOKING_COUNT,
-  MARQUEE_HOLIDAY_DAYS,
-  MARQUEE_REFERRAL_BONUS_BOOKINGS,
-  MARQUEE_VENDOR_FEE_RATE,
-  MARQUEE_RATE_MONTHS,
-  MARQUEE_CUSTOMER_FEE_RATE,
-  MARQUEE_CUSTOMER_FEE_MONTHS,
-  MARQUEE_VISIBILITY_MONTHS,
-  FOUNDING_VENDOR_HOLIDAY_BOOKING_COUNT,
-  FOUNDING_VENDOR_HOLIDAY_DAYS,
-  FOUNDING_VENDOR_RATE_MONTHS,
-  FOUNDING_VENDOR_VISIBILITY_MONTHS,
-  FOUNDING_VENDOR_REFERRAL_BONUS_BOOKINGS,
   STRIPE_FEE_ESTIMATE_PERCENT,
   STRIPE_FEE_ESTIMATE_FIXED_CENTS,
   VENDOR_ABSORBS_STRIPE_FEES,
@@ -818,23 +800,7 @@ export function registerVendorRoutes(app: Express): void {
         needsNewVendorProfileOnboarding,
         shopActive: account.shopActive ?? true,
         shopSlug: account.shopSlug || null,
-        isMarqueeVendor: account.isMarqueeVendor ?? false,
-        marqueeVendorNumber: account.marqueeVendorNumber ?? null,
-        marqueeHolidayBookingsUsed: account.marqueeHolidayBookingsUsed ?? 0,
-        marqueeHolidayBonusBookings: account.marqueeHolidayBonusBookings ?? 0,
-        marqueeActivatedAt: account.marqueeActivatedAt ?? null,
-        marqueeHolidayEndsAt: account.marqueeHolidayEndsAt ?? null,
-        marqueeRateEndsAt: account.marqueeRateEndsAt ?? null,
-        marqueeCustomerFeeEndsAt: account.marqueeCustomerFeeEndsAt ?? null,
-        marqueeVisibilityEndsAt: account.marqueeVisibilityEndsAt ?? null,
         referralCode: account.referralCode ?? null,
-        isFoundingVendor: account.isFoundingVendor ?? false,
-        foundingVendorNumber: account.foundingVendorNumber ?? null,
-        foundingBenefitBookingsUsed: account.foundingBenefitBookingsUsed ?? 0,
-        foundingBenefitsActivatedAt: account.foundingBenefitsActivatedAt ?? null,
-        foundingHolidayEndsAt: account.foundingHolidayEndsAt ?? null,
-        foundingRateEndsAt: account.foundingRateEndsAt ?? null,
-        foundingReferralBonusBookingsRemaining: account.foundingReferralBonusBookingsRemaining ?? 0,
         __marker: "vendor_me_route_hit",
         vendorOnlySignup,
         onboardingCompleted: Boolean(account.onboardingCompletedAt),
@@ -1015,35 +981,10 @@ export function registerVendorRoutes(app: Express): void {
     marqueeInviteToken: z.string().max(64).optional(),
   });
 
-  // Validate an invite token before the vendor starts onboarding.
-  // No auth required — called client-side on mount when a token is found in localStorage.
-  app.get("/api/invite/validate", async (req, res) => {
-    const token = typeof req.query.token === "string" ? req.query.token.trim() : "";
-    const type  = typeof req.query.type  === "string" ? req.query.type.trim()  : "";
-
-    if (!token || !["founding", "marquee"].includes(type)) {
-      return res.status(400).json({ valid: false, error: "token and type (founding|marquee) are required" });
-    }
-
-    try {
-      if (type === "founding") {
-        const [invite] = await db
-          .select({ id: foundingVendorInvites.id })
-          .from(foundingVendorInvites)
-          .where(and(eq(foundingVendorInvites.token, token), eq(foundingVendorInvites.active, true)))
-          .limit(1);
-        return res.json({ valid: Boolean(invite), program: "founding" });
-      } else {
-        const [invite] = await db
-          .select({ id: marqueeVendorInvites.id })
-          .from(marqueeVendorInvites)
-          .where(and(eq(marqueeVendorInvites.token, token), eq(marqueeVendorInvites.active, true)))
-          .limit(1);
-        return res.json({ valid: Boolean(invite), program: "marquee" });
-      }
-    } catch (err: any) {
-      return res.status(500).json({ valid: false, error: "Server error" });
-    }
+  // Founding / Marquee vendor programs have been retired. Any old invite token is
+  // now treated as expired so the client can surface a "link has expired" page.
+  app.get("/api/invite/validate", async (_req, res) => {
+    return res.json({ valid: false, expired: true });
   });
 
   // Provision a minimal vendor account immediately after auth.
@@ -1536,168 +1477,9 @@ export function registerVendorRoutes(app: Express): void {
 
       const isFirstTimeOnboarding = existingProfiles.length === 0;
 
-      // Track vendor referrals: if a valid referral code was provided by a new vendor,
-      // record the relationship so we can reward the referring vendor later.
-      if (isFirstTimeOnboarding && onboardingData.referralCode) {
-        void (async () => {
-          try {
-            const code = onboardingData.referralCode!.trim().toUpperCase();
-            const [referrer] = await db
-              .select({ id: vendorAccounts.id })
-              .from(vendorAccounts)
-              .where(
-                and(
-                  drizzleSql`upper(${vendorAccounts.referralCode}) = ${code}`,
-                  or(
-                    eq(vendorAccounts.isMarqueeVendor, true),
-                    eq(vendorAccounts.isFoundingVendor, true)
-                  ),
-                  isNull(vendorAccounts.deletedAt)
-                )
-              )
-              .limit(1);
-            if (referrer && referrer.id !== account.id) {
-              await db.insert(vendorReferrals).values({
-                referrerVendorId: referrer.id,
-                referredVendorId: account.id,
-                status: "pending",
-              });
-            }
-          } catch (refErr: any) {
-            logger.warn("[vendor referral] failed to record referral:", refErr?.message || refErr);
-          }
-        })();
-      }
-
-      // Apply Founding Vendor status if a valid global invite token was used.
-      // Awaited so the grant completes before the response is sent — callers can rely on
-      // isFoundingVendor being set immediately after onboarding.
-      if (isFirstTimeOnboarding && onboardingData.foundingInviteToken) {
-        try {
-          const token = onboardingData.foundingInviteToken.trim();
-          const [invite] = await db
-            .select({ id: foundingVendorInvites.id })
-            .from(foundingVendorInvites)
-            .where(
-              and(
-                eq(foundingVendorInvites.token, token),
-                eq(foundingVendorInvites.active, true)
-              )
-            )
-            .limit(1);
-
-          if (invite) {
-            let granted = false;
-            await db.transaction(async (tx) => {
-              const [counts] = await tx
-                .select({
-                  nextSlot: drizzleSql<number>`coalesce(max(${vendorAccounts.foundingVendorNumber}), 0) + 1`,
-                })
-                .from(vendorAccounts)
-                .where(isNull(vendorAccounts.deletedAt));
-
-              const nextSlot = counts?.nextSlot ?? 1;
-              const [updated] = await tx
-                .update(vendorAccounts)
-                .set({ isFoundingVendor: true, foundingVendorNumber: nextSlot })
-                .where(
-                  and(
-                    eq(vendorAccounts.id, account.id),
-                    eq(vendorAccounts.isFoundingVendor, false)
-                  )
-                )
-                .returning({ id: vendorAccounts.id });
-
-              if (updated) granted = true;
-            });
-
-            if (granted) {
-              await db
-                .update(foundingVendorInvites)
-                .set({ redemptionCount: drizzleSql`${foundingVendorInvites.redemptionCount} + 1` })
-                .where(eq(foundingVendorInvites.id, invite.id));
-            }
-          } else {
-            logger.warn(`[founding vendor grant] token invalid or inactive — vendorId=${account.id} token=${token}`);
-          }
-        } catch (fvErr: any) {
-          logger.warn("[founding vendor grant] failed:", fvErr?.message || fvErr);
-        }
-      }
-
-      // Apply Marquee Vendor status if a valid global invite token was used.
-      // Awaited so the grant completes before the response is sent.
-      if (isFirstTimeOnboarding && onboardingData.marqueeInviteToken) {
-        try {
-          const token = onboardingData.marqueeInviteToken.trim();
-          const [invite] = await db
-            .select({ id: marqueeVendorInvites.id })
-            .from(marqueeVendorInvites)
-            .where(
-              and(
-                eq(marqueeVendorInvites.token, token),
-                eq(marqueeVendorInvites.active, true)
-              )
-            )
-            .limit(1);
-
-          if (invite) {
-            let granted = false;
-            await db.transaction(async (tx) => {
-              const [countRow] = await tx
-                .select({ count: drizzleSql<number>`count(*)::int` })
-                .from(vendorAccounts)
-                .where(and(eq(vendorAccounts.isMarqueeVendor, true), isNull(vendorAccounts.deletedAt)));
-              const currentCount = countRow?.count ?? 0;
-
-              if (currentCount >= MARQUEE_VENDOR_MAX_SPOTS) {
-                logger.warn(`[marquee vendor grant] cap reached — grant skipped, vendorId=${account.id} count=${currentCount}/${MARQUEE_VENDOR_MAX_SPOTS}`);
-                return;
-              }
-
-              const nextSlot = currentCount + 1;
-              let referralCode: string | undefined;
-              for (let attempt = 0; attempt < 5; attempt++) {
-                const candidate = crypto.randomBytes(6).toString("hex").toUpperCase();
-                const [existing] = await tx
-                  .select({ id: vendorAccounts.id })
-                  .from(vendorAccounts)
-                  .where(eq(vendorAccounts.referralCode, candidate))
-                  .limit(1);
-                if (!existing) { referralCode = candidate; break; }
-              }
-              if (!referralCode) {
-                logger.warn(`[marquee vendor grant] referral code collision — grant skipped, vendorId=${account.id}`);
-                return;
-              }
-
-              const [updated] = await tx
-                .update(vendorAccounts)
-                .set({ isMarqueeVendor: true, marqueeVendorNumber: nextSlot, referralCode })
-                .where(
-                  and(
-                    eq(vendorAccounts.id, account.id),
-                    eq(vendorAccounts.isMarqueeVendor, false)
-                  )
-                )
-                .returning({ id: vendorAccounts.id });
-
-              if (updated) granted = true;
-            }, { isolationLevel: "serializable" });
-
-            if (granted) {
-              await db
-                .update(marqueeVendorInvites)
-                .set({ redemptionCount: drizzleSql`${marqueeVendorInvites.redemptionCount} + 1` })
-                .where(eq(marqueeVendorInvites.id, invite.id));
-            }
-          } else {
-            logger.warn(`[marquee vendor grant] token invalid or inactive — vendorId=${account.id} token=${token}`);
-          }
-        } catch (mvErr: any) {
-          logger.warn("[marquee vendor grant] failed:", mvErr?.message || mvErr);
-        }
-      }
+      // Founding / Marquee vendor programs have been retired. Invite tokens and
+      // vendor-referral rewards are no longer processed. Monetization is moving to
+      // a vendor subscription model.
 
       logEvent("vendor_signup_completed", "vendor", account.id, {
         is_new: isFirstTimeOnboarding,
@@ -2793,103 +2575,6 @@ export function registerVendorRoutes(app: Express): void {
       const finalListing = isPackageContainer
         ? (await db.select().from(vendorListings).where(eq(vendorListings.id, id)))[0] ?? updated
         : updated;
-
-      // Stamp all marquee expiry timestamps the first time a marquee vendor goes live
-      if (updated?.status === "active") {
-        const now = new Date();
-        void db
-          .update(vendorAccounts)
-          .set({
-            marqueeActivatedAt: now,
-            marqueeHolidayEndsAt: new Date(now.getTime() + MARQUEE_HOLIDAY_DAYS * 24 * 60 * 60 * 1000),
-            // 24-month window starts after the 30-day time threshold, not at activation
-            marqueeRateEndsAt: new Date(
-              now.getTime()
-              + MARQUEE_HOLIDAY_DAYS * 24 * 60 * 60 * 1000
-              + MARQUEE_RATE_MONTHS * 30.44 * 24 * 60 * 60 * 1000
-            ),
-            marqueeCustomerFeeEndsAt: new Date(now.getTime() + MARQUEE_CUSTOMER_FEE_MONTHS * 30.44 * 24 * 60 * 60 * 1000),
-            marqueeVisibilityEndsAt: new Date(now.getTime() + MARQUEE_VISIBILITY_MONTHS * 30.44 * 24 * 60 * 60 * 1000),
-          })
-          .where(
-            and(
-              eq(vendorAccounts.id, vendorAuth.id),
-              eq(vendorAccounts.isMarqueeVendor, true),
-              isNull(vendorAccounts.marqueeActivatedAt)
-            )
-          )
-          .catch(() => {});
-
-        // Stamp all founding vendor expiry timestamps the first time a founding vendor goes live
-        void db
-          .update(vendorAccounts)
-          .set({
-            foundingBenefitsActivatedAt: now,
-            foundingHolidayEndsAt: new Date(now.getTime() + FOUNDING_VENDOR_HOLIDAY_DAYS * 24 * 60 * 60 * 1000),
-            // 12-month rate window starts after the 14-day holiday
-            foundingRateEndsAt: new Date(
-              now.getTime()
-              + FOUNDING_VENDOR_HOLIDAY_DAYS * 24 * 60 * 60 * 1000
-              + FOUNDING_VENDOR_RATE_MONTHS * 30.44 * 24 * 60 * 60 * 1000
-            ),
-            foundingVisibilityEndsAt: new Date(now.getTime() + FOUNDING_VENDOR_VISIBILITY_MONTHS * 30.44 * 24 * 60 * 60 * 1000),
-          })
-          .where(
-            and(
-              eq(vendorAccounts.id, vendorAuth.id),
-              eq(vendorAccounts.isFoundingVendor, true),
-              isNull(vendorAccounts.foundingBenefitsActivatedAt)
-            )
-          )
-          .catch(() => {});
-
-        // Reward the referring vendor when a referred vendor publishes their first listing.
-        // Using UPDATE-first so concurrent requests can't double-award (status='pending' is the lock).
-        void (async () => {
-          try {
-            const rewardedAt = new Date();
-            const [rewarded] = await db
-              .update(vendorReferrals)
-              .set({ status: "rewarded", completedAt: rewardedAt })
-              .where(
-                and(
-                  eq(vendorReferrals.referredVendorId, vendorAuth.id),
-                  eq(vendorReferrals.status, "pending")
-                )
-              )
-              .returning({ referrerVendorId: vendorReferrals.referrerVendorId });
-
-            if (rewarded) {
-              const [referrer] = await db
-                .select({
-                  isMarqueeVendor: vendorAccounts.isMarqueeVendor,
-                  isFoundingVendor: vendorAccounts.isFoundingVendor,
-                })
-                .from(vendorAccounts)
-                .where(eq(vendorAccounts.id, rewarded.referrerVendorId))
-                .limit(1);
-
-              if (referrer?.isMarqueeVendor) {
-                await db
-                  .update(vendorAccounts)
-                  .set({
-                    marqueeHolidayBonusBookings: drizzleSql`${vendorAccounts.marqueeHolidayBonusBookings} + ${MARQUEE_REFERRAL_BONUS_BOOKINGS}`,
-                  })
-                  .where(eq(vendorAccounts.id, rewarded.referrerVendorId));
-              } else if (referrer?.isFoundingVendor) {
-                await db
-                  .update(vendorAccounts)
-                  .set({
-                    foundingReferralBonusBookingsRemaining: drizzleSql`${vendorAccounts.foundingReferralBonusBookingsRemaining} + ${FOUNDING_VENDOR_REFERRAL_BONUS_BOOKINGS}`,
-                  })
-                  .where(eq(vendorAccounts.id, rewarded.referrerVendorId));
-              }
-            }
-          } catch (err: any) {
-            logger.warn("[vendor referral reward] failed:", err?.message || err);
-          }
-        })();
-      }
 
       if (updated?.status === "active" && existing[0]?.status !== "active") {
         const [{ activeCount }] = await db
@@ -4855,48 +4540,6 @@ export function registerVendorRoutes(app: Express): void {
       const updated = updatedRows[0];
       if (!updated?.id) {
         return res.status(500).json({ error: "Failed to update booking status" });
-      }
-
-      // Increment program booking counters when a booking is confirmed (fire-and-forget).
-      if (nextStatus === "confirmed" && vendorAccountId) {
-        void db
-          .execute(
-            drizzleSql`
-              UPDATE vendor_accounts
-              SET
-                marquee_holiday_bookings_used = marquee_holiday_bookings_used + 1,
-                marquee_rate_ends_at = CASE
-                  WHEN marquee_holiday_bookings_used + 1 = ${MARQUEE_HOLIDAY_BOOKING_COUNT}
-                   AND marquee_holiday_ends_at > NOW()
-                  THEN NOW() + (${MARQUEE_RATE_MONTHS} * INTERVAL '1 month')
-                  ELSE marquee_rate_ends_at
-                END
-              WHERE id = ${vendorAccountId}
-                AND is_marquee_vendor = true
-            `
-          )
-          .catch(() => {});
-
-        void db
-          .execute(
-            drizzleSql`
-              UPDATE vendor_accounts
-              SET
-                founding_benefit_bookings_used = founding_benefit_bookings_used + 1,
-                founding_referral_bonus_bookings_remaining = GREATEST(0,
-                  CASE
-                    WHEN founding_benefit_bookings_used + 1 > ${FOUNDING_VENDOR_HOLIDAY_BOOKING_COUNT}
-                      AND founding_holiday_ends_at IS NOT NULL
-                      AND NOW() >= founding_holiday_ends_at
-                    THEN founding_referral_bonus_bookings_remaining - 1
-                    ELSE founding_referral_bonus_bookings_remaining
-                  END
-                )
-              WHERE id = ${vendorAccountId}
-                AND is_founding_vendor = true
-            `
-          )
-          .catch(() => {});
       }
 
       // When a vendor cancels (pending decline or confirmed cancellation), issue full

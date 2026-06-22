@@ -173,7 +173,6 @@ import {
   sendDisputeResponseEmail,
   sendTravelFeeProposedEmail,
   sendTravelFeeRespondedEmail,
-  sendMarqueeInviteEmail,
 } from "../email";
 import { calculateRefund } from "../lib/calculateRefund";
 import {
@@ -297,15 +296,6 @@ import {
 import {
   VENDOR_FEE_RATE,
   CUSTOMER_FEE_RATE,
-  MARQUEE_VENDOR_MAX_SPOTS,
-  MARQUEE_HOLIDAY_BOOKING_COUNT,
-  MARQUEE_HOLIDAY_DAYS,
-  MARQUEE_REFERRAL_BONUS_BOOKINGS,
-  MARQUEE_VENDOR_FEE_RATE,
-  MARQUEE_RATE_MONTHS,
-  MARQUEE_CUSTOMER_FEE_RATE,
-  MARQUEE_CUSTOMER_FEE_MONTHS,
-  MARQUEE_VISIBILITY_MONTHS,
   STRIPE_FEE_ESTIMATE_PERCENT,
   STRIPE_FEE_ESTIMATE_FIXED_CENTS,
   VENDOR_ABSORBS_STRIPE_FEES,
