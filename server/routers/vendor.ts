@@ -91,9 +91,12 @@ import {
 } from "../services/chatService";
 import {
   deactivateActiveListingsViolatingPublishGate,
+  deactivateExtraActiveListingsForFreeTier,
   checkListingAvailabilityForBookingRequest,
   sendCancellationEmailsAsync,
 } from "../services/bookingService";
+import { getVendorEntitlements } from "../services/entitlementsService";
+import { reconcileVendorSubscriptionState } from "./billing";
 import { registerGoogleRoutes } from "../routers/google";
 import { registerBoardRoutes } from "../routers/boards";
 import { registerCircumventionRoutes } from "../routers/circumvention";
@@ -759,7 +762,10 @@ export function registerVendorRoutes(app: Express): void {
       if (!context?.account?.id) {
         return res.status(404).json({ error: "Account not found" });
       }
-      const account = context.account;
+      // Lazily expire complimentary Pro grants (drops to Free + trims listings)
+      // before computing entitlements, so no cron is required.
+      const account = await reconcileVendorSubscriptionState(context.account);
+      const entitlements = getVendorEntitlements(account);
       const activeProfile = context.activeProfile;
       const activeProfileName = activeProfile ? getProfileDisplayName(activeProfile, account.businessName) : null;
       const hasVendorAccount = Boolean(account?.id);
@@ -801,6 +807,19 @@ export function registerVendorRoutes(app: Express): void {
         shopActive: account.shopActive ?? true,
         shopSlug: account.shopSlug || null,
         referralCode: account.referralCode ?? null,
+        // Vendor Pro subscription entitlements (drives client gating + billing UI).
+        isPro: entitlements.isPro,
+        subscriptionPlan: entitlements.plan,
+        subscriptionStatus: entitlements.status,
+        subscriptionReason: entitlements.reason,
+        maxActiveListings: Number.isFinite(entitlements.maxActiveListings)
+          ? entitlements.maxActiveListings
+          : null, // null = unlimited (Pro)
+        canUseAnalytics: entitlements.canUseAnalytics,
+        canUseGoogleSync: entitlements.canUseGoogleSync,
+        subscriptionCurrentPeriodEnd: account.subscriptionCurrentPeriodEnd ?? null,
+        subscriptionCancelAtPeriodEnd: account.subscriptionCancelAtPeriodEnd ?? false,
+        compEndsAt: account.compEndsAt ?? null,
         __marker: "vendor_me_route_hit",
         vendorOnlySignup,
         onboardingCompleted: Boolean(account.onboardingCompletedAt),
@@ -2341,6 +2360,9 @@ export function registerVendorRoutes(app: Express): void {
           stripeConnectId: vendorAccounts.stripeConnectId,
           stripeOnboardingComplete: vendorAccounts.stripeOnboardingComplete,
           onboardingCompletedAt: vendorAccounts.onboardingCompletedAt,
+          subscriptionPlan: vendorAccounts.subscriptionPlan,
+          subscriptionStatus: vendorAccounts.subscriptionStatus,
+          compEndsAt: vendorAccounts.compEndsAt,
         })
         .from(vendorAccounts)
         .where(eq(vendorAccounts.id, vendorAuth.id))
@@ -2358,6 +2380,34 @@ export function registerVendorRoutes(app: Express): void {
           error: "stripe_not_configured",
           message: "Set up your payment account before publishing a listing. Go to your dashboard and complete the Stripe Connect setup — your listing will stay in draft until then.",
         });
+      }
+
+      // Free-tier active-listing cap. Pro vendors are unlimited. The gate is on the
+      // publish/activate transition only — drafting/editing is always allowed, and
+      // re-publishing an already-active listing never trips it. package_item rows
+      // are managed by their parent container, so they're excluded from the count.
+      const entitlements = getVendorEntitlements(vendorAccount);
+      if (!entitlements.isPro) {
+        const isAlreadyActive = (existing[0]?.status || "").toLowerCase() === "active";
+        if (!isAlreadyActive) {
+          const [{ activeCount }] = await db
+            .select({ activeCount: drizzleSql<number>`count(*)::int` })
+            .from(vendorListings)
+            .where(
+              and(
+                eq(vendorListings.accountId, vendorAuth.id),
+                eq(vendorListings.status, "active"),
+                ne(vendorListings.listingType, "package_item")
+              )
+            );
+          if (activeCount >= entitlements.maxActiveListings) {
+            return res.status(403).json({
+              error: "listing_limit_reached",
+              message: "Your free plan includes 1 active listing. Upgrade to Pro for unlimited listings.",
+              upgradeUrl: "/vendor/dashboard#vendor-billing",
+            });
+          }
+        }
       }
 
       const incomingListingData = req.body?.listingData;
@@ -4111,6 +4161,13 @@ export function registerVendorRoutes(app: Express): void {
           recentBookings: [],
         });
       }
+
+      // Advanced analytics is a Pro feature. Free vendors still see lifetime
+      // totals (total bookings + total revenue); the trends, profile views, and
+      // recent-activity list are gated and stripped from the response below.
+      const statsAccount = await getVendorAccountFromRequest(req);
+      const analyticsLocked = statsAccount ? !getVendorEntitlements(statsAccount).canUseAnalytics : false;
+
       const profileContext = await resolveActiveVendorProfile(req);
       const activeProfileId = profileContext?.activeProfileId;
       if (!activeProfileId) {
@@ -4265,13 +4322,16 @@ export function registerVendorRoutes(app: Express): void {
         }));
 
       return res.json({
+        // Always visible: lifetime totals.
         totalBookings,
-        bookingsThisMonth,
         revenue,
-        revenueGrowth,
-        profileViews,
-        profileViewsGrowth,
-        recentBookings,
+        // Pro-only fields — zeroed/emptied for Free vendors.
+        analyticsLocked,
+        bookingsThisMonth: analyticsLocked ? 0 : bookingsThisMonth,
+        revenueGrowth: analyticsLocked ? 0 : revenueGrowth,
+        profileViews: analyticsLocked ? 0 : profileViews,
+        profileViewsGrowth: analyticsLocked ? 0 : profileViewsGrowth,
+        recentBookings: analyticsLocked ? [] : recentBookings,
       });
     } catch (error: any) {
       return respondWithInternalServerError(req, res, error);

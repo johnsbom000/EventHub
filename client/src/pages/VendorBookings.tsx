@@ -1,5 +1,5 @@
 import React, { useMemo, useState } from "react";
-import { useLocation } from "wouter";
+import { useLocation, Link } from "wouter";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { useAuth0 } from "@auth0/auth0-react";
 import { useTranslation } from "react-i18next";
@@ -16,7 +16,7 @@ import {
   DialogDescription,
 } from "@/components/ui/dialog";
 import { Textarea } from "@/components/ui/textarea";
-import { Calendar, ChevronLeft, ChevronRight, Clock, Globe, MapPin, MessageSquare } from "lucide-react";
+import { Calendar, ChevronLeft, ChevronRight, Clock, Globe, MapPin, MessageSquare, Sparkles, Lock } from "lucide-react";
 import VendorShell from "@/components/VendorShell";
 import { apiRequest } from "@/lib/queryClient";
 import { useToast } from "@/hooks/use-toast";
@@ -123,6 +123,7 @@ function isTimezoneMismatch(eventTz: string | null | undefined, vendorTz: string
 
 type VendorMe = {
   googleConnectionStatus?: string | null;
+  canUseGoogleSync?: boolean | null;
 };
 
 export default function VendorBookings() {
@@ -535,19 +536,37 @@ export default function VendorBookings() {
               </>
             ) : (
               <>
-                <div className="mt-3 text-sm">
-                  <span className="font-medium text-foreground">{t("vendorBookings.statusLabel")} </span>
-                  <span className="text-muted-foreground">{t("vendorBookings.statusNotConnected")}</span>
-                </div>
-                <div className="mt-4">
-                  <Button
-                    onClick={handleConnectGoogleCalendar}
-                    disabled={isGoogleCalendarConnectLoading}
-                    data-testid="button-connect-google-calendar-bookings"
-                  >
-                    {isGoogleCalendarConnectLoading ? t("vendorBookings.googleConnectLoading") : t("vendorBookings.googleConnectButton")}
-                  </Button>
-                </div>
+                {vendorAccount?.canUseGoogleSync === false ? (
+                  <>
+                    <p className="mt-3 flex items-center gap-1.5 text-sm text-[#2a3a42]">
+                      <Lock className="h-3.5 w-3.5 shrink-0 text-[#4a6a7d]" />
+                      Google Calendar sync is a Pro feature.
+                    </p>
+                    <div className="mt-4">
+                      <Button asChild className="bg-[#4a6a7d] hover:bg-[#3f5c6d] text-[#f5f0e8]">
+                        <Link href="/vendor/dashboard#vendor-billing" data-testid="button-upgrade-google-calendar-bookings">
+                          <Sparkles className="mr-1 h-3.5 w-3.5" /> Upgrade to Pro
+                        </Link>
+                      </Button>
+                    </div>
+                  </>
+                ) : (
+                  <>
+                    <div className="mt-3 text-sm">
+                      <span className="font-medium text-foreground">{t("vendorBookings.statusLabel")} </span>
+                      <span className="text-muted-foreground">{t("vendorBookings.statusNotConnected")}</span>
+                    </div>
+                    <div className="mt-4">
+                      <Button
+                        onClick={handleConnectGoogleCalendar}
+                        disabled={isGoogleCalendarConnectLoading}
+                        data-testid="button-connect-google-calendar-bookings"
+                      >
+                        {isGoogleCalendarConnectLoading ? t("vendorBookings.googleConnectLoading") : t("vendorBookings.googleConnectButton")}
+                      </Button>
+                    </div>
+                  </>
+                )}
               </>
             )}
           </div>

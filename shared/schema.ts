@@ -303,6 +303,22 @@ export const vendorAccounts = pgTable(
     // When the vendor finished/dismissed the one-time onboarding tour shown on
     // their first dashboard visit (migration 0133). NULL = not completed yet.
     dashboardTourCompletedAt: timestamp("dashboard_tour_completed_at"),
+    // Vendor Pro subscription (migration 0134). Free tier = 1 active listing, no
+    // analytics, no Google Calendar sync. Pro ($29/mo or $290/yr) = unlimited
+    // listings + analytics + calendar sync. Billing is via Stripe Billing and is
+    // entirely separate from the Stripe Connect payout account (stripeConnectId).
+    subscriptionPlan: text("subscription_plan").notNull().default("free"), // 'free' | 'pro'
+    // none | trialing | active | past_due | canceled | comp
+    subscriptionStatus: text("subscription_status").notNull().default("none"),
+    stripeSubscriptionId: text("stripe_subscription_id"),
+    stripePriceId: text("stripe_price_id"),
+    subscriptionCurrentPeriodEnd: timestamp("subscription_current_period_end"),
+    subscriptionCancelAtPeriodEnd: boolean("subscription_cancel_at_period_end").notNull().default(false),
+    // Complimentary-Pro grant expiry (no card / no auto-charge). Distinct from a
+    // Stripe trial: when this passes with no active subscription the vendor drops
+    // to Free. Used for the 30-day grant given to vendors existing at launch.
+    compEndsAt: timestamp("comp_ends_at"),
+    subscriptionUpdatedAt: timestamp("subscription_updated_at"),
   },
   (table) => ({
     userIdActiveUniqueIdx: uniqueIndex("vendor_accounts_user_id_active_unique_idx")
@@ -319,6 +335,9 @@ export const vendorAccounts = pgTable(
     referralCodeUniqueIdx: uniqueIndex("vendor_accounts_referral_code_unique_idx")
       .on(table.referralCode)
       .where(sql`${table.referralCode} is not null`),
+    stripeSubscriptionIdUniqueIdx: uniqueIndex("vendor_accounts_stripe_subscription_id_unique_idx")
+      .on(table.stripeSubscriptionId)
+      .where(sql`${table.stripeSubscriptionId} is not null`),
     shopSlugUniqueIdx: uniqueIndex("vendor_accounts_shop_slug_unique_idx")
       .on(table.shopSlug)
       .where(sql`${table.deletedAt} is null`),

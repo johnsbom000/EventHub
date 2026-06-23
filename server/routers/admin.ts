@@ -91,6 +91,7 @@ import {
 } from "../services/chatService";
 import {
   deactivateActiveListingsViolatingPublishGate,
+  deactivateExtraActiveListingsForFreeTier,
   checkListingAvailabilityForBookingRequest,
   sendCancellationEmailsAsync,
 } from "../services/bookingService";
@@ -904,11 +905,36 @@ export function registerAdminRoutes(app: Express): void {
         .groupBy(drizzleSql`DATE(${users.createdAt})`)
         .orderBy(drizzleSql`DATE(${users.createdAt})`);
 
+      // Vendor Pro subscription counts (active vendors only).
+      const subCountsRows = await db.execute(drizzleSql`
+        SELECT
+          COUNT(*) FILTER (WHERE subscription_status = 'active')::int AS active,
+          COUNT(*) FILTER (WHERE subscription_status = 'trialing')::int AS trialing,
+          COUNT(*) FILTER (WHERE subscription_status = 'comp' AND (comp_ends_at IS NULL OR comp_ends_at > NOW()))::int AS comp,
+          COUNT(*) FILTER (WHERE subscription_status = 'past_due')::int AS past_due,
+          COUNT(*) FILTER (WHERE NOT (
+            subscription_status IN ('active','trialing','past_due')
+            OR (subscription_status = 'comp' AND (comp_ends_at IS NULL OR comp_ends_at > NOW()))
+          ))::int AS free
+        FROM vendor_accounts
+        WHERE deleted_at IS NULL AND active = true
+      `);
+      const sc = extractRows<{ active: number; trialing: number; comp: number; past_due: number; free: number }>(subCountsRows)[0];
+      const subscriptionCounts = {
+        active: Number(sc?.active ?? 0),
+        trialing: Number(sc?.trialing ?? 0),
+        comp: Number(sc?.comp ?? 0),
+        pastDue: Number(sc?.past_due ?? 0),
+        free: Number(sc?.free ?? 0),
+        pro: Number(sc?.active ?? 0) + Number(sc?.trialing ?? 0) + Number(sc?.comp ?? 0) + Number(sc?.past_due ?? 0),
+      };
+
       res.json({
         totalUsers,
         totalVendors,
         vendorsByType,
         userGrowth,
+        subscriptionCounts,
       });
     } catch (error: any) {
       return respondWithInternalServerError(req, res, error);
@@ -1568,6 +1594,65 @@ export function registerAdminRoutes(app: Express): void {
         .limit(10);
 
       return res.json({ vendors: rows });
+    } catch (err: any) {
+      return respondWithInternalServerError(req, res, err);
+    }
+  });
+
+  // POST /api/admin/vendors/:id/grant-comp — grant complimentary Pro (no billing).
+  // Body: { days?: number } (default 30). DB-only; never touches Stripe.
+  app.post("/api/admin/vendors/:id/grant-comp", adminRateLimiter, requireAdminAuth, async (req: any, res: any) => {
+    try {
+      const vendorId = asTrimmedString(req.params?.id);
+      if (!vendorId) return res.status(400).json({ error: "Vendor id required" });
+      const days = Math.max(1, Math.min(365, parseIntegerValue(req.body?.days) ?? 30));
+      const compEndsAt = new Date(Date.now() + days * 24 * 60 * 60 * 1000);
+
+      const [updated] = await db
+        .update(vendorAccounts)
+        .set({
+          subscriptionPlan: "pro",
+          subscriptionStatus: "comp",
+          compEndsAt,
+          subscriptionUpdatedAt: new Date(),
+        })
+        .where(and(eq(vendorAccounts.id, vendorId), isNull(vendorAccounts.deletedAt)))
+        .returning({ id: vendorAccounts.id });
+      if (!updated) return res.status(404).json({ error: "Vendor not found" });
+
+      return res.json({ ok: true, compEndsAt });
+    } catch (err: any) {
+      return respondWithInternalServerError(req, res, err);
+    }
+  });
+
+  // POST /api/admin/vendors/:id/cancel-comp — end a complimentary grant now and
+  // drop the vendor to Free (trims extra active listings). DB-only.
+  app.post("/api/admin/vendors/:id/cancel-comp", adminRateLimiter, requireAdminAuth, async (req: any, res: any) => {
+    try {
+      const vendorId = asTrimmedString(req.params?.id);
+      if (!vendorId) return res.status(400).json({ error: "Vendor id required" });
+
+      const [updated] = await db
+        .update(vendorAccounts)
+        .set({
+          subscriptionPlan: "free",
+          subscriptionStatus: "none",
+          compEndsAt: null,
+          subscriptionUpdatedAt: new Date(),
+        })
+        .where(
+          and(
+            eq(vendorAccounts.id, vendorId),
+            eq(vendorAccounts.subscriptionStatus, "comp"),
+            isNull(vendorAccounts.deletedAt)
+          )
+        )
+        .returning({ id: vendorAccounts.id });
+      if (!updated) return res.status(404).json({ error: "Vendor not found or not on a complimentary grant" });
+
+      await deactivateExtraActiveListingsForFreeTier(vendorId);
+      return res.json({ ok: true });
     } catch (err: any) {
       return respondWithInternalServerError(req, res, err);
     }

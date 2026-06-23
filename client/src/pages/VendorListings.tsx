@@ -5,7 +5,9 @@ import { useAuth0 } from "@auth0/auth0-react";
 import { Card } from "@/components/ui/card";
 import { Button } from "@/components/ui/button";
 import { Badge } from "@/components/ui/badge";
-import { Plus, Edit, Eye } from "lucide-react";
+import { Plus, Edit, Eye, Sparkles, Lock } from "lucide-react";
+import { Link } from "wouter";
+import type { VendorMeState } from "@/lib/vendorState";
 import { CreateListingWizard } from "@/features/vendor/create-listing/CreateListingWizard";
 import { useQuery, useMutation } from "@tanstack/react-query";
 import { queryClient } from "@/lib/queryClient";
@@ -65,12 +67,20 @@ export default function VendorListings() {
     },
   });
 
+  const { data: me } = useQuery<VendorMeState>({
+    queryKey: ["/api/vendor/me"],
+    enabled: isAuthenticated && !isAuthLoading,
+  });
+  const isPro = Boolean(me?.isPro);
+
   const allListingRows: AnyListing[] = (Array.isArray(listings) ? listings : []).filter(
     (l) => l?.listingType !== "package_item"
   );
   const activeListingRows = allListingRows.filter(
     (listing) => String(listing?.status || "").toLowerCase() === "active"
   );
+  // Free tier may keep only 1 active listing at a time.
+  const atFreeListingCap = !isPro && activeListingRows.length >= 1;
   const draftListingRows = allListingRows.filter(
     (listing) => String(listing?.status || "").toLowerCase() === "draft"
   );
@@ -158,6 +168,18 @@ export default function VendorListings() {
               className="underline font-semibold text-sm"
             >
               Complete profile
+            </a>
+          ),
+        } as any);
+        return;
+      }
+      if (error?.code === "listing_limit_reached") {
+        toast({
+          title: "Free plan limit reached",
+          description: "Your free plan includes 1 active listing. Upgrade to Pro for unlimited.",
+          action: (
+            <a href="/vendor/dashboard#vendor-billing" className="underline font-semibold text-sm">
+              Upgrade to Pro
             </a>
           ),
         } as any);
@@ -406,6 +428,20 @@ export default function VendorListings() {
               {t("vendorListings.createListing")}
             </Button>
           </div>
+
+          {atFreeListingCap ? (
+            <div className="flex flex-wrap items-center gap-3 rounded-lg border border-[#4a6a7d]/30 bg-[#4a6a7d]/8 px-4 py-3" data-testid="listing-cap-banner">
+              <Lock className="h-4 w-4 shrink-0 text-[#4a6a7d]" />
+              <p className="flex-1 text-sm text-[#2a3a42]">
+                Your free plan includes 1 active listing. You can keep building drafts — upgrade to Pro to publish unlimited listings.
+              </p>
+              <Button asChild size="sm" className="bg-[#4a6a7d] hover:bg-[#3f5c6d] text-[#f5f0e8]">
+                <Link href="/vendor/dashboard#vendor-billing">
+                  <Sparkles className="mr-1 h-3.5 w-3.5" /> Upgrade to Pro
+                </Link>
+              </Button>
+            </div>
+          ) : null}
 
           <ListingSection
             title={t("vendorListings.activeListings")}

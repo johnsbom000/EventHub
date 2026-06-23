@@ -8,7 +8,7 @@ import {
   Users, Building2, Calendar, DollarSign, TrendingUp, Eye,
   AlertTriangle, CheckCircle, XCircle, Clock, Ban, ArrowRightLeft,
   CreditCard, FileText, ChevronDown, ChevronUp, Shield,
-  Lightbulb, Bug, Star,
+  Lightbulb, Bug, Star, Sparkles,
 } from "lucide-react";
 import { useLocation, useParams } from "wouter";
 import { useAuth0 } from "@auth0/auth0-react";
@@ -763,6 +763,105 @@ function PayoutsSection({ isAdmin }: { isAdmin: boolean }) {
 
 // ─── Section: Users ───────────────────────────────────────────────────────────
 
+// Admin tool: search a vendor and grant / cancel complimentary Pro (DB-only,
+// never touches Stripe). Billed subscriptions are managed in the Stripe dashboard.
+function CompManagementCard() {
+  const [query, setQuery] = useState("");
+  const [results, setResults] = useState<Array<{ id: string; businessName: string; email: string }>>([]);
+  const [searching, setSearching] = useState(false);
+  const [message, setMessage] = useState<string | null>(null);
+
+  async function runSearch() {
+    const q = query.trim();
+    if (q.length < 2) {
+      setMessage("Type at least 2 characters.");
+      return;
+    }
+    setSearching(true);
+    setMessage(null);
+    try {
+      const res = await apiRequest("GET", `/api/admin/vendors/search?q=${encodeURIComponent(q)}`);
+      const json = await res.json();
+      setResults(Array.isArray(json?.vendors) ? json.vendors : []);
+      if (!json?.vendors?.length) setMessage("No vendors found.");
+    } catch {
+      setMessage("Search failed. Try again.");
+    } finally {
+      setSearching(false);
+    }
+  }
+
+  async function grant(vendorId: string) {
+    setMessage(null);
+    try {
+      const res = await apiRequest("POST", `/api/admin/vendors/${vendorId}/grant-comp`, { days: 30 });
+      if (!res.ok) throw new Error();
+      setMessage("Granted 30 days of complimentary Pro.");
+    } catch {
+      setMessage("Could not grant comp.");
+    }
+  }
+
+  async function cancel(vendorId: string) {
+    setMessage(null);
+    try {
+      const res = await apiRequest("POST", `/api/admin/vendors/${vendorId}/cancel-comp`, {});
+      if (!res.ok) throw new Error();
+      setMessage("Complimentary Pro ended; vendor dropped to Free.");
+    } catch {
+      setMessage("Could not cancel comp (vendor may not be on a comp grant).");
+    }
+  }
+
+  return (
+    <Card>
+      <CardHeader>
+        <CardTitle>Complimentary Pro</CardTitle>
+        <CardDescription>Grant or end a free Pro grant for a specific vendor. Does not affect billed subscriptions.</CardDescription>
+      </CardHeader>
+      <CardContent className="space-y-3">
+        <div className="flex gap-2">
+          <input
+            value={query}
+            onChange={(e) => setQuery(e.target.value)}
+            onKeyDown={(e) => { if (e.key === "Enter") runSearch(); }}
+            placeholder="Search vendor by name or email"
+            className="flex-1 rounded-md border border-border bg-background px-3 py-2 text-sm"
+          />
+          <button
+            onClick={runSearch}
+            disabled={searching}
+            className="px-3 py-2 text-sm bg-primary text-primary-foreground rounded hover:opacity-90 disabled:opacity-50"
+          >
+            {searching ? "Searching…" : "Search"}
+          </button>
+        </div>
+        {message ? <p className="text-sm text-muted-foreground">{message}</p> : null}
+        {results.length > 0 ? (
+          <div className="divide-y divide-border rounded-lg border border-border">
+            {results.map((v) => (
+              <div key={v.id} className="flex items-center justify-between gap-3 px-3 py-2.5 text-sm">
+                <div className="min-w-0">
+                  <p className="font-medium truncate">{v.businessName}</p>
+                  <p className="text-muted-foreground truncate">{v.email}</p>
+                </div>
+                <div className="flex shrink-0 gap-2">
+                  <button onClick={() => grant(v.id)} className="px-3 py-1.5 text-xs bg-[#4a6a7d] text-[#f5f0e8] rounded hover:opacity-90">
+                    Grant 30d Pro
+                  </button>
+                  <button onClick={() => cancel(v.id)} className="px-3 py-1.5 text-xs bg-muted text-foreground rounded hover:bg-muted/70">
+                    End comp
+                  </button>
+                </div>
+              </div>
+            ))}
+          </div>
+        ) : null}
+      </CardContent>
+    </Card>
+  );
+}
+
 function UsersSection({ isAdmin }: { isAdmin: boolean }) {
   const { data: userStats } = useQuery<any>({ queryKey: ["/api/admin/stats/users"], enabled: isAdmin });
 
@@ -773,6 +872,19 @@ function UsersSection({ isAdmin }: { isAdmin: boolean }) {
       <div className="grid gap-4 grid-cols-2 md:grid-cols-4 mb-6">
         <StatCard title="Total Users" value={userStats?.totalUsers ?? 0} sub="Registered customers" icon={<Users className="h-4 w-4 text-muted-foreground" />} />
         <StatCard title="Total Vendors" value={userStats?.totalVendors ?? 0} sub="Vendor accounts" icon={<Building2 className="h-4 w-4 text-muted-foreground" />} />
+      </div>
+
+      <h3 className="text-sm font-semibold text-muted-foreground mb-3">Pro subscriptions</h3>
+      <div className="grid gap-4 grid-cols-2 md:grid-cols-5 mb-6">
+        <StatCard title="Pro (total)" value={userStats?.subscriptionCounts?.pro ?? 0} sub="Active + trial + comp" icon={<Sparkles className="h-4 w-4 text-muted-foreground" />} />
+        <StatCard title="Paying" value={userStats?.subscriptionCounts?.active ?? 0} sub="Active subscriptions" icon={<CreditCard className="h-4 w-4 text-muted-foreground" />} />
+        <StatCard title="Trialing" value={userStats?.subscriptionCounts?.trialing ?? 0} sub="In free trial" icon={<Clock className="h-4 w-4 text-muted-foreground" />} />
+        <StatCard title="Complimentary" value={userStats?.subscriptionCounts?.comp ?? 0} sub="Comp grants" icon={<Star className="h-4 w-4 text-muted-foreground" />} />
+        <StatCard title="Past due" value={userStats?.subscriptionCounts?.pastDue ?? 0} sub="Payment retrying" icon={<AlertTriangle className="h-4 w-4 text-muted-foreground" />} />
+      </div>
+
+      <div className="mb-6">
+        <CompManagementCard />
       </div>
 
       <div className="grid gap-4 md:grid-cols-2">

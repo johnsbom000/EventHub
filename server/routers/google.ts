@@ -136,6 +136,30 @@ import { requireAuth0, verifyAuth0Token, resolveEmailVerified, EMAIL_NOT_VERIFIE
 import { z } from "zod";
 import { db } from "../db";
 import { eq, and, or, ne, not, isNull, inArray, sql as drizzleSql, count, sum, gte, lte, desc, asc } from "drizzle-orm";
+import { getVendorEntitlements } from "../services/entitlementsService";
+
+// Google Calendar sync is a Pro-tier feature. Returns true if the vendor may use
+// it; otherwise sends a 403 and returns false (caller should stop).
+async function ensureGoogleSyncEntitlement(vendorAccountId: string, res: any): Promise<boolean> {
+  const [row] = await db
+    .select({
+      subscriptionPlan: vendorAccounts.subscriptionPlan,
+      subscriptionStatus: vendorAccounts.subscriptionStatus,
+      compEndsAt: vendorAccounts.compEndsAt,
+    })
+    .from(vendorAccounts)
+    .where(eq(vendorAccounts.id, vendorAccountId))
+    .limit(1);
+  if (row && !getVendorEntitlements(row).canUseGoogleSync) {
+    res.status(403).json({
+      error: "pro_required",
+      message: "Google Calendar sync is a Pro feature. Upgrade to connect your calendar.",
+      upgradeUrl: "/vendor/dashboard#vendor-billing",
+    });
+    return false;
+  }
+  return true;
+}
 import multer from "multer";
 import { promises as fs } from "fs";
 import path from "path";
@@ -366,6 +390,10 @@ export function registerGoogleRoutes(app: Express): void {
       if (!vendorAccount?.id) {
         return res.status(404).json({ error: "Vendor account not found for this Auth0 user" });
       }
+
+      // Google Calendar sync is a Pro feature — gate the connect flow.
+      if (!(await ensureGoogleSyncEntitlement(vendorAccount.id, res))) return;
+
       vendorAccountId = vendorAccount.id;
     } catch (error: any) {
       logger.error("Google OAuth start auth failed:", error?.message || error);
@@ -638,6 +666,16 @@ export function registerGoogleRoutes(app: Express): void {
       const account = await getVendorAccountFromRequest(req);
       if (!account?.id) {
         return res.status(404).json({ error: "Account not found" });
+      }
+
+      // Google Calendar sync is a Pro feature — block downgraded vendors from
+      // re-pointing a calendar even if a stale token remains.
+      if (!getVendorEntitlements(account).canUseGoogleSync) {
+        return res.status(403).json({
+          error: "pro_required",
+          message: "Google Calendar sync is a Pro feature. Upgrade to connect your calendar.",
+          upgradeUrl: "/vendor/dashboard#vendor-billing",
+        });
       }
 
       const { calendarId } = selectGoogleCalendarSchema.parse(req.body ?? {});

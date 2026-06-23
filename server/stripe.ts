@@ -568,6 +568,68 @@ export async function createCheckoutSession(params: {
 }
 
 // ---------------------------------------------------------------------------
+// Billing: Vendor Pro Subscription
+// ---------------------------------------------------------------------------
+// Stripe Billing for the vendor Pro plan. This is entirely SEPARATE from the
+// Stripe Connect payout flow above — it bills the vendor as a normal Stripe
+// Customer (users.stripe_customer_id), and never touches transfers or the
+// vendor's connected account.
+
+/**
+ * Creates a Stripe Checkout Session in subscription mode for the vendor Pro plan.
+ *
+ * The vendor is redirected to Stripe's hosted page to enter card details and
+ * confirm. A free trial is applied via `trial_period_days`. A card is collected
+ * up front (`payment_method_collection: 'always'`) so the subscription auto-
+ * converts to paid when the trial ends.
+ *
+ * `vendorAccountId` is stored on the subscription metadata so the webhook handler
+ * can resolve the vendor without a customer-id lookup race.
+ */
+export async function createSubscriptionCheckoutSession(params: {
+  stripeCustomerId: string;
+  priceId: string;
+  vendorAccountId: string;
+  trialPeriodDays?: number;
+  successUrl: string;
+  cancelUrl: string;
+}): Promise<Stripe.Checkout.Session> {
+  const { stripeCustomerId, priceId, vendorAccountId, trialPeriodDays, successUrl, cancelUrl } = params;
+
+  return stripeClient.checkout.sessions.create({
+    mode: "subscription",
+    customer: stripeCustomerId,
+    line_items: [{ price: priceId, quantity: 1 }],
+    // Collect a card up front so the trial auto-converts to a paid subscription.
+    payment_method_collection: "always",
+    subscription_data: {
+      ...(trialPeriodDays && trialPeriodDays > 0 ? { trial_period_days: trialPeriodDays } : {}),
+      metadata: { vendorAccountId, kind: "vendor_pro_subscription" },
+    },
+    // Mirror the identifiers onto the session too for checkout.session.completed.
+    metadata: { vendorAccountId, kind: "vendor_pro_subscription" },
+    success_url: successUrl,
+    cancel_url: cancelUrl,
+    allow_promotion_codes: true,
+  });
+}
+
+/**
+ * Creates a Stripe Billing Portal session so a vendor can self-manage their
+ * subscription (update card, switch monthly/annual, cancel). Returns a one-time
+ * URL to redirect the vendor to.
+ */
+export async function createBillingPortalSession(params: {
+  stripeCustomerId: string;
+  returnUrl: string;
+}): Promise<Stripe.BillingPortal.Session> {
+  return stripeClient.billingPortal.sessions.create({
+    customer: params.stripeCustomerId,
+    return_url: params.returnUrl,
+  });
+}
+
+// ---------------------------------------------------------------------------
 // Payments: Transfer to Vendor
 // ---------------------------------------------------------------------------
 

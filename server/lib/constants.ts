@@ -6,6 +6,17 @@
 export const VENDOR_FEE_RATE = 0;
 export const CUSTOMER_FEE_RATE = 0;
 
+// ─── Vendor Pro subscription ──────────────────────────────────────────────────
+// Free tier = this many active listings at once, no analytics, no Google sync.
+// Pro = unlimited listings + analytics + calendar sync (the product as it works
+// today). See server/services/entitlementsService.ts for the entitlement logic.
+export const FREE_TIER_MAX_ACTIVE_LISTINGS = 1;
+export const PRO_TRIAL_PERIOD_DAYS = 30;
+// Stripe Price IDs for the Pro plan (created in the Stripe dashboard). Read from
+// env so the same code works across test/live without a redeploy.
+export const STRIPE_PRICE_PRO_MONTHLY = process.env.STRIPE_PRICE_PRO_MONTHLY || "";
+export const STRIPE_PRICE_PRO_ANNUAL = process.env.STRIPE_PRICE_PRO_ANNUAL || "";
+
 // ─── Stripe fee estimation ────────────────────────────────────────────────────
 export const STRIPE_FEE_ESTIMATE_PERCENT = 0.029;
 export const STRIPE_FEE_ESTIMATE_FIXED_CENTS = 30;

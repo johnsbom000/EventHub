@@ -1,4 +1,4 @@
-import { Switch, Route, useLocation } from "wouter";
+import { Switch, Route, Redirect, useLocation } from "wouter";
 import React, { useEffect, useRef, useState } from "react";
 import { QueryClientProvider, useQuery } from "@tanstack/react-query";
 import { queryClient, apiRequest, getQueryFn } from "./lib/queryClient";
@@ -329,6 +329,9 @@ function Router() {
         <Route path="/vendor/discounts" component={VendorDiscounts} />
         <Route path="/vendor/reviews" component={VendorReviews} />
         <Route path="/vendor/notifications" component={VendorNotifications} />
+        {/* Billing now lives on the dashboard; keep the path as a redirect for
+            old links and Stripe return URLs. */}
+        <Route path="/vendor/billing"><Redirect to="/vendor/dashboard" /></Route>
         <Route path="/vendor/connect/refresh" component={VendorConnectRefresh} />
         <Route path="/vendor/connect/return" component={VendorConnectReturn} />
         <Route path="/vendor/disputes" component={VendorDisputes} />
