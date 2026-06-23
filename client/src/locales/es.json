@@ -1,4 +1,34 @@
 {
+    "ai": {
+      "draftReplyButton": "Redactar una respuesta",
+      "drafting": "Redactando…",
+      "draftHint": "Elige un borrador para editarlo antes de enviar — nada se envía automáticamente.",
+      "errorTitle": "Respuesta con IA",
+      "error": "No se pudo generar una respuesta. Inténtalo de nuevo.",
+      "limitReached": "Has usado todas tus respuestas de IA incluidas este mes. Activa el pago por uso en Facturación para seguir redactando.",
+      "proRequired": "Las respuestas con IA son una función Pro.",
+      "disabled": "Activa el asistente de IA en Facturación para redactar respuestas.",
+      "assistant": {
+        "title": "Asistente de mensajes con IA",
+        "desc": "Genera respuestas sugeridas para tus clientes desde tu bandeja. Tú revisas y editas cada borrador — nada se envía automáticamente.",
+        "enableLabel": "Activar borradores de respuesta con IA",
+        "meter": "{{used}} / {{included}} respuestas usadas este mes",
+        "resets": "Se restablece el {{date}}",
+        "overageLabel": "Pago por uso",
+        "overageHint": "Tras tu límite mensual, cada respuesta adicional cuesta ${{price}}.",
+        "hardStopHint": "La redacción se detiene en {{included}} respuestas/mes. Actívalo para continuar con pago por uso."
+      },
+      "faq": {
+        "title": "Documento de preguntas frecuentes",
+        "desc": "Sube un PDF con tus preguntas frecuentes y el asistente lo usará para escribir mejores respuestas.",
+        "upload": "Subir PDF",
+        "replace": "Reemplazar",
+        "remove": "Quitar",
+        "pdfOnly": "Solo PDF, hasta 10 MB.",
+        "noText": "No pudimos leer texto de ese PDF.",
+        "uploadError": "Error al subir. Inténtalo de nuevo."
+      }
+    },
   "nav": {
     "loginSignup": "Iniciar sesión / Registrarse",
     "vendor": {

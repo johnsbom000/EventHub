@@ -1,10 +1,14 @@
 import { useEffect, useRef, useState } from "react";
-import { useQuery, useQueryClient } from "@tanstack/react-query";
+import { useQuery } from "@tanstack/react-query";
+import { useQueryClient } from "@tanstack/react-query";
 import { useAuth0 } from "@auth0/auth0-react";
 import { useLocation } from "wouter";
+import { useTranslation } from "react-i18next";
 
 import { Button } from "@/components/ui/button";
 import { Badge } from "@/components/ui/badge";
+import { Switch } from "@/components/ui/switch";
+import { apiRequest } from "@/lib/queryClient";
 import type { VendorMeState } from "@/lib/vendorState";
 import {
   Check,
@@ -14,7 +18,24 @@ import {
   BarChart3,
   LayoutGrid,
   AlertTriangle,
+  FileText,
+  Upload,
+  Trash2,
+  MessageSquareText,
 } from "lucide-react";
+
+type AiSettings = {
+  isPro: boolean;
+  enabled: boolean;
+  overageEnabled: boolean;
+  includedPerPeriod: number;
+  used: number;
+  remaining: number;
+  periodResetsAt: string;
+  overagePriceCents: number;
+};
+
+type FaqMeta = { filename: string | null; charCount: number; pageCount: number | null; updatedAt: string } | null;
 
 type BillingInterval = "monthly" | "annual";
 
@@ -334,6 +355,198 @@ export default function VendorBillingPanel() {
         </div>
       </div>
       ) : null}
+
+      <AiAssistantCard isPro={isPro} />
+    </div>
+  );
+}
+
+function AiAssistantCard({ isPro }: { isPro: boolean }) {
+  const { t } = useTranslation();
+  const { getAccessTokenSilently } = useAuth0();
+  const fileRef = useRef<HTMLInputElement>(null);
+  const [savingToggle, setSavingToggle] = useState<null | "enabled" | "overage">(null);
+  const [uploading, setUploading] = useState(false);
+  const [cardError, setCardError] = useState<string | null>(null);
+
+  const { data: ai, refetch: refetchAi } = useQuery<AiSettings>({
+    queryKey: ["/api/vendor/ai/settings"],
+    enabled: isPro,
+  });
+  const { data: faq, refetch: refetchFaq } = useQuery<FaqMeta>({
+    queryKey: ["/api/vendor/ai/faq"],
+    enabled: isPro,
+  });
+
+  if (!isPro) return null;
+
+  const saveSetting = async (
+    patch: { enabled?: boolean; overageEnabled?: boolean },
+    which: "enabled" | "overage"
+  ) => {
+    setSavingToggle(which);
+    setCardError(null);
+    try {
+      await apiRequest("POST", "/api/vendor/ai/settings", patch);
+      await refetchAi();
+    } catch {
+      setCardError(t("ai.error"));
+    } finally {
+      setSavingToggle(null);
+    }
+  };
+
+  const onPickFile = () => fileRef.current?.click();
+
+  const onUpload = async (file: File) => {
+    setUploading(true);
+    setCardError(null);
+    try {
+      const token = await getAccessTokenSilently();
+      const form = new FormData();
+      form.append("file", file);
+      const res = await fetch("/api/vendor/ai/faq", {
+        method: "POST",
+        headers: { Authorization: `Bearer ${token}` },
+        body: form,
+      });
+      if (!res.ok) {
+        const body = await res.json().catch(() => ({}));
+        throw new Error(body?.message || body?.error || "upload_failed");
+      }
+      await refetchFaq();
+    } catch (err: any) {
+      setCardError(err?.message === "no_text" ? t("ai.faq.noText") : t("ai.faq.uploadError"));
+    } finally {
+      setUploading(false);
+      if (fileRef.current) fileRef.current.value = "";
+    }
+  };
+
+  const onRemove = async () => {
+    setCardError(null);
+    try {
+      await apiRequest("DELETE", "/api/vendor/ai/faq");
+      await refetchFaq();
+    } catch {
+      setCardError(t("ai.error"));
+    }
+  };
+
+  const enabled = ai?.enabled ?? false;
+  const overageEnabled = ai?.overageEnabled ?? true;
+  const included = ai?.includedPerPeriod ?? 0;
+  const used = ai?.used ?? 0;
+  const resets = formatDate(ai?.periodResetsAt);
+  const price = ((ai?.overagePriceCents ?? 0) / 100).toFixed(2);
+  const meterPct = included > 0 ? Math.min(100, Math.round((used / included) * 100)) : 0;
+
+  return (
+    <div className="rounded-2xl border border-border bg-card p-6">
+      <div className="flex items-start gap-3">
+        <span className="mt-0.5 text-[#4a6a7d]">
+          <MessageSquareText className="h-5 w-5" />
+        </span>
+        <div className="flex-1">
+          <h3 className="font-serif text-lg font-semibold">{t("ai.assistant.title")}</h3>
+          <p className="mt-0.5 text-sm text-muted-foreground">{t("ai.assistant.desc")}</p>
+        </div>
+        <Switch
+          checked={enabled}
+          onCheckedChange={(v) => saveSetting({ enabled: v }, "enabled")}
+          disabled={savingToggle !== null}
+          aria-label={t("ai.assistant.enableLabel")}
+        />
+      </div>
+
+      {enabled ? (
+        <div className="mt-5 space-y-5">
+          {/* Credit meter */}
+          <div>
+            <div className="flex items-center justify-between text-sm">
+              <span className="font-medium">
+                {t("ai.assistant.meter", { used, included })}
+              </span>
+              {resets ? (
+                <span className="text-muted-foreground">{t("ai.assistant.resets", { date: resets })}</span>
+              ) : null}
+            </div>
+            <div className="mt-2 h-2 w-full overflow-hidden rounded-full bg-muted">
+              <div
+                className="h-full rounded-full bg-[#4a6a7d] transition-all"
+                style={{ width: `${meterPct}%` }}
+              />
+            </div>
+          </div>
+
+          {/* Pay-as-you-go overage */}
+          <div className="flex items-start justify-between gap-4">
+            <div>
+              <p className="text-sm font-medium">{t("ai.assistant.overageLabel")}</p>
+              <p className="mt-0.5 text-xs text-muted-foreground">
+                {overageEnabled
+                  ? t("ai.assistant.overageHint", { price })
+                  : t("ai.assistant.hardStopHint", { included })}
+              </p>
+            </div>
+            <Switch
+              checked={overageEnabled}
+              onCheckedChange={(v) => saveSetting({ overageEnabled: v }, "overage")}
+              disabled={savingToggle !== null}
+              aria-label={t("ai.assistant.overageLabel")}
+            />
+          </div>
+
+          {/* FAQ document */}
+          <div className="rounded-xl border border-border bg-background/50 p-4">
+            <div className="flex items-center gap-2 text-sm font-medium">
+              <FileText className="h-4 w-4 text-[#4a6a7d]" />
+              {t("ai.faq.title")}
+            </div>
+            <p className="mt-1 text-xs text-muted-foreground">{t("ai.faq.desc")}</p>
+            <input
+              ref={fileRef}
+              type="file"
+              accept="application/pdf"
+              className="hidden"
+              onChange={(e) => {
+                const f = e.target.files?.[0];
+                if (f) void onUpload(f);
+              }}
+            />
+            <div className="mt-3 flex flex-wrap items-center gap-2">
+              {faq?.filename ? (
+                <>
+                  <Badge variant="outline" className="gap-1">
+                    <FileText className="h-3 w-3" />
+                    {faq.filename}
+                  </Badge>
+                  <Button size="sm" variant="outline" onClick={onPickFile} disabled={uploading}>
+                    {uploading ? <Loader2 className="h-4 w-4 animate-spin" /> : t("ai.faq.replace")}
+                  </Button>
+                  <Button size="sm" variant="ghost" onClick={onRemove} disabled={uploading}>
+                    <Trash2 className="h-4 w-4" />
+                  </Button>
+                </>
+              ) : (
+                <Button size="sm" variant="outline" onClick={onPickFile} disabled={uploading}>
+                  {uploading ? (
+                    <Loader2 className="h-4 w-4 animate-spin" />
+                  ) : (
+                    <>
+                      <Upload className="mr-1.5 h-4 w-4" />
+                      {t("ai.faq.upload")}
+                    </>
+                  )}
+                </Button>
+              )}
+            </div>
+            <p className="mt-2 text-[11px] text-muted-foreground">{t("ai.faq.pdfOnly")}</p>
+          </div>
+        </div>
+      ) : null}
+
+      {cardError ? <p className="mt-3 text-sm text-destructive">{cardError}</p> : null}
     </div>
   );
 }

@@ -16,6 +16,7 @@ import { registerCustomerRoutes } from "./routers/customer";
 import { registerVendorRoutes } from "./routers/vendor";
 import { registerAdminRoutes } from "./routers/admin";
 import { registerBillingRoutes } from "./routers/billing";
+import { registerAiRoutes } from "./routers/ai";
 
 export async function registerRoutes(app: Express): Promise<Server> {
   await assertCanonicalBookingSchemaReady();
@@ -38,6 +39,7 @@ export async function registerRoutes(app: Express): Promise<Server> {
   registerCircumventionRoutes(app);
   registerAdminRoutes(app);
   registerBillingRoutes(app);
+  registerAiRoutes(app);
 
   const httpServer = createServer(app);
   return httpServer;

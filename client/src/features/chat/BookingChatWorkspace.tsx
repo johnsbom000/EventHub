@@ -1,13 +1,13 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
-import { AlertTriangle, ArrowLeft, Flag, MessageSquare, ShieldAlert } from "lucide-react";
+import { AlertTriangle, ArrowLeft, Flag, MessageSquare, ShieldAlert, Sparkles } from "lucide-react";
 import { Filter } from "bad-words";
-import { Chat, Channel, ChannelHeader, MessageInput, MessageList, Thread, Window } from "stream-chat-react";
+import { Chat, Channel, ChannelHeader, MessageInput, MessageList, Thread, Window, useMessageComposer } from "stream-chat-react";
 import { StreamChat, type Message as StreamMessage, type SendMessageOptions, type LocalMessage } from "stream-chat";
 import { CardElement, Elements, useElements, useStripe } from "@stripe/react-stripe-js";
 import { loadStripe } from "@stripe/stripe-js";
 
-import { apiRequest } from "@/lib/queryClient";
+import { apiRequest, ApiRequestError } from "@/lib/queryClient";
 import { trackEvent } from "@/lib/analytics";
 import { cn } from "@/lib/utils";
 import { Badge } from "@/components/ui/badge";
@@ -16,6 +16,7 @@ import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { Dialog, DialogContent, DialogHeader, DialogTitle } from "@/components/ui/dialog";
 import { useToast } from "@/hooks/use-toast";
 import { chatBlockMessage } from "@/components/CircumventionWarningModal";
+import { detectChatCircumvention } from "@shared/circumvention";
 import { useTranslation } from "react-i18next";
 
 const stripePromise = (() => {
@@ -75,27 +76,9 @@ type ChatBootstrapResponse = {
 
 const TOXIC_PATTERN = /\b(kill yourself|go die|i will hurt you|i'll hurt you|hate you)\b/gi;
 
-// ─── Client-side circumvention detection (mirrors server patterns) ────────────
-
-const CIRCUMVENTION_HARD_PATTERNS: RegExp[] = [
-  /[a-zA-Z0-9._%+\-]+@[a-zA-Z0-9.\-]+\.[a-zA-Z]{2,}/,
-  /(\+?1[\s.\-]?)?\(?\d{3}\)?[\s.\-]?\d{3}[\s.\-]?\d{4}/,
-  /\b(zero|one|two|three|four|five|six|seven|eight|nine)[\s\-]+(zero|one|two|three|four|five|six|seven|eight|nine)[\s\-]+(zero|one|two|three|four|five|six|seven|eight|nine)[\s\-]+(zero|one|two|three|four|five|six|seven|eight|nine)/i,
-  /https?:\/\/[^\s<>"']+/i,
-  /\bwww\.[a-zA-Z0-9\-]+\.[a-zA-Z]{2,}/i,
-  /\b[a-zA-Z0-9\-]{2,}\.(com|net|org|io|co|app|biz|info|me|us|shop|store|online|site|web)\b/i,
-  /\b(instagram|facebook|twitter|tiktok|linkedin|snapchat|youtube|pinterest|threads|x\.com)\.(com|me)\/[^\s<>"']+/i,
-  /@[a-zA-Z0-9_.]{3,}/,
-];
-
-function detectChatCircumvention(text: string): { blocked: boolean; matches: string[] } {
-  const matches: string[] = [];
-  for (const pattern of CIRCUMVENTION_HARD_PATTERNS) {
-    const found = text.match(pattern)?.[0];
-    if (found) matches.push(found.slice(0, 120));
-  }
-  return { blocked: matches.length > 0, matches };
-}
+// Circumvention detection (patterns + detectChatCircumvention) lives in
+// @shared/circumvention so the AI reply assistant on the server holds generated
+// drafts to the same off-platform policy as typed messages.
 
 function formatDate(value: string | null, fallback: string, locale?: string) {
   if (!value) return fallback;
@@ -248,6 +231,111 @@ function TravelFeePaymentModal({
         ) : null}
       </DialogContent>
     </Dialog>
+  );
+}
+
+type AiSettings = {
+  isPro: boolean;
+  enabled: boolean;
+  overageEnabled: boolean;
+  includedPerPeriod: number;
+  used: number;
+  remaining: number;
+  periodResetsAt: string;
+  overagePriceCents: number;
+};
+
+/**
+ * Vendor-only toolbar above the composer: generates 1-2 AI draft replies on demand
+ * and injects the chosen draft into the message input (editable, never auto-sent).
+ * Rendered inside <Channel> so it can reach the message composer.
+ */
+function AiReplyToolbar({
+  enabled,
+  bookingId,
+  channelId,
+  onUsed,
+  t,
+}: {
+  enabled: boolean;
+  bookingId?: string;
+  channelId?: string;
+  onUsed: () => void;
+  t: (key: string, opts?: Record<string, unknown>) => string;
+}) {
+  const composer = useMessageComposer();
+  const { toast } = useToast();
+  const [loading, setLoading] = useState(false);
+  const [drafts, setDrafts] = useState<string[]>([]);
+
+  if (!enabled) return null;
+
+  const generate = async () => {
+    setLoading(true);
+    setDrafts([]);
+    try {
+      const res = await apiRequest("POST", "/api/vendor/ai/suggest-reply", {
+        bookingId: bookingId || undefined,
+        channelId: channelId || undefined,
+      });
+      const data = await res.json();
+      setDrafts(Array.isArray(data?.replies) ? data.replies : []);
+      onUsed();
+    } catch (err) {
+      let code = "";
+      if (err instanceof ApiRequestError) {
+        try {
+          code = JSON.parse(err.responseText)?.error || "";
+        } catch {
+          /* non-JSON body */
+        }
+      }
+      const description =
+        code === "ai_limit_reached"
+          ? t("ai.limitReached")
+          : code === "ai_pro_required"
+            ? t("ai.proRequired")
+            : code === "ai_disabled"
+              ? t("ai.disabled")
+              : t("ai.error");
+      toast({ title: t("ai.errorTitle"), description, variant: "destructive" });
+    } finally {
+      setLoading(false);
+    }
+  };
+
+  const useDraft = (text: string) => {
+    composer?.textComposer?.setText(text);
+    setDrafts([]);
+  };
+
+  return (
+    <div className="border-t border-gray-100 px-3 py-2">
+      <button
+        type="button"
+        onClick={generate}
+        disabled={loading}
+        className="inline-flex items-center gap-1.5 rounded-md border border-violet-300 bg-violet-50 px-3 py-1.5 text-xs font-medium text-violet-800 hover:bg-violet-100 disabled:opacity-50"
+      >
+        <Sparkles className="h-3.5 w-3.5" />
+        {loading ? t("ai.drafting") : t("ai.draftReplyButton")}
+      </button>
+      {drafts.length > 0 && (
+        <div className="mt-2 space-y-1.5">
+          {drafts.map((draft, index) => (
+            <button
+              key={index}
+              type="button"
+              onClick={() => useDraft(draft)}
+              className="block w-full rounded-md border border-gray-200 bg-white px-3 py-2 text-left text-sm text-gray-700 transition-colors hover:border-violet-300 hover:bg-violet-50"
+            >
+              {draft}
+            </button>
+          ))}
+          <p className="text-[11px] text-gray-400">{t("ai.draftHint")}</p>
+        </div>
+      )}
+    </div>
   );
 }
 
@@ -451,6 +539,18 @@ export function BookingChatWorkspace({ role, initialBookingId, initialVendorId }
     staleTime: 15_000,
     refetchInterval: 20_000,
   });
+
+  // AI reply assistant settings (Pro + feature toggle + credit meter). Vendor only.
+  const { data: aiSettings, refetch: refetchAiSettings } = useQuery<AiSettings>({
+    queryKey: ["/api/vendor/ai/settings"],
+    queryFn: async () => {
+      const res = await apiRequest("GET", "/api/vendor/ai/settings");
+      return res.json();
+    },
+    enabled: role === "vendor",
+    staleTime: 30_000,
+  });
+  const aiEnabled = role === "vendor" && Boolean(aiSettings?.isPro) && Boolean(aiSettings?.enabled);
 
   // Most-recent vendor proposal that was declined and has no newer pending/accepted proposal
   const declinedVendorProposal = (() => {
@@ -1224,6 +1324,13 @@ export function BookingChatWorkspace({ role, initialBookingId, initialVendorId }
                   <Window>
                     <ChannelHeader />
                     <MessageList renderText={renderSafeText} />
+                    <AiReplyToolbar
+                      enabled={aiEnabled}
+                      bookingId={isSelectedInquiry ? undefined : selectedBookingId || undefined}
+                      channelId={activeChannel?.id}
+                      onUsed={() => refetchAiSettings()}
+                      t={t}
+                    />
                     <MessageInput overrideSubmitHandler={sendModeratedMessage} />
                   </Window>
                   <Thread />

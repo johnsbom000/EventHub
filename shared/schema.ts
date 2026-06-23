@@ -319,6 +319,15 @@ export const vendorAccounts = pgTable(
     // to Free. Used for the 30-day grant given to vendors existing at launch.
     compEndsAt: timestamp("comp_ends_at"),
     subscriptionUpdatedAt: timestamp("subscription_updated_at"),
+    // AI reply assistant (Pro-gated, metered — migration 0136). Feature toggle is
+    // opt-in (default off); overage auto-billing is opt-out (default on). When the
+    // included monthly allowance is exhausted: overage on → meter to Stripe, overage
+    // off → hard stop. See server/aiReplyService.ts + server/services/entitlementsService.ts.
+    aiRepliesEnabled: boolean("ai_replies_enabled").notNull().default(false),
+    aiOverageEnabled: boolean("ai_overage_enabled").notNull().default(true),
+    // Stripe metered subscription item used to bill AI-reply overage. Set when the
+    // vendor enables the feature; usage events are reported against it.
+    aiOverageSubscriptionItemId: text("ai_overage_subscription_item_id"),
   },
   (table) => ({
     userIdActiveUniqueIdx: uniqueIndex("vendor_accounts_user_id_active_unique_idx")
@@ -1511,3 +1520,61 @@ export const vendorInquiries = pgTable("vendor_inquiries", {
 
 export type VendorInquiry = typeof vendorInquiries.$inferSelect;
 export type InsertVendorInquiry = typeof vendorInquiries.$inferInsert;
+
+// Vendor FAQ documents — one active PDF per vendor that the AI reply assistant
+// references when drafting customer replies (migration 0136). The raw PDF lives in
+// object storage; extractedText is read directly at draft time (no re-parse).
+export const vendorFaqDocuments = pgTable(
+  "vendor_faq_documents",
+  {
+    id: varchar("id").primaryKey().default(sql`gen_random_uuid()`),
+    vendorAccountId: varchar("vendor_account_id")
+      .notNull()
+      .references(() => vendorAccounts.id, { onDelete: "cascade" }),
+    storageUrl: text("storage_url").notNull(),
+    originalFilename: text("original_filename"),
+    extractedText: text("extracted_text").notNull(),
+    charCount: integer("char_count").notNull().default(0),
+    pageCount: integer("page_count"),
+    createdAt: timestamp("created_at").notNull().defaultNow(),
+    updatedAt: timestamp("updated_at").notNull().defaultNow(),
+    deletedAt: timestamp("deleted_at"),
+  },
+  (table) => ({
+    // One active FAQ per vendor (soft-deleted rows excluded).
+    oneActivePerVendorIdx: uniqueIndex("vendor_faq_documents_one_active_per_vendor_idx")
+      .on(table.vendorAccountId)
+      .where(sql`${table.deletedAt} is null`),
+  })
+);
+
+export type VendorFaqDocument = typeof vendorFaqDocuments.$inferSelect;
+export type InsertVendorFaqDocument = typeof vendorFaqDocuments.$inferInsert;
+
+// AI reply usage log — one row per generated draft (migration 0136). Powers the
+// monthly credit meter (count rows since the period start), overage billing
+// (is_overage rows are metered to Stripe), and per-vendor cost visibility.
+export const aiReplyUsage = pgTable(
+  "ai_reply_usage",
+  {
+    id: varchar("id").primaryKey().default(sql`gen_random_uuid()`),
+    vendorAccountId: varchar("vendor_account_id")
+      .notNull()
+      .references(() => vendorAccounts.id, { onDelete: "cascade" }),
+    bookingId: varchar("booking_id"),
+    inputTokens: integer("input_tokens").notNull(),
+    outputTokens: integer("output_tokens").notNull(),
+    repliesReturned: integer("replies_returned").notNull(),
+    isOverage: boolean("is_overage").notNull().default(false),
+    createdAt: timestamp("created_at").notNull().defaultNow(),
+  },
+  (table) => ({
+    vendorCreatedIdx: index("ai_reply_usage_vendor_created_idx").on(
+      table.vendorAccountId,
+      table.createdAt
+    ),
+  })
+);
+
+export type AiReplyUsage = typeof aiReplyUsage.$inferSelect;
+export type InsertAiReplyUsage = typeof aiReplyUsage.$inferInsert;

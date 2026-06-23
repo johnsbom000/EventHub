@@ -16,6 +16,22 @@ export const PRO_TRIAL_PERIOD_DAYS = 30;
 // env so the same code works across test/live without a redeploy.
 export const STRIPE_PRICE_PRO_MONTHLY = process.env.STRIPE_PRICE_PRO_MONTHLY || "";
 export const STRIPE_PRICE_PRO_ANNUAL = process.env.STRIPE_PRICE_PRO_ANNUAL || "";
+// Stripe coupon auto-applied at checkout to deliver the launch deal off the base
+// prices ($39 -> $29, $390 -> $290). Empty = no discount (charge base price).
+export const STRIPE_COUPON_PRO = process.env.STRIPE_COUPON_PRO || "";
+
+// ─── AI reply assistant (Pro-gated, metered) ──────────────────────────────────
+// Generates (never auto-sends) suggested replies for vendors in the chat section.
+// Each Pro vendor gets AI_INCLUDED_RESPONSES_PER_PERIOD drafts per billing month;
+// beyond that, overage auto-bills at AI_OVERAGE_PRICE_CENTS each (opt-out) or hard
+// stops (if the vendor opted out). Model is a constant so it's a one-line swap.
+export const AI_REPLY_MODEL = "claude-haiku-4-5";
+export const AI_INCLUDED_RESPONSES_PER_PERIOD = 200;
+export const AI_OVERAGE_PRICE_CENTS = 5;
+// Stripe Billing Meter event name + metered Price ID for AI-reply overage (created
+// in the Stripe dashboard / via setup). Read from env so test/live both work.
+export const STRIPE_AI_OVERAGE_METER_EVENT = process.env.STRIPE_AI_OVERAGE_METER_EVENT || "ai_reply_overage";
+export const STRIPE_PRICE_AI_OVERAGE = process.env.STRIPE_PRICE_AI_OVERAGE || "";
 
 // ─── Stripe fee estimation ────────────────────────────────────────────────────
 export const STRIPE_FEE_ESTIMATE_PERCENT = 0.029;

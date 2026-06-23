@@ -575,3 +575,64 @@ export async function getAverageVendorResponseMinutesForBookings(params: {
   const total = responseMinutes.reduce((sum, value) => sum + value, 0);
   return Math.round(total / responseMinutes.length);
 }
+
+export type StreamReplyMessage = {
+  role: "customer" | "vendor";
+  text: string;
+  createdAt: Date;
+};
+
+/**
+ * Fetch the most recent messages of a Stream channel (booking or inquiry) for the
+ * AI reply assistant. Returns oldest-first so the model reads the conversation in
+ * order. Senders are classified by Stream user-id prefix: "customer_" → customer,
+ * "vendor_" → vendor; system/other messages are dropped. Empty array if Stream is
+ * unconfigured, the channel is empty, or the query fails (caller treats it as "no
+ * history" rather than erroring the draft request).
+ */
+export async function getRecentMessagesForChannel(
+  channelId: string,
+  limit = 12
+): Promise<StreamReplyMessage[]> {
+  if (!isStreamChatConfigured()) return [];
+  const id = String(channelId || "").trim();
+  if (!id) return [];
+
+  const messageLimit = Math.max(1, Math.min(limit, 50));
+  const client = getServerClient();
+
+  try {
+    const channel = client.channel(STREAM_CHANNEL_TYPE, id);
+    const state = await channel.query({
+      messages: { limit: messageLimit },
+      state: true,
+      watch: false,
+      presence: false,
+    } as any);
+
+    const rawMessages = Array.isArray((state as any)?.messages)
+      ? (state as any).messages
+      : Array.isArray((channel as any)?.state?.messages)
+        ? (channel as any).state.messages
+        : [];
+
+    return rawMessages
+      .map((message: any): StreamReplyMessage | null => {
+        const userId = String(message?.user?.id || "");
+        const text = String(message?.text || "").trim();
+        const createdAt = new Date(message?.created_at || message?.createdAt || 0);
+        if (!text || Number.isNaN(createdAt.getTime())) return null;
+        const role: "customer" | "vendor" | null = userId.startsWith("customer_")
+          ? "customer"
+          : userId.startsWith("vendor_")
+            ? "vendor"
+            : null;
+        if (!role) return null;
+        return { role, text, createdAt };
+      })
+      .filter((m: StreamReplyMessage | null): m is StreamReplyMessage => m !== null)
+      .sort((a: StreamReplyMessage, b: StreamReplyMessage) => a.createdAt.getTime() - b.createdAt.getTime());
+  } catch {
+    return [];
+  }
+}
