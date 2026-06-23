@@ -58,7 +58,7 @@ function buildClient() {
   });
 }
 
-export type UploadFolder = "listings" | "vendor-shops" | "disputes";
+export type UploadFolder = "listings" | "vendor-shops" | "disputes" | "vendor-faq";
 
 export function makeObjectKey(folder: UploadFolder, originalName?: string): string {
   const safeOriginal = (originalName || "image.jpg").replace(/[^a-zA-Z0-9._-]/g, "-");

@@ -14,6 +14,7 @@ import { mutationRateLimiter } from "../lib/rateLimiters";
 import {
   STRIPE_PRICE_PRO_MONTHLY,
   STRIPE_PRICE_PRO_ANNUAL,
+  STRIPE_COUPON_PRO,
   PRO_TRIAL_PERIOD_DAYS,
 } from "../lib/constants";
 
@@ -90,6 +91,7 @@ export function registerBillingRoutes(app: Express) {
         priceId,
         vendorAccountId: account.id,
         trialPeriodDays,
+        couponId: STRIPE_COUPON_PRO || undefined,
         successUrl: `${base}/vendor/dashboard?checkout=success`,
         cancelUrl: `${base}/vendor/dashboard?checkout=cancelled`,
       });

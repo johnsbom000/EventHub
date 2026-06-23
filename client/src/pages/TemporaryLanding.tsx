@@ -512,32 +512,55 @@ export default function TemporaryLanding() {
 
   return (
     <div className="min-h-screen bg-white">
-      {/* Header */}
-      <header className="sticky top-0 z-40 border-b border-[rgba(74,106,125,0.1)] bg-white/95 backdrop-blur">
-        <div className="mx-auto flex max-w-[1320px] items-center justify-between px-5 py-3 lg:px-10">
-          <BrandWordmark
-            className="text-[1.9rem] leading-none tracking-tight lg:text-[2.2rem]"
-            eventClassName="text-[#e07a6a] font-normal"
-            hubClassName="text-[#4a6a7d] font-normal"
-          />
-          <div className="flex items-center gap-3">
+      {/* Sticky bar + header pinned together so they never overlap */}
+      <div className="sticky top-0 z-40">
+        {/* Launch-deal announcement bar (always shown) */}
+        <div className="deal-outline relative bg-[#2a3a42] text-[#f5f0e8]" style={{ ["--ring" as any]: "2px" }}>
+          <div className="mx-auto flex max-w-[1320px] flex-wrap items-center justify-center gap-x-3 gap-y-1 px-5 py-2 text-center lg:px-10">
+            <span className="font-sans text-[0.92rem] leading-tight">
+              <span className="font-semibold">EventHub Pro</span>
+              <span className="mx-1.5 font-semibold text-[#e07a6a]">$29/mo</span>
+              <span className="text-[rgba(245,240,232,0.55)] line-through">$39</span>
+              <span className="mx-1.5 text-[rgba(245,240,232,0.4)]">·</span>
+              <span className="text-[rgba(245,240,232,0.85)]">No booking fees, ever.</span>
+            </span>
             <button
               type="button"
-              onClick={openLogin}
-              className="rounded-[10px] px-4 py-2 font-sans text-[0.98rem] font-semibold text-[#2a3a42] transition-colors hover:bg-[#f0f4f7]"
+              onClick={() => openSignup("vendor")}
+              className="rounded-full bg-[#e07a6a] px-3.5 py-1 font-sans text-[0.85rem] font-semibold text-white transition-colors hover:bg-[#c96959]"
             >
-              Log in
-            </button>
-            <button
-              type="button"
-              onClick={() => openSignup()}
-              className="rounded-[10px] bg-[#2a3a42] px-4 py-2 font-sans text-[0.98rem] font-semibold text-white transition-colors hover:bg-[#3a4f59]"
-            >
-              Get started
+              Start free →
             </button>
           </div>
         </div>
-      </header>
+
+        {/* Header */}
+        <header className="border-b border-[rgba(74,106,125,0.1)] bg-white/95 backdrop-blur">
+          <div className="mx-auto flex max-w-[1320px] items-center justify-between px-5 py-3 lg:px-10">
+            <BrandWordmark
+              className="text-[1.9rem] leading-none tracking-tight lg:text-[2.2rem]"
+              eventClassName="text-[#e07a6a] font-normal"
+              hubClassName="text-[#4a6a7d] font-normal"
+            />
+            <div className="flex items-center gap-3">
+              <button
+                type="button"
+                onClick={openLogin}
+                className="rounded-[10px] px-4 py-2 font-sans text-[0.98rem] font-semibold text-[#2a3a42] transition-colors hover:bg-[#f0f4f7]"
+              >
+                Log in
+              </button>
+              <button
+                type="button"
+                onClick={() => openSignup()}
+                className="rounded-[10px] bg-[#2a3a42] px-4 py-2 font-sans text-[0.98rem] font-semibold text-white transition-colors hover:bg-[#3a4f59]"
+              >
+                Get started
+              </button>
+            </div>
+          </div>
+        </header>
+      </div>
 
       {/* Hero */}
       <section className="border-b border-[rgba(74,106,125,0.08)] bg-gradient-to-b from-[#f8fafb] to-white">
@@ -658,21 +681,59 @@ export default function TemporaryLanding() {
           <p className="mx-auto mt-4 max-w-xl font-sans text-[1.15rem] leading-[1.6] text-[rgba(245,240,232,0.8)]">
             Join EventHub and start taking bookings for your services today.
           </p>
-          <div className="mt-8 flex flex-wrap items-center justify-center gap-4">
-            <button
-              type="button"
-              onClick={() => openSignup("vendor")}
-              className="rounded-[12px] bg-[#e07a6a] px-8 py-4 font-sans text-[1.1rem] font-semibold text-white transition-colors hover:bg-[#c96959]"
-            >
-              Get started as a vendor
-            </button>
-            <button
-              type="button"
-              onClick={openLogin}
-              className="rounded-[12px] border-[1.5px] border-[rgba(245,240,232,0.4)] px-8 py-4 font-sans text-[1.1rem] font-semibold text-[#f5f0e8] transition-colors hover:bg-[rgba(245,240,232,0.08)]"
-            >
-              Log in
-            </button>
+          {/* Launch-deal panel with the moving palette outline */}
+          <div
+            className="deal-outline mx-auto mt-10 max-w-2xl rounded-2xl bg-[rgba(245,240,232,0.04)] p-8 text-left lg:p-10"
+            style={{ ["--ring" as any]: "2.5px" }}
+          >
+            <div className="flex items-center gap-2">
+              <span className="rounded-full bg-[#e07a6a] px-2.5 py-0.5 font-sans text-[0.7rem] font-semibold uppercase tracking-[0.12em] text-white">
+                Launch offer
+              </span>
+            </div>
+            <h3 className="mt-4 font-heading text-[1.9rem] font-light leading-tight text-white">
+              Go Pro at our launch price.
+            </h3>
+            <p className="mt-3 font-sans text-[1.05rem] leading-[1.6] text-[rgba(245,240,232,0.82)]">
+              <span className="text-[rgba(245,240,232,0.5)] line-through">$39/mo</span>
+              <span className="font-semibold text-white"> $29/mo</span>, or{" "}
+              <span className="font-semibold text-white">$290/year</span>{" "}
+              <span className="text-[rgba(245,240,232,0.5)] line-through">$390</span>
+              <span className="text-[rgba(245,240,232,0.7)]"> + 2 months free.</span>
+            </p>
+            <ul className="mt-6 grid gap-3 sm:grid-cols-2">
+              <li className="flex items-start gap-2.5 font-sans text-[0.98rem] text-[rgba(245,240,232,0.92)]">
+                <span className="mt-0.5 text-[#e07a6a]">✓</span> Keep 100% of every booking — we never take a cut
+              </li>
+              <li className="flex items-start gap-2.5 font-sans text-[0.98rem] text-[rgba(245,240,232,0.92)]">
+                <span className="mt-0.5 text-[#9dd4cc]">✓</span> Unlimited listings + advanced analytics
+              </li>
+              <li className="flex items-start gap-2.5 font-sans text-[0.98rem] text-[rgba(245,240,232,0.92)]">
+                <span className="mt-0.5 text-[#c9a06a]">✓</span> Google Calendar sync — never double-book
+              </li>
+              <li className="flex items-start gap-2.5 font-sans text-[0.98rem] text-[rgba(245,240,232,0.92)]">
+                <span className="mt-0.5 text-[#e07a6a]">✓</span> 30 days free, cancel anytime
+              </li>
+            </ul>
+            <div className="mt-8 flex flex-wrap items-center gap-4">
+              <button
+                type="button"
+                onClick={() => openSignup("vendor")}
+                className="rounded-[12px] bg-[#e07a6a] px-8 py-4 font-sans text-[1.1rem] font-semibold text-white transition-colors hover:bg-[#c96959]"
+              >
+                Start your 30-day free trial — $29/mo
+              </button>
+              <button
+                type="button"
+                onClick={openLogin}
+                className="rounded-[12px] border-[1.5px] border-[rgba(245,240,232,0.4)] px-8 py-4 font-sans text-[1.1rem] font-semibold text-[#f5f0e8] transition-colors hover:bg-[rgba(245,240,232,0.08)]"
+              >
+                Log in
+              </button>
+            </div>
+            <p className="mt-4 font-sans text-[0.9rem] text-[rgba(245,240,232,0.6)]">
+              No booking fees · Secure payouts via Stripe · Cancel anytime
+            </p>
           </div>
         </div>
       </section>
