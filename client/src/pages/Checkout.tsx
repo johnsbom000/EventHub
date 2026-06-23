@@ -1920,10 +1920,12 @@ function CheckoutContent({
                 </div>
               ) : null}
 
-              <div className="flex items-center justify-between">
-                <span className="text-sm text-muted-foreground">{t("checkout.orderSummaryServiceFee")}</span>
-                <span className="font-medium">{formatUsdFromCents(customerFeeAmount)}</span>
-              </div>
+              {customerFeeAmount > 0 ? (
+                <div className="flex items-center justify-between">
+                  <span className="text-sm text-muted-foreground">{t("checkout.orderSummaryServiceFee")}</span>
+                  <span className="font-medium">{formatUsdFromCents(customerFeeAmount)}</span>
+                </div>
+              ) : null}
 
               {securityDepositCents > 0 ? (
                 <div className="flex items-center justify-between">

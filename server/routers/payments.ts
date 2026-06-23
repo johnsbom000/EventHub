@@ -97,9 +97,14 @@ import {
 } from "../services/chatService";
 import {
   deactivateActiveListingsViolatingPublishGate,
+  deactivateExtraActiveListingsForFreeTier,
   checkListingAvailabilityForBookingRequest,
   sendCancellationEmailsAsync,
 } from "../services/bookingService";
+import {
+  applyStripeSubscriptionToVendor,
+  markVendorSubscriptionCanceled,
+} from "./billing";
 import { registerGoogleRoutes } from "../routers/google";
 import { registerBoardRoutes } from "../routers/boards";
 import { registerCircumventionRoutes } from "../routers/circumvention";
@@ -173,7 +178,6 @@ import {
   sendDisputeResponseEmail,
   sendTravelFeeProposedEmail,
   sendTravelFeeRespondedEmail,
-  sendMarqueeInviteEmail,
 } from "../email";
 import { calculateRefund } from "../lib/calculateRefund";
 import {
@@ -297,15 +301,6 @@ import {
 import {
   VENDOR_FEE_RATE,
   CUSTOMER_FEE_RATE,
-  MARQUEE_VENDOR_MAX_SPOTS,
-  MARQUEE_HOLIDAY_BOOKING_COUNT,
-  MARQUEE_HOLIDAY_DAYS,
-  MARQUEE_REFERRAL_BONUS_BOOKINGS,
-  MARQUEE_VENDOR_FEE_RATE,
-  MARQUEE_RATE_MONTHS,
-  MARQUEE_CUSTOMER_FEE_RATE,
-  MARQUEE_CUSTOMER_FEE_MONTHS,
-  MARQUEE_VISIBILITY_MONTHS,
   STRIPE_FEE_ESTIMATE_PERCENT,
   STRIPE_FEE_ESTIMATE_FIXED_CENTS,
   VENDOR_ABSORBS_STRIPE_FEES,
@@ -1042,6 +1037,13 @@ export function registerPaymentRoutes(app: Express): void {
           ? session.metadata as Record<string, string>
           : {};
 
+        // Vendor Pro subscription checkouts also fire this event, but the
+        // customer.subscription.* events below are the source of truth for tier
+        // state — skip them here to avoid logging them as direct purchases.
+        if (asTrimmedString(sessionMeta?.kind) === "vendor_pro_subscription") {
+          // no-op: handled by the subscription webhook events
+        } else {
+
         const listingId = asTrimmedString(sessionMeta?.listingId);
         const vendorStripeAccountId = asTrimmedString(sessionMeta?.vendorStripeAccountId);
         const amountTotal = parseIntegerValue(session?.amount_total);
@@ -1055,6 +1057,52 @@ export function registerPaymentRoutes(app: Express): void {
             ` listing=${listingId} vendor=${vendorStripeAccountId}` +
             ` amount=${amountTotal} status=paid`
           );
+        }
+        }
+      }
+
+      // ── Vendor Pro subscription events ──────────────────────────────────────
+      // Source of truth for vendor tier state. Mirrors Stripe's subscription
+      // status onto vendor_accounts. NEVER touches Connect payouts/transfers.
+      if (
+        eventType === "customer.subscription.created" ||
+        eventType === "customer.subscription.updated"
+      ) {
+        const subscription = event?.data?.object ?? {};
+        await applyStripeSubscriptionToVendor(subscription);
+      } else if (eventType === "customer.subscription.deleted") {
+        const subscription = event?.data?.object ?? {};
+        const subscriptionId = asTrimmedString(subscription?.id);
+        if (subscriptionId) {
+          const { vendorAccountId } = await markVendorSubscriptionCanceled(subscriptionId);
+          // Drop to Free: trim extra active listings down to the free-tier cap.
+          if (vendorAccountId) {
+            await deactivateExtraActiveListingsForFreeTier(vendorAccountId);
+          }
+        }
+      } else if (eventType === "invoice.payment_failed") {
+        // Belt-and-suspenders: Stripe also sends subscription.updated with status
+        // past_due, but mark it here too so the vendor keeps Pro during dunning
+        // with the "update card" banner regardless of event ordering.
+        const invoice = event?.data?.object ?? {};
+        const subscriptionId = asTrimmedString(invoice?.subscription);
+        if (subscriptionId) {
+          await db
+            .update(vendorAccounts)
+            .set({
+              subscriptionStatus: "past_due",
+              subscriptionPlan: "pro",
+              subscriptionUpdatedAt: new Date(),
+            })
+            // Only affect an already-live subscription. Guards against a late /
+            // out-of-order invoice.payment_failed resurrecting a canceled vendor
+            // to Pro (the subscription id is retained on cancel).
+            .where(
+              and(
+                eq(vendorAccounts.stripeSubscriptionId, subscriptionId),
+                inArray(vendorAccounts.subscriptionStatus, ["active", "trialing", "past_due"])
+              )
+            );
         }
       }
 

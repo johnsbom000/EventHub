@@ -82,8 +82,6 @@ export interface VendorOnboardingData {
  } | null;
 
  referralCode?: string;
- foundingInviteToken?: string;
- marqueeInviteToken?: string;
 }
 
 const STEPS = SINGLE_VENDOR_MODE
@@ -133,8 +131,6 @@ function getStepMeta(stepLabel: string): {
 }
 
 const REFERRAL_STORAGE_KEY = "eventhub:pending-referral";
-const FOUNDING_TOKEN_STORAGE_KEY = "eventhub:founding-invite-token";
-const MARQUEE_TOKEN_STORAGE_KEY = "eventhub:marquee-invite-token";
 const AUTH_LOGIN_REQUIRED_ERROR = "AUTH_LOGIN_REQUIRED";
 const AUTH_REQUIRED_MESSAGE_PATTERNS = [
  "login required",
@@ -258,35 +254,17 @@ export default function VendorOnboarding() {
   localStorage.setItem(REFERRAL_STORAGE_KEY, refCode.trim().toUpperCase());
   params.delete("ref");
  }
- const fvToken = params.get("fv");
- if (fvToken?.trim()) {
-  localStorage.setItem(FOUNDING_TOKEN_STORAGE_KEY, fvToken.trim());
-  params.delete("fv");
- }
- const mvToken = params.get("mv");
- if (mvToken?.trim()) {
-  localStorage.setItem(MARQUEE_TOKEN_STORAGE_KEY, mvToken.trim());
-  params.delete("mv");
- }
- if (refCode?.trim() || fvToken?.trim() || mvToken?.trim()) {
+ if (refCode?.trim()) {
   const newSearch = params.toString();
   window.history.replaceState(null, "", window.location.pathname + (newSearch ? `?${newSearch}` : ""));
  }
  }, []);
 
- // Seed formData with any pending referral/founding/marquee tokens not yet in the draft.
+ // Seed formData with any pending referral code not yet in the draft.
  useEffect(() => {
  const pendingReferral = localStorage.getItem(REFERRAL_STORAGE_KEY);
  if (pendingReferral && !formData.referralCode) {
   setFormData((prev) => ({ ...prev, referralCode: pendingReferral }));
- }
- const pendingFoundingToken = localStorage.getItem(FOUNDING_TOKEN_STORAGE_KEY);
- if (pendingFoundingToken && !formData.foundingInviteToken) {
-  setFormData((prev) => ({ ...prev, foundingInviteToken: pendingFoundingToken }));
- }
- const pendingMarqueeToken = localStorage.getItem(MARQUEE_TOKEN_STORAGE_KEY);
- if (pendingMarqueeToken && !formData.marqueeInviteToken) {
-  setFormData((prev) => ({ ...prev, marqueeInviteToken: pendingMarqueeToken }));
  }
  // eslint-disable-next-line react-hooks/exhaustive-deps
  }, []);
@@ -439,8 +417,6 @@ export default function VendorOnboarding() {
  const finishAndNavigate = async () => {
  await completeOnboardingMutation.mutateAsync(formData);
  localStorage.removeItem(REFERRAL_STORAGE_KEY);
- localStorage.removeItem(FOUNDING_TOKEN_STORAGE_KEY);
- localStorage.removeItem(MARQUEE_TOKEN_STORAGE_KEY);
  if (createListing) {
  setLocation("/vendor/listings/new");
  } else {
@@ -633,12 +609,6 @@ export default function VendorOnboarding() {
 
  {/* Main */}
  <div className="flex-1 overflow-y-auto">
- {formData.foundingInviteToken && (
-  <div className="bg-amber-50 border-b border-amber-200 px-6 py-3 flex items-center gap-2.5">
-  <span className="text-amber-600 font-semibold text-sm">★ Founding Vendor</span>
-  <span className="text-amber-700 text-sm">You're signing up as a Founding Vendor.</span>
-  </div>
- )}
  <div
  className={cn(
  "vendor-onboarding-input-surface vendor-onboarding-steps-typography mx-auto w-full max-w-[1400px] py-10 px-4 sm:px-12 lg:px-36"

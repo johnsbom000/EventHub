@@ -168,7 +168,6 @@ import {
   sendDisputeResponseEmail,
   sendTravelFeeProposedEmail,
   sendTravelFeeRespondedEmail,
-  sendMarqueeInviteEmail,
 } from "../email";
 import { calculateRefund } from "../lib/calculateRefund";
 import {
@@ -293,19 +292,6 @@ import {
 import {
   VENDOR_FEE_RATE,
   CUSTOMER_FEE_RATE,
-  MARQUEE_VENDOR_MAX_SPOTS,
-  MARQUEE_HOLIDAY_BOOKING_COUNT,
-  MARQUEE_HOLIDAY_DAYS,
-  MARQUEE_REFERRAL_BONUS_BOOKINGS,
-  MARQUEE_REFERRAL_BONUS_FEE_RATE,
-  MARQUEE_VENDOR_FEE_RATE,
-  MARQUEE_RATE_MONTHS,
-  MARQUEE_CUSTOMER_FEE_RATE,
-  MARQUEE_CUSTOMER_FEE_MONTHS,
-  MARQUEE_VISIBILITY_MONTHS,
-  FOUNDING_VENDOR_HOLIDAY_BOOKING_COUNT,
-  FOUNDING_VENDOR_FEE_RATE,
-  FOUNDING_VENDOR_REFERRAL_BONUS_FEE_RATE,
   STRIPE_FEE_ESTIMATE_PERCENT,
   STRIPE_FEE_ESTIMATE_FIXED_CENTS,
   VENDOR_ABSORBS_STRIPE_FEES,
@@ -1191,17 +1177,6 @@ export function registerBookingRoutes(app: Express): void {
           googleConnectionStatus: vendorAccounts.googleConnectionStatus,
           googleCalendarId: vendorAccounts.googleCalendarId,
           shopActive: vendorAccounts.shopActive,
-          isMarqueeVendor: vendorAccounts.isMarqueeVendor,
-          marqueeHolidayBookingsUsed: vendorAccounts.marqueeHolidayBookingsUsed,
-          marqueeHolidayBonusBookings: vendorAccounts.marqueeHolidayBonusBookings,
-          marqueeHolidayEndsAt: vendorAccounts.marqueeHolidayEndsAt,
-          marqueeRateEndsAt: vendorAccounts.marqueeRateEndsAt,
-          marqueeCustomerFeeEndsAt: vendorAccounts.marqueeCustomerFeeEndsAt,
-          isFoundingVendor: vendorAccounts.isFoundingVendor,
-          foundingBenefitBookingsUsed: vendorAccounts.foundingBenefitBookingsUsed,
-          foundingReferralBonusBookingsRemaining: vendorAccounts.foundingReferralBonusBookingsRemaining,
-          foundingHolidayEndsAt: vendorAccounts.foundingHolidayEndsAt,
-          foundingRateEndsAt: vendorAccounts.foundingRateEndsAt,
         })
         .from(vendorAccounts)
         .where(and(eq(vendorAccounts.id, vendorIdToLoad), eq(vendorAccounts.active, true)))
@@ -1582,73 +1557,13 @@ export function registerBookingRoutes(app: Express): void {
       const discountedSubtotal = Math.max(0, subtotalAmount - discountAmountCents);
       // ── End discount resolution ────────────────────────────────────────────
 
-      // ── Marquee Vendor fee rates ───────────────────────────────────────────
-      // Fee holiday: 0% vendor fee until 20 bookings AND 30 days have both passed.
-      // (whichever comes LAST — holiday stays active until both thresholds are crossed)
-      // After holiday: 6% for 24 months, then standard 8%.
-      // Customer fee: 2.5% for first 12 months, then standard 5%.
-      const isMarqueeVendor = vendorAccount.isMarqueeVendor ?? false;
-      const now = new Date();
-      let effectiveCustomerFeeRate = CUSTOMER_FEE_RATE;
-      let effectiveVendorFeeRate = VENDOR_FEE_RATE;
-      if (isMarqueeVendor) {
-        // Customer fee window
-        const customerFeeActive = vendorAccount.marqueeCustomerFeeEndsAt
-          ? now < vendorAccount.marqueeCustomerFeeEndsAt
-          : true; // window not yet set (pre-activation) — default to active
-        effectiveCustomerFeeRate = customerFeeActive ? MARQUEE_CUSTOMER_FEE_RATE : CUSTOMER_FEE_RATE;
-
-        // Main holiday: active while EITHER booking limit OR time limit is still true
-        // (both must expire before the holiday ends — whichever comes LAST)
-        const bookingsUsed = vendorAccount.marqueeHolidayBookingsUsed ?? 0;
-        const bonusBookings = vendorAccount.marqueeHolidayBonusBookings ?? 0;
-        const underMainBookingLimit = bookingsUsed < MARQUEE_HOLIDAY_BOOKING_COUNT;
-        const underTimeLimit = vendorAccount.marqueeHolidayEndsAt
-          ? now < vendorAccount.marqueeHolidayEndsAt
-          : true; // pre-activation
-        const mainHolidayActive = underMainBookingLimit || underTimeLimit;
-
-        // Bonus phase: 4% on referral bonus bookings, only after main holiday ends,
-        // and only within the 24-month marquee window
-        const bonusPhaseActive =
-          !mainHolidayActive &&
-          bonusBookings > 0 &&
-          bookingsUsed < MARQUEE_HOLIDAY_BOOKING_COUNT + bonusBookings;
-
-        if (mainHolidayActive) {
-          effectiveVendorFeeRate = 0;
-        } else if (bonusPhaseActive) {
-          effectiveVendorFeeRate = MARQUEE_REFERRAL_BONUS_FEE_RATE;
-        } else if (vendorAccount.marqueeRateEndsAt && now < vendorAccount.marqueeRateEndsAt) {
-          effectiveVendorFeeRate = MARQUEE_VENDOR_FEE_RATE;
-        } else {
-          effectiveVendorFeeRate = VENDOR_FEE_RATE;
-        }
-      } else if (vendorAccount.isFoundingVendor) {
-        // Founding Vendor fee rates
-        // Holiday: 0% while EITHER booking count < 10 OR current time < foundingHolidayEndsAt
-        const fBookingsUsed = vendorAccount.foundingBenefitBookingsUsed ?? 0;
-        const fBonusRemaining = vendorAccount.foundingReferralBonusBookingsRemaining ?? 0;
-        const fUnderBookingLimit = fBookingsUsed < FOUNDING_VENDOR_HOLIDAY_BOOKING_COUNT;
-        const fUnderTimeLimit = vendorAccount.foundingHolidayEndsAt
-          ? now < vendorAccount.foundingHolidayEndsAt
-          : true; // pre-activation: treat holiday as still active
-        const fHolidayActive = fUnderBookingLimit || fUnderTimeLimit;
-
-        const fBonusPhaseActive = !fHolidayActive && fBonusRemaining > 0;
-
-        if (fHolidayActive) {
-          effectiveVendorFeeRate = 0;
-        } else if (fBonusPhaseActive) {
-          effectiveVendorFeeRate = FOUNDING_VENDOR_REFERRAL_BONUS_FEE_RATE;
-        } else if (vendorAccount.foundingRateEndsAt && now < vendorAccount.foundingRateEndsAt) {
-          effectiveVendorFeeRate = FOUNDING_VENDOR_FEE_RATE;
-        } else {
-          effectiveVendorFeeRate = VENDOR_FEE_RATE;
-        }
-      }
-
-      const customerFee = Math.round(discountedSubtotal * effectiveCustomerFeeRate);
+      // ── Fees ───────────────────────────────────────────────────────────────
+      // EventHub charges no platform or service fees. The customer pays exactly
+      // the (discounted) listing price plus any security deposit, and the vendor
+      // receives the full service subtotal. customerFee / platformFee remain as
+      // zeroed values so downstream snapshot/payout fields stay populated.
+      const customerFee = 0;
+      const platformFee = 0;
       // Security deposit: collected from customer on top of the service total but never
       // paid out to the vendor. Refunded to the customer after the dispute window closes
       // with no open vendor claim, or held by admin until a dispute is resolved.
@@ -1659,11 +1574,8 @@ export function registerBookingRoutes(app: Express): void {
       // Collect the full amount up-front at booking time — service total + security deposit
       // in a single Stripe PaymentIntent. The security deposit is tracked separately in the
       // payments table so it can be partially refunded without touching the service amount.
-      // vendorPayout / platformFee are calculated on the service subtotal only — the
-      // security deposit is excluded from payout calculations.
-      const enforcedTotalAmount = discountedSubtotal + customerFee + securityDepositCents;
-      const platformFee = Math.round(discountedSubtotal * effectiveVendorFeeRate);
-      const vendorPayout = discountedSubtotal - platformFee;
+      const enforcedTotalAmount = discountedSubtotal + securityDepositCents;
+      const vendorPayout = discountedSubtotal;
       const enforcedDepositAmount = enforcedTotalAmount;
       const bookingLifecycle = resolveBookingLifecycleMode({
         listingCategory: listingRow?.category ?? null,
