@@ -432,7 +432,7 @@ export async function cancelUnansweredBookingRequests(): Promise<number> {
               type: "booking_cancelled",
               title: "Booking expired — vendor didn't respond",
               message: `Your booking for ${row.listing_title || "the service"} on ${row.event_date} was automatically cancelled because the vendor did not respond within ${BOOKING_VENDOR_RESPONSE_EXPIRY_DAYS} days. A full refund has been issued.`,
-              link: "/dashboard/events",
+              link: `/booking/${encodeURIComponent(row.id)}`,
               read: false,
             }).catch(() => {})
           : Promise.resolve(),
