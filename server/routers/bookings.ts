@@ -2055,7 +2055,7 @@ export function registerBookingRoutes(app: Express): void {
             bookingStatus === "confirmed"
               ? `Your booking for ${data.eventDate} is confirmed.`
               : `Your booking request for ${data.eventDate} was sent.`,
-          link: "/dashboard/events",
+          link: `/booking/${encodeURIComponent(booking.id)}`,
           read: false,
         }),
       ]);
@@ -2290,7 +2290,7 @@ export function registerBookingRoutes(app: Express): void {
             type: "travel_fee_proposed" as any,
             title: "Travel fee proposed",
             message: `${vendorRow?.businessName ?? "Your vendor"} proposed a travel/delivery fee of ${amountFormatted} for your booking on ${booking.eventDate}.`,
-            link: "/dashboard/events",
+            link: `/booking/${encodeURIComponent(bookingId)}`,
             read: false,
           }).catch(() => {});
 
