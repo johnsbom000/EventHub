@@ -112,6 +112,7 @@ import {
   bulkMarkNotificationsRead,
   bulkArchiveNotifications,
   markNotificationAsRead,
+  markAllNotificationsSeen,
 } from "../lib/notificationHelpers";
 import crypto from "crypto";
 import {
@@ -5403,13 +5404,32 @@ export function registerVendorRoutes(app: Express): void {
       const account = await getVendorAccountFromRequest(req);
       if (!account?.id) return res.json({ unreadCount: 0 });
       const notifications = await getNotificationsByRecipient(account.id, "vendor");
-      const unreadCount = notifications.filter((n: any) => !n.read).length;
+      // Badge counts notifications the vendor hasn't *seen* yet (distinct from
+      // per-item read state). Cleared by POST /api/vendor/notifications/mark-seen.
+      const unreadCount = notifications.filter((n: any) => !n.seen).length;
       res.json({ unreadCount });
     } catch (error: any) {
       logRouteError("/api/vendor/notifications/unread-count", error);
       res.json({ unreadCount: 0 });
     }
   });
+
+  app.post(
+    "/api/vendor/notifications/mark-seen",
+    mutationRateLimiter,
+    ...requireVendorAuth0,
+    async (req, res) => {
+      try {
+        const account = await getVendorAccountFromRequest(req);
+        if (!account?.id) return res.json({ updated: 0 });
+        const updated = await markAllNotificationsSeen(account.id, "vendor");
+        res.json({ updated });
+      } catch (error: any) {
+        logRouteError("/api/vendor/notifications/mark-seen", error);
+        res.status(500).json({ error: "Unable to mark notifications as seen" });
+      }
+    }
+  );
 
   app.patch(
     "/api/vendor/notifications/bulk/read",
