@@ -61,6 +61,8 @@ type CheckoutPendingPaymentDraft = {
   bookingId: string;
   idempotencyKey: string;
   createdAt: string;
+  eventDate: string;
+  quantity: number;
 };
 
 function createCheckoutIdempotencyKey() {
@@ -440,7 +442,9 @@ function CheckoutContent({
         parsed &&
         parsed.listingId === listingId &&
         typeof parsed.bookingId === "string" &&
-        typeof parsed.idempotencyKey === "string"
+        typeof parsed.idempotencyKey === "string" &&
+        typeof parsed.eventDate === "string" &&
+        typeof parsed.quantity === "number"
       ) {
         setPendingPaymentDraft(parsed);
       }
@@ -1141,9 +1145,9 @@ function CheckoutContent({
         }).catch(() => undefined);
       }
 
-      let bookingId = pendingPaymentDraft?.bookingId || "";
-
-      if (!bookingId) {
+      // Create a booking for a given idempotency key. Extracted so we can mint a
+      // brand-new booking (fresh key) if a reused one turns out to be unpayable.
+      const createBookingWithKey = async (idemKey: string): Promise<string> => {
         const bookingRes = await fetch("/api/bookings", {
           method: "POST",
           headers: {
@@ -1169,7 +1173,7 @@ function CheckoutContent({
             specialRequests: customerNotes?.trim() || undefined,
             customerNotes: customerNotes?.trim() || undefined,
             customerQuestions: customerQuestions?.trim() || undefined,
-            idempotencyKey: activeIdempotencyKey,
+            idempotencyKey: idemKey,
             finalPaymentStrategy: "immediately",
             promoCode: appliedPromo ? appliedPromo.code : undefined,
             packageId: selectedPackageId || undefined,
@@ -1183,42 +1187,96 @@ function CheckoutContent({
           throw new Error((bookingJson?.error || "Checkout failed") + detail);
         }
 
-        bookingId = typeof bookingJson?.id === "string" ? bookingJson.id : "";
-        if (!bookingId) {
+        const newBookingId = typeof bookingJson?.id === "string" ? bookingJson.id : "";
+        if (!newBookingId) {
           throw new Error("Booking was created, but booking ID is missing. Please try again.");
         }
         if (typeof bookingJson?.pendingReason === "string") {
           setBookingPendingReason(bookingJson.pendingReason);
         }
+        return newBookingId;
+      };
+
+      const initializePayment = async (id: string) => {
+        const res = await fetch(
+          `/api/bookings/${encodeURIComponent(id)}/initialize-payment`,
+          {
+            method: "POST",
+            headers: {
+              "Content-Type": "application/json",
+              Authorization: `Bearer ${token}`,
+            },
+            body: JSON.stringify({}),
+          }
+        );
+        const json = await res.json().catch(() => ({}));
+        return { ok: res.ok, status: res.status, json };
+      };
+
+      const saveDraft = (id: string, key: string) => {
+        const draft: CheckoutPendingPaymentDraft = {
+          listingId: data?.id ?? listingId ?? "",
+          bookingId: id,
+          idempotencyKey: key,
+          createdAt: new Date().toISOString(),
+          eventDate,
+          quantity: normalizedQuantity,
+        };
+        persistPendingPaymentDraft(draft);
+      };
+
+      // Only resume a saved booking when it matches THIS checkout — same listing,
+      // date and quantity. A draft from an earlier session (different date, or a
+      // booking whose 30-minute hold has since expired) must not be replayed, or
+      // initialize-payment 409s with "no longer payable".
+      const draftReusable =
+        Boolean(pendingPaymentDraft?.bookingId) &&
+        pendingPaymentDraft?.listingId === (data?.id ?? listingId) &&
+        pendingPaymentDraft?.eventDate === eventDate &&
+        pendingPaymentDraft?.quantity === normalizedQuantity;
+
+      if (!draftReusable && pendingPaymentDraft) {
+        // Drop the mismatched draft AND its idempotency key — reusing the key
+        // would make the server hand back the same stale booking.
+        persistPendingPaymentDraft(null);
       }
 
-      const pendingDraft: CheckoutPendingPaymentDraft = {
-        listingId: data?.id ?? listingId ?? "",
-        bookingId,
-        idempotencyKey: activeIdempotencyKey,
-        createdAt: new Date().toISOString(),
-      };
-      persistPendingPaymentDraft(pendingDraft);
+      let bookingIdempotencyKey = draftReusable ? activeIdempotencyKey : createCheckoutIdempotencyKey();
+      if (typeof window !== "undefined" && listingId) {
+        window.localStorage.setItem(getCheckoutIdempotencyStorageKey(listingId), bookingIdempotencyKey);
+      }
+
+      let bookingId = draftReusable ? (pendingPaymentDraft?.bookingId || "") : "";
+      if (!bookingId) {
+        bookingId = await createBookingWithKey(bookingIdempotencyKey);
+      }
+      saveDraft(bookingId, bookingIdempotencyKey);
 
       setSubmitStage("initializing-payment");
-      const initPaymentRes = await fetch(
-        `/api/bookings/${encodeURIComponent(bookingId)}/initialize-payment`,
-        {
-          method: "POST",
-          headers: {
-            "Content-Type": "application/json",
-            Authorization: `Bearer ${token}`,
-          },
-          body: JSON.stringify({}),
+      let initResult = await initializePayment(bookingId);
+
+      // Self-heal: a reused booking that's no longer payable (expired/cancelled/
+      // failed) returns 409. Discard it, mint a fresh booking with a new key, and
+      // retry initialize-payment exactly once so the customer isn't stranded.
+      if (!initResult.ok && initResult.status === 409) {
+        persistPendingPaymentDraft(null);
+        bookingIdempotencyKey = createCheckoutIdempotencyKey();
+        if (typeof window !== "undefined" && listingId) {
+          window.localStorage.setItem(getCheckoutIdempotencyStorageKey(listingId), bookingIdempotencyKey);
         }
-      );
-      const initPaymentJson = await initPaymentRes.json().catch(() => ({}));
-      if (!initPaymentRes.ok) {
-        throw new Error(initPaymentJson?.error || "Unable to initialize payment");
+        bookingId = await createBookingWithKey(bookingIdempotencyKey);
+        saveDraft(bookingId, bookingIdempotencyKey);
+        initResult = await initializePayment(bookingId);
+      }
+
+      if (!initResult.ok) {
+        throw new Error((initResult.json as any)?.error || "Unable to initialize payment");
       }
 
       const clientSecret =
-        typeof initPaymentJson?.clientSecret === "string" ? initPaymentJson.clientSecret : "";
+        typeof (initResult.json as any)?.clientSecret === "string"
+          ? (initResult.json as any).clientSecret
+          : "";
       if (!clientSecret) {
         throw new Error("Payment initialization response is missing a client secret");
       }
