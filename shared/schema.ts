@@ -758,7 +758,8 @@ export const notifications = pgTable("notifications", {
   title: text("title").notNull(),
   message: text("message").notNull(),
   link: text("link"), // URL to relevant page
-  read: boolean("read").default(false).notNull(),
+  read: boolean("read").default(false).notNull(), // user opened/dismissed this notification
+  seen: boolean("seen").default(false).notNull(), // user has glanced at it (drives the sidebar count badge)
   archived: boolean("archived").default(false).notNull(),
   createdAt: timestamp("created_at").defaultNow().notNull(),
   expiresAt: timestamp("expires_at", { withTimezone: true }).default(sql`now() + interval '90 days'`),

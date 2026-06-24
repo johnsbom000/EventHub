@@ -92,6 +92,29 @@ export async function bulkMarkNotificationsRead(
   return rows.length;
 }
 
+/**
+ * Mark every unseen notification for a recipient as seen. Drives the sidebar
+ * count badge — called when the recipient opens their notifications page so the
+ * badge clears and stays cleared across reloads/logins. Independent of `read`.
+ */
+export async function markAllNotificationsSeen(
+  recipientId: string,
+  recipientType: string
+): Promise<number> {
+  const rows = await db
+    .update(notifications)
+    .set({ seen: true })
+    .where(
+      and(
+        eq(notifications.recipientId, recipientId),
+        eq(notifications.recipientType, recipientType as "customer" | "vendor"),
+        eq(notifications.seen, false)
+      )
+    )
+    .returning({ id: notifications.id });
+  return rows.length;
+}
+
 export async function bulkArchiveNotifications(
   ids: string[],
   recipientId: string,

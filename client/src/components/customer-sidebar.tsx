@@ -1,9 +1,10 @@
 import { Bell, Calendar, MessageSquare, PlusCircle, User, Scale, AlertTriangle } from "lucide-react";
 import { useEffect } from "react";
 import { Link, useLocation } from "wouter";
-import { useQuery } from "@tanstack/react-query";
+import { useQuery, useQueryClient } from "@tanstack/react-query";
 import { useAuth0 } from "@auth0/auth0-react";
 import { useTranslation } from "react-i18next";
+import { apiRequest } from "@/lib/queryClient";
 
 import {
  Sidebar,
@@ -65,6 +66,7 @@ export function CustomerSidebar({ className, showWarningBadge = false, onWarning
  const [location] = useLocation();
  const { t } = useTranslation();
  const { isAuthenticated, isLoading: isAuthLoading } = useAuth0();
+ const queryClient = useQueryClient();
 
  const { data: customer } = useQuery<CustomerMe>({
  queryKey: ["/api/customer/me"],
@@ -95,15 +97,21 @@ export function CustomerSidebar({ className, showWarningBadge = false, onWarning
  refetchInterval: (query) => (query.state.status === "error" ? false : 30000),
  staleTime: 30_000,
  });
+ // Badge reflects the server "seen" count so it survives reloads/logins.
+ // Opening the notifications page marks everything seen (persisted), clearing
+ // the badge until a genuinely new notification arrives.
  const notifUnreadCount = Math.max(0, Number(notifData?.unreadCount || 0));
- const { visibleCount: visibleNotifCount, dismissCurrent: dismissNotifCount } = useResettableBadgeCount({
- id: "customer:notifications",
- count: notifUnreadCount,
- });
  useEffect(() => {
- if (!location.startsWith("/dashboard/notifications")) return;
- dismissNotifCount();
- }, [dismissNotifCount, location]);
+ if (!location.startsWith("/dashboard/notifications") || notifUnreadCount <= 0) return;
+ queryClient.setQueryData(["/api/customer/notifications/unread-count"], { unreadCount: 0 });
+ void apiRequest("POST", "/api/customer/notifications/mark-seen")
+ .then(() =>
+ queryClient.invalidateQueries({ queryKey: ["/api/customer/notifications/unread-count"] }),
+ )
+ .catch(() =>
+ queryClient.invalidateQueries({ queryKey: ["/api/customer/notifications/unread-count"] }),
+ );
+ }, [notifUnreadCount, location, queryClient]);
  const displayName = customer?.displayName?.trim() || customer?.name || "Customer";
 
  return (
@@ -153,9 +161,9 @@ export function CustomerSidebar({ className, showWarningBadge = false, onWarning
  className="bg-[hsl(var(--secondary-accent))] text-[hsl(var(--secondary-accent-foreground))]"
  />
  ) : null}
- {item.key === "notifications" && visibleNotifCount > 0 ? (
+ {item.key === "notifications" && notifUnreadCount > 0 ? (
  <SidebarCountBadge
- count={visibleNotifCount}
+ count={notifUnreadCount}
  className="bg-[hsl(var(--secondary-accent))] text-[hsl(var(--secondary-accent-foreground))]"
  />
  ) : null}

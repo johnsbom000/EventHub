@@ -899,11 +899,18 @@ function CheckoutContent({
     typeof data?.availableQuantity === "number" && Number.isFinite(data.availableQuantity) && data.availableQuantity > 0
       ? Math.floor(data.availableQuantity)
       : 1;
-  const normalizedQuantity = Math.max(1, Math.min(quantity, maxAvailableQuantity));
+  // Only clamp to the listing's max once `data` has loaded. Before then,
+  // `data` is undefined → maxAvailableQuantity falls back to 1, which would
+  // otherwise reset the quantity carried over from the listing detail page
+  // (e.g. ?quantity=3) down to 1 before the real availability is known.
+  const normalizedQuantity = data
+    ? Math.max(1, Math.min(quantity, maxAvailableQuantity))
+    : Math.max(1, quantity);
   useEffect(() => {
+    if (!data) return;
     if (quantity === normalizedQuantity) return;
     setQuantity(normalizedQuantity);
-  }, [normalizedQuantity, quantity]);
+  }, [data, normalizedQuantity, quantity]);
   const hourlyDurationHours = useMemo(() => {
     if (!isHourlyBooking) return null;
     const startMinutes = parseTimeToMinutes(eventStartTime);

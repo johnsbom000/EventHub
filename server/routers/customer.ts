@@ -99,7 +99,7 @@ import { registerCircumventionRoutes } from "../routers/circumvention";
 import { registerBookingRoutes } from "../routers/bookings";
 import { registerPaymentRoutes } from "../routers/payments";
 import { registerMiscRoutes } from "../routers/misc";
-import { createNotification, getNotificationsByRecipient, bulkMarkNotificationsRead, markNotificationAsRead } from "../lib/notificationHelpers";
+import { createNotification, getNotificationsByRecipient, bulkMarkNotificationsRead, markNotificationAsRead, markAllNotificationsSeen } from "../lib/notificationHelpers";
 import crypto from "crypto";
 import {
   insertEventSchema,
@@ -1860,11 +1860,25 @@ export function registerCustomerRoutes(app: Express): void {
       const customerAuth = await resolveCustomerAuthFromRequest(req, { createIfMissing: false });
       if (!customerAuth?.id) return res.json({ unreadCount: 0 });
       const notifs = await getNotificationsByRecipient(customerAuth.id, "customer");
-      const unreadCount = notifs.filter((n: any) => !n.read).length;
+      // Badge counts notifications the customer hasn't *seen* yet (distinct from
+      // per-item read state). Cleared by POST /api/customer/notifications/mark-seen.
+      const unreadCount = notifs.filter((n: any) => !n.seen).length;
       res.json({ unreadCount });
     } catch (err: any) {
       logRouteError("/api/customer/notifications/unread-count", err);
       res.status(500).json({ unreadCount: 0 });
+    }
+  });
+
+  app.post("/api/customer/notifications/mark-seen", mutationRateLimiter, requireCustomerAnyAuth, async (req, res) => {
+    try {
+      const customerAuth = await resolveCustomerAuthFromRequest(req, { createIfMissing: false });
+      if (!customerAuth?.id) return res.json({ updated: 0 });
+      const updated = await markAllNotificationsSeen(customerAuth.id, "customer");
+      res.json({ updated });
+    } catch (err: any) {
+      logRouteError("/api/customer/notifications/mark-seen", err);
+      res.status(500).json({ error: "Unable to mark notifications as seen" });
     }
   });
 
