@@ -2290,7 +2290,7 @@ export function registerBookingRoutes(app: Express): void {
             type: "travel_fee_proposed" as any,
             title: "Travel fee proposed",
             message: `${vendorRow?.businessName ?? "Your vendor"} proposed a travel/delivery fee of ${amountFormatted} for your booking on ${booking.eventDate}.`,
-            link: `/booking/${encodeURIComponent(bookingId)}`,
+            link: `/dashboard/messages?bookingId=${encodeURIComponent(bookingId)}`,
             read: false,
           }).catch(() => {});
 
