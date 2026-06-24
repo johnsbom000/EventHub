@@ -24,7 +24,6 @@ import { LocationPicker } from "@/components/LocationPicker";
 import { MapLocationPicker } from "@/components/MapLocationPicker";
 import type { LocationResult } from "@/types/location";
 import { resolveAssetUrl } from "@/lib/runtimeUrls";
-import { useFeeRates } from "@/hooks/useFeeRates";
 import { TimeInput } from "@/components/ui/TimeInput";
 
 type CheckoutRouteParams = { listingId: string };
@@ -285,7 +284,6 @@ function CheckoutContent({
   stripeConfigError: string | null;
 }) {
   const { t } = useTranslation();
-  const { customerFeeRate } = useFeeRates();
   const [path, setLocation] = useLocation();
   const [, params] = useRoute<CheckoutRouteParams>("/checkout/:listingId");
   const listingId =
@@ -1048,8 +1046,7 @@ function CheckoutContent({
       ? Math.round((baseSubtotal + addonSubtotalCents + logisticsSubtotal) * activeDiscountPercent / 100)
       : 0;
   const discountedSubtotal = Math.max(0, baseSubtotal + addonSubtotalCents + logisticsSubtotal - discountAmountCents);
-  const customerFeeAmount = Math.round(discountedSubtotal * customerFeeRate);
-  const customerTotal = discountedSubtotal + customerFeeAmount;
+  const customerTotal = discountedSubtotal;
 
   async function handleSubmitOrder() {
     setSubmitError(null);
@@ -1924,13 +1921,6 @@ function CheckoutContent({
                 <div className="flex items-center justify-between text-[#e07a6a]">
                   <span className="text-sm font-medium">{activeDiscountLabel}</span>
                   <span className="font-medium">−{formatUsdFromCents(discountAmountCents)}</span>
-                </div>
-              ) : null}
-
-              {customerFeeAmount > 0 ? (
-                <div className="flex items-center justify-between">
-                  <span className="text-sm text-muted-foreground">{t("checkout.orderSummaryServiceFee")}</span>
-                  <span className="font-medium">{formatUsdFromCents(customerFeeAmount)}</span>
                 </div>
               ) : null}
 
