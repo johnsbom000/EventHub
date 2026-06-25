@@ -78,6 +78,10 @@ interface BookingDetail {
 
 interface CancelBookingResult {
   message?: string;
+  travelFeeHeld?: {
+    amountCents: number;
+    refundDeadlineIso: string | null;
+  } | null;
 }
 
 // ─── Helpers ──────────────────────────────────────────────────────────────────
@@ -450,9 +454,21 @@ export default function CustomerBookingDetail() {
       setCancelModalOpen(false);
       setCancelReasonSelected("");
       setCancelReasonOther("");
+      const heldNote = result.travelFeeHeld
+        ? ` Your travel fee of $${(result.travelFeeHeld.amountCents / 100).toFixed(2)} is on hold and is set to be refunded to you${
+            result.travelFeeHeld.refundDeadlineIso
+              ? ` on ${new Date(result.travelFeeHeld.refundDeadlineIso).toLocaleString(undefined, {
+                  month: "short",
+                  day: "numeric",
+                  hour: "numeric",
+                  minute: "2-digit",
+                })}`
+              : ""
+          }.`
+        : "";
       toast({
         title: "Booking cancelled",
-        description: result.message || "The vendor has been notified.",
+        description: `${result.message || "The vendor has been notified."}${heldNote}`,
       });
     },
     onError: (err: Error) => {
