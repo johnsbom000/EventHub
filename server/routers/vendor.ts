@@ -5714,7 +5714,7 @@ export function registerVendorRoutes(app: Express): void {
       // Verify the booking belongs to this vendor
       const bookingResult = await db.execute(drizzleSql`
         SELECT id, status, vendor_account_id, customer_id,
-               listing_title_snapshot, event_date
+               listing_title_snapshot, event_date, cancelled_at
         FROM bookings
         WHERE id = ${payload.bookingId}
           AND vendor_account_id = ${account.id}
@@ -5726,6 +5726,19 @@ export function registerVendorRoutes(app: Express): void {
       const allowedStatuses = ["pending", "confirmed", "completed", "cancelled"];
       if (!allowedStatuses.includes(bk.status)) {
         return res.status(400).json({ error: "Disputes can only be filed on active or closed bookings" });
+      }
+
+      // Travel-cost-recovery on a cancelled booking must be filed within the hold
+      // window (cancelled_at + 72h = DISPUTE_WINDOW_HOURS). After that the held
+      // travel fee has already been auto-refunded to the customer.
+      if (payload.disputeType === "travel_cost_recovery" && bk.status === "cancelled") {
+        const cancelledAt = bk.cancelled_at ? new Date(bk.cancelled_at) : null;
+        const deadlineMs = cancelledAt ? cancelledAt.getTime() + 72 * 60 * 60 * 1000 : null;
+        if (!deadlineMs || Date.now() >= deadlineMs) {
+          return res.status(400).json({
+            error: "The travel reimbursement window for this cancellation has closed.",
+          });
+        }
       }
 
       const caseId = await findOrCreateDisputeCase(payload.bookingId);

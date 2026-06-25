@@ -647,6 +647,127 @@ export async function runSecurityDepositRefundJob(): Promise<number> {
   }
 }
 
+/**
+ * Travel/delivery fees on a CUSTOMER-cancelled booking are held (not refunded
+ * immediately) so the vendor has a window to claim travel costs already incurred
+ * via a travel_cost_recovery dispute. This sweep auto-refunds the held fee to the
+ * customer once DISPUTE_WINDOW_HOURS have elapsed since cancellation, provided no
+ * unresolved dispute exists for the booking. Mirrors runSecurityDepositRefundJob.
+ */
+export async function runTravelFeeRefundJob(): Promise<number> {
+  const lockAcquired = await tryAcquireWorkerLock("travel_fee_refund", 70 * 60 * 1000);
+  if (!lockAcquired) {
+    logger.info("[travel-fee-refund] lock held by another instance — skipping");
+    return 0;
+  }
+  try {
+    const eligible: any = await db.execute(drizzleSql`
+      SELECT
+        p.id                       AS payment_id,
+        p.stripe_payment_intent_id AS stripe_pi_id,
+        p.amount                   AS amount_cents,
+        p.refund_amount            AS refund_amount_cents,
+        b.id                       AS booking_id,
+        b.listing_title_snapshot   AS listing_title
+      FROM payments p
+      JOIN bookings b ON b.id = p.booking_id
+      WHERE p.payment_type = 'travel_fee'
+        AND p.status = 'succeeded'
+        AND p.payout_status = 'blocked'
+        AND p.payout_blocked_reason = 'travel_fee_hold'
+        AND b.status = 'cancelled'
+        AND b.cancelled_at IS NOT NULL
+        AND b.cancelled_at < now() - interval '72 hours'  -- = DISPUTE_WINDOW_HOURS
+        AND NOT EXISTS (
+          SELECT 1 FROM dispute_cases dc
+          WHERE dc.booking_id = b.id AND dc.status != 'resolved'
+        )
+      LIMIT 50
+    `);
+
+    const rows = extractRows<{
+      payment_id: string;
+      stripe_pi_id: string | null;
+      amount_cents: number;
+      refund_amount_cents: number | null;
+      booking_id: string;
+      listing_title: string | null;
+    }>(eligible);
+
+    if (rows.length === 0) return 0;
+
+    logger.info("[travel-fee-refund] %d eligible held travel fee(s) to refund", rows.length);
+    const { refundBookingPayment } = await import("../stripe");
+    const now = new Date();
+    let refunded = 0;
+
+    for (const row of rows) {
+      if (!row.stripe_pi_id) {
+        logger.warn("[travel-fee-refund] payment %s has no stripe_pi_id — skipping", row.payment_id);
+        continue;
+      }
+      const alreadyRefunded = typeof row.refund_amount_cents === "number" ? row.refund_amount_cents : 0;
+      const remainingCents = Math.max(0, row.amount_cents - alreadyRefunded);
+      if (remainingCents <= 0) {
+        // Nothing left to refund — just clear the hold so it stops being selected.
+        await db
+          .update(payments)
+          .set({ payoutStatus: "cancelled", payoutBlockedReason: "auto_refunded_no_dispute" })
+          .where(eq(payments.id, row.payment_id));
+        continue;
+      }
+      try {
+        await refundBookingPayment({
+          paymentIntentId: row.stripe_pi_id,
+          amount: remainingCents,
+          reason: "requested_by_customer",
+          idempotencyKey: `auto-travel-refund:${row.payment_id}`,
+        });
+
+        await db.transaction(async (tx) => {
+          await tx
+            .update(payments)
+            .set({
+              status: "refunded",
+              refundAmount: alreadyRefunded + remainingCents,
+              refundReason: "auto_travel_refund_72h",
+              refundedAt: now,
+              payoutStatus: "cancelled",
+              payoutEligibleAt: null,
+              payoutBlockedReason: "auto_refunded_no_dispute",
+              payoutAdjustedAmount: 0,
+            })
+            .where(eq(payments.id, row.payment_id));
+        });
+
+        refunded++;
+        logger.info(
+          "[travel-fee-refund] refunded booking=%s amount=%d cents",
+          row.booking_id,
+          remainingCents
+        );
+      } catch (rowErr: any) {
+        logger.warn(
+          "[travel-fee-refund] failed for payment=%s booking=%s: %s",
+          row.payment_id,
+          row.booking_id,
+          rowErr?.message || rowErr
+        );
+      }
+    }
+
+    if (refunded > 0) {
+      logger.info("[travel-fee-refund] auto-refunded %d held travel fee(s)", refunded);
+    }
+    return refunded;
+  } catch (err: any) {
+    logger.warn("[travel-fee-refund] job failed: %s", err?.message || err);
+    return 0;
+  } finally {
+    await releaseWorkerLock("travel_fee_refund");
+  }
+}
+
 export async function runBookingCompletionJob(): Promise<number> {
   const lockAcquired = await tryAcquireWorkerLock("booking_auto_complete", 5 * 60 * 60 * 1000);
   if (!lockAcquired) {
@@ -1065,6 +1186,16 @@ export function startBookingCompletionWorker() {
   startTimer.unref?.();
 }
 
+export function startTravelFeeRefundWorker() {
+  const INTERVAL_MS = 60 * 60 * 1000;
+  const startTimer = setTimeout(() => {
+    void runTravelFeeRefundJob();
+    const t = setInterval(() => void runTravelFeeRefundJob(), INTERVAL_MS);
+    t.unref?.();
+  }, 8 * 60 * 1000);
+  startTimer.unref?.();
+}
+
 export function startAllBackgroundWorkers() {
   startBookingExpiryWorker();
   startChatCleanupWorker();
@@ -1075,6 +1206,7 @@ export function startAllBackgroundWorkers() {
   startSuspensionLiftedWorker();
   startPendingRequestReminderWorker();
   startSecurityDepositRefundWorker();
+  startTravelFeeRefundWorker();
   startBookingCompletionWorker();
   startAutoPayoutWorker();
   startStripeWebhookCleanupWorker();

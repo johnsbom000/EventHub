@@ -2,6 +2,8 @@ const CORAL = "#E07A6A";
 const SLATE = "#4A6A7D";
 const BG = "#FAF9F7";
 const TEXT = "#1C1C1C";
+const GREEN = "#16a34a";
+const AMBER = "#B45309";
 
 function formatCents(cents: number): string {
   return new Intl.NumberFormat("en-US", { style: "currency", currency: "USD" }).format((cents || 0) / 100);
@@ -37,6 +39,19 @@ export interface BookingCancelledParams {
   reasonNote?: string;
   totalAmountCents?: number;
   refundAmountCents?: number;
+  // ── Itemized receipt (optional) ───────────────────────────────────────────
+  // When any of these are provided, the email shows a line-by-line refund
+  // summary to BOTH parties instead of the single "Refund Amount" row.
+  /** Service/booking charge refunded immediately (per the cancellation policy). */
+  serviceRefundCents?: number;
+  /** Security deposit refunded immediately (always 100% on cancellation). */
+  depositRefundCents?: number;
+  /** Travel/delivery fee placed on hold for the dispute window (customer-cancel only). */
+  travelFeeHeld?: {
+    amountCents: number;
+    /** Human-readable deadline already formatted in the event timezone, e.g. "Jun 27 at 3:14 PM". */
+    refundDeadlineLabel: string;
+  };
   serverUrl: string;
 }
 
@@ -55,6 +70,9 @@ export function bookingCancelledTemplate(params: BookingCancelledParams): {
     reasonNote,
     totalAmountCents,
     refundAmountCents,
+    serviceRefundCents,
+    depositRefundCents,
+    travelFeeHeld,
     serverUrl,
   } = params;
 
@@ -72,15 +90,67 @@ export function bookingCancelledTemplate(params: BookingCancelledParams): {
     ? `The booking from <strong>${counterpartName}</strong> has been cancelled by the customer.`
     : `The booking from <strong>${counterpartName}</strong> has been cancelled.`;
 
-  // Refund row — only show for the customer recipient when there's payment info
-  const refundRow = role === "customer" && typeof totalAmountCents === "number"
-    ? `<tr><td style="padding:8px 0;border-bottom:1px solid #f0eeec;font-size:14px;color:#666;">Total Paid</td><td style="padding:8px 0;border-bottom:1px solid #f0eeec;font-size:14px;font-weight:600;text-align:right;">${formatCents(totalAmountCents)}</td></tr>
-       <tr><td style="padding:8px 0;font-size:14px;color:#666;">Refund Amount</td><td style="padding:8px 0;font-size:14px;font-weight:700;text-align:right;color:${refundAmountCents! > 0 ? "#16a34a" : "#666"};">${typeof refundAmountCents === "number" ? formatCents(refundAmountCents) : "None"}</td></tr>`
+  // An itemized receipt is shown to both parties whenever any line item is provided.
+  const hasItemized =
+    typeof serviceRefundCents === "number" ||
+    typeof depositRefundCents === "number" ||
+    !!travelFeeHeld;
+
+  const tdLabel = `padding:8px 0;border-bottom:1px solid #f0eeec;font-size:14px;color:#666;`;
+  const tdValue = `padding:8px 0;border-bottom:1px solid #f0eeec;font-size:14px;font-weight:600;text-align:right;`;
+
+  // ── Itemized receipt rows (preferred when provided) ────────────────────────
+  const itemizedRows: string[] = [];
+  if (typeof serviceRefundCents === "number") {
+    itemizedRows.push(
+      `<tr><td style="${tdLabel}">Service refund</td><td style="${tdValue}color:${serviceRefundCents > 0 ? GREEN : "#666"};">${serviceRefundCents > 0 ? formatCents(serviceRefundCents) : "None"}</td></tr>`
+    );
+  }
+  if (typeof depositRefundCents === "number" && depositRefundCents > 0) {
+    itemizedRows.push(
+      `<tr><td style="${tdLabel}">Security deposit refund</td><td style="${tdValue}color:${GREEN};">${formatCents(depositRefundCents)}</td></tr>`
+    );
+  }
+  if (travelFeeHeld) {
+    itemizedRows.push(
+      `<tr><td style="${tdLabel}">Travel / delivery fee</td><td style="${tdValue}color:${AMBER};">On hold</td></tr>`
+    );
+  }
+
+  // Legacy single-row refund (for callers that don't pass itemized line items).
+  const legacyRefundRow = role === "customer" && typeof totalAmountCents === "number"
+    ? `<tr><td style="${tdLabel}">Total Paid</td><td style="${tdValue}">${formatCents(totalAmountCents)}</td></tr>
+       <tr><td style="padding:8px 0;font-size:14px;color:#666;">Refund Amount</td><td style="padding:8px 0;font-size:14px;font-weight:700;text-align:right;color:${refundAmountCents! > 0 ? GREEN : "#666"};">${typeof refundAmountCents === "number" ? formatCents(refundAmountCents) : "None"}</td></tr>`
     : `<tr><td style="padding:8px 0;font-size:14px;color:#666;">Event Date</td><td style="padding:8px 0;font-size:14px;font-weight:600;text-align:right;">${eventDate}</td></tr>`;
 
-  const refundNote = role === "customer" && typeof refundAmountCents === "number" && refundAmountCents > 0
+  const summaryBlock = hasItemized
+    ? `<h3 style="margin:0 0 8px;font-family:'Playfair Display',Georgia,serif;font-size:16px;color:${SLATE};">Refund summary</h3>
+       <table style="width:100%;border-collapse:collapse;margin-bottom:16px;">${itemizedRows.join("")}</table>`
+    : "";
+
+  // The exact held-travel sentence, shown to both parties.
+  const travelHoldNote = travelFeeHeld
+    ? `<p style="margin:0 0 16px;font-size:14px;line-height:1.6;color:${AMBER};">Travel fee of ${formatCents(travelFeeHeld.amountCents)} is on hold and is set to be refunded to the customer on ${travelFeeHeld.refundDeadlineLabel}.</p>`
+    : "";
+
+  // Vendors who actually spent money on travel get a path to recover it.
+  const vendorTravelClaimNote = travelFeeHeld && role === "vendor"
+    ? `<p style="margin:0 0 20px;font-size:14px;line-height:1.6;color:#555;">If you already incurred travel costs for this booking, you can request reimbursement from the held travel fee before <strong>${travelFeeHeld.refundDeadlineLabel}</strong> from the dispute page of your dashboard.</p>`
+    : "";
+
+  const refundedTotalForNote =
+    (typeof serviceRefundCents === "number" ? Math.max(0, serviceRefundCents) : 0) +
+    (typeof depositRefundCents === "number" ? Math.max(0, depositRefundCents) : 0);
+
+  // Settlement note for itemized refunds (the held line is covered by travelHoldNote).
+  const itemizedSettlementNote = hasItemized && role === "customer" && refundedTotalForNote > 0
+    ? `<p style="margin:0 0 20px;font-size:14px;line-height:1.6;color:#555;">Your refund of <strong>${formatCents(refundedTotalForNote)}</strong> has been processed and will appear on your original payment method within 5–10 business days.</p>`
+    : "";
+
+  // Legacy refund note (only when no itemized data was provided).
+  const legacyRefundNote = !hasItemized && role === "customer" && typeof refundAmountCents === "number" && refundAmountCents > 0
     ? `<p style="margin:0 0 20px;font-size:14px;line-height:1.6;color:#555;">Your refund of <strong>${formatCents(refundAmountCents)}</strong> has been processed and will appear on your original payment method within 5–10 business days.</p>`
-    : role === "customer" && typeof refundAmountCents === "number" && refundAmountCents === 0
+    : !hasItemized && role === "customer" && typeof refundAmountCents === "number" && refundAmountCents === 0
     ? `<p style="margin:0 0 20px;font-size:14px;line-height:1.6;color:#555;">Per the cancellation policy, no refund applies for cancellations at this time.</p>`
     : "";
 
@@ -90,20 +160,21 @@ export function bookingCancelledTemplate(params: BookingCancelledParams): {
     <p style="margin:0 0 20px;font-size:15px;line-height:1.6;">${intro}</p>
     ${reasonNote ? `<p style="margin:0 0 20px;font-size:15px;line-height:1.6;">${reasonNote}</p>` : ""}
     <table style="width:100%;border-collapse:collapse;margin-bottom:20px;">
-      <tr><td style="padding:8px 0;border-bottom:1px solid #f0eeec;font-size:14px;color:#666;">Service</td><td style="padding:8px 0;border-bottom:1px solid #f0eeec;font-size:14px;font-weight:600;text-align:right;">${listingTitle}</td></tr>
-      <tr><td style="padding:8px 0;border-bottom:1px solid #f0eeec;font-size:14px;color:#666;">Event Date</td><td style="padding:8px 0;border-bottom:1px solid #f0eeec;font-size:14px;font-weight:600;text-align:right;">${eventDate}</td></tr>
-      ${refundRow}
+      <tr><td style="${tdLabel}">Service</td><td style="${tdValue}">${listingTitle}</td></tr>
+      <tr><td style="${tdLabel}">Event Date</td><td style="${tdValue}">${eventDate}</td></tr>
+      ${hasItemized ? "" : legacyRefundRow}
     </table>
-    ${refundNote}
+    ${summaryBlock}
+    ${travelHoldNote}
+    ${itemizedSettlementNote}
+    ${vendorTravelClaimNote}
+    ${legacyRefundNote}
     <p style="margin:0 0 24px;font-size:14px;line-height:1.6;color:#666;">If you have questions, you can view your booking history in your dashboard.</p>
     <a href="${dashboardUrl}" style="display:inline-block;background:${CORAL};color:#fff;text-decoration:none;padding:12px 28px;border-radius:6px;font-size:14px;font-weight:600;">View Dashboard</a>
   `;
 
-  const refundTextLine = role === "customer" && typeof refundAmountCents === "number"
-    ? `Refund: ${formatCents(refundAmountCents)}`
-    : "";
-
-  const text = [
+  // ── Plain-text version ─────────────────────────────────────────────────────
+  const textLines: string[] = [
     `Booking Cancelled`,
     ``,
     `Hi ${recipientName},`,
@@ -114,10 +185,30 @@ export function bookingCancelledTemplate(params: BookingCancelledParams): {
     ``,
     `Service: ${listingTitle}`,
     `Event Date: ${eventDate}`,
-    refundTextLine,
-    ``,
-    `View your dashboard: ${dashboardUrl}`,
-  ].filter(Boolean).join("\n");
+  ];
+
+  if (hasItemized) {
+    textLines.push(``, `Refund summary:`);
+    if (typeof serviceRefundCents === "number") {
+      textLines.push(`  Service refund: ${serviceRefundCents > 0 ? formatCents(serviceRefundCents) : "None"}`);
+    }
+    if (typeof depositRefundCents === "number" && depositRefundCents > 0) {
+      textLines.push(`  Security deposit refund: ${formatCents(depositRefundCents)}`);
+    }
+    if (travelFeeHeld) {
+      textLines.push(`  Travel / delivery fee: On hold`);
+      textLines.push(``, `Travel fee of ${formatCents(travelFeeHeld.amountCents)} is on hold and is set to be refunded to the customer on ${travelFeeHeld.refundDeadlineLabel}.`);
+      if (role === "vendor") {
+        textLines.push(``, `If you already incurred travel costs for this booking, you can request reimbursement from the held travel fee before ${travelFeeHeld.refundDeadlineLabel} from the dispute page of your dashboard.`);
+      }
+    }
+  } else if (role === "customer" && typeof refundAmountCents === "number") {
+    textLines.push(`Refund: ${formatCents(refundAmountCents)}`);
+  }
+
+  textLines.push(``, `View your dashboard: ${dashboardUrl}`);
+
+  const text = textLines.filter((line) => line !== undefined).join("\n");
 
   return { subject, html: baseWrapper(body), text };
 }

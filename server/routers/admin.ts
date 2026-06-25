@@ -486,6 +486,10 @@ export function registerAdminRoutes(app: Express): void {
           // How many cents to refund to the customer.
           // Absent = full deposit refund. Can exceed deposit to also refund booking payment.
           refundAmountCents: z.number().int().min(0).optional(),
+          // Travel-cost-recovery disputes only: cents to award the vendor from the
+          // held travel fee (their proven incurred cost). Remainder is refunded to
+          // the customer. Capped server-side at the held travel amount.
+          travelAwardCents: z.number().int().min(0).optional(),
         })
         .parse(req.body ?? {});
 
@@ -535,6 +539,199 @@ export function registerAdminRoutes(app: Express): void {
       const dispute = { ...bookingContext };
 
       const now = new Date();
+
+      // ── Travel-fee dispute settlement (held travel fee on a cancelled booking) ──
+      // On a customer cancellation the travel/delivery fee is held (not refunded)
+      // so the vendor can recover real travel costs incurred. Admin awards the
+      // vendor's proven cost from the held fee; the remainder is refunded to the
+      // customer. The vendor award is paid via a DIRECT authorized transfer
+      // (transferToVendor) because the automated payout path correctly refuses
+      // cancelled bookings (payoutEligibility cancelled-booking branch). A held
+      // travel fee only ever exists on a cancelled booking, so this is mutually
+      // exclusive with the deposit-dispute path below.
+      const heldTravelRows = await db
+        .select({
+          id: payments.id,
+          stripePaymentIntentId: payments.stripePaymentIntentId,
+          stripeChargeId: payments.stripeChargeId,
+          amount: payments.amount,
+          refundAmount: payments.refundAmount,
+          status: payments.status,
+        })
+        .from(payments)
+        .where(
+          and(
+            eq(payments.bookingId, resolvedBookingId),
+            eq(payments.paymentType, "travel_fee"),
+            eq(payments.payoutBlockedReason, "travel_fee_hold")
+          )
+        )
+        .orderBy(desc(payments.createdAt))
+        .limit(1);
+      const heldTravel = heldTravelRows[0];
+
+      if (heldTravel?.id) {
+        if (!isPaymentSucceededStatus(heldTravel.status)) {
+          return res.status(400).json({ error: "Held travel fee is not in a settleable state" });
+        }
+        const alreadyRefunded = heldTravel.refundAmount ?? 0;
+        const heldRemaining = Math.max(0, heldTravel.amount - alreadyRefunded);
+
+        const requestedAward =
+          typeof payload.travelAwardCents === "number"
+            ? payload.travelAwardCents
+            : payload.decision === "payout"
+              ? heldRemaining
+              : 0;
+        const travelAward = Math.min(Math.max(0, requestedAward), heldRemaining);
+        const travelRefundToCustomer = heldRemaining - travelAward;
+
+        // Vendor connected account is required to pay an award.
+        const vendorAcctRows: any = await db.execute(drizzleSql`
+          SELECT va.stripe_connected_account_id AS "connectedAccountId"
+          FROM bookings b
+          JOIN vendor_accounts va ON va.id = b.vendor_account_id
+          WHERE b.id = ${resolvedBookingId}
+          LIMIT 1
+        `);
+        const connectedAccountId = asTrimmedString(
+          (vendorAcctRows.rows?.[0] as any)?.connectedAccountId
+        );
+        if (travelAward > 0 && !connectedAccountId) {
+          return res.status(400).json({
+            error: "Vendor has no connected Stripe account; cannot award travel costs",
+          });
+        }
+
+        const { refundBookingPayment, transferToVendor } = await import("../stripe");
+
+        // 1) Refund the customer's portion (partial refund on the travel charge).
+        const travelRefund =
+          travelRefundToCustomer > 0
+            ? await refundBookingPayment({
+                paymentIntentId: heldTravel.stripePaymentIntentId,
+                amount:
+                  travelRefundToCustomer < heldTravel.amount ? travelRefundToCustomer : undefined,
+                reason: "requested_by_customer",
+                idempotencyKey: `admin-dispute-travel-refund:${caseId}:${heldTravel.id}`,
+              })
+            : null;
+
+        // 2) Directly transfer the awarded portion to the vendor (authorized override).
+        let travelTransfer: any = null;
+        if (travelAward > 0) {
+          travelTransfer = await transferToVendor({
+            amount: travelAward,
+            vendorStripeAccountId: connectedAccountId,
+            description: `Travel cost recovery for booking ${resolvedBookingId}`,
+            sourceTransaction: asTrimmedString(heldTravel.stripeChargeId) || undefined,
+            transferGroup: `booking_${resolvedBookingId}`,
+            metadata: {
+              bookingId: resolvedBookingId,
+              paymentId: heldTravel.id,
+              kind: "travel_cost_recovery",
+            },
+            // Key by case+payment (NOT amount) so a retry with a different award can
+            // never produce a second transfer — the first settlement wins.
+            idempotencyKey: `admin-dispute-travel-payout:${caseId}:${heldTravel.id}`,
+          });
+        }
+
+        const resolutionNote = payload.adminNotes
+          ? payload.adminNotes
+          : travelAward > 0
+            ? `Travel dispute: ${formatCentsAsDollars(travelAward)} awarded to vendor, ${formatCentsAsDollars(travelRefundToCustomer)} refunded to customer`
+            : `Travel dispute: full travel fee ${formatCentsAsDollars(travelRefundToCustomer)} refunded to customer`;
+
+        await db.transaction(async (tx) => {
+          await tx
+            .update(payments)
+            .set({
+              status:
+                travelAward > 0
+                  ? travelRefundToCustomer > 0
+                    ? "partially_refunded"
+                    : "succeeded"
+                  : "refunded",
+              ...(travelRefundToCustomer > 0
+                ? {
+                    refundAmount: alreadyRefunded + travelRefundToCustomer,
+                    refundReason: "admin_dispute_travel",
+                    refundedAt: now,
+                  }
+                : {}),
+              ...(travelAward > 0
+                ? {
+                    payoutStatus: "paid",
+                    payoutEligibleAt: now,
+                    payoutBlockedReason: null,
+                    payoutAdjustedAmount: travelAward,
+                    paidOutAt: now,
+                    stripeTransferId: travelTransfer?.id ?? null,
+                  }
+                : {
+                    payoutStatus: "cancelled",
+                    payoutEligibleAt: null,
+                    payoutBlockedReason: "dispute_refund_approved",
+                    payoutAdjustedAmount: 0,
+                  }),
+            })
+            .where(eq(payments.id, heldTravel.id));
+
+          await tx.execute(drizzleSql`
+            UPDATE dispute_cases
+            SET status = 'resolved',
+                resolution = ${resolutionNote},
+                withheld_amount_cents = ${travelAward > 0 ? travelAward : null},
+                resolved_at = ${now},
+                updated_at = ${now}
+            WHERE id = ${activeCaseId}
+          `);
+          await tx.execute(drizzleSql`
+            INSERT INTO dispute_filings (case_id, booking_id, filed_by, dispute_type, description, attachment_urls, created_at, updated_at)
+            VALUES (${activeCaseId}, ${resolvedBookingId}, 'admin', 'admin_note', ${resolutionNote}, '{}', ${now}, ${now})
+          `);
+        });
+
+        // Fire-and-forget outcome emails
+        const serverUrlTravel = appUrl();
+        const travelListingTitle = asTrimmedString(dispute.listingTitle) || "Your booking";
+        const travelEventDate = asTrimmedString(dispute.eventDate) || "N/A";
+        if (dispute.customerEmail) {
+          sendDisputeResolvedEmail(dispute.customerEmail, {
+            role: "customer",
+            decision: "refund",
+            recipientName: asTrimmedString(dispute.customerName) || "Customer",
+            counterpartName: asTrimmedString(dispute.vendorBusinessName) || "Vendor",
+            listingTitle: travelListingTitle,
+            eventDate: travelEventDate,
+            refundAmountCents: travelRefundToCustomer > 0 ? travelRefundToCustomer : undefined,
+            serverUrl: serverUrlTravel,
+          }).catch(() => {});
+        }
+        if (dispute.vendorEmail) {
+          sendDisputeResolvedEmail(dispute.vendorEmail, {
+            role: "vendor",
+            decision: travelAward > 0 ? "payout" : "refund",
+            recipientName: asTrimmedString(dispute.vendorBusinessName) || "Vendor",
+            counterpartName: asTrimmedString(dispute.customerName) || "Customer",
+            listingTitle: travelListingTitle,
+            eventDate: travelEventDate,
+            serverUrl: serverUrlTravel,
+          }).catch(() => {});
+        }
+
+        return res.json({
+          disputeId: caseId,
+          bookingId: resolvedBookingId,
+          decision: payload.decision,
+          travelAwardCents: travelAward,
+          travelRefundCents: travelRefundToCustomer,
+          travelRefund,
+          travelTransfer,
+          resolvedAt: now,
+        });
+      }
 
       if (payload.decision === "refund") {
         const depositPaymentRows = await db
