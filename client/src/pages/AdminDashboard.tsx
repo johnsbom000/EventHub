@@ -406,6 +406,7 @@ function AdminDisputeCaseCard({ disputeCase }: { disputeCase: AdminDisputeCase }
   const [expanded, setExpanded] = useState(false);
   const [noteText, setNoteText] = useState("");
   const [withheldInput, setWithheldInput] = useState("");
+  const [travelAwardInput, setTravelAwardInput] = useState("");
   const queryClient = useQueryClient();
 
   const isResolved = disputeCase.case_status === "resolved";
@@ -420,8 +421,8 @@ function AdminDisputeCaseCard({ disputeCase }: { disputeCase: AdminDisputeCase }
   });
 
   const resolve = useMutation({
-    mutationFn: ({ decision, withheldAmountCents }: { decision: "refund" | "payout"; withheldAmountCents?: number }) =>
-      apiRequest("POST", `/api/admin/disputes/${disputeCase.case_id}/resolve`, { decision, withheldAmountCents }).then((r) => r.json()),
+    mutationFn: ({ decision, withheldAmountCents, travelAwardCents }: { decision: "refund" | "payout"; withheldAmountCents?: number; travelAwardCents?: number }) =>
+      apiRequest("POST", `/api/admin/disputes/${disputeCase.case_id}/resolve`, { decision, withheldAmountCents, travelAwardCents }).then((r) => r.json()),
     onSuccess: () => queryClient.invalidateQueries({ queryKey: ["/api/admin/disputes"] }),
   });
 
@@ -429,6 +430,10 @@ function AdminDisputeCaseCard({ disputeCase }: { disputeCase: AdminDisputeCase }
   const filingTypes = Array.from(new Set(
     disputeCase.filings.filter((f) => f.filed_by !== "admin").map((f) => f.dispute_type)
   ));
+
+  // A held travel fee on a cancelled booking is settled via the travel-award flow
+  // (award the vendor their incurred cost; refund the remainder to the customer).
+  const isTravelDispute = filingTypes.includes("travel_cost_recovery");
 
   return (
     <Card className="mb-3">
@@ -540,7 +545,66 @@ function AdminDisputeCaseCard({ disputeCase }: { disputeCase: AdminDisputeCase }
             </div>
           )}
 
-          {!isResolved && (
+          {!isResolved && isTravelDispute && (
+            <div className="space-y-3">
+              <p className="text-sm font-medium">Travel cost recovery</p>
+
+              {/* Award the vendor their proven travel cost from the held travel fee. */}
+              <div className="rounded-lg border border-border bg-muted/40 px-3 py-2.5 space-y-2">
+                <p className="text-xs font-medium text-muted-foreground">Award to vendor (optional)</p>
+                <div className="flex items-center gap-2">
+                  <span className="text-sm text-muted-foreground">$</span>
+                  <input
+                    type="number"
+                    min="0"
+                    step="0.01"
+                    placeholder="0.00"
+                    value={travelAwardInput}
+                    onChange={(e) => setTravelAwardInput(e.target.value)}
+                    className="h-8 w-32 rounded border border-border px-2 text-sm"
+                  />
+                  <span className="text-xs text-muted-foreground">
+                    paid to vendor from the held travel fee; remainder refunded to the customer
+                  </span>
+                </div>
+              </div>
+
+              <div className="flex gap-2 flex-wrap">
+                <button
+                  className="px-3 py-1.5 text-sm bg-green-600 text-white rounded hover:bg-green-700 disabled:opacity-50"
+                  disabled={resolve.isPending}
+                  onClick={() => {
+                    const awardCents = travelAwardInput.trim()
+                      ? Math.round(parseFloat(travelAwardInput) * 100)
+                      : 0;
+                    if (!(awardCents > 0)) {
+                      alert("Enter an award amount, or use “Refund all to customer”.");
+                      return;
+                    }
+                    if (confirm(`Award $${(awardCents / 100).toFixed(2)} to the vendor and refund the remaining travel fee to the customer?`)) {
+                      resolve.mutate({ decision: "payout", travelAwardCents: awardCents });
+                    }
+                  }}
+                >
+                  ✓ Award to vendor
+                </button>
+                <button
+                  className="px-3 py-1.5 text-sm bg-red-600 text-white rounded hover:bg-red-700 disabled:opacity-50"
+                  disabled={resolve.isPending}
+                  onClick={() => {
+                    if (confirm("Refund the entire held travel fee to the customer?")) {
+                      resolve.mutate({ decision: "refund", travelAwardCents: 0 });
+                    }
+                  }}
+                >
+                  ↩ Refund all to customer
+                </button>
+              </div>
+              {resolve.isError && <p className="text-xs text-red-600">Failed. Please try again.</p>}
+            </div>
+          )}
+
+          {!isResolved && !isTravelDispute && (
             <div className="space-y-3">
               <p className="text-sm font-medium">Case decision</p>
 
