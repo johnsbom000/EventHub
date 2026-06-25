@@ -16,7 +16,7 @@
  */
 
 import { useRef, useEffect, useState } from "react";
-import { ChevronRight, ChevronLeft } from "lucide-react";
+import { ChevronRight, ChevronLeft, Check } from "lucide-react";
 import {
   toCategoryKey,
   getSubcategories,
@@ -208,10 +208,10 @@ export function HeroCategoryPopup({
         </span>
       </button>
 
-      {/* Popup */}
+      {/* Popup — styled to match the Radix Select (Event Type) dropdown */}
       {open && (
         <div
-          className="absolute left-0 top-full z-[90] mt-1 w-64 overflow-hidden rounded-xl border border-[rgba(74,106,125,0.18)] bg-white shadow-lg"
+          className="absolute left-0 top-full z-[90] mt-1 w-64 overflow-hidden rounded-[12px] border border-border bg-popover p-1 font-sans text-popover-foreground shadow-md"
           role="listbox"
         >
           {/* Header */}
@@ -219,39 +219,50 @@ export function HeroCategoryPopup({
             <button
               type="button"
               onClick={handleBack}
-              className="flex w-full items-center gap-2 border-b border-[rgba(74,106,125,0.1)] px-4 py-2.5 text-sm font-medium text-[#4a6a7d] hover:bg-[#f5f0e8] transition-colors"
+              className="relative flex w-full cursor-default select-none items-center rounded-[10px] py-1.5 pl-8 pr-2 text-sm font-sans font-medium text-[#4a6a7d] outline-none transition-colors hover:bg-[hsl(var(--secondary-accent)/0.2)] hover:text-[hsl(var(--secondary-accent))]"
             >
-              <ChevronLeft className="h-4 w-4" />
+              <ChevronLeft className="absolute left-2 h-4 w-4" />
               {depth === "subcategory" ? "All Categories" : pendingCategory?.label}
             </button>
           )}
 
           {/* Level 1 — categories */}
           {depth === "category" && (
-            <ul className="py-1">
-              {CATEGORY_OPTIONS.map((cat) => (
-                <li key={cat.key}>
-                  <button
-                    type="button"
-                    onClick={() => handleSelectCategory(cat)}
-                    className={[
-                      "flex w-full items-center justify-between px-4 py-2.5 text-sm transition-colors hover:bg-[#f5f0e8]",
-                      value?.categoryKey === cat.key ? "font-semibold text-[#e07a6a]" : "text-[#2a3a42]",
-                    ].join(" ")}
-                  >
-                    <span>{cat.label}</span>
-                    {(available[cat.key]?.subcategories ?? []).length > 0 && (
-                      <ChevronRight className="h-4 w-4 text-[#9aacb4]" />
-                    )}
-                  </button>
-                </li>
-              ))}
+            <ul>
+              {CATEGORY_OPTIONS.map((cat) => {
+                const isSelected = value?.categoryKey === cat.key;
+                const hasSubs = (available[cat.key]?.subcategories ?? []).length > 0;
+                return (
+                  <li key={cat.key}>
+                    <button
+                      type="button"
+                      onClick={() => handleSelectCategory(cat)}
+                      className={[
+                        "relative flex w-full cursor-default select-none items-center rounded-[10px] py-1.5 pl-8 pr-2 text-sm font-sans outline-none transition-colors hover:bg-[hsl(var(--secondary-accent)/0.2)] hover:text-[hsl(var(--secondary-accent))]",
+                        isSelected
+                          ? "bg-[hsl(var(--secondary-accent)/0.24)] text-[hsl(var(--secondary-accent))]"
+                          : "text-[#2a3a42]",
+                      ].join(" ")}
+                    >
+                      {isSelected && (
+                        <span className="absolute left-2 flex h-3.5 w-3.5 items-center justify-center">
+                          <Check className="h-4 w-4" />
+                        </span>
+                      )}
+                      <span>{cat.label}</span>
+                      {hasSubs && (
+                        <ChevronRight className="ml-auto h-4 w-4 text-[#9aacb4]" />
+                      )}
+                    </button>
+                  </li>
+                );
+              })}
             </ul>
           )}
 
           {/* Level 2 — subcategories / types */}
           {depth === "subcategory" && pendingCategory && (
-            <ul className="max-h-64 overflow-y-auto py-1">
+            <ul className="max-h-64 overflow-y-auto">
               {subcategoryOptions.map((sub) => {
                 const hasDetails =
                   isTwoLevel(pendingCategory.canonicalKey) &&
@@ -264,12 +275,21 @@ export function HeroCategoryPopup({
                       type="button"
                       onClick={() => handleSelectSubcategory(sub)}
                       className={[
-                        "flex w-full items-center justify-between px-4 py-2.5 text-sm transition-colors hover:bg-[#f5f0e8]",
-                        isSelected ? "font-semibold text-[#e07a6a]" : "text-[#2a3a42]",
+                        "relative flex w-full cursor-default select-none items-center rounded-[10px] py-1.5 pl-8 pr-2 text-sm font-sans outline-none transition-colors hover:bg-[hsl(var(--secondary-accent)/0.2)] hover:text-[hsl(var(--secondary-accent))]",
+                        isSelected
+                          ? "bg-[hsl(var(--secondary-accent)/0.24)] text-[hsl(var(--secondary-accent))]"
+                          : "text-[#2a3a42]",
                       ].join(" ")}
                     >
+                      {isSelected && (
+                        <span className="absolute left-2 flex h-3.5 w-3.5 items-center justify-center">
+                          <Check className="h-4 w-4" />
+                        </span>
+                      )}
                       <span>{sub}</span>
-                      {hasDetails && <ChevronRight className="h-4 w-4 text-[#9aacb4]" />}
+                      {hasDetails && (
+                        <ChevronRight className="ml-auto h-4 w-4 text-[#9aacb4]" />
+                      )}
                     </button>
                   </li>
                 );
@@ -279,7 +299,7 @@ export function HeroCategoryPopup({
 
           {/* Level 3 — details (cuisine / subtype) */}
           {depth === "detail" && pendingCategory && pendingSubcategory && (
-            <ul className="max-h-64 overflow-y-auto py-1">
+            <ul className="max-h-64 overflow-y-auto">
               {detailOptions.map((detail) => {
                 const isSelected =
                   value?.categoryKey === pendingCategory.key &&
@@ -291,11 +311,18 @@ export function HeroCategoryPopup({
                       type="button"
                       onClick={() => handleSelectDetail(detail)}
                       className={[
-                        "flex w-full items-center px-4 py-2.5 text-sm transition-colors hover:bg-[#f5f0e8]",
-                        isSelected ? "font-semibold text-[#e07a6a]" : "text-[#2a3a42]",
+                        "relative flex w-full cursor-default select-none items-center rounded-[10px] py-1.5 pl-8 pr-2 text-sm font-sans outline-none transition-colors hover:bg-[hsl(var(--secondary-accent)/0.2)] hover:text-[hsl(var(--secondary-accent))]",
+                        isSelected
+                          ? "bg-[hsl(var(--secondary-accent)/0.24)] text-[hsl(var(--secondary-accent))]"
+                          : "text-[#2a3a42]",
                       ].join(" ")}
                     >
-                      {detail}
+                      {isSelected && (
+                        <span className="absolute left-2 flex h-3.5 w-3.5 items-center justify-center">
+                          <Check className="h-4 w-4" />
+                        </span>
+                      )}
+                      <span>{detail}</span>
                     </button>
                   </li>
                 );
