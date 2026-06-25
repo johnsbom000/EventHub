@@ -912,17 +912,16 @@ export default function VendorBookings() {
                         ) : null}
                       </div>
                     ) : null}
-                    {/* Pending: request-to-book or instant-book outside service radius — vendor must accept or decline */}
-                    {(item.status === "pending" || (item.status === "confirmed" && item.raw.outsideServiceRadius)) ? (
+                    {/* Request-to-book (pending): vendor must accept or decline */}
+                    {item.status === "pending" ? (
                       <div className="mt-3 flex items-center gap-2">
                         <Button
                           size="sm"
                           onClick={() => {
-                            if (item.status === "confirmed") return;
                             setActionBookingId(item.id);
                             bookingActionMutation.mutate({ id: item.id, status: "confirmed" });
                           }}
-                          disabled={bookingActionMutation.isPending || item.status === "confirmed"}
+                          disabled={bookingActionMutation.isPending}
                         >
                           {bookingActionMutation.isPending && actionBookingId === item.id
                             ? t("vendorBookings.accepting")
@@ -934,12 +933,12 @@ export default function VendorBookings() {
                           onClick={() => setCancelModalBookingId(item.id)}
                           disabled={bookingActionMutation.isPending}
                         >
-                          {item.status === "confirmed" ? "Cancel" : t("vendorBookings.decline")}
+                          {t("vendorBookings.decline")}
                         </Button>
                       </div>
                     ) : null}
-                    {/* Confirmed and NOT outside service radius: show Cancel only — completion is handled automatically */}
-                    {item.status === "confirmed" && !item.raw.outsideServiceRadius ? (
+                    {/* Confirmed (instant-book auto-confirmed, or an accepted request): Cancel only — completion is handled automatically */}
+                    {item.status === "confirmed" ? (
                       <div className="mt-3 flex items-center gap-2">
                         <Button
                           size="sm"

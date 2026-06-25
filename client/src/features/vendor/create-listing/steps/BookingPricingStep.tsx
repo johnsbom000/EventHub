@@ -12,8 +12,6 @@ interface BookingPricingStepProps {
 }
 
 export function BookingPricingStep({ draft, setDraft, showValidation }: BookingPricingStepProps) {
-  const bookingTypeRequired =
-    draft.category === "Service" || draft.category === "Venue" || draft.category === "Catering";
   const hasPrice = Number(draft.rate) > 0;
 
   function parsePositiveInt(val: string): number {
@@ -33,30 +31,28 @@ export function BookingPricingStep({ draft, setDraft, showValidation }: BookingP
       </header>
 
       <Card className="space-y-6 p-6">
-        {bookingTypeRequired ? (
-          <div className="space-y-3">
-            <Label className="text-base font-semibold">Booking Type</Label>
-            <div className="flex flex-wrap gap-3">
-              <Button
-                type="button"
-                variant={draft.bookingType === "instant" ? "default" : "outline"}
-                onClick={() => setDraft((prev) => ({ ...prev, bookingType: "instant" }))}
-              >
-                Instant Book
-              </Button>
-              <Button
-                type="button"
-                variant={draft.bookingType === "request" ? "default" : "outline"}
-                onClick={() => setDraft((prev) => ({ ...prev, bookingType: "request" }))}
-              >
-                Request to Book
-              </Button>
-            </div>
-            <p className="text-sm text-muted-foreground">
-              Request to Book means customers submit requested dates and you manually accept or decline.
-            </p>
+        <div className="space-y-3">
+          <Label className="text-base font-semibold">Booking Type</Label>
+          <div className="flex flex-wrap gap-3">
+            <Button
+              type="button"
+              variant={draft.bookingType === "instant" ? "default" : "outline"}
+              onClick={() => setDraft((prev) => ({ ...prev, bookingType: "instant" }))}
+            >
+              Instant Book
+            </Button>
+            <Button
+              type="button"
+              variant={draft.bookingType === "request" ? "default" : "outline"}
+              onClick={() => setDraft((prev) => ({ ...prev, bookingType: "request" }))}
+            >
+              Request to Book
+            </Button>
           </div>
-        ) : null}
+          <p className="text-sm text-muted-foreground">
+            Request to Book means customers submit requested dates and you manually accept or decline.
+          </p>
+        </div>
 
         <div className="space-y-3">
           <Label className="text-base font-semibold">Pricing Model</Label>

@@ -2021,7 +2021,9 @@ function CheckoutContent({
                       : t("checkout.placeOrderLoading.confirmingPayment")
                   : pendingPaymentDraft
                     ? t("checkout.placeOrderResume", { total: formatUsdFromCents(customerTotal) })
-                    : t("checkout.placeOrder", { total: formatUsdFromCents(customerTotal) })}
+                    : data?.instantBookEnabled === false
+                      ? t("checkout.requestToBook")
+                      : t("checkout.bookNow")}
               </Button>
             </div>
           </div>

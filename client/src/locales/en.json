@@ -924,6 +924,8 @@
     "cardNumber": "Card Number",
     "termsDisclaimer": "By confirming this booking you agree to our Terms of Service, including payment authorization, the 72-hour dispute window from your event date, damage responsibility, and assumption of risk for personal injury.",
     "placeOrder": "Pay {{total}}",
+    "bookNow": "Book Now",
+    "requestToBook": "Request to Book",
     "placeOrderResume": "Resume payment {{total}}",
     "placeOrderLoading": {
       "creatingBooking": "Creating booking...",

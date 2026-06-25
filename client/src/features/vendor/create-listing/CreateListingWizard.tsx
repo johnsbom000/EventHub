@@ -832,7 +832,7 @@ export function CreateListingWizard({ onClose, initialListingType, parentListing
  const dimensionWidth = showDimensionsSection ? parseDimensionNumber(draft.dimensionWidth) : null;
  const dimensionLength = showDimensionsSection ? parseDimensionNumber(draft.dimensionLength) : null;
  const dimensionHeight = showDimensionsSection ? parseDimensionNumber(draft.dimensionHeight) : null;
- const instantBookEnabled = draft.category === "Rental" ? true : draft.bookingType === "instant";
+ const instantBookEnabled = draft.bookingType === "instant";
 
  const centerLat = draft.serviceCenter?.lat ?? draft.serviceLocation?.lat ?? null;
  const centerLng = draft.serviceCenter?.lng ?? draft.serviceLocation?.lng ?? null;
@@ -857,7 +857,7 @@ export function CreateListingWizard({ onClose, initialListingType, parentListing
 
  instantBookEnabled,
  allowPreBookingContact: draft.allowPreBookingContact,
- bookingType: draft.category === "Rental" ? "instant" : draft.bookingType,
+ bookingType: draft.bookingType,
  pricingUnit: draft.pricingUnit,
  rate: price,
  price,
@@ -2013,6 +2013,8 @@ export function CreateListingWizard({ onClose, initialListingType, parentListing
            <PackagesStep
              listingId={listingId}
              category={draft.category}
+             draft={draft}
+             setDraft={setDraft}
              onPackageCountChange={setPackageCount}
              showValidation={Boolean(attemptedStepAdvance.packages)}
            />

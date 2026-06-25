@@ -1669,14 +1669,14 @@ export function registerBookingRoutes(app: Express): void {
         listingCategory: listingRow?.category ?? null,
         listingInstantBookEnabled: listingRow?.instantBookEnabled ?? false,
       });
-      // Any booking whose event falls outside the listing's service radius must go
-      // pending so the vendor can propose a travel fee or decline before confirming,
-      // regardless of category or instant-book setting.
+      // Booking status follows the listing's booking type only: instant-book auto-confirms,
+      // request-to-book stays pending for the vendor to accept/decline. Falling outside the
+      // service radius no longer forces a booking pending — the travel/delivery fee is handled
+      // separately via the proposal flow (which keys off outsideServiceRadius), on top of the
+      // already-confirmed (or pending) booking.
       const isDeliveryCategory =
         listingRow?.category === "Rentals" || listingRow?.category === "Catering";
-      const idealBookingStatus = bookingOutsideServiceRadius
-        ? "pending"
-        : bookingLifecycle.initialStatus;
+      const idealBookingStatus = bookingLifecycle.initialStatus;
       const bookingVendorProfileId = resolvedVendorProfileId ?? null;
       const customerNotes =
         typeof data.customerNotes === "string" && data.customerNotes.trim().length > 0
@@ -2177,8 +2177,9 @@ export function registerBookingRoutes(app: Express): void {
       const serverUrl = appUrl();
       const emailTasks: Promise<any>[] = [];
       // isInstant reflects whether the booking was *actually* confirmed immediately.
-      // Outside-radius delivery bookings are forced to pending even when the listing
-      // has instant book enabled, so we use bookingStatus rather than isInstantBooking.
+      // Instant-book listings auto-confirm (even outside the service radius — the travel/
+      // delivery fee is proposed separately); request-to-book listings stay pending. We key
+      // off the resolved bookingStatus so the email copy always matches the booking's state.
       const emailIsInstant = bookingStatus === "confirmed";
       const emailFeeLabel: "delivery fee" | "travel fee" =
         isDeliveryCategory ? "delivery fee" : "travel fee";
