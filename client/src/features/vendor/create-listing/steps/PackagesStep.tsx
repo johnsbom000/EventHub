@@ -954,11 +954,23 @@ function PackagesStep({ listingId, category, onPackageCountChange, showValidatio
             )}
           </div>
 
-          {/* Cancel */}
+          {/* Save / Cancel */}
           <div className="flex gap-3">
             <Button
               type="button"
+              onClick={handleSave}
+              disabled={isSaving}
+            >
+              {isSaving
+                ? "Saving..."
+                : editingId === "new"
+                  ? "Add Package"
+                  : "Save Package"}
+            </Button>
+            <Button
+              type="button"
               variant="ghost"
+              disabled={isSaving}
               onClick={() => {
                 setEditingId(null);
                 setForm(EMPTY_FORM);
