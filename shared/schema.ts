@@ -1515,6 +1515,9 @@ export const vendorInquiries = pgTable("vendor_inquiries", {
   initialListingId: varchar("initial_listing_id", { length: 255 }).references(() => vendorListings.id),
   bookingId: varchar("booking_id", { length: 255 }).references(() => bookings.id),
   status: varchar("status", { length: 20 }).notNull().default("active"),
+  // Cooldown timestamps for the "new message" email per inquiry channel (mirrors bookings).
+  vendorMsgEmailLastSentAt: timestamp("vendor_msg_email_last_sent_at"),
+  customerMsgEmailLastSentAt: timestamp("customer_msg_email_last_sent_at"),
   createdAt: timestamp("created_at").notNull().defaultNow(),
   updatedAt: timestamp("updated_at").notNull().defaultNow(),
 });

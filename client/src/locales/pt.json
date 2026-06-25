@@ -953,6 +953,8 @@
     "cardNumber": "Número do cartão",
     "termsDisclaimer": "Ao confirmar esta reserva, você concorda com nossos Termos de Serviço, incluindo autorização de pagamento, a janela de disputa de 48 horas a partir da data do evento, responsabilidade por danos e assunção de risco de lesões pessoais.",
     "placeOrder": "Pagar {{total}}",
+    "bookNow": "Reservar agora",
+    "requestToBook": "Solicitar reserva",
     "placeOrderResume": "Retomar pagamento {{total}}",
     "placeOrderLoading": {
       "creatingBooking": "Criando reserva...",

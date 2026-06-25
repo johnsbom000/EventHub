@@ -576,6 +576,10 @@ export default function VendorListingEdit() {
         };
       })(),
 
+      // Booking type + pre-booking contact (canonical columns — read directly from listing row)
+      bookingType: ((listing as any).instantBookEnabled === false ? "request" : "instant") as "instant" | "request",
+      allowPreBookingContact: Boolean((listing as any).allowPreBookingContact),
+
       // Cancellation policy
       cancellationPolicy: (ld?.cancellationPolicy ?? "cancel_anytime") as "cancel_anytime" | "cancel_within_hours" | "no_cancellations",
       cancellationPolicyHours: String(ld?.cancellationPolicyHours ?? 48),
@@ -1135,6 +1139,8 @@ export default function VendorListingEdit() {
         takedownFeeEnabled,
         takedownFeeAmount: takedownFeeAmount ?? "",
       },
+      instantBookEnabled: draft.bookingType === "instant",
+      allowPreBookingContact: Boolean(draft.allowPreBookingContact),
       cancellationPolicy: draft.cancellationPolicy ?? "cancel_anytime",
       cancellationPolicyHours:
         draft.cancellationPolicy === "cancel_within_hours"
@@ -1628,6 +1634,8 @@ export default function VendorListingEdit() {
                       ref={packagesStepRef}
                       listingId={listingId ?? null}
                       category={draft?.category ?? ""}
+                      draft={draft}
+                      setDraft={setDraft}
                     />
                   )}
 
@@ -2045,6 +2053,51 @@ export default function VendorListingEdit() {
                       )}
                     </div>
                   </Card>}
+
+                  {/* 3a) Booking — single + add-on listings (packages set this in the Packages tab) */}
+                  {!isPackageContainer && (
+                    <Card className={creamSectionCardClass}>
+                      <div className="space-y-6">
+                        <div className="space-y-3">
+                          <div className="text-xl font-semibold">Booking Type</div>
+                          <div className="flex flex-wrap gap-3">
+                            <Button
+                              type="button"
+                              variant={draft.bookingType === "instant" ? "default" : "outline"}
+                              onClick={() => setDraft((d: any) => ({ ...d, bookingType: "instant" }))}
+                            >
+                              Instant Book
+                            </Button>
+                            <Button
+                              type="button"
+                              variant={draft.bookingType === "request" ? "default" : "outline"}
+                              onClick={() => setDraft((d: any) => ({ ...d, bookingType: "request" }))}
+                            >
+                              Request to Book
+                            </Button>
+                          </div>
+                          <p className="text-sm text-muted-foreground">
+                            Request to Book means customers submit requested dates and you manually accept or decline.
+                          </p>
+                        </div>
+
+                        <div className="flex items-start justify-between gap-4 border-t pt-6">
+                          <div>
+                            <div className="font-medium">Allow customers to contact you before booking?</div>
+                            <p className="text-sm text-muted-foreground mt-0.5">
+                              Shows a "Message Vendor" button on your listing page so customers can ask questions before committing to a booking.
+                            </p>
+                          </div>
+                          <Switch
+                            checked={Boolean(draft.allowPreBookingContact)}
+                            onCheckedChange={(checked) =>
+                              setDraft((d: any) => ({ ...d, allowPreBookingContact: checked }))
+                            }
+                          />
+                        </div>
+                      </div>
+                    </Card>
+                  )}
 
                   {/* 3b) Security Deposit — single listings only */}
                   {!isPackageContainer && (

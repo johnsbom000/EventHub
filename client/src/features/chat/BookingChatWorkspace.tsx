@@ -483,6 +483,29 @@ export function BookingChatWorkspace({ role, initialBookingId, initialVendorId }
     }
   }, [conversations, initialVendorId, loadingConversations, role]);
 
+  // ── Deep-link: create the inquiry channel on first arrival if none exists yet ──
+  // A customer who clicks "Message Vendor" lands here with ?vendorId=… but may have
+  // no prior conversation with that vendor. Create it, then the effect above selects it.
+  const inquiryInitTriedRef = useRef(false);
+  const initInquiryMutation = useMutation({
+    mutationFn: async (vendorAccountId: string) => {
+      const res = await apiRequest("POST", "/api/customer/messages/inquiry/init", { vendorAccountId });
+      return (await res.json()) as { channelId: string };
+    },
+    onSuccess: () => {
+      queryClient.invalidateQueries({ queryKey: [listPath] });
+    },
+  });
+  useEffect(() => {
+    if (role !== "customer") return;
+    if (!initialVendorId || inquiryInitTriedRef.current) return;
+    if (loadingConversations) return;
+    const existing = conversations.find((c) => c.isInquiry && c.vendorAccountId === initialVendorId);
+    if (existing) return; // the deep-link effect above will open it
+    inquiryInitTriedRef.current = true;
+    initInquiryMutation.mutate(initialVendorId);
+  }, [role, initialVendorId, loadingConversations, conversations]);
+
   const selectedConversation = useMemo(
     () => visibleConversations.find((c) => c.bookingId === selectedBookingId) ?? null,
     [selectedBookingId, visibleConversations]

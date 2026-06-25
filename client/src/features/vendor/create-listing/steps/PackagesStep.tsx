@@ -6,9 +6,10 @@ import { Card } from "@/components/ui/card";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
 import { Textarea } from "@/components/ui/textarea";
+import { Switch } from "@/components/ui/switch";
 import { useToast } from "@/hooks/use-toast";
 import { apiRequest } from "@/lib/queryClient";
-import type { ListingCategory } from "../wizardTypes";
+import type { ListingCategory, ListingDraft } from "../wizardTypes";
 import { DIMENSION_UNIT_OPTIONS } from "../wizardTypes";
 
 // ── Types ─────────────────────────────────────────────────────────────────────
@@ -175,6 +176,9 @@ interface PackagesStepProps {
   listingId: string | null;
   /** Category of the container listing — drives which logistics sections appear. */
   category: ListingCategory | "";
+  /** Container-level draft — holds listing-wide booking settings shared by all packages. */
+  draft: ListingDraft;
+  setDraft: React.Dispatch<React.SetStateAction<ListingDraft>>;
   onPackageCountChange?: (count: number) => void;
   showValidation?: boolean;
 }
@@ -187,7 +191,7 @@ export interface PackagesStepHandle {
 // ── Component ─────────────────────────────────────────────────────────────────
 
 export const PackagesStep = forwardRef<PackagesStepHandle, PackagesStepProps>(
-function PackagesStep({ listingId, category, onPackageCountChange, showValidation }, ref) {
+function PackagesStep({ listingId, category, draft, setDraft, onPackageCountChange, showValidation }, ref) {
   const { toast } = useToast();
   const queryClient = useQueryClient();
   const [editingId, setEditingId] = useState<string | "new" | null>(null);
@@ -430,6 +434,49 @@ function PackagesStep({ listingId, category, onPackageCountChange, showValidatio
           Add up to 5 packages — each with its own name, price, inclusions, and logistics. Customers pick one when booking.
         </p>
       </header>
+
+      {/* Listing-level booking settings — apply to the whole package listing (all packages share them) */}
+      <Card className="space-y-6 p-6">
+        <div className="space-y-3">
+          <Label className="text-base font-semibold">Booking Type</Label>
+          <div className="flex flex-wrap gap-3">
+            <Button
+              type="button"
+              variant={draft.bookingType === "instant" ? "default" : "outline"}
+              onClick={() => setDraft((prev) => ({ ...prev, bookingType: "instant" }))}
+            >
+              Instant Book
+            </Button>
+            <Button
+              type="button"
+              variant={draft.bookingType === "request" ? "default" : "outline"}
+              onClick={() => setDraft((prev) => ({ ...prev, bookingType: "request" }))}
+            >
+              Request to Book
+            </Button>
+          </div>
+          <p className="text-sm text-muted-foreground">
+            Applies to every package in this listing. Request to Book means customers submit requested dates and you manually accept or decline.
+          </p>
+        </div>
+
+        <div className="space-y-4 rounded-xl border border-border bg-muted/30 p-4">
+          <div className="flex items-center justify-between gap-4">
+            <div>
+              <Label className="text-base font-semibold">Allow customers to contact you before booking?</Label>
+              <p className="text-sm text-muted-foreground mt-0.5">
+                Shows a "Message Vendor" button on your listing page so customers can ask questions before committing to a booking.
+              </p>
+            </div>
+            <Switch
+              checked={draft.allowPreBookingContact}
+              onCheckedChange={(checked) =>
+                setDraft((prev) => ({ ...prev, allowPreBookingContact: checked }))
+              }
+            />
+          </div>
+        </div>
+      </Card>
 
       {/* Existing packages list */}
       {isLoading ? (
