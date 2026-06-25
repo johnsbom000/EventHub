@@ -170,7 +170,6 @@ export function BasicsStep({ draft, setDraft, showValidation, isPackageListing =
                       category: option.value,
                       subcategory: "",
                       subcategoryDetail: "",
-                      bookingType: option.value === "Rental" ? "instant" : prev.bookingType,
                       dimensionWidth: option.value === "Rental" ? prev.dimensionWidth : "",
                       dimensionLength: option.value === "Rental" ? prev.dimensionLength : "",
                       dimensionHeight: option.value === "Rental" ? prev.dimensionHeight : "",
