@@ -3197,6 +3197,72 @@ export function registerVendorRoutes(app: Express): void {
     }
   });
 
+  /**
+   * GET /api/vendor/addon-listings/:addonId/attachable
+   * Returns the vendor's parent-eligible listings (single + package_container),
+   * each flagged with whether this add-on is currently attached to it. Powers the
+   * reverse "Attach to Listings" step at the end of the add-on wizard.
+   */
+  app.get("/api/vendor/addon-listings/:addonId/attachable", requireDualAuthAuth0, async (req, res) => {
+    try {
+      const vendorAuth = (req as any).vendorAuth;
+      if (!vendorAuth) return res.status(403).json({ error: "Vendor account required" });
+
+      const { addonId } = req.params;
+
+      // Verify the add-on exists, is owned by this vendor, and is actually an add-on.
+      const [addon] = await db
+        .select({ id: vendorListings.id })
+        .from(vendorListings)
+        .where(
+          and(
+            eq(vendorListings.id, addonId),
+            eq(vendorListings.accountId, vendorAuth.id),
+            eq(vendorListings.listingType, "addon")
+          )
+        )
+        .limit(1);
+      if (!addon) return res.status(404).json({ error: "Add-on listing not found" });
+
+      const candidates = await db
+        .select({
+          id: vendorListings.id,
+          title: vendorListings.title,
+          listingType: vendorListings.listingType,
+          status: vendorListings.status,
+          priceCents: vendorListings.priceCents,
+          pricingUnit: vendorListings.pricingUnit,
+          photos: vendorListings.photos,
+        })
+        .from(vendorListings)
+        .where(
+          and(
+            eq(vendorListings.accountId, vendorAuth.id),
+            inArray(vendorListings.listingType, ["single", "package_container"]),
+            ne(vendorListings.status, "deleted")
+          )
+        )
+        .orderBy(asc(vendorListings.title));
+
+      const links = await db
+        .select({ parentListingId: listingAddonLinks.parentListingId })
+        .from(listingAddonLinks)
+        .where(eq(listingAddonLinks.addonListingId, addonId));
+      const attachedIds = new Set(links.map((l) => l.parentListingId));
+
+      return res.json(
+        candidates.map((c) => ({
+          ...c,
+          photos: (c.photos ?? []).map((p) => resolveStoredUploadPath(p) ?? p),
+          attached: attachedIds.has(c.id),
+        }))
+      );
+    } catch (error: any) {
+      logRouteError("/api/vendor/addon-listings/:addonId/attachable", error);
+      return res.status(500).json({ error: "Unable to load attachable listings" });
+    }
+  });
+
   app.get("/api/vendors/public/:vendorId/shop", async (req, res) => {
     try {
       res.setHeader("Cache-Control", "no-store");
