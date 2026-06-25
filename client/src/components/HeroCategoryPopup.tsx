@@ -16,6 +16,7 @@
  */
 
 import { useRef, useEffect, useState } from "react";
+import { createPortal } from "react-dom";
 import { ChevronRight, ChevronLeft, Check } from "lucide-react";
 import {
   toCategoryKey,
@@ -77,17 +78,40 @@ export function HeroCategoryPopup({
   const [pendingSubcategory, setPendingSubcategory] = useState<string>("");
 
   const containerRef = useRef<HTMLDivElement>(null);
+  const triggerRef = useRef<HTMLButtonElement>(null);
+  const popupRef = useRef<HTMLDivElement>(null);
+  // Fixed viewport coords for the portaled popup (escapes the hero's CSS zoom).
+  const [position, setPosition] = useState<{ top: number; left: number; width: number } | null>(null);
 
-  // Close on outside click
+  // Close on outside click (popup is portaled to <body>, so check it too)
   useEffect(() => {
     if (!open) return;
     const handler = (e: MouseEvent) => {
-      if (!containerRef.current?.contains(e.target as Node)) {
-        setOpen(false);
-      }
+      const target = e.target as Node;
+      if (containerRef.current?.contains(target)) return;
+      if (popupRef.current?.contains(target)) return;
+      setOpen(false);
     };
     document.addEventListener("mousedown", handler);
     return () => document.removeEventListener("mousedown", handler);
+  }, [open]);
+
+  // Position the portaled popup under the trigger; keep it pinned on scroll/resize.
+  useEffect(() => {
+    if (!open) return;
+    const update = () => {
+      const rect = triggerRef.current?.getBoundingClientRect();
+      if (rect) {
+        setPosition({ top: rect.bottom + 4, left: rect.left, width: rect.width });
+      }
+    };
+    update();
+    window.addEventListener("scroll", update, true);
+    window.addEventListener("resize", update);
+    return () => {
+      window.removeEventListener("scroll", update, true);
+      window.removeEventListener("resize", update);
+    };
   }, [open]);
 
   const handleTriggerClick = () => {
@@ -197,6 +221,7 @@ export function HeroCategoryPopup({
     <div ref={containerRef} className="relative w-full">
       {/* Trigger */}
       <button
+        ref={triggerRef}
         type="button"
         onClick={handleTriggerClick}
         className={triggerClassName}
@@ -208,10 +233,19 @@ export function HeroCategoryPopup({
         </span>
       </button>
 
-      {/* Popup — styled to match the Radix Select (Event Type) dropdown */}
-      {open && (
+      {/* Popup — portaled to <body> so it escapes the hero's CSS zoom and
+          renders at the same scale as the Radix Select (Event Type) dropdown */}
+      {open && position && createPortal(
         <div
-          className="absolute left-0 top-full z-[90] mt-1 w-64 overflow-hidden rounded-[12px] border border-border bg-popover p-1 font-sans text-popover-foreground shadow-md"
+          ref={popupRef}
+          style={{
+            position: "fixed",
+            top: position.top,
+            left: position.left,
+            minWidth: Math.max(position.width, 224),
+            zIndex: 90,
+          }}
+          className="w-64 overflow-hidden rounded-[12px] border border-border bg-popover p-1 font-sans text-popover-foreground shadow-md"
           role="listbox"
         >
           {/* Header */}
@@ -329,7 +363,8 @@ export function HeroCategoryPopup({
               })}
             </ul>
           )}
-        </div>
+        </div>,
+        document.body
       )}
     </div>
   );
