@@ -16,7 +16,8 @@ export type StepId =
   | "serviceArea"
   | "logistics"
   | "media"
-  | "attachAddons";
+  | "attachAddons"
+  | "attachToListings";
 
 export type ListingCategory = "Rental" | "Venue" | "Service" | "Catering";
 export type PricingUnit = "per_day" | "per_hour";
@@ -198,10 +199,26 @@ const PACKAGE_STEPS: Array<{ id: StepId; title: string }> = [
   { id: "attachAddons", title: "Attach Add-ons" },
 ];
 
+/**
+ * Steps for add-on listings.
+ *
+ * Add-ons can't have other add-ons attached to them, so the "Attach Add-ons" step
+ * is replaced by its reverse — "Attach to Listings" — where the vendor picks which
+ * of their single/package listings should offer this add-on as an upgrade.
+ */
+const ADDON_STEPS: Array<{ id: StepId; title: string }> = [
+  { id: "basics",           title: "Listing Basics" },
+  { id: "perfectFor",       title: "Perfect For" },
+  { id: "bookingPricing",   title: "Booking & Pricing" },
+  { id: "serviceArea",      title: "Service Area" },
+  { id: "logistics",        title: "Logistics" },
+  { id: "media",            title: "Photos" },
+  { id: "attachToListings", title: "Attach to Listings" },
+];
+
 export function getStepsForListingType(listingType: ListingType | null): Array<{ id: StepId; title: string }> {
   if (listingType === "package_container") return PACKAGE_STEPS;
-  // Add-on listings can't have other add-ons attached to them
-  if (listingType === "addon") return SINGLE_STEPS.filter((s) => s.id !== "attachAddons");
+  if (listingType === "addon") return ADDON_STEPS;
   return SINGLE_STEPS;
 }
 

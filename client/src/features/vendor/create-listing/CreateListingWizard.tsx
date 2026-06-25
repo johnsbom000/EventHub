@@ -18,6 +18,7 @@ import { ServiceAreaStep } from "./steps/ServiceAreaStep";
 import { LogisticsStep } from "./steps/LogisticsStep";
 import { MediaStep } from "./steps/MediaStep";
 import { AttachAddonsStep } from "./steps/AttachAddonsStep";
+import { AttachToListingsStep } from "./steps/AttachToListingsStep";
 import { PackagesStep } from "./steps/PackagesStep";
 import type { ListingType } from "./wizardTypes";
 import { getStepsForListingType } from "./wizardTypes";
@@ -75,7 +76,7 @@ const CATEGORY_OPTIONS = [
 
 type ListingCategory = (typeof CATEGORY_OPTIONS)[number]["value"];
 type ListingHelperCategory = "rental" | "venue" | "service" | "caterer";
-type StepId = "basics" | "perfectFor" | "packages" | "bookingPricing" | "serviceArea" | "logistics" | "media" | "attachAddons";
+type StepId = "basics" | "perfectFor" | "packages" | "bookingPricing" | "serviceArea" | "logistics" | "media" | "attachAddons" | "attachToListings";
 type PricingUnit = "per_day" | "per_hour";
 type BookingType = "instant" | "request";
 type TravelFeeType = "flat" | "per_mile" | "per_hour";
@@ -244,6 +245,10 @@ const STEP_META: Record<
  attachAddons: {
  icon: Paperclip,
  description: "Optional upgrades for customers.",
+ },
+ attachToListings: {
+ icon: Paperclip,
+ description: "Offer this add-on on your listings.",
  },
 };
 
@@ -2029,6 +2034,10 @@ export function CreateListingWizard({ onClose, initialListingType, parentListing
              listingId={listingId}
              onCreateNewAddon={handleCreateNewAddon}
            />
+         )}
+
+         {currentStep === "attachToListings" && (
+           <AttachToListingsStep addonListingId={listingId} />
          )}
          </div>
          </div>
