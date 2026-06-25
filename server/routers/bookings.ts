@@ -669,14 +669,44 @@ export function registerBookingRoutes(app: Express): void {
       // ── Calculate refund amounts ──────────────────────────────────────────
       const bookingRefundCents = safeRefundCents(payment, refundCalc.grossRefundCents);
 
-      // Travel fee refunds at the same percentage as the booking payment.
-      const travelFeeRefunds = travelFeePayments.map((tfp) => ({
-        payment: tfp,
-        refundCents: safeRefundCents(
-          tfp,
-          Math.floor(tfp.amount * refundCalc.grossRefundPercentage / 100)
-        ),
-      }));
+      // Travel/delivery fees are NOT refunded immediately on a *customer*
+      // cancellation. They are HELD for a fixed window (DISPUTE_WINDOW_HOURS) so
+      // the vendor can claim real travel costs already incurred, via a
+      // travel_cost_recovery dispute. If no dispute is filed, runTravelFeeRefundJob
+      // auto-refunds the held fee to the customer once the window elapses.
+      // (Vendor-initiated cancellations refund travel fees immediately in their
+      // own handlers — no hold applies there.)
+      const heldTravelFeePayments = travelFeePayments.filter(
+        (tfp) =>
+          isPaymentSucceededStatus(tfp.status) &&
+          Math.max(0, tfp.amount - (tfp.refundAmount ?? 0)) > 0
+      );
+      const heldTravelFeeCents = heldTravelFeePayments.reduce(
+        (sum, tfp) => sum + Math.max(0, tfp.amount - (tfp.refundAmount ?? 0)),
+        0
+      );
+      const travelHoldDeadline =
+        heldTravelFeeCents > 0
+          ? new Date(now.getTime() + DISPUTE_WINDOW_HOURS * 60 * 60 * 1000)
+          : null;
+      // Human-readable deadline in the event's local timezone, e.g. "Jun 27 at 3:14 PM".
+      const travelHoldDeadlineLabel = travelHoldDeadline
+        ? (() => {
+            const tz = booking.eventTimezone || "America/Denver";
+            const datePart = new Intl.DateTimeFormat("en-US", {
+              month: "short",
+              day: "numeric",
+              timeZone: tz,
+            }).format(travelHoldDeadline);
+            const timePart = new Intl.DateTimeFormat("en-US", {
+              hour: "numeric",
+              minute: "2-digit",
+              hour12: true,
+              timeZone: tz,
+            }).format(travelHoldDeadline);
+            return `${datePart} at ${timePart}`;
+          })()
+        : null;
 
       // Security deposits protect against event damage, so they are refunded on
       // cancellation independently of the listing's service cancellation policy.
@@ -702,16 +732,9 @@ export function registerBookingRoutes(app: Express): void {
           });
         }
 
-        for (const { payment: tfp, refundCents } of travelFeeRefunds) {
-          if (refundCents > 0) {
-            await refundBookingPayment({
-              paymentIntentId: tfp.stripePaymentIntentId,
-              amount: refundCents,
-              reason: "requested_by_customer",
-              idempotencyKey: `customer-cancel-travelfee:${bookingId}:${tfp.id}:${refundCents}`,
-            });
-          }
-        }
+        // NOTE: travel/delivery fees are intentionally NOT refunded here — they
+        // are held (see the held-travel logic below) and settled later by the
+        // sweep job or a dispute resolution.
 
         if (refundDepositNow && depositRefundCents > 0) {
           await refundBookingPayment({
@@ -728,9 +751,9 @@ export function registerBookingRoutes(app: Express): void {
       }
 
       // ── Persist in a transaction ───────────────────────────────────────────
-      const totalRefundedToCustomer = bookingRefundCents +
-        travelFeeRefunds.reduce((sum, r) => sum + r.refundCents, 0) +
-        depositRefundCents;
+      // Travel fees are held, not refunded now, so they are excluded from the
+      // immediate refund total shown to the customer.
+      const totalRefundedToCustomer = bookingRefundCents + depositRefundCents;
 
       await db.transaction(async (tx) => {
         // Update main booking payment
@@ -761,25 +784,21 @@ export function registerBookingRoutes(app: Express): void {
           })
           .where(eq(payments.id, payment.id));
 
-        // Update each travel fee payment
-        for (const { payment: tfp, refundCents } of travelFeeRefunds) {
-          if (refundCents > 0) {
-            const existingTfRefund = typeof tfp.refundAmount === "number" ? tfp.refundAmount : 0;
-            const newTfRefundTotal = existingTfRefund + refundCents;
-            await tx
-              .update(payments)
-              .set({
-                status: (newTfRefundTotal >= tfp.amount ? "refunded" : "partially_refunded") as any,
-                refundAmount: newTfRefundTotal,
-                refundReason: reason ? `customer_cancel: ${reason}` : "customer_cancel",
-                refundedAt: now,
-                payoutStatus: "cancelled",
-                payoutEligibleAt: null,
-                payoutBlockedReason: "customer_cancellation",
-                payoutAdjustedAmount: 0,
-              })
-              .where(eq(payments.id, tfp.id));
-          }
+        // Hold each travel/delivery fee instead of refunding it. The payment row
+        // stays "succeeded" (the charge is real and still on the platform
+        // balance); we mark its payout as blocked so the auto-payout worker never
+        // transfers it. runTravelFeeRefundJob (or a dispute resolution) settles it
+        // later. We do NOT set refundAmount/refundedAt here — nothing is refunded yet.
+        for (const tfp of heldTravelFeePayments) {
+          await tx
+            .update(payments)
+            .set({
+              payoutStatus: "blocked",
+              payoutEligibleAt: null,
+              payoutBlockedReason: "travel_fee_hold",
+              payoutAdjustedAmount: 0,
+            })
+            .where(eq(payments.id, tfp.id));
         }
 
         // Update security deposit payment if refunded now
@@ -811,11 +830,27 @@ export function registerBookingRoutes(app: Express): void {
 
       // ── Emails + Google Calendar sync (fire-and-forget) ───────────────────
       const serverUrl = appUrl();
-      void sendCancellationEmailsAsync({ booking, refundCents: totalRefundedToCustomer, serverUrl });
+      const travelHoldHtmlAmount = `$${(heldTravelFeeCents / 100).toFixed(2)}`;
+      const travelHoldReceipt =
+        heldTravelFeeCents > 0 && travelHoldDeadlineLabel
+          ? { amountCents: heldTravelFeeCents, refundDeadlineLabel: travelHoldDeadlineLabel }
+          : undefined;
+      void sendCancellationEmailsAsync({
+        booking,
+        refundCents: totalRefundedToCustomer,
+        serverUrl,
+        serviceRefundCents: bookingRefundCents,
+        depositRefundCents: refundDepositNow ? depositRefundCents : 0,
+        travelFeeHeld: travelHoldReceipt,
+      });
       void syncBookingToGoogleCalendarSafely(bookingId, "/api/bookings/:bookingId/cancel google-sync");
       await sendBookingSystemMessage({
         bookingId,
-        text: `This booking has been cancelled by the customer.${reason ? ` Reason: ${reason}.` : ""}`,
+        text: `This booking has been cancelled by the customer.${reason ? ` Reason: ${reason}.` : ""}${
+          travelHoldReceipt
+            ? ` Travel fee of ${travelHoldHtmlAmount} is on hold and is set to be refunded to the customer on ${travelHoldDeadlineLabel}.`
+            : ""
+        }`,
         metadata: { action: "customer_cancelled", reason: reason ?? null },
       });
       if (booking.vendorAccountId) {
@@ -824,8 +859,25 @@ export function registerBookingRoutes(app: Express): void {
           recipientType: "vendor",
           type: "booking_cancelled",
           title: "Booking cancelled",
-          message: `A booking for ${booking.eventDate}${reason ? ` was cancelled by the customer. Reason: ${reason}` : " has been cancelled by the customer"}.`,
+          message: `A booking for ${booking.eventDate}${reason ? ` was cancelled by the customer. Reason: ${reason}` : " has been cancelled by the customer"}.${
+            travelHoldReceipt
+              ? ` Travel fee of ${travelHoldHtmlAmount} is on hold until ${travelHoldDeadlineLabel} — request reimbursement before then if you incurred travel costs.`
+              : ""
+          }`,
           link: `/vendor/bookings?bookingId=${encodeURIComponent(bookingId)}`,
+          read: false,
+        }).catch(() => {});
+      }
+      if (booking.customerId) {
+        createNotification({
+          recipientId: booking.customerId,
+          recipientType: "customer",
+          type: "booking_cancelled",
+          title: "Booking cancelled",
+          message: travelHoldReceipt
+            ? `Your booking for ${booking.eventDate} was cancelled. Travel fee of ${travelHoldHtmlAmount} is on hold and is set to be refunded to you on ${travelHoldDeadlineLabel}.`
+            : `Your booking for ${booking.eventDate} has been cancelled.`,
+          link: `/dashboard/events`,
           read: false,
         }).catch(() => {});
       }
@@ -839,6 +891,14 @@ export function registerBookingRoutes(app: Express): void {
         refundPercentage: refundCalc.grossRefundPercentage,
         daysUntilEvent: refundCalc.daysUntilEvent,
         stripeRefundId: bookingStripeRefund?.id ?? null,
+        // Travel/delivery fee held for the dispute window (null when there was none).
+        travelFeeHeld:
+          heldTravelFeeCents > 0
+            ? {
+                amountCents: heldTravelFeeCents,
+                refundDeadlineIso: travelHoldDeadline?.toISOString() ?? null,
+              }
+            : null,
         message: totalRefundedToCustomer > 0
           ? `Booking cancelled. A refund of $${(totalRefundedToCustomer / 100).toFixed(2)} has been issued.`
           : "Booking cancelled. No refund applies per the cancellation policy.",
