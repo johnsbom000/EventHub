@@ -375,15 +375,15 @@ function PackagesStep({ listingId, category, draft, setDraft, onPackageCountChan
       dimensionWidth: showDimensions ? parseDimension(form.dimensionWidth) : null,
       dimensionLength: showDimensions ? parseDimension(form.dimensionLength) : null,
       dimensionHeight: showDimensions ? parseDimension(form.dimensionHeight) : null,
-      // Travel
+      // Travel — fees are proposed post-booking, never set upfront in the wizard.
       travelOffered: showTravel ? form.travelOffered : false,
-      travelFeeEnabled: showTravel ? form.travelOffered && form.travelFeeEnabled : false,
-      travelFeeType: showTravel && form.travelOffered && form.travelFeeEnabled ? form.travelFeeType : null,
-      travelFeeAmountCents: showTravel && form.travelOffered && form.travelFeeEnabled ? parseDollars(form.travelFeeAmount) : null,
-      // Delivery
+      travelFeeEnabled: false,
+      travelFeeType: null,
+      travelFeeAmountCents: null,
+      // Delivery — fees are proposed post-booking, never set upfront in the wizard.
       deliveryOffered: showDelivery ? form.deliveryOffered : false,
-      deliveryFeeEnabled: showDelivery ? form.deliveryOffered && form.deliveryFeeEnabled : false,
-      deliveryFeeAmountCents: showDelivery && form.deliveryOffered && form.deliveryFeeEnabled ? parseDollars(form.deliveryFeeAmount) : null,
+      deliveryFeeEnabled: false,
+      deliveryFeeAmountCents: null,
       // Setup
       setupOffered: showSetup ? form.setupOffered : false,
       setupFeeEnabled: showSetup ? form.setupOffered && form.setupFeeEnabled : false,
@@ -475,6 +475,50 @@ function PackagesStep({ listingId, category, draft, setDraft, onPackageCountChan
               }
             />
           </div>
+        </div>
+
+        <div className="space-y-4 rounded-xl border border-border bg-muted/30 p-4">
+          <div className="flex items-center justify-between gap-4">
+            <div>
+              <Label className="text-base font-semibold">Require a security deposit?</Label>
+              <p className="text-sm text-muted-foreground mt-0.5">
+                Customers will be charged this amount on top of the booking total. It is refunded to them after the event if no damage claim is filed. Applies to every package in this listing.
+              </p>
+            </div>
+            <Switch
+              checked={draft.securityDepositEnabled}
+              onCheckedChange={(checked) =>
+                setDraft((prev) => ({
+                  ...prev,
+                  securityDepositEnabled: checked,
+                  securityDepositAmount: checked ? prev.securityDepositAmount : "",
+                }))
+              }
+            />
+          </div>
+
+          {draft.securityDepositEnabled && (
+            <div className="space-y-2">
+              <Label className="text-sm font-medium">Deposit Amount</Label>
+              <div className="relative max-w-sm">
+                <span className="pointer-events-none absolute left-3 top-1/2 -translate-y-1/2 text-muted-foreground">
+                  $
+                </span>
+                <Input
+                  className="pl-7"
+                  value={draft.securityDepositAmount}
+                  inputMode="decimal"
+                  placeholder="e.g. 200"
+                  onChange={(event) =>
+                    setDraft((prev) => ({
+                      ...prev,
+                      securityDepositAmount: event.target.value.replace(/[^\d.]/g, ""),
+                    }))
+                  }
+                />
+              </div>
+            </div>
+          )}
         </div>
       </Card>
 
@@ -773,54 +817,15 @@ function PackagesStep({ listingId, category, draft, setDraft, onPackageCountChan
                 />
               </div>
               {form.travelOffered && (
-                <>
-                  <div className="flex flex-wrap items-center justify-between gap-3">
-                    <Label className="text-sm">Is there a travel fee?</Label>
-                    <ToggleGroup
-                      value={form.travelFeeEnabled}
-                      onChange={(next) => setForm((f) => ({ ...f, travelFeeEnabled: next, travelFeeAmount: next ? f.travelFeeAmount : "" }))}
-                      trueLabel="Yes"
-                      falseLabel="No"
-                    />
-                  </div>
-                  {form.travelFeeEnabled && (
-                    <div className="grid gap-3 sm:grid-cols-2">
-                      <div className="space-y-2">
-                        <Label>How do you charge?</Label>
-                        <div className="flex flex-wrap gap-2">
-                          {[
-                            { value: "per_mile", label: "Per mile" },
-                            { value: "per_hour", label: "Per hour" },
-                            { value: "flat", label: "Flat rate" },
-                          ].map((opt) => (
-                            <Button
-                              key={opt.value}
-                              type="button"
-                              size="sm"
-                              variant={form.travelFeeType === opt.value ? "default" : "outline"}
-                              onClick={() => setForm((f) => ({ ...f, travelFeeType: opt.value as TravelFeeType }))}
-                            >
-                              {opt.label}
-                            </Button>
-                          ))}
-                        </div>
-                      </div>
-                      <div className="space-y-2">
-                        <Label>Travel fee</Label>
-                        <div className="relative">
-                          <span className="pointer-events-none absolute left-3 top-1/2 -translate-y-1/2 text-muted-foreground">$</span>
-                          <Input
-                            className="pl-7"
-                            value={form.travelFeeAmount}
-                            inputMode="decimal"
-                            placeholder={form.travelFeeType === "per_mile" ? "e.g. 2.50" : form.travelFeeType === "per_hour" ? "e.g. 35" : "e.g. 75"}
-                            onChange={(e) => setForm((f) => ({ ...f, travelFeeAmount: e.target.value.replace(/[^\d.]/g, "") }))}
-                          />
-                        </div>
-                      </div>
-                    </div>
-                  )}
-                </>
+                <div className="rounded-lg border border-border bg-muted/40 p-4 text-sm text-muted-foreground space-y-1">
+                  <p className="font-medium text-foreground">How travel fees work</p>
+                  <p>
+                    Events within your service radius (set on the Service Area step) are covered
+                    at no extra charge. If a booking falls outside your radius, you'll receive a
+                    prompt to propose a travel fee after the booking is created — the customer
+                    must accept before payment is collected.
+                  </p>
+                </div>
               )}
             </div>
           )}
@@ -840,32 +845,15 @@ function PackagesStep({ listingId, category, draft, setDraft, onPackageCountChan
               </div>
               <p className="text-xs text-muted-foreground">If no, this package is pickup only.</p>
               {form.deliveryOffered && (
-                <>
-                  <div className="flex flex-wrap items-center justify-between gap-3">
-                    <Label className="text-sm">Is there a delivery fee?</Label>
-                    <ToggleGroup
-                      value={form.deliveryFeeEnabled}
-                      onChange={(next) => setForm((f) => ({ ...f, deliveryFeeEnabled: next, deliveryFeeAmount: next ? f.deliveryFeeAmount : "" }))}
-                      trueLabel="Yes"
-                      falseLabel="No"
-                    />
-                  </div>
-                  {form.deliveryFeeEnabled && (
-                    <div className="max-w-sm space-y-2">
-                      <Label>Delivery fee</Label>
-                      <div className="relative">
-                        <span className="pointer-events-none absolute left-3 top-1/2 -translate-y-1/2 text-muted-foreground">$</span>
-                        <Input
-                          className="pl-7"
-                          value={form.deliveryFeeAmount}
-                          inputMode="decimal"
-                          placeholder="e.g. 50"
-                          onChange={(e) => setForm((f) => ({ ...f, deliveryFeeAmount: e.target.value.replace(/[^\d.]/g, "") }))}
-                        />
-                      </div>
-                    </div>
-                  )}
-                </>
+                <div className="rounded-lg border border-border bg-muted/40 p-4 text-sm text-muted-foreground space-y-1">
+                  <p className="font-medium text-foreground">How delivery fees work</p>
+                  <p>
+                    Deliveries within your service radius (set on the Service Area step) are
+                    included at no extra charge. If a booking is outside your radius, you'll
+                    receive a prompt to propose a delivery fee after the booking is created —
+                    the customer must accept before payment is collected.
+                  </p>
+                </div>
               )}
             </div>
           )}
