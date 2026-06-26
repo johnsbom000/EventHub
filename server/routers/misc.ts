@@ -845,13 +845,26 @@ app.post(
 
       const whereClause = and(...(conditions as any[]));
 
-      // Sort order — "recommended" falls back to newest first.
+      // Sort order — the default "recommended" sort applies a light Pro search
+      // boost: vendors with Pro in effect rank above free vendors, then newest
+      // first within each group. This is a soft tiebreak, NOT a hard top
+      // placement — a separate paid "Featured" slot is reserved for the future.
+      // The Pro condition mirrors getVendorEntitlements()'s `isPro` exactly
+      // (active/trialing/past_due, or an unexpired comp grant); keep them in sync.
+      // To disable the boost, drop `desc(proBoostExpr)` from the recommended case.
+      const proBoostExpr = drizzleSql`(
+        ${vendorAccounts.subscriptionStatus} IN ('active', 'trialing', 'past_due')
+        OR (
+          ${vendorAccounts.subscriptionStatus} = 'comp'
+          AND (${vendorAccounts.compEndsAt} IS NULL OR ${vendorAccounts.compEndsAt} > now())
+        )
+      )`;
       const orderBy: any[] =
         rawSort === "price-asc"
           ? [asc(vendorListings.priceCents)]
           : rawSort === "price-desc"
           ? [desc(vendorListings.priceCents)]
-          : [desc(vendorListings.createdAt)];
+          : [desc(proBoostExpr), desc(vendorListings.createdAt)];
 
       const selectShape = {
         id: vendorListings.id,
