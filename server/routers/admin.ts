@@ -486,6 +486,11 @@ export function registerAdminRoutes(app: Express): void {
           // How many cents to refund to the customer.
           // Absent = full deposit refund. Can exceed deposit to also refund booking payment.
           refundAmountCents: z.number().int().min(0).optional(),
+          // Alternative to refundAmountCents, used by the admin "Damage withhold" UI:
+          // cents to withhold from the deposit and pay the vendor for damages. The
+          // customer refund is derived server-side as (deposit - withheld). Clamped
+          // to the deposit amount. Ignored if refundAmountCents is also provided.
+          withheldAmountCents: z.number().int().min(0).optional(),
           // Travel-cost-recovery disputes only: cents to award the vendor from the
           // held travel fee (their proven incurred cost). Remainder is refunded to
           // the customer. Capped server-side at the held travel amount.
@@ -780,9 +785,16 @@ export function registerAdminRoutes(app: Express): void {
         const maxBookingRefund = bookingPayment?.vendorNetPayoutAmount ?? 0;
         const maxTotalRefund = depositAmt + maxBookingRefund;
 
+        // Resolve the customer refund. Precedence:
+        //  1. refundAmountCents — explicit customer refund (can exceed deposit).
+        //  2. withheldAmountCents — admin "Damage withhold" UI: refund = deposit
+        //     minus the withheld damages (withheld can't exceed the deposit).
+        //  3. neither — full deposit refund.
         const requestedRefund = typeof payload.refundAmountCents === "number"
           ? payload.refundAmountCents
-          : depositAmt; // default: full deposit refund
+          : typeof payload.withheldAmountCents === "number"
+            ? depositAmt - Math.min(payload.withheldAmountCents, depositAmt)
+            : depositAmt; // default: full deposit refund
 
         if (requestedRefund > maxTotalRefund) {
           return res.status(400).json({
