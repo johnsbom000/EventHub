@@ -13,10 +13,19 @@ export type VendorMeState = {
   hasActiveVendorProfile?: boolean | null;
   needsNewVendorProfileOnboarding?: boolean | null;
   onboardingCompleted?: boolean | null;
-  isFoundingVendor?: boolean | null;
-  isMarqueeVendor?: boolean | null;
   vendorOnlySignup?: boolean | null;
   dashboardTourCompletedAt?: string | null;
+  // Vendor Pro subscription entitlements (from /api/vendor/me).
+  isPro?: boolean | null;
+  subscriptionPlan?: "free" | "pro" | null;
+  subscriptionStatus?: string | null;
+  subscriptionReason?: string | null;
+  maxActiveListings?: number | null; // null = unlimited (Pro)
+  canUseAnalytics?: boolean | null;
+  canUseGoogleSync?: boolean | null;
+  subscriptionCurrentPeriodEnd?: string | null;
+  subscriptionCancelAtPeriodEnd?: boolean | null;
+  compEndsAt?: string | null;
 };
 
 export type VendorDetectionStatus =

@@ -258,52 +258,7 @@ export function LogisticsStep({ draft, setDraft }: LogisticsStepProps) {
           </Card>
         ) : null}
 
-        {/* Security Deposit — always shown */}
-        <Card className="space-y-5 p-6">
-          <div className="text-xl font-semibold">Security Deposit</div>
-
-          <div className="flex flex-wrap items-center justify-between gap-3">
-            <Label className="text-base">Do you require a security deposit?</Label>
-            <ToggleGroup
-              value={draft.securityDepositEnabled}
-              onChange={(next) =>
-                setDraft((prev) => ({
-                  ...prev,
-                  securityDepositEnabled: next,
-                  securityDepositAmount: next ? prev.securityDepositAmount : "",
-                }))
-              }
-              trueLabel="Yes"
-              falseLabel="No"
-            />
-          </div>
-
-          {draft.securityDepositEnabled ? (
-            <div className="max-w-sm space-y-2">
-              <Label>Deposit amount</Label>
-              <div className="relative">
-                <span className="pointer-events-none absolute left-3 top-1/2 -translate-y-1/2 text-muted-foreground">
-                  $
-                </span>
-                <Input
-                  className="pl-7"
-                  value={draft.securityDepositAmount}
-                  inputMode="decimal"
-                  placeholder="e.g. 200"
-                  onChange={(event) =>
-                    setDraft((prev) => ({
-                      ...prev,
-                      securityDepositAmount: event.target.value.replace(/[^\d.]/g, ""),
-                    }))
-                  }
-                />
-              </div>
-              <p className="text-xs text-muted-foreground">
-                Collected at checkout and held until after the event. Refunded automatically if no dispute is filed.
-              </p>
-            </div>
-          ) : null}
-        </Card>
+        {/* Security deposit is collected on the Booking & Pricing step — not here. */}
 
         {/* Cancellation Policy — always shown */}
         <Card className="space-y-5 p-6">

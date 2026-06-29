@@ -535,10 +535,13 @@ export async function createCheckoutSession(params: {
     mode: "payment",
 
     payment_intent_data: {
-      // application_fee_amount: the portion the platform retains.
-      // The remaining amount (amountCents − applicationFeeAmountCents − Stripe fee)
-      // is automatically transferred to the vendor's connected account.
-      application_fee_amount: applicationFeeAmountCents,
+      // application_fee_amount: the portion the platform retains. EventHub no
+      // longer charges a platform fee, so this is omitted when zero (Stripe
+      // rejects an application_fee_amount of 0). The vendor then receives the
+      // full amount minus only Stripe's own processing fee.
+      ...(applicationFeeAmountCents > 0
+        ? { application_fee_amount: applicationFeeAmountCents }
+        : {}),
 
       // Destination charge: funds flow to the platform first, then Stripe
       // transfers the net amount to the connected account automatically.
@@ -562,6 +565,195 @@ export async function createCheckoutSession(params: {
   });
 
   return session;
+}
+
+// ---------------------------------------------------------------------------
+// Billing: Vendor Pro Subscription
+// ---------------------------------------------------------------------------
+// Stripe Billing for the vendor Pro plan. This is entirely SEPARATE from the
+// Stripe Connect payout flow above — it bills the vendor as a normal Stripe
+// Customer (users.stripe_customer_id), and never touches transfers or the
+// vendor's connected account.
+
+/**
+ * Creates a Stripe Checkout Session in subscription mode for the vendor Pro plan.
+ *
+ * The vendor is redirected to Stripe's hosted page to enter card details and
+ * confirm. A free trial is applied via `trial_period_days`. A card is collected
+ * up front (`payment_method_collection: 'always'`) so the subscription auto-
+ * converts to paid when the trial ends.
+ *
+ * `vendorAccountId` is stored on the subscription metadata so the webhook handler
+ * can resolve the vendor without a customer-id lookup race.
+ */
+export async function createSubscriptionCheckoutSession(params: {
+  stripeCustomerId: string;
+  priceId: string;
+  vendorAccountId: string;
+  trialPeriodDays?: number;
+  couponId?: string;
+  successUrl: string;
+  cancelUrl: string;
+}): Promise<Stripe.Checkout.Session> {
+  const { stripeCustomerId, priceId, vendorAccountId, trialPeriodDays, couponId, successUrl, cancelUrl } = params;
+
+  // A coupon (auto-applied launch discount) and allow_promotion_codes are
+  // mutually exclusive in Checkout — Stripe rejects both. When we have a coupon,
+  // apply it directly; otherwise let the customer enter a promo code.
+  const discountConfig = couponId
+    ? { discounts: [{ coupon: couponId }] }
+    : { allow_promotion_codes: true };
+
+  return stripeClient.checkout.sessions.create({
+    mode: "subscription",
+    customer: stripeCustomerId,
+    line_items: [{ price: priceId, quantity: 1 }],
+    // Collect a card up front so the trial auto-converts to a paid subscription.
+    payment_method_collection: "always",
+    subscription_data: {
+      ...(trialPeriodDays && trialPeriodDays > 0 ? { trial_period_days: trialPeriodDays } : {}),
+      metadata: { vendorAccountId, kind: "vendor_pro_subscription" },
+    },
+    // Mirror the identifiers onto the session too for checkout.session.completed.
+    metadata: { vendorAccountId, kind: "vendor_pro_subscription" },
+    success_url: successUrl,
+    cancel_url: cancelUrl,
+    ...discountConfig,
+  });
+}
+
+/**
+ * Creates a Stripe Billing Portal session so a vendor can self-manage their
+ * subscription (update card, switch monthly/annual, cancel). Returns a one-time
+ * URL to redirect the vendor to.
+ */
+export async function createBillingPortalSession(params: {
+  stripeCustomerId: string;
+  returnUrl: string;
+}): Promise<Stripe.BillingPortal.Session> {
+  return stripeClient.billingPortal.sessions.create({
+    customer: params.stripeCustomerId,
+    return_url: params.returnUrl,
+  });
+}
+
+// ---------------------------------------------------------------------------
+// AI reply overage (metered usage billing)
+// ---------------------------------------------------------------------------
+
+/**
+ * Ensures the AI-reply-overage metered price is a line item on the vendor's Pro
+ * subscription, so reported usage actually invoices. Idempotent — only adds the
+ * item if it's missing — and caches the resulting subscription item id on the
+ * vendor account.
+ */
+async function ensureAiOverageSubscriptionItem(
+  vendorAccountId: string,
+  subscriptionId: string,
+  overagePriceId: string
+): Promise<void> {
+  const subscription = await stripeClient.subscriptions.retrieve(subscriptionId);
+  const existing = subscription.items.data.find((it) => it.price?.id === overagePriceId);
+  let itemId = existing?.id;
+  if (!itemId) {
+    const item = await stripeClient.subscriptionItems.create({
+      subscription: subscriptionId,
+      price: overagePriceId,
+      proration_behavior: "none",
+    });
+    itemId = item.id;
+  }
+
+  const { db } = await import("./db");
+  const { vendorAccounts } = await import("@shared/schema");
+  const { eq } = await import("drizzle-orm");
+  await db
+    .update(vendorAccounts)
+    .set({ aiOverageSubscriptionItemId: itemId })
+    .where(eq(vendorAccounts.id, vendorAccountId));
+}
+
+/**
+ * Reports one unit of AI-reply overage to Stripe's metered billing for this
+ * vendor. No-ops (with a warning) when overage billing isn't fully configured —
+ * the draft itself is unaffected, and the usage is still recorded in
+ * ai_reply_usage for visibility. Called from server/aiReplyService.ts.
+ */
+export async function reportAiReplyOverage(account: {
+  id: string;
+  userId: string | null;
+  email: string | null;
+  stripeSubscriptionId: string | null;
+  aiOverageSubscriptionItemId: string | null;
+}): Promise<void> {
+  const { STRIPE_PRICE_AI_OVERAGE, STRIPE_AI_OVERAGE_METER_EVENT } = await import("./lib/constants");
+  const { logger } = await import("./lib/logger");
+
+  if (!STRIPE_PRICE_AI_OVERAGE) {
+    logger.warn(
+      { vendorAccountId: account.id },
+      "[ai-overage] STRIPE_PRICE_AI_OVERAGE not configured — usage recorded but not billed"
+    );
+    return;
+  }
+  if (!account.userId || !account.email) {
+    logger.warn({ vendorAccountId: account.id }, "[ai-overage] vendor missing identity — skipping");
+    return;
+  }
+
+  // Resolve the Meter's event_name directly from the metered Price (the price is
+  // linked to a meter), so usage is always reported against the right event
+  // regardless of how STRIPE_AI_OVERAGE_METER_EVENT is set. Falls back to the env
+  // value only if the price isn't metered / can't be read.
+  const eventName = await resolveAiOverageMeterEventName(
+    STRIPE_PRICE_AI_OVERAGE,
+    STRIPE_AI_OVERAGE_METER_EVENT
+  );
+  if (!eventName) {
+    logger.warn(
+      { vendorAccountId: account.id, priceId: STRIPE_PRICE_AI_OVERAGE },
+      "[ai-overage] price is not metered (no linked meter) and no STRIPE_AI_OVERAGE_METER_EVENT — usage recorded but not billed"
+    );
+    return;
+  }
+
+  const { ensureStripeCustomer } = await import("./services/paymentService");
+  const customerId = await ensureStripeCustomer(account.userId, account.email);
+
+  // Make sure the metered price is on the subscription so usage invoices.
+  if (account.stripeSubscriptionId && !account.aiOverageSubscriptionItemId) {
+    await ensureAiOverageSubscriptionItem(account.id, account.stripeSubscriptionId, STRIPE_PRICE_AI_OVERAGE);
+  }
+
+  // Report 1 unit; Stripe aggregates and bills at the metered price's rate.
+  await stripeClient.billing.meterEvents.create({
+    event_name: eventName,
+    payload: { stripe_customer_id: customerId, value: "1" },
+  });
+}
+
+// Cache the resolved meter event name (per price) so we don't refetch every draft.
+let cachedAiMeterEventName: string | null = null;
+
+async function resolveAiOverageMeterEventName(
+  priceId: string,
+  envOverride: string
+): Promise<string | null> {
+  if (cachedAiMeterEventName) return cachedAiMeterEventName;
+  try {
+    const price = await stripeClient.prices.retrieve(priceId);
+    const meterId = price.recurring?.meter;
+    if (meterId) {
+      const meter = await stripeClient.billing.meters.retrieve(meterId);
+      if (meter.event_name) {
+        cachedAiMeterEventName = meter.event_name;
+        return meter.event_name;
+      }
+    }
+  } catch {
+    // Fall through to the env override if the price/meter can't be read.
+  }
+  return envOverride || null;
 }
 
 // ---------------------------------------------------------------------------

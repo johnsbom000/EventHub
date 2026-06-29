@@ -1,5 +1,5 @@
 import React, { useMemo, useState } from "react";
-import { useLocation } from "wouter";
+import { useLocation, Link } from "wouter";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { useAuth0 } from "@auth0/auth0-react";
 import { useTranslation } from "react-i18next";
@@ -16,7 +16,7 @@ import {
   DialogDescription,
 } from "@/components/ui/dialog";
 import { Textarea } from "@/components/ui/textarea";
-import { Calendar, ChevronLeft, ChevronRight, Clock, Globe, MapPin, MessageSquare } from "lucide-react";
+import { Calendar, ChevronLeft, ChevronRight, Clock, Globe, MapPin, MessageSquare, Sparkles, Lock } from "lucide-react";
 import VendorShell from "@/components/VendorShell";
 import { apiRequest } from "@/lib/queryClient";
 import { useToast } from "@/hooks/use-toast";
@@ -123,6 +123,7 @@ function isTimezoneMismatch(eventTz: string | null | undefined, vendorTz: string
 
 type VendorMe = {
   googleConnectionStatus?: string | null;
+  canUseGoogleSync?: boolean | null;
 };
 
 export default function VendorBookings() {
@@ -535,19 +536,37 @@ export default function VendorBookings() {
               </>
             ) : (
               <>
-                <div className="mt-3 text-sm">
-                  <span className="font-medium text-foreground">{t("vendorBookings.statusLabel")} </span>
-                  <span className="text-muted-foreground">{t("vendorBookings.statusNotConnected")}</span>
-                </div>
-                <div className="mt-4">
-                  <Button
-                    onClick={handleConnectGoogleCalendar}
-                    disabled={isGoogleCalendarConnectLoading}
-                    data-testid="button-connect-google-calendar-bookings"
-                  >
-                    {isGoogleCalendarConnectLoading ? t("vendorBookings.googleConnectLoading") : t("vendorBookings.googleConnectButton")}
-                  </Button>
-                </div>
+                {vendorAccount?.canUseGoogleSync === false ? (
+                  <>
+                    <p className="mt-3 flex items-center gap-1.5 text-sm text-[#2a3a42]">
+                      <Lock className="h-3.5 w-3.5 shrink-0 text-[#4a6a7d]" />
+                      Google Calendar sync is a Pro feature.
+                    </p>
+                    <div className="mt-4">
+                      <Button asChild className="bg-[#4a6a7d] hover:bg-[#3f5c6d] text-[#f5f0e8]">
+                        <Link href="/vendor/dashboard#vendor-billing" data-testid="button-upgrade-google-calendar-bookings">
+                          <Sparkles className="mr-1 h-3.5 w-3.5" /> Upgrade to Pro
+                        </Link>
+                      </Button>
+                    </div>
+                  </>
+                ) : (
+                  <>
+                    <div className="mt-3 text-sm">
+                      <span className="font-medium text-foreground">{t("vendorBookings.statusLabel")} </span>
+                      <span className="text-muted-foreground">{t("vendorBookings.statusNotConnected")}</span>
+                    </div>
+                    <div className="mt-4">
+                      <Button
+                        onClick={handleConnectGoogleCalendar}
+                        disabled={isGoogleCalendarConnectLoading}
+                        data-testid="button-connect-google-calendar-bookings"
+                      >
+                        {isGoogleCalendarConnectLoading ? t("vendorBookings.googleConnectLoading") : t("vendorBookings.googleConnectButton")}
+                      </Button>
+                    </div>
+                  </>
+                )}
               </>
             )}
           </div>
@@ -881,10 +900,12 @@ export default function VendorBookings() {
                               <span>{formatUsd(a.priceCents)}</span>
                             </div>
                           ))}
-                          <div className="text-sm flex items-center justify-between gap-3">
-                            <span className="text-muted-foreground">{t("vendorBookings.customerServiceFee")}</span>
-                            <span>{formatUsd(item.customerFeeCents)}</span>
-                          </div>
+                          {item.customerFeeCents > 0 ? (
+                            <div className="text-sm flex items-center justify-between gap-3">
+                              <span className="text-muted-foreground">{t("vendorBookings.customerServiceFee")}</span>
+                              <span>{formatUsd(item.customerFeeCents)}</span>
+                            </div>
+                          ) : null}
                           <div className="text-sm flex items-center justify-between gap-3">
                             <span className="text-muted-foreground">{t("vendorBookings.customerTotal")}</span>
                             <span>{formatUsd(item.customerTotalCents)}</span>
@@ -912,17 +933,16 @@ export default function VendorBookings() {
                         ) : null}
                       </div>
                     ) : null}
-                    {/* Pending: request-to-book or instant-book outside service radius — vendor must accept or decline */}
-                    {(item.status === "pending" || (item.status === "confirmed" && item.raw.outsideServiceRadius)) ? (
+                    {/* Request-to-book (pending): vendor must accept or decline */}
+                    {item.status === "pending" ? (
                       <div className="mt-3 flex items-center gap-2">
                         <Button
                           size="sm"
                           onClick={() => {
-                            if (item.status === "confirmed") return;
                             setActionBookingId(item.id);
                             bookingActionMutation.mutate({ id: item.id, status: "confirmed" });
                           }}
-                          disabled={bookingActionMutation.isPending || item.status === "confirmed"}
+                          disabled={bookingActionMutation.isPending}
                         >
                           {bookingActionMutation.isPending && actionBookingId === item.id
                             ? t("vendorBookings.accepting")
@@ -934,12 +954,12 @@ export default function VendorBookings() {
                           onClick={() => setCancelModalBookingId(item.id)}
                           disabled={bookingActionMutation.isPending}
                         >
-                          {item.status === "confirmed" ? "Cancel" : t("vendorBookings.decline")}
+                          {t("vendorBookings.decline")}
                         </Button>
                       </div>
                     ) : null}
-                    {/* Confirmed and NOT outside service radius: show Cancel only — completion is handled automatically */}
-                    {item.status === "confirmed" && !item.raw.outsideServiceRadius ? (
+                    {/* Confirmed (instant-book auto-confirmed, or an accepted request): Cancel only — completion is handled automatically */}
+                    {item.status === "confirmed" ? (
                       <div className="mt-3 flex items-center gap-2">
                         <Button
                           size="sm"

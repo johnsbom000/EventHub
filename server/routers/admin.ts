@@ -91,6 +91,7 @@ import {
 } from "../services/chatService";
 import {
   deactivateActiveListingsViolatingPublishGate,
+  deactivateExtraActiveListingsForFreeTier,
   checkListingAvailabilityForBookingRequest,
   sendCancellationEmailsAsync,
 } from "../services/bookingService";
@@ -133,11 +134,6 @@ import {
   type TravelFeeProposal,
   listingReviews,
   reviewReplies,
-  vendorReferrals,
-  foundingVendorInvites,
-  marqueeVendorInvites,
-  marqueeEmailInvites,
-  foundingEmailInvites,
 } from "@shared/schema";
 import {
   requireDualAuthAuth0,
@@ -173,8 +169,6 @@ import {
   sendDisputeResponseEmail,
   sendTravelFeeProposedEmail,
   sendTravelFeeRespondedEmail,
-  sendMarqueeInviteEmail,
-  sendFoundingVendorInviteEmail,
 } from "../email";
 import { calculateRefund } from "../lib/calculateRefund";
 import {
@@ -297,15 +291,6 @@ import {
 import {
   VENDOR_FEE_RATE,
   CUSTOMER_FEE_RATE,
-  MARQUEE_VENDOR_MAX_SPOTS,
-  MARQUEE_HOLIDAY_BOOKING_COUNT,
-  MARQUEE_HOLIDAY_DAYS,
-  MARQUEE_REFERRAL_BONUS_BOOKINGS,
-  MARQUEE_VENDOR_FEE_RATE,
-  MARQUEE_RATE_MONTHS,
-  MARQUEE_CUSTOMER_FEE_RATE,
-  MARQUEE_CUSTOMER_FEE_MONTHS,
-  MARQUEE_VISIBILITY_MONTHS,
   STRIPE_FEE_ESTIMATE_PERCENT,
   STRIPE_FEE_ESTIMATE_FIXED_CENTS,
   VENDOR_ABSORBS_STRIPE_FEES,
@@ -501,6 +486,10 @@ export function registerAdminRoutes(app: Express): void {
           // How many cents to refund to the customer.
           // Absent = full deposit refund. Can exceed deposit to also refund booking payment.
           refundAmountCents: z.number().int().min(0).optional(),
+          // Travel-cost-recovery disputes only: cents to award the vendor from the
+          // held travel fee (their proven incurred cost). Remainder is refunded to
+          // the customer. Capped server-side at the held travel amount.
+          travelAwardCents: z.number().int().min(0).optional(),
         })
         .parse(req.body ?? {});
 
@@ -550,6 +539,199 @@ export function registerAdminRoutes(app: Express): void {
       const dispute = { ...bookingContext };
 
       const now = new Date();
+
+      // ── Travel-fee dispute settlement (held travel fee on a cancelled booking) ──
+      // On a customer cancellation the travel/delivery fee is held (not refunded)
+      // so the vendor can recover real travel costs incurred. Admin awards the
+      // vendor's proven cost from the held fee; the remainder is refunded to the
+      // customer. The vendor award is paid via a DIRECT authorized transfer
+      // (transferToVendor) because the automated payout path correctly refuses
+      // cancelled bookings (payoutEligibility cancelled-booking branch). A held
+      // travel fee only ever exists on a cancelled booking, so this is mutually
+      // exclusive with the deposit-dispute path below.
+      const heldTravelRows = await db
+        .select({
+          id: payments.id,
+          stripePaymentIntentId: payments.stripePaymentIntentId,
+          stripeChargeId: payments.stripeChargeId,
+          amount: payments.amount,
+          refundAmount: payments.refundAmount,
+          status: payments.status,
+        })
+        .from(payments)
+        .where(
+          and(
+            eq(payments.bookingId, resolvedBookingId),
+            eq(payments.paymentType, "travel_fee"),
+            eq(payments.payoutBlockedReason, "travel_fee_hold")
+          )
+        )
+        .orderBy(desc(payments.createdAt))
+        .limit(1);
+      const heldTravel = heldTravelRows[0];
+
+      if (heldTravel?.id) {
+        if (!isPaymentSucceededStatus(heldTravel.status)) {
+          return res.status(400).json({ error: "Held travel fee is not in a settleable state" });
+        }
+        const alreadyRefunded = heldTravel.refundAmount ?? 0;
+        const heldRemaining = Math.max(0, heldTravel.amount - alreadyRefunded);
+
+        const requestedAward =
+          typeof payload.travelAwardCents === "number"
+            ? payload.travelAwardCents
+            : payload.decision === "payout"
+              ? heldRemaining
+              : 0;
+        const travelAward = Math.min(Math.max(0, requestedAward), heldRemaining);
+        const travelRefundToCustomer = heldRemaining - travelAward;
+
+        // Vendor connected account is required to pay an award.
+        const vendorAcctRows: any = await db.execute(drizzleSql`
+          SELECT va.stripe_connected_account_id AS "connectedAccountId"
+          FROM bookings b
+          JOIN vendor_accounts va ON va.id = b.vendor_account_id
+          WHERE b.id = ${resolvedBookingId}
+          LIMIT 1
+        `);
+        const connectedAccountId = asTrimmedString(
+          (vendorAcctRows.rows?.[0] as any)?.connectedAccountId
+        );
+        if (travelAward > 0 && !connectedAccountId) {
+          return res.status(400).json({
+            error: "Vendor has no connected Stripe account; cannot award travel costs",
+          });
+        }
+
+        const { refundBookingPayment, transferToVendor } = await import("../stripe");
+
+        // 1) Refund the customer's portion (partial refund on the travel charge).
+        const travelRefund =
+          travelRefundToCustomer > 0
+            ? await refundBookingPayment({
+                paymentIntentId: heldTravel.stripePaymentIntentId,
+                amount:
+                  travelRefundToCustomer < heldTravel.amount ? travelRefundToCustomer : undefined,
+                reason: "requested_by_customer",
+                idempotencyKey: `admin-dispute-travel-refund:${caseId}:${heldTravel.id}`,
+              })
+            : null;
+
+        // 2) Directly transfer the awarded portion to the vendor (authorized override).
+        let travelTransfer: any = null;
+        if (travelAward > 0) {
+          travelTransfer = await transferToVendor({
+            amount: travelAward,
+            vendorStripeAccountId: connectedAccountId,
+            description: `Travel cost recovery for booking ${resolvedBookingId}`,
+            sourceTransaction: asTrimmedString(heldTravel.stripeChargeId) || undefined,
+            transferGroup: `booking_${resolvedBookingId}`,
+            metadata: {
+              bookingId: resolvedBookingId,
+              paymentId: heldTravel.id,
+              kind: "travel_cost_recovery",
+            },
+            // Key by case+payment (NOT amount) so a retry with a different award can
+            // never produce a second transfer — the first settlement wins.
+            idempotencyKey: `admin-dispute-travel-payout:${caseId}:${heldTravel.id}`,
+          });
+        }
+
+        const resolutionNote = payload.adminNotes
+          ? payload.adminNotes
+          : travelAward > 0
+            ? `Travel dispute: ${formatCentsAsDollars(travelAward)} awarded to vendor, ${formatCentsAsDollars(travelRefundToCustomer)} refunded to customer`
+            : `Travel dispute: full travel fee ${formatCentsAsDollars(travelRefundToCustomer)} refunded to customer`;
+
+        await db.transaction(async (tx) => {
+          await tx
+            .update(payments)
+            .set({
+              status:
+                travelAward > 0
+                  ? travelRefundToCustomer > 0
+                    ? "partially_refunded"
+                    : "succeeded"
+                  : "refunded",
+              ...(travelRefundToCustomer > 0
+                ? {
+                    refundAmount: alreadyRefunded + travelRefundToCustomer,
+                    refundReason: "admin_dispute_travel",
+                    refundedAt: now,
+                  }
+                : {}),
+              ...(travelAward > 0
+                ? {
+                    payoutStatus: "paid",
+                    payoutEligibleAt: now,
+                    payoutBlockedReason: null,
+                    payoutAdjustedAmount: travelAward,
+                    paidOutAt: now,
+                    stripeTransferId: travelTransfer?.id ?? null,
+                  }
+                : {
+                    payoutStatus: "cancelled",
+                    payoutEligibleAt: null,
+                    payoutBlockedReason: "dispute_refund_approved",
+                    payoutAdjustedAmount: 0,
+                  }),
+            })
+            .where(eq(payments.id, heldTravel.id));
+
+          await tx.execute(drizzleSql`
+            UPDATE dispute_cases
+            SET status = 'resolved',
+                resolution = ${resolutionNote},
+                withheld_amount_cents = ${travelAward > 0 ? travelAward : null},
+                resolved_at = ${now},
+                updated_at = ${now}
+            WHERE id = ${activeCaseId}
+          `);
+          await tx.execute(drizzleSql`
+            INSERT INTO dispute_filings (case_id, booking_id, filed_by, dispute_type, description, attachment_urls, created_at, updated_at)
+            VALUES (${activeCaseId}, ${resolvedBookingId}, 'admin', 'admin_note', ${resolutionNote}, '{}', ${now}, ${now})
+          `);
+        });
+
+        // Fire-and-forget outcome emails
+        const serverUrlTravel = appUrl();
+        const travelListingTitle = asTrimmedString(dispute.listingTitle) || "Your booking";
+        const travelEventDate = asTrimmedString(dispute.eventDate) || "N/A";
+        if (dispute.customerEmail) {
+          sendDisputeResolvedEmail(dispute.customerEmail, {
+            role: "customer",
+            decision: "refund",
+            recipientName: asTrimmedString(dispute.customerName) || "Customer",
+            counterpartName: asTrimmedString(dispute.vendorBusinessName) || "Vendor",
+            listingTitle: travelListingTitle,
+            eventDate: travelEventDate,
+            refundAmountCents: travelRefundToCustomer > 0 ? travelRefundToCustomer : undefined,
+            serverUrl: serverUrlTravel,
+          }).catch(() => {});
+        }
+        if (dispute.vendorEmail) {
+          sendDisputeResolvedEmail(dispute.vendorEmail, {
+            role: "vendor",
+            decision: travelAward > 0 ? "payout" : "refund",
+            recipientName: asTrimmedString(dispute.vendorBusinessName) || "Vendor",
+            counterpartName: asTrimmedString(dispute.customerName) || "Customer",
+            listingTitle: travelListingTitle,
+            eventDate: travelEventDate,
+            serverUrl: serverUrlTravel,
+          }).catch(() => {});
+        }
+
+        return res.json({
+          disputeId: caseId,
+          bookingId: resolvedBookingId,
+          decision: payload.decision,
+          travelAwardCents: travelAward,
+          travelRefundCents: travelRefundToCustomer,
+          travelRefund,
+          travelTransfer,
+          resolvedAt: now,
+        });
+      }
 
       if (payload.decision === "refund") {
         const depositPaymentRows = await db
@@ -920,11 +1102,36 @@ export function registerAdminRoutes(app: Express): void {
         .groupBy(drizzleSql`DATE(${users.createdAt})`)
         .orderBy(drizzleSql`DATE(${users.createdAt})`);
 
+      // Vendor Pro subscription counts (active vendors only).
+      const subCountsRows = await db.execute(drizzleSql`
+        SELECT
+          COUNT(*) FILTER (WHERE subscription_status = 'active')::int AS active,
+          COUNT(*) FILTER (WHERE subscription_status = 'trialing')::int AS trialing,
+          COUNT(*) FILTER (WHERE subscription_status = 'comp' AND (comp_ends_at IS NULL OR comp_ends_at > NOW()))::int AS comp,
+          COUNT(*) FILTER (WHERE subscription_status = 'past_due')::int AS past_due,
+          COUNT(*) FILTER (WHERE NOT (
+            subscription_status IN ('active','trialing','past_due')
+            OR (subscription_status = 'comp' AND (comp_ends_at IS NULL OR comp_ends_at > NOW()))
+          ))::int AS free
+        FROM vendor_accounts
+        WHERE deleted_at IS NULL AND active = true
+      `);
+      const sc = extractRows<{ active: number; trialing: number; comp: number; past_due: number; free: number }>(subCountsRows)[0];
+      const subscriptionCounts = {
+        active: Number(sc?.active ?? 0),
+        trialing: Number(sc?.trialing ?? 0),
+        comp: Number(sc?.comp ?? 0),
+        pastDue: Number(sc?.past_due ?? 0),
+        free: Number(sc?.free ?? 0),
+        pro: Number(sc?.active ?? 0) + Number(sc?.trialing ?? 0) + Number(sc?.comp ?? 0) + Number(sc?.past_due ?? 0),
+      };
+
       res.json({
         totalUsers,
         totalVendors,
         vendorsByType,
         userGrowth,
+        subscriptionCounts,
       });
     } catch (error: any) {
       return respondWithInternalServerError(req, res, error);
@@ -1556,8 +1763,6 @@ export function registerAdminRoutes(app: Express): void {
     }
   });
 
-  // ── Founding Vendor Admin Endpoints ────────────────────────────────────────
-
   // GET /api/admin/vendors/search?q= — search vendor accounts by name or email
   app.get("/api/admin/vendors/search", adminRateLimiter, requireAdminAuth, async (req: any, res: any) => {
     try {
@@ -1569,7 +1774,6 @@ export function registerAdminRoutes(app: Express): void {
           id: vendorAccounts.id,
           businessName: vendorAccounts.businessName,
           email: vendorAccounts.email,
-          isMarqueeVendor: vendorAccounts.isMarqueeVendor,
           profileComplete: vendorAccounts.profileComplete,
         })
         .from(vendorAccounts)
@@ -1592,498 +1796,63 @@ export function registerAdminRoutes(app: Express): void {
     }
   });
 
-  // GET /api/admin/marquee-vendors/stats
-  app.get("/api/admin/marquee-vendors/stats", adminRateLimiter, requireAdminAuth, async (req: any, res: any) => {
+  // POST /api/admin/vendors/:id/grant-comp — grant complimentary Pro (no billing).
+  // Body: { days?: number } (default 30). DB-only; never touches Stripe.
+  app.post("/api/admin/vendors/:id/grant-comp", adminRateLimiter, requireAdminAuth, async (req: any, res: any) => {
     try {
-      const [stats] = await db
-        .select({
-          spotsUsed: drizzleSql<number>`count(*) filter (where ${vendorAccounts.isMarqueeVendor} = true)::int`,
-          totalHolidayBookingsUsed: drizzleSql<number>`coalesce(sum(${vendorAccounts.marqueeHolidayBookingsUsed}) filter (where ${vendorAccounts.isMarqueeVendor} = true), 0)::int`,
+      const vendorId = asTrimmedString(req.params?.id);
+      if (!vendorId) return res.status(400).json({ error: "Vendor id required" });
+      const days = Math.max(1, Math.min(365, parseIntegerValue(req.body?.days) ?? 30));
+      const compEndsAt = new Date(Date.now() + days * 24 * 60 * 60 * 1000);
+
+      const [updated] = await db
+        .update(vendorAccounts)
+        .set({
+          subscriptionPlan: "pro",
+          subscriptionStatus: "comp",
+          compEndsAt,
+          subscriptionUpdatedAt: new Date(),
         })
-        .from(vendorAccounts)
-        .where(isNull(vendorAccounts.deletedAt));
-
-      // Return the single canonical invite regardless of active state so the admin can see and toggle it
-      const [invite] = await db
-        .select({
-          token: marqueeVendorInvites.token,
-          active: marqueeVendorInvites.active,
-          redemptionCount: marqueeVendorInvites.redemptionCount,
-        })
-        .from(marqueeVendorInvites)
-        .orderBy(desc(marqueeVendorInvites.createdAt))
-        .limit(1);
-
-      const inviteUrl = invite
-        ? `${appUrl()}/vendor/onboarding?mv=${invite.token}`
-        : null;
-
-      return res.json({
-        spotsUsed: stats?.spotsUsed ?? 0,
-        spotsRemaining: MARQUEE_VENDOR_MAX_SPOTS - (stats?.spotsUsed ?? 0),
-        totalHolidayBookingsUsed: stats?.totalHolidayBookingsUsed ?? 0,
-        inviteToken: invite?.token ?? null,
-        inviteUrl,
-        inviteActive: invite?.active ?? false,
-        redemptionCount: invite?.redemptionCount ?? 0,
-      });
-    } catch (err: any) {
-      return respondWithInternalServerError(req, res, err);
-    }
-  });
-
-  // GET /api/admin/marquee-vendors — list all marquee vendors
-  app.get("/api/admin/marquee-vendors", adminRateLimiter, requireAdminAuth, async (req: any, res: any) => {
-    try {
-      const rows = await db
-        .select({
-          id: vendorAccounts.id,
-          businessName: vendorAccounts.businessName,
-          email: vendorAccounts.email,
-          marqueeVendorNumber: vendorAccounts.marqueeVendorNumber,
-          marqueeHolidayBookingsUsed: vendorAccounts.marqueeHolidayBookingsUsed,
-          marqueeHolidayBonusBookings: vendorAccounts.marqueeHolidayBonusBookings,
-          marqueeActivatedAt: vendorAccounts.marqueeActivatedAt,
-          marqueeHolidayEndsAt: vendorAccounts.marqueeHolidayEndsAt,
-          marqueeRateEndsAt: vendorAccounts.marqueeRateEndsAt,
-          referralCode: vendorAccounts.referralCode,
-          createdAt: vendorAccounts.createdAt,
-        })
-        .from(vendorAccounts)
-        .where(and(eq(vendorAccounts.isMarqueeVendor, true), isNull(vendorAccounts.deletedAt)))
-        .orderBy(asc(vendorAccounts.marqueeVendorNumber));
-      return res.json({ marqueeVendors: rows });
-    } catch (err: any) {
-      return respondWithInternalServerError(req, res, err);
-    }
-  });
-
-  // POST /api/admin/marquee-vendors/:vendorId/grant — grant marquee status
-  app.post("/api/admin/marquee-vendors/:vendorId/grant", adminRateLimiter, requireAdminAuth, async (req: any, res: any) => {
-    try {
-      const { vendorId } = req.params;
-
-      // All reads and the UPDATE run inside a SERIALIZABLE transaction so that
-      // two concurrent admin requests cannot both pass the cap check and both
-      // write the same marqueeVendorNumber.  Early-exit conditions are captured
-      // in `txError` so we can respond after the transaction commits.
-      let txError: { status: number; body: object } | null = null;
-      let txResult: { marqueeVendorNumber: number; referralCode: string } | null = null;
-
-      await db.transaction(async (tx) => {
-        const [countRow] = await tx
-          .select({ count: drizzleSql<number>`count(*)::int` })
-          .from(vendorAccounts)
-          .where(and(eq(vendorAccounts.isMarqueeVendor, true), isNull(vendorAccounts.deletedAt)));
-        const currentCount = countRow?.count ?? 0;
-        if (currentCount >= MARQUEE_VENDOR_MAX_SPOTS) {
-          txError = { status: 400, body: { error: `All ${MARQUEE_VENDOR_MAX_SPOTS} Marquee Vendor spots are filled.`, code: "marquee_vendor_cap_reached" } };
-          return;
-        }
-
-        const [vendor] = await tx
-          .select({ id: vendorAccounts.id, isMarqueeVendor: vendorAccounts.isMarqueeVendor })
-          .from(vendorAccounts)
-          .where(and(eq(vendorAccounts.id, vendorId), isNull(vendorAccounts.deletedAt), eq(vendorAccounts.active, true)))
-          .limit(1);
-        if (!vendor) { txError = { status: 404, body: { error: "Vendor not found or not active" } }; return; }
-        if (vendor.isMarqueeVendor) { txError = { status: 400, body: { error: "Vendor is already a Marquee Vendor" } }; return; }
-
-        const nextSlot = currentCount + 1;
-        let referralCode: string | undefined;
-        for (let attempt = 0; attempt < 5; attempt++) {
-          const candidate = crypto.randomBytes(6).toString("hex").toUpperCase();
-          const [existing] = await tx
-            .select({ id: vendorAccounts.id })
-            .from(vendorAccounts)
-            .where(eq(vendorAccounts.referralCode, candidate))
-            .limit(1);
-          if (!existing) { referralCode = candidate; break; }
-        }
-        if (!referralCode) { txError = { status: 500, body: { error: "Could not generate a unique referral code. Please try again." } }; return; }
-
-        await tx
-          .update(vendorAccounts)
-          .set({ isMarqueeVendor: true, marqueeVendorNumber: nextSlot, referralCode })
-          .where(eq(vendorAccounts.id, vendorId));
-
-        txResult = { marqueeVendorNumber: nextSlot, referralCode };
-      }, { isolationLevel: "serializable" });
-
-      if (txError) return res.status((txError as any).status).json((txError as any).body);
-      if (!txResult) return res.status(500).json({ error: "Internal server error" });
-      return res.json({ success: true, ...(txResult as any) });
-    } catch (err: any) {
-      return respondWithInternalServerError(req, res, err);
-    }
-  });
-
-  // POST /api/admin/marquee-vendors/:vendorId/revoke — revoke marquee status
-  app.post("/api/admin/marquee-vendors/:vendorId/revoke", adminRateLimiter, requireAdminAuth, async (req: any, res: any) => {
-    try {
-      const { vendorId } = req.params;
-      const [vendor] = await db
-        .select({ id: vendorAccounts.id, isMarqueeVendor: vendorAccounts.isMarqueeVendor })
-        .from(vendorAccounts)
         .where(and(eq(vendorAccounts.id, vendorId), isNull(vendorAccounts.deletedAt)))
-        .limit(1);
-      if (!vendor) return res.status(404).json({ error: "Vendor not found" });
-      if (!vendor.isMarqueeVendor) return res.status(400).json({ error: "Vendor is not a Marquee Vendor" });
+        .returning({ id: vendorAccounts.id });
+      if (!updated) return res.status(404).json({ error: "Vendor not found" });
 
-      await db
+      return res.json({ ok: true, compEndsAt });
+    } catch (err: any) {
+      return respondWithInternalServerError(req, res, err);
+    }
+  });
+
+  // POST /api/admin/vendors/:id/cancel-comp — end a complimentary grant now and
+  // drop the vendor to Free (trims extra active listings). DB-only.
+  app.post("/api/admin/vendors/:id/cancel-comp", adminRateLimiter, requireAdminAuth, async (req: any, res: any) => {
+    try {
+      const vendorId = asTrimmedString(req.params?.id);
+      if (!vendorId) return res.status(400).json({ error: "Vendor id required" });
+
+      const [updated] = await db
         .update(vendorAccounts)
-        .set({ isMarqueeVendor: false, marqueeVendorNumber: null })
-        .where(eq(vendorAccounts.id, vendorId));
-
-      return res.json({ success: true });
-    } catch (err: any) {
-      return respondWithInternalServerError(req, res, err);
-    }
-  });
-
-  // POST /api/admin/marquee-vendors/toggle-link — enable or disable the invite link
-  app.post("/api/admin/marquee-vendors/toggle-link", adminRateLimiter, requireAdminAuth, async (req: any, res: any) => {
-    try {
-      const { active } = req.body as { active: boolean };
-
-      // Fetch the canonical invite (most recent)
-      const [invite] = await db
-        .select({ id: marqueeVendorInvites.id, token: marqueeVendorInvites.token })
-        .from(marqueeVendorInvites)
-        .orderBy(desc(marqueeVendorInvites.createdAt))
-        .limit(1);
-
-      if (!invite) {
-        // No token exists yet — seed the first one (active or inactive per request)
-        const token = crypto.randomBytes(16).toString("hex");
-        await db.insert(marqueeVendorInvites).values({ token, active: Boolean(active) });
-      } else {
-        await db
-          .update(marqueeVendorInvites)
-          .set({ active: Boolean(active) })
-          .where(eq(marqueeVendorInvites.id, invite.id));
-      }
-
-      return res.json({ success: true });
-    } catch (err: any) {
-      return respondWithInternalServerError(req, res, err);
-    }
-  });
-
-  // POST /api/admin/test-email — send a test email to verify Resend is configured
-  app.post("/api/admin/test-email", adminRateLimiter, requireAdminAuth, async (req: any, res: any) => {
-    try {
-      const adminEmail = (req.adminAuth as { email?: string } | undefined)?.email;
-      if (!adminEmail) return res.status(400).json({ error: "Could not determine admin email" });
-
-      const { sendViaResendRaw } = await import("../email");
-      const result = await sendViaResendRaw({
-        to: adminEmail,
-        subject: "EventHub — Resend test email",
-        html: "<p>If you received this, Resend is configured correctly in production.</p>",
-        text: "If you received this, Resend is configured correctly in production.",
-      });
-
-      return res.json(result);
-    } catch (err: any) {
-      return respondWithInternalServerError(req, res, err);
-    }
-  });
-
-  // POST /api/admin/jobs/run-completion — manually fire the booking auto-completion job
-  app.post("/api/admin/jobs/run-completion", adminRateLimiter, requireAdminAuth, async (_req: any, res: any) => {
-    try {
-      const completed = await runBookingCompletionJob();
-      return res.json({ completed });
-    } catch (err: any) {
-      return respondWithInternalServerError(_req, res, err);
-    }
-  });
-
-  // POST /api/admin/jobs/run-deposit-refund — manually fire the security deposit auto-refund job
-  app.post("/api/admin/jobs/run-deposit-refund", adminRateLimiter, requireAdminAuth, async (_req: any, res: any) => {
-    try {
-      const refunded = await runSecurityDepositRefundJob();
-      return res.json({ refunded });
-    } catch (err: any) {
-      return respondWithInternalServerError(_req, res, err);
-    }
-  });
-
-  // GET /api/admin/marquee-invites — list invitation history
-  app.get("/api/admin/marquee-invites", adminRateLimiter, requireAdminAuth, async (req: any, res: any) => {
-    try {
-      const rows = await db
-        .select()
-        .from(marqueeEmailInvites)
-        .orderBy(desc(marqueeEmailInvites.sentAt))
-        .limit(200);
-      return res.json({ invites: rows });
-    } catch (err: any) {
-      return respondWithInternalServerError(req, res, err);
-    }
-  });
-
-  // POST /api/admin/marquee-invite — send invitation emails
-  app.post("/api/admin/marquee-invite", adminRateLimiter, requireAdminAuth, async (req: any, res: any) => {
-    try {
-      const raw: unknown = req.body?.emails;
-      if (!Array.isArray(raw) || raw.length === 0) {
-        return res.status(400).json({ error: "emails must be a non-empty array" });
-      }
-      const emails: string[] = Array.from(new Set(
-        raw
-          .map((e: unknown) => (typeof e === "string" ? e.trim().toLowerCase() : ""))
-          .filter((e) => /^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(e))
-      ));
-      if (emails.length === 0) {
-        return res.status(400).json({ error: "No valid email addresses provided" });
-      }
-
-      const adminEmail = (req.adminAuth as { email?: string } | undefined)?.email ?? null;
-
-      // Skip emails that were already successfully sent
-      const alreadySentRows = await db
-        .select({ email: marqueeEmailInvites.email })
-        .from(marqueeEmailInvites)
-        .where(and(inArray(marqueeEmailInvites.email, emails), eq(marqueeEmailInvites.sentSuccessfully, true)));
-      const alreadySent = new Set(alreadySentRows.map((r) => r.email));
-      const toSend = emails.filter((e) => !alreadySent.has(e));
-
-      const [activeInvite] = await db
-        .select({ token: marqueeVendorInvites.token })
-        .from(marqueeVendorInvites)
-        .where(eq(marqueeVendorInvites.active, true))
-        .orderBy(desc(marqueeVendorInvites.createdAt))
-        .limit(1);
-
-      const results: { email: string; sent: boolean }[] = [];
-      for (let i = 0; i < toSend.length; i += 4) {
-        const batch = toSend.slice(i, i + 4);
-        const batchResults = await Promise.all(
-          batch.map(async (email) => {
-            const result = await sendMarqueeInviteEmail(email, {
-              recipientEmail: email,
-              inviteToken: activeInvite?.token,
-            });
-            // Update existing failed record if one exists, otherwise insert
-            const [existing] = await db
-              .select({ id: marqueeEmailInvites.id })
-              .from(marqueeEmailInvites)
-              .where(and(eq(marqueeEmailInvites.email, email), eq(marqueeEmailInvites.sentSuccessfully, false)))
-              .orderBy(desc(marqueeEmailInvites.sentAt))
-              .limit(1);
-            if (existing) {
-              await db.update(marqueeEmailInvites)
-                .set({ sentSuccessfully: result.sent, sentAt: new Date(), sentBy: adminEmail })
-                .where(eq(marqueeEmailInvites.id, existing.id));
-            } else {
-              await db.insert(marqueeEmailInvites).values({ email, sentBy: adminEmail, sentSuccessfully: result.sent });
-            }
-            return { email, ...result };
-          })
-        );
-        results.push(...batchResults);
-        if (i + 4 < toSend.length) await new Promise((r) => setTimeout(r, 1100));
-      }
-
-      return res.json({ results });
-    } catch (err: any) {
-      return respondWithInternalServerError(req, res, err);
-    }
-  });
-
-  // ── Founding Vendor Admin Endpoints ──────────────────────────────────────────
-
-  // GET /api/admin/founding-vendors/stats
-  app.get("/api/admin/founding-vendors/stats", adminRateLimiter, requireAdminAuth, async (req: any, res: any) => {
-    try {
-      const [stats] = await db
-        .select({
-          spotsUsed: drizzleSql<number>`count(*) filter (where ${vendorAccounts.isFoundingVendor} = true)::int`,
-          totalHolidayBookingsUsed: drizzleSql<number>`coalesce(sum(${vendorAccounts.foundingBenefitBookingsUsed}) filter (where ${vendorAccounts.isFoundingVendor} = true), 0)::int`,
+        .set({
+          subscriptionPlan: "free",
+          subscriptionStatus: "none",
+          compEndsAt: null,
+          subscriptionUpdatedAt: new Date(),
         })
-        .from(vendorAccounts)
-        .where(isNull(vendorAccounts.deletedAt));
+        .where(
+          and(
+            eq(vendorAccounts.id, vendorId),
+            eq(vendorAccounts.subscriptionStatus, "comp"),
+            isNull(vendorAccounts.deletedAt)
+          )
+        )
+        .returning({ id: vendorAccounts.id });
+      if (!updated) return res.status(404).json({ error: "Vendor not found or not on a complimentary grant" });
 
-      // Return the single canonical invite regardless of active state so the admin can see and toggle it
-      const [invite] = await db
-        .select({
-          token: foundingVendorInvites.token,
-          active: foundingVendorInvites.active,
-          redemptionCount: foundingVendorInvites.redemptionCount,
-        })
-        .from(foundingVendorInvites)
-        .orderBy(desc(foundingVendorInvites.createdAt))
-        .limit(1);
-
-      const spotsUsed = stats?.spotsUsed ?? 0;
-      const inviteUrl = invite
-        ? `${appUrl()}/vendor/onboarding?fv=${invite.token}`
-        : null;
-
-      return res.json({
-        spotsUsed,
-        totalHolidayBookingsUsed: stats?.totalHolidayBookingsUsed ?? 0,
-        inviteToken: invite?.token ?? null,
-        inviteUrl,
-        inviteActive: invite?.active ?? false,
-        redemptionCount: invite?.redemptionCount ?? 0,
-      });
-    } catch (err: any) {
-      return respondWithInternalServerError(req, res, err);
-    }
-  });
-
-  // GET /api/admin/founding-vendors — list all founding vendors
-  app.get("/api/admin/founding-vendors", adminRateLimiter, requireAdminAuth, async (req: any, res: any) => {
-    try {
-      const rows = await db
-        .select({
-          id: vendorAccounts.id,
-          businessName: vendorAccounts.businessName,
-          email: vendorAccounts.email,
-          foundingVendorNumber: vendorAccounts.foundingVendorNumber,
-          foundingBenefitBookingsUsed: vendorAccounts.foundingBenefitBookingsUsed,
-          foundingReferralBonusBookingsRemaining: vendorAccounts.foundingReferralBonusBookingsRemaining,
-          foundingBenefitsActivatedAt: vendorAccounts.foundingBenefitsActivatedAt,
-          foundingHolidayEndsAt: vendorAccounts.foundingHolidayEndsAt,
-          foundingRateEndsAt: vendorAccounts.foundingRateEndsAt,
-          createdAt: vendorAccounts.createdAt,
-        })
-        .from(vendorAccounts)
-        .where(and(eq(vendorAccounts.isFoundingVendor, true), isNull(vendorAccounts.deletedAt)))
-        .orderBy(asc(vendorAccounts.foundingVendorNumber));
-      return res.json({ foundingVendors: rows });
-    } catch (err: any) {
-      return respondWithInternalServerError(req, res, err);
-    }
-  });
-
-  // POST /api/admin/founding-vendors/:vendorId/revoke — revoke founding status
-  app.post("/api/admin/founding-vendors/:vendorId/revoke", adminRateLimiter, requireAdminAuth, async (req: any, res: any) => {
-    try {
-      const { vendorId } = req.params;
-      await db
-        .update(vendorAccounts)
-        .set({ isFoundingVendor: false, foundingVendorNumber: null })
-        .where(and(eq(vendorAccounts.id, vendorId), isNull(vendorAccounts.deletedAt)));
+      await deactivateExtraActiveListingsForFreeTier(vendorId);
       return res.json({ ok: true });
     } catch (err: any) {
       return respondWithInternalServerError(req, res, err);
     }
   });
 
-  // GET /api/admin/founding-vendors/email-invites — list invitation email history
-  app.get("/api/admin/founding-vendors/email-invites", adminRateLimiter, requireAdminAuth, async (req: any, res: any) => {
-    try {
-      const rows = await db
-        .select()
-        .from(foundingEmailInvites)
-        .orderBy(desc(foundingEmailInvites.sentAt))
-        .limit(200);
-      return res.json({ invites: rows });
-    } catch (err: any) {
-      return respondWithInternalServerError(req, res, err);
-    }
-  });
-
-  // POST /api/admin/founding-vendors/send-invites — send founding vendor invitation emails
-  app.post("/api/admin/founding-vendors/send-invites", adminRateLimiter, requireAdminAuth, async (req: any, res: any) => {
-    try {
-      const raw: unknown = req.body?.emails;
-      if (!Array.isArray(raw) || raw.length === 0) {
-        return res.status(400).json({ error: "emails must be a non-empty array" });
-      }
-      const emails: string[] = Array.from(new Set(
-        raw
-          .map((e: unknown) => (typeof e === "string" ? e.trim().toLowerCase() : ""))
-          .filter((e) => /^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(e))
-      ));
-      if (emails.length === 0) {
-        return res.status(400).json({ error: "No valid email addresses provided" });
-      }
-
-      const adminEmail = (req.adminAuth as { email?: string } | undefined)?.email ?? null;
-
-      // Skip emails that were already successfully sent
-      const alreadySentRows = await db
-        .select({ email: foundingEmailInvites.email })
-        .from(foundingEmailInvites)
-        .where(and(inArray(foundingEmailInvites.email, emails), eq(foundingEmailInvites.sentSuccessfully, true)));
-      const alreadySent = new Set(alreadySentRows.map((r) => r.email));
-      const toSend = emails.filter((e) => !alreadySent.has(e));
-
-      const [activeInvite] = await db
-        .select({ token: foundingVendorInvites.token })
-        .from(foundingVendorInvites)
-        .where(eq(foundingVendorInvites.active, true))
-        .orderBy(desc(foundingVendorInvites.createdAt))
-        .limit(1);
-
-      const results: { email: string; sent: boolean }[] = [];
-      for (let i = 0; i < toSend.length; i += 4) {
-        const batch = toSend.slice(i, i + 4);
-        const batchResults = await Promise.all(
-          batch.map(async (email) => {
-            const result = await sendFoundingVendorInviteEmail(email, {
-              recipientEmail: email,
-              inviteToken: activeInvite?.token,
-            });
-            // Update existing failed record if one exists, otherwise insert
-            const [existing] = await db
-              .select({ id: foundingEmailInvites.id })
-              .from(foundingEmailInvites)
-              .where(and(eq(foundingEmailInvites.email, email), eq(foundingEmailInvites.sentSuccessfully, false)))
-              .orderBy(desc(foundingEmailInvites.sentAt))
-              .limit(1);
-            if (existing) {
-              await db.update(foundingEmailInvites)
-                .set({ sentSuccessfully: result.sent, sentAt: new Date(), sentBy: adminEmail })
-                .where(eq(foundingEmailInvites.id, existing.id));
-            } else {
-              await db.insert(foundingEmailInvites).values({ email, sentBy: adminEmail, sentSuccessfully: result.sent });
-            }
-            return { email, ...result };
-          })
-        );
-        results.push(...batchResults);
-        if (i + 4 < toSend.length) await new Promise((r) => setTimeout(r, 1100));
-      }
-
-      return res.json({ results });
-    } catch (err: any) {
-      return respondWithInternalServerError(req, res, err);
-    }
-  });
-
-  // POST /api/admin/founding-vendors/toggle-link — enable or disable the invite link
-  app.post("/api/admin/founding-vendors/toggle-link", adminRateLimiter, requireAdminAuth, async (req: any, res: any) => {
-    try {
-      const { active } = req.body as { active: boolean };
-
-      // Fetch the canonical invite (most recent)
-      const [invite] = await db
-        .select({ id: foundingVendorInvites.id, token: foundingVendorInvites.token })
-        .from(foundingVendorInvites)
-        .orderBy(desc(foundingVendorInvites.createdAt))
-        .limit(1);
-
-      if (!invite) {
-        // No token exists yet — seed the first one (active or inactive per request)
-        const token = crypto.randomBytes(16).toString("hex");
-        await db.insert(foundingVendorInvites).values({ token, active: Boolean(active) });
-        return res.json({ ok: true, active: Boolean(active) });
-      }
-
-      await db
-        .update(foundingVendorInvites)
-        .set({ active: Boolean(active) })
-        .where(eq(foundingVendorInvites.id, invite.id));
-
-      return res.json({ ok: true, active: Boolean(active) });
-    } catch (err: any) {
-      return respondWithInternalServerError(req, res, err);
-    }
-  });
 }

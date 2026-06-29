@@ -303,6 +303,31 @@ export const vendorAccounts = pgTable(
     // When the vendor finished/dismissed the one-time onboarding tour shown on
     // their first dashboard visit (migration 0133). NULL = not completed yet.
     dashboardTourCompletedAt: timestamp("dashboard_tour_completed_at"),
+    // Vendor Pro subscription (migration 0134). Free tier = 1 active listing, no
+    // analytics, no Google Calendar sync. Pro ($29/mo or $290/yr) = unlimited
+    // listings + analytics + calendar sync. Billing is via Stripe Billing and is
+    // entirely separate from the Stripe Connect payout account (stripeConnectId).
+    subscriptionPlan: text("subscription_plan").notNull().default("free"), // 'free' | 'pro'
+    // none | trialing | active | past_due | canceled | comp
+    subscriptionStatus: text("subscription_status").notNull().default("none"),
+    stripeSubscriptionId: text("stripe_subscription_id"),
+    stripePriceId: text("stripe_price_id"),
+    subscriptionCurrentPeriodEnd: timestamp("subscription_current_period_end"),
+    subscriptionCancelAtPeriodEnd: boolean("subscription_cancel_at_period_end").notNull().default(false),
+    // Complimentary-Pro grant expiry (no card / no auto-charge). Distinct from a
+    // Stripe trial: when this passes with no active subscription the vendor drops
+    // to Free. Used for the 30-day grant given to vendors existing at launch.
+    compEndsAt: timestamp("comp_ends_at"),
+    subscriptionUpdatedAt: timestamp("subscription_updated_at"),
+    // AI reply assistant (Pro-gated, metered — migration 0136). Feature toggle is
+    // opt-in (default off); overage auto-billing is opt-out (default on). When the
+    // included monthly allowance is exhausted: overage on → meter to Stripe, overage
+    // off → hard stop. See server/aiReplyService.ts + server/services/entitlementsService.ts.
+    aiRepliesEnabled: boolean("ai_replies_enabled").notNull().default(false),
+    aiOverageEnabled: boolean("ai_overage_enabled").notNull().default(true),
+    // Stripe metered subscription item used to bill AI-reply overage. Set when the
+    // vendor enables the feature; usage events are reported against it.
+    aiOverageSubscriptionItemId: text("ai_overage_subscription_item_id"),
   },
   (table) => ({
     userIdActiveUniqueIdx: uniqueIndex("vendor_accounts_user_id_active_unique_idx")
@@ -319,6 +344,9 @@ export const vendorAccounts = pgTable(
     referralCodeUniqueIdx: uniqueIndex("vendor_accounts_referral_code_unique_idx")
       .on(table.referralCode)
       .where(sql`${table.referralCode} is not null`),
+    stripeSubscriptionIdUniqueIdx: uniqueIndex("vendor_accounts_stripe_subscription_id_unique_idx")
+      .on(table.stripeSubscriptionId)
+      .where(sql`${table.stripeSubscriptionId} is not null`),
     shopSlugUniqueIdx: uniqueIndex("vendor_accounts_shop_slug_unique_idx")
       .on(table.shopSlug)
       .where(sql`${table.deletedAt} is null`),
@@ -730,7 +758,8 @@ export const notifications = pgTable("notifications", {
   title: text("title").notNull(),
   message: text("message").notNull(),
   link: text("link"), // URL to relevant page
-  read: boolean("read").default(false).notNull(),
+  read: boolean("read").default(false).notNull(), // user opened/dismissed this notification
+  seen: boolean("seen").default(false).notNull(), // user has glanced at it (drives the sidebar count badge)
   archived: boolean("archived").default(false).notNull(),
   createdAt: timestamp("created_at").defaultNow().notNull(),
   expiresAt: timestamp("expires_at", { withTimezone: true }).default(sql`now() + interval '90 days'`),
@@ -1486,9 +1515,70 @@ export const vendorInquiries = pgTable("vendor_inquiries", {
   initialListingId: varchar("initial_listing_id", { length: 255 }).references(() => vendorListings.id),
   bookingId: varchar("booking_id", { length: 255 }).references(() => bookings.id),
   status: varchar("status", { length: 20 }).notNull().default("active"),
+  // Cooldown timestamps for the "new message" email per inquiry channel (mirrors bookings).
+  vendorMsgEmailLastSentAt: timestamp("vendor_msg_email_last_sent_at"),
+  customerMsgEmailLastSentAt: timestamp("customer_msg_email_last_sent_at"),
   createdAt: timestamp("created_at").notNull().defaultNow(),
   updatedAt: timestamp("updated_at").notNull().defaultNow(),
 });
 
 export type VendorInquiry = typeof vendorInquiries.$inferSelect;
 export type InsertVendorInquiry = typeof vendorInquiries.$inferInsert;
+
+// Vendor FAQ documents — one active PDF per vendor that the AI reply assistant
+// references when drafting customer replies (migration 0136). The raw PDF lives in
+// object storage; extractedText is read directly at draft time (no re-parse).
+export const vendorFaqDocuments = pgTable(
+  "vendor_faq_documents",
+  {
+    id: varchar("id").primaryKey().default(sql`gen_random_uuid()`),
+    vendorAccountId: varchar("vendor_account_id")
+      .notNull()
+      .references(() => vendorAccounts.id, { onDelete: "cascade" }),
+    storageUrl: text("storage_url").notNull(),
+    originalFilename: text("original_filename"),
+    extractedText: text("extracted_text").notNull(),
+    charCount: integer("char_count").notNull().default(0),
+    pageCount: integer("page_count"),
+    createdAt: timestamp("created_at").notNull().defaultNow(),
+    updatedAt: timestamp("updated_at").notNull().defaultNow(),
+    deletedAt: timestamp("deleted_at"),
+  },
+  (table) => ({
+    // One active FAQ per vendor (soft-deleted rows excluded).
+    oneActivePerVendorIdx: uniqueIndex("vendor_faq_documents_one_active_per_vendor_idx")
+      .on(table.vendorAccountId)
+      .where(sql`${table.deletedAt} is null`),
+  })
+);
+
+export type VendorFaqDocument = typeof vendorFaqDocuments.$inferSelect;
+export type InsertVendorFaqDocument = typeof vendorFaqDocuments.$inferInsert;
+
+// AI reply usage log — one row per generated draft (migration 0136). Powers the
+// monthly credit meter (count rows since the period start), overage billing
+// (is_overage rows are metered to Stripe), and per-vendor cost visibility.
+export const aiReplyUsage = pgTable(
+  "ai_reply_usage",
+  {
+    id: varchar("id").primaryKey().default(sql`gen_random_uuid()`),
+    vendorAccountId: varchar("vendor_account_id")
+      .notNull()
+      .references(() => vendorAccounts.id, { onDelete: "cascade" }),
+    bookingId: varchar("booking_id"),
+    inputTokens: integer("input_tokens").notNull(),
+    outputTokens: integer("output_tokens").notNull(),
+    repliesReturned: integer("replies_returned").notNull(),
+    isOverage: boolean("is_overage").notNull().default(false),
+    createdAt: timestamp("created_at").notNull().defaultNow(),
+  },
+  (table) => ({
+    vendorCreatedIdx: index("ai_reply_usage_vendor_created_idx").on(
+      table.vendorAccountId,
+      table.createdAt
+    ),
+  })
+);
+
+export type AiReplyUsage = typeof aiReplyUsage.$inferSelect;
+export type InsertAiReplyUsage = typeof aiReplyUsage.$inferInsert;

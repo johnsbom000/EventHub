@@ -104,15 +104,21 @@ export function VendorSidebar({ className, showWarningBadge = false, onWarningBa
  return res.json();
  },
  });
+ // Badge reflects the server "seen" count so it survives reloads/logins.
+ // Opening the notifications page marks everything seen (persisted), clearing
+ // the badge until a genuinely new notification arrives.
  const notifUnreadCount = Math.max(0, Number(notifData?.unreadCount || 0));
- const { visibleCount: visibleNotifCount, dismissCurrent: dismissNotifCount } = useResettableBadgeCount({
- id: "vendor:notifications",
- count: notifUnreadCount,
- });
  useEffect(() => {
- if (!location.startsWith("/vendor/notifications")) return;
- dismissNotifCount();
- }, [dismissNotifCount, location]);
+ if (!location.startsWith("/vendor/notifications") || notifUnreadCount <= 0) return;
+ queryClient.setQueryData(["/api/vendor/notifications/unread-count"], { unreadCount: 0 });
+ void apiRequest("POST", "/api/vendor/notifications/mark-seen")
+ .then(() =>
+ queryClient.invalidateQueries({ queryKey: ["/api/vendor/notifications/unread-count"] }),
+ )
+ .catch(() =>
+ queryClient.invalidateQueries({ queryKey: ["/api/vendor/notifications/unread-count"] }),
+ );
+ }, [notifUnreadCount, location, queryClient]);
 
  const { data: bookingUnreadData } = useQuery<{ unreadCount: number }>({
  queryKey: ["/api/vendor/bookings/unread-count"],
@@ -183,8 +189,8 @@ export function VendorSidebar({ className, showWarningBadge = false, onWarningBa
  {item.key === "messages" && visibleUnreadCount > 0 ? (
  <SidebarCountBadge count={visibleUnreadCount} className="text-[#f5f0e8]" />
  ) : null}
- {item.key === "notifications" && visibleNotifCount > 0 ? (
- <SidebarCountBadge count={visibleNotifCount} className="text-[#f5f0e8]" />
+ {item.key === "notifications" && notifUnreadCount > 0 ? (
+ <SidebarCountBadge count={notifUnreadCount} className="text-[#f5f0e8]" />
  ) : null}
  {item.key === "bookings" && bookingUnreadCount > 0 ? (
  <SidebarCountBadge count={bookingUnreadCount} className="text-[#f5f0e8]" />

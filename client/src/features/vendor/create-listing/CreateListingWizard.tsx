@@ -18,6 +18,7 @@ import { ServiceAreaStep } from "./steps/ServiceAreaStep";
 import { LogisticsStep } from "./steps/LogisticsStep";
 import { MediaStep } from "./steps/MediaStep";
 import { AttachAddonsStep } from "./steps/AttachAddonsStep";
+import { AttachToListingsStep } from "./steps/AttachToListingsStep";
 import { PackagesStep } from "./steps/PackagesStep";
 import type { ListingType } from "./wizardTypes";
 import { getStepsForListingType } from "./wizardTypes";
@@ -75,7 +76,7 @@ const CATEGORY_OPTIONS = [
 
 type ListingCategory = (typeof CATEGORY_OPTIONS)[number]["value"];
 type ListingHelperCategory = "rental" | "venue" | "service" | "caterer";
-type StepId = "basics" | "perfectFor" | "packages" | "bookingPricing" | "serviceArea" | "logistics" | "media" | "attachAddons";
+type StepId = "basics" | "perfectFor" | "packages" | "bookingPricing" | "serviceArea" | "logistics" | "media" | "attachAddons" | "attachToListings";
 type PricingUnit = "per_day" | "per_hour";
 type BookingType = "instant" | "request";
 type TravelFeeType = "flat" | "per_mile" | "per_hour";
@@ -244,6 +245,10 @@ const STEP_META: Record<
  attachAddons: {
  icon: Paperclip,
  description: "Optional upgrades for customers.",
+ },
+ attachToListings: {
+ icon: Paperclip,
+ description: "Offer this add-on on your listings.",
  },
 };
 
@@ -832,7 +837,7 @@ export function CreateListingWizard({ onClose, initialListingType, parentListing
  const dimensionWidth = showDimensionsSection ? parseDimensionNumber(draft.dimensionWidth) : null;
  const dimensionLength = showDimensionsSection ? parseDimensionNumber(draft.dimensionLength) : null;
  const dimensionHeight = showDimensionsSection ? parseDimensionNumber(draft.dimensionHeight) : null;
- const instantBookEnabled = draft.category === "Rental" ? true : draft.bookingType === "instant";
+ const instantBookEnabled = draft.bookingType === "instant";
 
  const centerLat = draft.serviceCenter?.lat ?? draft.serviceLocation?.lat ?? null;
  const centerLng = draft.serviceCenter?.lng ?? draft.serviceLocation?.lng ?? null;
@@ -857,7 +862,7 @@ export function CreateListingWizard({ onClose, initialListingType, parentListing
 
  instantBookEnabled,
  allowPreBookingContact: draft.allowPreBookingContact,
- bookingType: draft.category === "Rental" ? "instant" : draft.bookingType,
+ bookingType: draft.bookingType,
  pricingUnit: draft.pricingUnit,
  rate: price,
  price,
@@ -2013,6 +2018,8 @@ export function CreateListingWizard({ onClose, initialListingType, parentListing
            <PackagesStep
              listingId={listingId}
              category={draft.category}
+             draft={draft}
+             setDraft={setDraft}
              onPackageCountChange={setPackageCount}
              showValidation={Boolean(attemptedStepAdvance.packages)}
            />
@@ -2027,6 +2034,10 @@ export function CreateListingWizard({ onClose, initialListingType, parentListing
              listingId={listingId}
              onCreateNewAddon={handleCreateNewAddon}
            />
+         )}
+
+         {currentStep === "attachToListings" && (
+           <AttachToListingsStep addonListingId={listingId} />
          )}
          </div>
          </div>

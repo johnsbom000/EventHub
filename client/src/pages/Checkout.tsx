@@ -24,7 +24,6 @@ import { LocationPicker } from "@/components/LocationPicker";
 import { MapLocationPicker } from "@/components/MapLocationPicker";
 import type { LocationResult } from "@/types/location";
 import { resolveAssetUrl } from "@/lib/runtimeUrls";
-import { useFeeRates } from "@/hooks/useFeeRates";
 import { TimeInput } from "@/components/ui/TimeInput";
 
 type CheckoutRouteParams = { listingId: string };
@@ -61,6 +60,8 @@ type CheckoutPendingPaymentDraft = {
   bookingId: string;
   idempotencyKey: string;
   createdAt: string;
+  eventDate: string;
+  quantity: number;
 };
 
 function createCheckoutIdempotencyKey() {
@@ -285,7 +286,6 @@ function CheckoutContent({
   stripeConfigError: string | null;
 }) {
   const { t } = useTranslation();
-  const { customerFeeRate } = useFeeRates();
   const [path, setLocation] = useLocation();
   const [, params] = useRoute<CheckoutRouteParams>("/checkout/:listingId");
   const listingId =
@@ -440,7 +440,9 @@ function CheckoutContent({
         parsed &&
         parsed.listingId === listingId &&
         typeof parsed.bookingId === "string" &&
-        typeof parsed.idempotencyKey === "string"
+        typeof parsed.idempotencyKey === "string" &&
+        typeof parsed.eventDate === "string" &&
+        typeof parsed.quantity === "number"
       ) {
         setPendingPaymentDraft(parsed);
       }
@@ -899,11 +901,18 @@ function CheckoutContent({
     typeof data?.availableQuantity === "number" && Number.isFinite(data.availableQuantity) && data.availableQuantity > 0
       ? Math.floor(data.availableQuantity)
       : 1;
-  const normalizedQuantity = Math.max(1, Math.min(quantity, maxAvailableQuantity));
+  // Only clamp to the listing's max once `data` has loaded. Before then,
+  // `data` is undefined → maxAvailableQuantity falls back to 1, which would
+  // otherwise reset the quantity carried over from the listing detail page
+  // (e.g. ?quantity=3) down to 1 before the real availability is known.
+  const normalizedQuantity = data
+    ? Math.max(1, Math.min(quantity, maxAvailableQuantity))
+    : Math.max(1, quantity);
   useEffect(() => {
+    if (!data) return;
     if (quantity === normalizedQuantity) return;
     setQuantity(normalizedQuantity);
-  }, [normalizedQuantity, quantity]);
+  }, [data, normalizedQuantity, quantity]);
   const hourlyDurationHours = useMemo(() => {
     if (!isHourlyBooking) return null;
     const startMinutes = parseTimeToMinutes(eventStartTime);
@@ -1041,8 +1050,7 @@ function CheckoutContent({
       ? Math.round((baseSubtotal + addonSubtotalCents + logisticsSubtotal) * activeDiscountPercent / 100)
       : 0;
   const discountedSubtotal = Math.max(0, baseSubtotal + addonSubtotalCents + logisticsSubtotal - discountAmountCents);
-  const customerFeeAmount = Math.round(discountedSubtotal * customerFeeRate);
-  const customerTotal = discountedSubtotal + customerFeeAmount;
+  const customerTotal = discountedSubtotal;
 
   async function handleSubmitOrder() {
     setSubmitError(null);
@@ -1141,9 +1149,9 @@ function CheckoutContent({
         }).catch(() => undefined);
       }
 
-      let bookingId = pendingPaymentDraft?.bookingId || "";
-
-      if (!bookingId) {
+      // Create a booking for a given idempotency key. Extracted so we can mint a
+      // brand-new booking (fresh key) if a reused one turns out to be unpayable.
+      const createBookingWithKey = async (idemKey: string): Promise<string> => {
         const bookingRes = await fetch("/api/bookings", {
           method: "POST",
           headers: {
@@ -1169,7 +1177,7 @@ function CheckoutContent({
             specialRequests: customerNotes?.trim() || undefined,
             customerNotes: customerNotes?.trim() || undefined,
             customerQuestions: customerQuestions?.trim() || undefined,
-            idempotencyKey: activeIdempotencyKey,
+            idempotencyKey: idemKey,
             finalPaymentStrategy: "immediately",
             promoCode: appliedPromo ? appliedPromo.code : undefined,
             packageId: selectedPackageId || undefined,
@@ -1183,42 +1191,96 @@ function CheckoutContent({
           throw new Error((bookingJson?.error || "Checkout failed") + detail);
         }
 
-        bookingId = typeof bookingJson?.id === "string" ? bookingJson.id : "";
-        if (!bookingId) {
+        const newBookingId = typeof bookingJson?.id === "string" ? bookingJson.id : "";
+        if (!newBookingId) {
           throw new Error("Booking was created, but booking ID is missing. Please try again.");
         }
         if (typeof bookingJson?.pendingReason === "string") {
           setBookingPendingReason(bookingJson.pendingReason);
         }
+        return newBookingId;
+      };
+
+      const initializePayment = async (id: string) => {
+        const res = await fetch(
+          `/api/bookings/${encodeURIComponent(id)}/initialize-payment`,
+          {
+            method: "POST",
+            headers: {
+              "Content-Type": "application/json",
+              Authorization: `Bearer ${token}`,
+            },
+            body: JSON.stringify({}),
+          }
+        );
+        const json = await res.json().catch(() => ({}));
+        return { ok: res.ok, status: res.status, json };
+      };
+
+      const saveDraft = (id: string, key: string) => {
+        const draft: CheckoutPendingPaymentDraft = {
+          listingId: data?.id ?? listingId ?? "",
+          bookingId: id,
+          idempotencyKey: key,
+          createdAt: new Date().toISOString(),
+          eventDate,
+          quantity: normalizedQuantity,
+        };
+        persistPendingPaymentDraft(draft);
+      };
+
+      // Only resume a saved booking when it matches THIS checkout — same listing,
+      // date and quantity. A draft from an earlier session (different date, or a
+      // booking whose 30-minute hold has since expired) must not be replayed, or
+      // initialize-payment 409s with "no longer payable".
+      const draftReusable =
+        Boolean(pendingPaymentDraft?.bookingId) &&
+        pendingPaymentDraft?.listingId === (data?.id ?? listingId) &&
+        pendingPaymentDraft?.eventDate === eventDate &&
+        pendingPaymentDraft?.quantity === normalizedQuantity;
+
+      if (!draftReusable && pendingPaymentDraft) {
+        // Drop the mismatched draft AND its idempotency key — reusing the key
+        // would make the server hand back the same stale booking.
+        persistPendingPaymentDraft(null);
       }
 
-      const pendingDraft: CheckoutPendingPaymentDraft = {
-        listingId: data?.id ?? listingId ?? "",
-        bookingId,
-        idempotencyKey: activeIdempotencyKey,
-        createdAt: new Date().toISOString(),
-      };
-      persistPendingPaymentDraft(pendingDraft);
+      let bookingIdempotencyKey = draftReusable ? activeIdempotencyKey : createCheckoutIdempotencyKey();
+      if (typeof window !== "undefined" && listingId) {
+        window.localStorage.setItem(getCheckoutIdempotencyStorageKey(listingId), bookingIdempotencyKey);
+      }
+
+      let bookingId = draftReusable ? (pendingPaymentDraft?.bookingId || "") : "";
+      if (!bookingId) {
+        bookingId = await createBookingWithKey(bookingIdempotencyKey);
+      }
+      saveDraft(bookingId, bookingIdempotencyKey);
 
       setSubmitStage("initializing-payment");
-      const initPaymentRes = await fetch(
-        `/api/bookings/${encodeURIComponent(bookingId)}/initialize-payment`,
-        {
-          method: "POST",
-          headers: {
-            "Content-Type": "application/json",
-            Authorization: `Bearer ${token}`,
-          },
-          body: JSON.stringify({}),
+      let initResult = await initializePayment(bookingId);
+
+      // Self-heal: a reused booking that's no longer payable (expired/cancelled/
+      // failed) returns 409. Discard it, mint a fresh booking with a new key, and
+      // retry initialize-payment exactly once so the customer isn't stranded.
+      if (!initResult.ok && initResult.status === 409) {
+        persistPendingPaymentDraft(null);
+        bookingIdempotencyKey = createCheckoutIdempotencyKey();
+        if (typeof window !== "undefined" && listingId) {
+          window.localStorage.setItem(getCheckoutIdempotencyStorageKey(listingId), bookingIdempotencyKey);
         }
-      );
-      const initPaymentJson = await initPaymentRes.json().catch(() => ({}));
-      if (!initPaymentRes.ok) {
-        throw new Error(initPaymentJson?.error || "Unable to initialize payment");
+        bookingId = await createBookingWithKey(bookingIdempotencyKey);
+        saveDraft(bookingId, bookingIdempotencyKey);
+        initResult = await initializePayment(bookingId);
+      }
+
+      if (!initResult.ok) {
+        throw new Error((initResult.json as any)?.error || "Unable to initialize payment");
       }
 
       const clientSecret =
-        typeof initPaymentJson?.clientSecret === "string" ? initPaymentJson.clientSecret : "";
+        typeof (initResult.json as any)?.clientSecret === "string"
+          ? (initResult.json as any).clientSecret
+          : "";
       if (!clientSecret) {
         throw new Error("Payment initialization response is missing a client secret");
       }
@@ -1920,11 +1982,6 @@ function CheckoutContent({
                 </div>
               ) : null}
 
-              <div className="flex items-center justify-between">
-                <span className="text-sm text-muted-foreground">{t("checkout.orderSummaryServiceFee")}</span>
-                <span className="font-medium">{formatUsdFromCents(customerFeeAmount)}</span>
-              </div>
-
               {securityDepositCents > 0 ? (
                 <div className="flex items-center justify-between">
                   <span className="text-sm text-muted-foreground">
@@ -2021,7 +2078,9 @@ function CheckoutContent({
                       : t("checkout.placeOrderLoading.confirmingPayment")
                   : pendingPaymentDraft
                     ? t("checkout.placeOrderResume", { total: formatUsdFromCents(customerTotal) })
-                    : t("checkout.placeOrder", { total: formatUsdFromCents(customerTotal) })}
+                    : data?.instantBookEnabled === false
+                      ? t("checkout.requestToBook")
+                      : t("checkout.bookNow")}
               </Button>
             </div>
           </div>

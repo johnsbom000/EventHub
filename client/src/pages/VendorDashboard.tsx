@@ -2,8 +2,9 @@ import { useTranslation } from "react-i18next";
 import React, { useEffect, useMemo, useState } from "react";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { useAuth0 } from "@auth0/auth0-react";
-import { Link, useLocation } from "wouter";
+import { useLocation } from "wouter";
 import VendorShell from "@/components/VendorShell";
+import VendorBillingPanel from "@/components/VendorBillingPanel";
 
 
 import { Button } from "@/components/ui/button";
@@ -33,7 +34,7 @@ import {
 import { cn } from "@/lib/utils";
 
 
-import { Calendar, DollarSign, Users, TrendingUp, Loader2, Copy, Check } from "lucide-react";
+import { Calendar, DollarSign, Users, TrendingUp, Loader2, Copy, Check, Sparkles, Lock } from "lucide-react";
 
 type VendorMe = {
  id?: string | null;
@@ -49,15 +50,9 @@ type VendorMe = {
  hasActiveVendorProfile?: boolean | null;
  needsNewVendorProfileOnboarding?: boolean | null;
  shopActive?: boolean | null;
- isMarqueeVendor?: boolean | null;
- marqueeVendorNumber?: number | null;
- marqueeHolidayBookingsUsed?: number | null;
- marqueeHolidayBonusBookings?: number | null;
- marqueeActivatedAt?: string | null;
- marqueeHolidayEndsAt?: string | null;
- marqueeRateEndsAt?: string | null;
- marqueeCustomerFeeEndsAt?: string | null;
- referralCode?: string | null;
+ isPro?: boolean | null;
+ canUseAnalytics?: boolean | null;
+ canUseGoogleSync?: boolean | null;
 };
 
 type VacationBlock = {
@@ -73,6 +68,7 @@ type VendorStats = {
  revenueGrowth?: number | null;
  profileViews?: number | null;
  profileViewsGrowth?: number | null;
+ analyticsLocked?: boolean | null; // true when advanced analytics is gated (Free tier)
 };
 
 type VendorProfileResponse = {
@@ -359,6 +355,9 @@ export default function VendorDashboard() {
  queryKey: ["/api/vendor/stats"],
  enabled: isAuthenticated && !isAuthLoading,
  });
+ // Advanced analytics (trends, profile views, recent activity) is Pro-only.
+ // Lifetime totals (bookings + revenue) stay visible to Free vendors.
+ const analyticsLocked = Boolean(stats?.analyticsLocked) || vendorAccount?.canUseAnalytics === false;
  const googleConnectionStatus = (vendorAccount?.googleConnectionStatus || "disconnected").toLowerCase();
  const isGoogleConnected = googleConnectionStatus === "connected";
  const hasSelectedGoogleCalendar = Boolean(vendorAccount?.googleCalendarId);
@@ -471,7 +470,6 @@ export default function VendorDashboard() {
  const [homeBaseLocationDraft, setHomeBaseLocationDraft] = useState<{ lat: number; lng: number } | null>(null);
  const [serviceRadiusMilesDraft, setServiceRadiusMilesDraft] = useState<number>(0);
  const [isStripeSetupLoading, setIsStripeSetupLoading] = useState(false);
- const [referralLinkCopied, setReferralLinkCopied] = useState(false);
  const [isGoogleCalendarConnectLoading, setIsGoogleCalendarConnectLoading] = useState(false);
  const [selectedGoogleCalendarId, setSelectedGoogleCalendarId] = useState("");
  const [pendingGoogleCalendarSelection, setPendingGoogleCalendarSelection] =
@@ -1037,18 +1035,6 @@ export default function VendorDashboard() {
  },
  });
 
- const handleCopyReferralLink = async () => {
- if (!vendorAccount?.referralCode) return;
- const link = `${window.location.origin}/?ref=${vendorAccount.referralCode}`;
- try {
-  await navigator.clipboard.writeText(link);
-  setReferralLinkCopied(true);
-  setTimeout(() => setReferralLinkCopied(false), 2000);
- } catch {
-  toast({ title: "Copy failed", description: "Copy the link manually.", variant: "destructive" });
- }
- };
-
  const handleCompletePaymentSetup = async () => {
  try {
  setIsStripeSetupLoading(true);
@@ -1309,6 +1295,7 @@ export default function VendorDashboard() {
 
  <div className="space-y-0">
  <div className="grid grid-cols-1 gap-4 md:grid-cols-[minmax(0,1fr)_auto_minmax(0,1fr)_auto_minmax(0,1fr)] md:gap-0">
+ {/* Total bookings — lifetime total always visible; monthly trend is Pro-only */}
  <div className="px-5 py-4">
  <div className="mb-3 flex items-center justify-between">
  <h2 className="font-heading text-[20px] leading-none tracking-tight">{t("vendorDashboard.totalBookings")}</h2>
@@ -1317,15 +1304,20 @@ export default function VendorDashboard() {
  <div className="text-2xl font-bold" data-testid="stat-bookings">
  {stats?.totalBookings ?? 0}
  </div>
+ {analyticsLocked ? (
+ <p className="text-sm text-muted-foreground">Lifetime</p>
+ ) : (
  <p className="text-sm text-muted-foreground flex items-center gap-1">
  <TrendingUp className="h-3 w-3" />+{stats?.bookingsThisMonth ?? 0} {t("vendorDashboard.thisMonth")}
  </p>
+ )}
  </div>
 
  <div className="hidden px-2 md:flex md:items-center md:justify-center">
  <div className={cn("h-14 w-px", dashboardDividerBgClass)} />
  </div>
 
+ {/* Revenue — lifetime total always visible; growth % is Pro-only */}
  <div className="px-5 py-4">
  <div className="mb-3 flex items-center justify-between">
  <h2 className="font-heading text-[20px] leading-none tracking-tight">{t("vendorDashboard.revenue")}</h2>
@@ -1334,16 +1326,33 @@ export default function VendorDashboard() {
  <div className="text-2xl font-bold" data-testid="stat-revenue">
  {formatMoneyFromCents(Number(stats?.revenue ?? 0))}
  </div>
+ {analyticsLocked ? (
+ <p className="text-sm text-muted-foreground">Lifetime</p>
+ ) : (
  <p className="text-sm text-muted-foreground flex items-center gap-1">
  <TrendingUp className="h-3 w-3" />
  {Number(stats?.revenueGrowth ?? 0) >= 0 ? "+" : ""}{stats?.revenueGrowth ?? 0}{t("vendorDashboard.fromLastMonth")}
  </p>
+ )}
  </div>
 
  <div className="hidden px-2 md:flex md:items-center md:justify-center">
  <div className={cn("h-14 w-px", dashboardDividerBgClass)} />
  </div>
 
+ {/* Profile views — Pro-only; replaced with an upsell for Free vendors */}
+ {analyticsLocked ? (
+ <a href="#vendor-billing" className="group flex flex-col justify-center px-5 py-4" data-testid="analytics-upsell">
+ <div className="mb-1 flex items-center gap-2">
+ <h2 className="font-heading text-[20px] leading-none tracking-tight text-[#4a6a7d]">{t("vendorDashboard.profileViews")}</h2>
+ <Lock className="h-3.5 w-3.5 text-[#4a6a7d]" />
+ </div>
+ <span className="inline-flex w-fit items-center gap-1 rounded-full bg-[#4a6a7d] px-3 py-1 text-sm font-medium text-[#f5f0e8] group-hover:bg-[#3f5c6d]">
+ <Sparkles className="h-3.5 w-3.5" /> Unlock with Pro
+ </span>
+ <p className="mt-1.5 text-xs text-muted-foreground">Profile views, monthly trends &amp; recent activity</p>
+ </a>
+ ) : (
  <div className="px-5 py-4">
  <div className="mb-3 flex items-center justify-between">
  <h2 className="font-heading text-[20px] leading-none tracking-tight">{t("vendorDashboard.profileViews")}</h2>
@@ -1357,48 +1366,10 @@ export default function VendorDashboard() {
  {Number(stats?.profileViewsGrowth ?? 0) >= 0 ? "+" : ""}{stats?.profileViewsGrowth ?? 0}{t("vendorDashboard.thisWeek")}
  </p>
  </div>
+ )}
  </div>
 
  <div className="space-y-8">
- {vendorAccount?.isMarqueeVendor && (
- <div className="rounded-xl border border-amber-300 bg-amber-50 p-6">
-   <div className="flex items-center gap-2 mb-4">
-     <span className="text-lg text-yellow-500">★</span>
-     <h2 className="font-heading text-[20px] leading-none tracking-tight text-amber-800">
-       Marquee Vendor
-     </h2>
-   </div>
-   {vendorAccount.referralCode && (
-     <div className="space-y-2 text-sm text-amber-900">
-       <p className="font-semibold">Refer a vendor</p>
-       <p className="text-xs text-amber-800">
-         Share this link to earn bonus bookings when a new vendor joins through you.
-       </p>
-       <div className="flex items-center gap-2">
-         <code className="flex-1 rounded bg-amber-100 px-2 py-1 text-[11px] font-mono text-amber-900 break-all select-all">
-           {`${window.location.origin}/?ref=${vendorAccount.referralCode}`}
-         </code>
-         <Button
-           variant="outline"
-           size="sm"
-           onClick={handleCopyReferralLink}
-           className="shrink-0 border-amber-300 text-amber-800 hover:bg-amber-100"
-           aria-label="Copy referral link"
-         >
-           {referralLinkCopied
-             ? <Check className="h-4 w-4 text-green-600" />
-             : <Copy className="h-4 w-4" />}
-         </Button>
-       </div>
-     </div>
-   )}
-   <div className="mt-4 pt-4 border-t border-amber-200">
-     <Link href="/vendor/marquee" className="text-sm font-medium text-amber-800 hover:text-amber-900 underline underline-offset-2">
-       View your program details →
-     </Link>
-   </div>
- </div>
- )}
 
  {showStripeSetupCard ? (
  <div className="rounded-xl border border-[hsl(var(--secondary-accent)/0.45)] bg-[hsl(var(--secondary-accent)/0.12)] p-6" data-testid="section-stripe-setup">
@@ -1434,7 +1405,19 @@ export default function VendorDashboard() {
  </div>
  ) : null}
 
- {!isGoogleConnected ? (
+ {vendorAccount?.canUseGoogleSync === false ? (
+ <div className="mt-6 flex flex-wrap items-center gap-3 rounded-lg border border-[#4a6a7d]/30 bg-[#4a6a7d]/8 p-4">
+ <Lock className="h-4 w-4 shrink-0 text-[#4a6a7d]" />
+ <p className="flex-1 text-sm text-[#2a3a42]">
+ Google Calendar sync is a Pro feature. Upgrade to automatically sync your bookings.
+ </p>
+ <Button asChild size="sm" className="bg-[#4a6a7d] hover:bg-[#3f5c6d] text-[#f5f0e8]">
+ <a href="#vendor-billing">
+ <Sparkles className="mr-1 h-3.5 w-3.5" /> Upgrade to Pro
+ </a>
+ </Button>
+ </div>
+ ) : !isGoogleConnected ? (
  <div className="mt-6">
  <Button
  onClick={handleConnectGoogleCalendar}
@@ -1773,6 +1756,137 @@ export default function VendorDashboard() {
  <div className={cn("my-4 border-t", dashboardDividerBorderClass)} />
  </div>
 
+ {/* ── Availability ─────────────────────────────────────────────────── */}
+ <section className="px-5 pt-4 pb-28 md:pb-32">
+ <h2 className="font-heading text-[20px] leading-none tracking-tight">{t("vendorDashboard.availability")}</h2>
+
+ {/* Shop Shutdown panel */}
+ <div className={cn(
+ "mt-6 rounded-lg border p-4",
+ shopActive
+ ? "border-[rgba(74,106,125,0.22)]"
+ : "border-destructive/40 bg-destructive/5"
+ )}>
+ <div className="flex items-start justify-between gap-4">
+ <div>
+ <h3 className="font-medium">
+ {t("vendorDashboard.shopStatus")}{" "}
+ <span className={shopActive ? "text-green-600 " : "text-destructive"}>
+ {shopActive ? t("vendorDashboard.shopOpen") : t("vendorDashboard.shopClosed")}
+ </span>
+ </h3>
+ <p className="mt-1 text-sm text-muted-foreground">
+ {shopActive
+ ? t("vendorDashboard.shopAcceptingBookings")
+ : t("vendorDashboard.shopClosedMessage")}
+ </p>
+ </div>
+ <Button
+ variant={shopActive ? "outline" : "default"}
+ onClick={() => {
+ if (shopActive) {
+ setIsShopShutdownDialogOpen(true);
+ } else {
+ toggleShopStatusMutation.mutate(true);
+ }
+ }}
+ disabled={toggleShopStatusMutation.isPending}
+ >
+ {toggleShopStatusMutation.isPending
+ ? t("vendorDashboard.updating")
+ : shopActive
+ ? t("vendorDashboard.closeShop")
+ : t("vendorDashboard.reopenShop")}
+ </Button>
+ </div>
+ {!shopActive && (
+ <div className="mt-3 rounded-md bg-destructive/10 border border-destructive/20 px-3 py-2 text-sm text-destructive">
+ {t("vendorDashboard.shopClosedWarning")}
+ </div>
+ )}
+ </div>
+
+ {/* Vacation Mode panel */}
+ <div className="mt-6 rounded-lg border border-[rgba(74,106,125,0.22)] p-4">
+ <h3 className="font-medium">{t("vendorDashboard.vacationBlocks")}</h3>
+
+ <div className="mt-4 grid grid-cols-1 gap-3 sm:grid-cols-[1fr_1fr_auto] sm:items-end">
+ <div className="space-y-1">
+ <label className="text-sm font-medium">{t("vendorDashboard.startDate")}</label>
+ <input
+ type="date"
+ value={vacationStart}
+ min={new Date().toISOString().split("T")[0]}
+ onChange={(e) => { setVacationStart(e.target.value); setVacationFormError(null); }}
+ className="w-full rounded-md border border-border bg-background px-3 py-2 text-sm"
+ />
+ </div>
+ <div className="space-y-1">
+ <label className="text-sm font-medium">{t("vendorDashboard.endDate")}</label>
+ <input
+ type="date"
+ value={vacationEnd}
+ min={vacationStart || new Date().toISOString().split("T")[0]}
+ onChange={(e) => { setVacationEnd(e.target.value); setVacationFormError(null); }}
+ className="w-full rounded-md border border-border bg-background px-3 py-2 text-sm"
+ />
+ </div>
+ <Button
+ onClick={() => {
+ if (!vacationStart || !vacationEnd) {
+ setVacationFormError(t("vendorDashboard.vacationErrorBothDates"));
+ return;
+ }
+ if (vacationEnd < vacationStart) {
+ setVacationFormError(t("vendorDashboard.vacationErrorEndDate"));
+ return;
+ }
+ addVacationBlockMutation.mutate({ startDate: vacationStart, endDate: vacationEnd });
+ }}
+ disabled={addVacationBlockMutation.isPending}
+ >
+ {addVacationBlockMutation.isPending ? t("vendorDashboard.adding") : t("vendorDashboard.addBlock")}
+ </Button>
+ </div>
+
+ {vacationFormError && (
+ <p className="mt-2 text-sm text-destructive">{vacationFormError}</p>
+ )}
+
+ <div className="mt-4">
+ {isVacationBlocksLoading ? (
+ <div className="text-sm text-muted-foreground">{t("vendorDashboard.loading")}</div>
+ ) : vacationBlocks.length === 0 ? (
+ <div className="rounded-lg border border-[rgba(74,106,125,0.22)] p-4 text-sm text-muted-foreground">
+ {t("vendorDashboard.noVacationBlocks")}
+ </div>
+ ) : (
+ <div className="space-y-2">
+ {vacationBlocks.map((block) => (
+ <div
+ key={block.id}
+ className="flex items-center justify-between rounded-lg border border-[rgba(74,106,125,0.22)] px-4 py-2"
+ >
+ <span className="text-sm">
+ {fmtDate(block.startDate)} → {fmtDate(block.endDate)}
+ </span>
+ <Button
+ variant="ghost"
+ size="sm"
+ className="text-destructive hover:text-destructive"
+ onClick={() => deleteVacationBlockMutation.mutate(block.id)}
+ disabled={deleteVacationBlockMutation.isPending && deleteVacationBlockMutation.variables === block.id}
+ >
+ {t("vendorDashboard.remove")}
+ </Button>
+ </div>
+ ))}
+ </div>
+ )}
+ </div>
+ </div>
+ </section>
+
  <section className="px-5 py-4">
  <h2 className="font-heading text-[20px] leading-none tracking-tight">{t("vendorDashboard.profileDetails")}</h2>
 
@@ -1990,137 +2104,9 @@ export default function VendorDashboard() {
  </div>
  </section>
 
- {/* ── Availability ─────────────────────────────────────────────────── */}
- <section className="px-5 pt-4 pb-28 md:pb-32">
- <h2 className="font-heading text-[20px] leading-none tracking-tight">{t("vendorDashboard.availability")}</h2>
-
- {/* Shop Shutdown panel */}
- <div className={cn(
- "mt-6 rounded-lg border p-4",
- shopActive
- ? "border-[rgba(74,106,125,0.22)]"
- : "border-destructive/40 bg-destructive/5"
- )}>
- <div className="flex items-start justify-between gap-4">
- <div>
- <h3 className="font-medium">
- {t("vendorDashboard.shopStatus")}{" "}
- <span className={shopActive ? "text-green-600 " : "text-destructive"}>
- {shopActive ? t("vendorDashboard.shopOpen") : t("vendorDashboard.shopClosed")}
- </span>
- </h3>
- <p className="mt-1 text-sm text-muted-foreground">
- {shopActive
- ? t("vendorDashboard.shopAcceptingBookings")
- : t("vendorDashboard.shopClosedMessage")}
- </p>
- </div>
- <Button
- variant={shopActive ? "outline" : "default"}
- onClick={() => {
- if (shopActive) {
- setIsShopShutdownDialogOpen(true);
- } else {
- toggleShopStatusMutation.mutate(true);
- }
- }}
- disabled={toggleShopStatusMutation.isPending}
- >
- {toggleShopStatusMutation.isPending
- ? t("vendorDashboard.updating")
- : shopActive
- ? t("vendorDashboard.closeShop")
- : t("vendorDashboard.reopenShop")}
- </Button>
- </div>
- {!shopActive && (
- <div className="mt-3 rounded-md bg-destructive/10 border border-destructive/20 px-3 py-2 text-sm text-destructive">
- {t("vendorDashboard.shopClosedWarning")}
- </div>
- )}
- </div>
-
- {/* Vacation Mode panel */}
- <div className="mt-6 rounded-lg border border-[rgba(74,106,125,0.22)] p-4">
- <h3 className="font-medium">{t("vendorDashboard.vacationBlocks")}</h3>
-
- <div className="mt-4 grid grid-cols-1 gap-3 sm:grid-cols-[1fr_1fr_auto] sm:items-end">
- <div className="space-y-1">
- <label className="text-sm font-medium">{t("vendorDashboard.startDate")}</label>
- <input
- type="date"
- value={vacationStart}
- min={new Date().toISOString().split("T")[0]}
- onChange={(e) => { setVacationStart(e.target.value); setVacationFormError(null); }}
- className="w-full rounded-md border border-border bg-background px-3 py-2 text-sm"
- />
- </div>
- <div className="space-y-1">
- <label className="text-sm font-medium">{t("vendorDashboard.endDate")}</label>
- <input
- type="date"
- value={vacationEnd}
- min={vacationStart || new Date().toISOString().split("T")[0]}
- onChange={(e) => { setVacationEnd(e.target.value); setVacationFormError(null); }}
- className="w-full rounded-md border border-border bg-background px-3 py-2 text-sm"
- />
- </div>
- <Button
- onClick={() => {
- if (!vacationStart || !vacationEnd) {
- setVacationFormError(t("vendorDashboard.vacationErrorBothDates"));
- return;
- }
- if (vacationEnd < vacationStart) {
- setVacationFormError(t("vendorDashboard.vacationErrorEndDate"));
- return;
- }
- addVacationBlockMutation.mutate({ startDate: vacationStart, endDate: vacationEnd });
- }}
- disabled={addVacationBlockMutation.isPending}
- >
- {addVacationBlockMutation.isPending ? t("vendorDashboard.adding") : t("vendorDashboard.addBlock")}
- </Button>
- </div>
-
- {vacationFormError && (
- <p className="mt-2 text-sm text-destructive">{vacationFormError}</p>
- )}
-
- <div className="mt-4">
- {isVacationBlocksLoading ? (
- <div className="text-sm text-muted-foreground">{t("vendorDashboard.loading")}</div>
- ) : vacationBlocks.length === 0 ? (
- <div className="rounded-lg border border-[rgba(74,106,125,0.22)] p-4 text-sm text-muted-foreground">
- {t("vendorDashboard.noVacationBlocks")}
- </div>
- ) : (
- <div className="space-y-2">
- {vacationBlocks.map((block) => (
- <div
- key={block.id}
- className="flex items-center justify-between rounded-lg border border-[rgba(74,106,125,0.22)] px-4 py-2"
- >
- <span className="text-sm">
- {fmtDate(block.startDate)} → {fmtDate(block.endDate)}
- </span>
- <Button
- variant="ghost"
- size="sm"
- className="text-destructive hover:text-destructive"
- onClick={() => deleteVacationBlockMutation.mutate(block.id)}
- disabled={deleteVacationBlockMutation.isPending && deleteVacationBlockMutation.variables === block.id}
- >
- {t("vendorDashboard.remove")}
- </Button>
- </div>
- ))}
- </div>
- )}
- </div>
- </div>
+ <section id="vendor-billing" className="scroll-mt-24 rounded-xl border border-[rgba(74,106,125,0.22)] p-6">
+ <VendorBillingPanel />
  </section>
-
 
  {/* Disconnect Google Calendar confirmation dialog */}
  <Dialog open={isDisconnectGoogleCalendarDialogOpen} onOpenChange={setIsDisconnectGoogleCalendarDialogOpen}>

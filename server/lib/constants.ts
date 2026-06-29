@@ -1,39 +1,37 @@
 // ─── Platform fee rates ───────────────────────────────────────────────────────
-// Read from env so they can be changed without a code deploy.
-export const VENDOR_FEE_RATE = parseFloat(process.env.VENDOR_FEE_RATE || "0.08");
-export const CUSTOMER_FEE_RATE = parseFloat(process.env.CUSTOMER_FEE_RATE || "0.05");
+// EventHub charges NO platform or service fees. These remain as named constants
+// (always 0) so the payment math and any callers still resolve cleanly. The env
+// overrides are intentionally ignored — fees are off by design, not config.
+// Future monetization is a vendor subscription, not per-transaction fees.
+export const VENDOR_FEE_RATE = 0;
+export const CUSTOMER_FEE_RATE = 0;
 
-// ─── Marquee Vendor program ───────────────────────────────────────────────────
-export const MARQUEE_VENDOR_MAX_SPOTS = 20;
-export const MARQUEE_HOLIDAY_BOOKING_COUNT = 20;   // fee holiday ends at N bookings…
-export const MARQUEE_HOLIDAY_DAYS = 30;             // …OR 30 days, whichever comes LAST
-export const MARQUEE_REFERRAL_BONUS_BOOKINGS = 5;  // each successful referral adds 5 bonus bookings
-export const MARQUEE_REFERRAL_BONUS_FEE_RATE = 0.04; // 4% on those bonus bookings (half the normal 8%)
-export const MARQUEE_VENDOR_FEE_RATE = 0.06;       // 6% for 24 months after holiday
-export const MARQUEE_RATE_MONTHS = 24;
-export const MARQUEE_CUSTOMER_FEE_RATE = 0.025;    // 2.5% customer fee for first 12 months
-export const MARQUEE_CUSTOMER_FEE_MONTHS = 12;
-export const MARQUEE_VISIBILITY_MONTHS = 12;        // search boost for first 12 months
+// ─── Vendor Pro subscription ──────────────────────────────────────────────────
+// Free tier = this many active listings at once, no analytics, no Google sync.
+// Pro = unlimited listings + analytics + calendar sync (the product as it works
+// today). See server/services/entitlementsService.ts for the entitlement logic.
+export const FREE_TIER_MAX_ACTIVE_LISTINGS = 1;
+export const PRO_TRIAL_PERIOD_DAYS = 30;
+// Stripe Price IDs for the Pro plan (created in the Stripe dashboard). Read from
+// env so the same code works across test/live without a redeploy.
+export const STRIPE_PRICE_PRO_MONTHLY = process.env.STRIPE_PRICE_PRO_MONTHLY || "";
+export const STRIPE_PRICE_PRO_ANNUAL = process.env.STRIPE_PRICE_PRO_ANNUAL || "";
+// Stripe coupon auto-applied at checkout to deliver the launch deal off the base
+// prices ($39 -> $29, $390 -> $290). Empty = no discount (charge base price).
+export const STRIPE_COUPON_PRO = process.env.STRIPE_COUPON_PRO || "";
 
-if (!Number.isFinite(VENDOR_FEE_RATE) || VENDOR_FEE_RATE <= 0 || VENDOR_FEE_RATE >= 1) {
-  throw new Error(
-    `Invalid VENDOR_FEE_RATE env var: "${process.env.VENDOR_FEE_RATE}". Must be a number between 0 (exclusive) and 1 (exclusive), e.g. "0.08" for 8%.`
-  );
-}
-if (!Number.isFinite(CUSTOMER_FEE_RATE) || CUSTOMER_FEE_RATE < 0 || CUSTOMER_FEE_RATE >= 1) {
-  throw new Error(
-    `Invalid CUSTOMER_FEE_RATE env var: "${process.env.CUSTOMER_FEE_RATE}". Must be a number between 0 (inclusive) and 1 (exclusive), e.g. "0.05" for 5%.`
-  );
-}
-
-// ─── Founding Vendor program ──────────────────────────────────────────────────
-export const FOUNDING_VENDOR_HOLIDAY_BOOKING_COUNT = 10; // 0% until N bookings…
-export const FOUNDING_VENDOR_HOLIDAY_DAYS = 14;          // …OR 14 days, whichever comes LAST
-export const FOUNDING_VENDOR_FEE_RATE = 0.06;            // 6% for 12 months after holiday
-export const FOUNDING_VENDOR_RATE_MONTHS = 12;
-export const FOUNDING_VENDOR_VISIBILITY_MONTHS = 6;      // search boost for 6 months
-export const FOUNDING_VENDOR_REFERRAL_BONUS_BOOKINGS = 2; // 2 extra bookings per referral
-export const FOUNDING_VENDOR_REFERRAL_BONUS_FEE_RATE = 0.04; // 4% on referral bonus bookings
+// ─── AI reply assistant (Pro-gated, metered) ──────────────────────────────────
+// Generates (never auto-sends) suggested replies for vendors in the chat section.
+// Each Pro vendor gets AI_INCLUDED_RESPONSES_PER_PERIOD drafts per billing month;
+// beyond that, overage auto-bills at AI_OVERAGE_PRICE_CENTS each (opt-out) or hard
+// stops (if the vendor opted out). Model is a constant so it's a one-line swap.
+export const AI_REPLY_MODEL = "claude-haiku-4-5";
+export const AI_INCLUDED_RESPONSES_PER_PERIOD = 200;
+export const AI_OVERAGE_PRICE_CENTS = 5;
+// Stripe Billing Meter event name + metered Price ID for AI-reply overage (created
+// in the Stripe dashboard / via setup). Read from env so test/live both work.
+export const STRIPE_AI_OVERAGE_METER_EVENT = process.env.STRIPE_AI_OVERAGE_METER_EVENT || "ai_reply_overage";
+export const STRIPE_PRICE_AI_OVERAGE = process.env.STRIPE_PRICE_AI_OVERAGE || "";
 
 // ─── Stripe fee estimation ────────────────────────────────────────────────────
 export const STRIPE_FEE_ESTIMATE_PERCENT = 0.029;

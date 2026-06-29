@@ -131,6 +131,7 @@ import {
   listingReviews,
   reviewReplies,
   vendorReferrals,
+  vendorInquiries,
 } from "@shared/schema";
 import {
   requireDualAuthAuth0,
@@ -166,7 +167,6 @@ import {
   sendDisputeResponseEmail,
   sendTravelFeeProposedEmail,
   sendTravelFeeRespondedEmail,
-  sendMarqueeInviteEmail,
 } from "../email";
 import { calculateRefund } from "../lib/calculateRefund";
 import {
@@ -290,15 +290,6 @@ import {
 import {
   VENDOR_FEE_RATE,
   CUSTOMER_FEE_RATE,
-  MARQUEE_VENDOR_MAX_SPOTS,
-  MARQUEE_HOLIDAY_BOOKING_COUNT,
-  MARQUEE_HOLIDAY_DAYS,
-  MARQUEE_REFERRAL_BONUS_BOOKINGS,
-  MARQUEE_VENDOR_FEE_RATE,
-  MARQUEE_RATE_MONTHS,
-  MARQUEE_CUSTOMER_FEE_RATE,
-  MARQUEE_CUSTOMER_FEE_MONTHS,
-  MARQUEE_VISIBILITY_MONTHS,
   STRIPE_FEE_ESTIMATE_PERCENT,
   STRIPE_FEE_ESTIMATE_FIXED_CENTS,
   VENDOR_ABSORBS_STRIPE_FEES,
@@ -854,19 +845,26 @@ app.post(
 
       const whereClause = and(...(conditions as any[]));
 
-      // Sort order — "recommended" prioritises marquee vendors (within visibility window) first, then newest
-      const now = new Date();
+      // Sort order — the default "recommended" sort applies a light Pro search
+      // boost: vendors with Pro in effect rank above free vendors, then newest
+      // first within each group. This is a soft tiebreak, NOT a hard top
+      // placement — a separate paid "Featured" slot is reserved for the future.
+      // The Pro condition mirrors getVendorEntitlements()'s `isPro` exactly
+      // (active/trialing/past_due, or an unexpired comp grant); keep them in sync.
+      // To disable the boost, drop `desc(proBoostExpr)` from the recommended case.
+      const proBoostExpr = drizzleSql`(
+        ${vendorAccounts.subscriptionStatus} IN ('active', 'trialing', 'past_due')
+        OR (
+          ${vendorAccounts.subscriptionStatus} = 'comp'
+          AND (${vendorAccounts.compEndsAt} IS NULL OR ${vendorAccounts.compEndsAt} > now())
+        )
+      )`;
       const orderBy: any[] =
         rawSort === "price-asc"
           ? [asc(vendorListings.priceCents)]
           : rawSort === "price-desc"
           ? [desc(vendorListings.priceCents)]
-          : [
-              desc(
-                drizzleSql`(${vendorAccounts.isMarqueeVendor} = true AND (${vendorAccounts.marqueeVisibilityEndsAt} IS NULL OR ${vendorAccounts.marqueeVisibilityEndsAt} > ${now}))`
-              ),
-              desc(vendorListings.createdAt),
-            ];
+          : [desc(proBoostExpr), desc(vendorListings.createdAt)];
 
       const selectShape = {
         id: vendorListings.id,
@@ -911,8 +909,6 @@ app.post(
         vendorId: vendorAccounts.id,
         vendorName: vendorAccounts.businessName,
         vendorOnlineProfiles: vendorProfiles.onlineProfiles,
-        isMarqueeVendor: vendorAccounts.isMarqueeVendor,
-        marqueeCustomerFeeEndsAt: vendorAccounts.marqueeCustomerFeeEndsAt,
       };
 
       // Fetch page + total count in parallel
@@ -1046,6 +1042,7 @@ app.post(
           tags: vendorListings.tags,
           popularFor: vendorListings.popularFor,
           instantBookEnabled: vendorListings.instantBookEnabled,
+          allowPreBookingContact: vendorListings.allowPreBookingContact,
           pricingUnit: vendorListings.pricingUnit,
           priceCents: vendorListings.priceCents,
           quantity: vendorListings.quantity,
@@ -1437,17 +1434,11 @@ app.post(
         channel_type?: string;
       };
 
-      // Only act on new messages in booking channels
-      if (
-        event.type !== "message.new" ||
-        event.channel_type !== "messaging" ||
-        !String(event.channel_id || "").startsWith("booking_")
-      ) {
-        return res.status(200).json({ ok: true });
-      }
-
-      const bookingId = String(event.channel_id || "").replace(/^booking_/, "");
-      if (!bookingId) {
+      // Act on new messages in booking channels and pre-booking inquiry channels
+      const channelId = String(event.channel_id || "");
+      const isBookingChannel = channelId.startsWith("booking_");
+      const isInquiryChannel = channelId.startsWith("inquiry_");
+      if (event.type !== "message.new" || (!isBookingChannel && !isInquiryChannel)) {
         return res.status(200).json({ ok: true });
       }
 
@@ -1461,6 +1452,8 @@ app.post(
         return res.status(200).json({ ok: true });
       }
 
+      if (isBookingChannel) {
+      const bookingId = channelId.replace(/^booking_/, "");
       void (async () => {
         try {
           const serverUrl = appUrl();
@@ -1541,6 +1534,82 @@ app.post(
           logger.warn("[stream webhook email] failed:", emailError?.message || emailError);
         }
       })();
+      }
+
+      if (isInquiryChannel) {
+      void (async () => {
+        try {
+          const serverUrl = appUrl();
+          const inqRows: any = await db.execute(drizzleSql`
+            select
+              vi.id                              as "inquiryId",
+              vi.vendor_account_id               as "vendorAccountId",
+              vi.vendor_msg_email_last_sent_at   as "vendorMsgLastSent",
+              vi.customer_msg_email_last_sent_at as "customerMsgLastSent",
+              u.email          as "customerEmail",
+              u.name           as "customerName",
+              va.email         as "vendorEmail",
+              va.business_name as "vendorName"
+            from vendor_inquiries vi
+            join users u on u.id = vi.customer_id
+            join vendor_accounts va on va.id = vi.vendor_account_id
+            where vi.stream_channel_id = ${channelId}
+            limit 1
+          `);
+          const inq = extractRows<{
+            inquiryId: string;
+            vendorAccountId: string;
+            vendorMsgLastSent: string | null;
+            customerMsgLastSent: string | null;
+            customerEmail: string;
+            customerName: string;
+            vendorEmail: string;
+            vendorName: string;
+          }>(inqRows)[0];
+          if (!inq) return;
+
+          const THIRTY_MINUTES_MS = 30 * 60 * 1000;
+          const now = new Date();
+
+          if (senderIsCustomer && inq.vendorEmail) {
+            // Customer messaged the vendor before booking — notify vendor (rate limited per inquiry)
+            const lastSent = inq.vendorMsgLastSent;
+            if (!lastSent || now.getTime() - new Date(lastSent).getTime() > THIRTY_MINUTES_MS) {
+              await sendNewMessageEmail(inq.vendorEmail, {
+                recipientName: inq.vendorName || "Vendor",
+                senderName: inq.customerName || "Customer",
+                messagePreview: messageText,
+                serverUrl,
+                recipientRole: "vendor",
+              });
+              await db
+                .update(vendorInquiries)
+                .set({ vendorMsgEmailLastSentAt: now })
+                .where(eq(vendorInquiries.id, inq.inquiryId));
+            }
+          } else if (senderIsVendor && inq.customerEmail) {
+            // Vendor replied to the inquiry — notify customer (rate limited per inquiry)
+            const lastSent = inq.customerMsgLastSent;
+            if (!lastSent || now.getTime() - new Date(lastSent).getTime() > THIRTY_MINUTES_MS) {
+              await sendNewMessageEmail(inq.customerEmail, {
+                recipientName: inq.customerName || "Customer",
+                senderName: inq.vendorName || "Vendor",
+                messagePreview: messageText,
+                serverUrl,
+                vendorAccountId: inq.vendorAccountId,
+                recipientRole: "customer",
+              });
+              await db
+                .update(vendorInquiries)
+                .set({ customerMsgEmailLastSentAt: now })
+                .where(eq(vendorInquiries.id, inq.inquiryId));
+            }
+          }
+        } catch (emailError: any) {
+          logger.warn("[stream webhook inquiry email] failed:", emailError?.message || emailError);
+        }
+      })();
+      }
 
       return res.status(200).json({ ok: true });
     } catch (error: any) {

@@ -1,4 +1,34 @@
 {
+    "ai": {
+      "draftReplyButton": "Draft a reply",
+      "drafting": "Drafting…",
+      "draftHint": "Pick a draft to edit before sending — nothing is sent automatically.",
+      "errorTitle": "AI reply",
+      "error": "Couldn't generate a reply. Please try again.",
+      "limitReached": "You've used all your included AI replies this month. Turn on pay-as-you-go in Billing to keep drafting.",
+      "proRequired": "AI replies are a Pro feature.",
+      "disabled": "Turn on the AI assistant in Billing to draft replies.",
+      "assistant": {
+        "title": "AI message assistant",
+        "desc": "Generate suggested replies to customers right in your inbox. You review and edit every draft — nothing sends automatically.",
+        "enableLabel": "Enable AI reply drafts",
+        "meter": "{{used}} / {{included}} replies used this month",
+        "resets": "Resets {{date}}",
+        "overageLabel": "Pay-as-you-go",
+        "overageHint": "After your monthly limit, extra replies are billed at ${{price}} each.",
+        "hardStopHint": "Drafting stops at {{included}} replies/month. Turn on to keep going with pay-as-you-go."
+      },
+      "faq": {
+        "title": "FAQ document",
+        "desc": "Upload a PDF of your FAQs and the assistant will use it to write better replies.",
+        "upload": "Upload PDF",
+        "replace": "Replace",
+        "remove": "Remove",
+        "pdfOnly": "PDF only, up to 10MB.",
+        "noText": "We couldn't read any text from that PDF.",
+        "uploadError": "Upload failed. Please try again."
+      }
+    },
   "nav": {
     "loginSignup": "Login / Sign up",
     "vendor": {
@@ -116,7 +146,6 @@
       "availableQuantity": "{{count}} identical unit available",
       "availableQuantity_plural": "{{count}} identical units available",
       "total": "Total",
-      "serviceFee": "A 5% service fee applies at checkout.",
       "cancellationPolicy": "Cancellation policy: ",
       "cancellationNone": "No cancellations.",
       "cancellationWithinHours": "Cancel at least {{hours}} hours before the event for a full refund.",
@@ -175,6 +204,7 @@
     "listings": "Listings",
     "messages": "Messages",
     "payments": "Payments",
+    "billing": "Billing",
     "discounts": "Discounts",
     "reviews": "Reviews",
     "notifications": "Notifications",
@@ -379,7 +409,7 @@
     "viewDetails": "View details",
     "feeBreakdown": "Fee Breakdown",
     "listingPrice": "Listing price",
-    "customerServiceFee": "Customer service fee (5%)",
+    "customerServiceFee": "Customer service fee",
     "customerTotal": "Customer total",
     "eventhubFee": "EventHub fee (8%)",
     "estimatedPayout": "Estimated payout",
@@ -778,7 +808,7 @@
     "s4Title": "4. Vendor Listings",
     "s4Body": "Vendors are solely responsible for the accuracy of their listings, including pricing, availability, and service descriptions. EventHub does not verify listing content.",
     "s5Title": "5. Bookings & Payments",
-    "s5Body": "All bookings are subject to vendor acceptance. Payments are processed through Stripe. EventHub charges a platform fee on each transaction. Vendors receive payouts minus the EventHub fee.",
+    "s5Body": "All bookings are subject to vendor acceptance. Payments are processed through Stripe. EventHub does not charge platform or service fees on bookings; vendors receive their full payout, less standard payment processing fees.",
     "s6Title": "6. Cancellations & Refunds",
     "s6Body": "Cancellation policies are set by individual vendors and are displayed on each listing. EventHub enforces the vendor's stated policy. Refunds are issued per that policy.",
     "s7Title": "7. Disputes",
@@ -913,7 +943,6 @@
     "orderSummarySetupFee": "Setup fee",
     "orderSummaryTakedownFee": "Takedown fee",
     "orderSummaryTravelFee": "Travel fee",
-    "orderSummaryServiceFee": "Service fee (5%)",
     "orderSummaryTotal": "Total",
     "orderSummaryTaxesLater": "Taxes calculated later",
     "cancellationPolicy": "Cancellation policy",
@@ -924,6 +953,8 @@
     "cardNumber": "Card Number",
     "termsDisclaimer": "By confirming this booking you agree to our Terms of Service, including payment authorization, the 72-hour dispute window from your event date, damage responsibility, and assumption of risk for personal injury.",
     "placeOrder": "Pay {{total}}",
+    "bookNow": "Book Now",
+    "requestToBook": "Request to Book",
     "placeOrderResume": "Resume payment {{total}}",
     "placeOrderLoading": {
       "creatingBooking": "Creating booking...",

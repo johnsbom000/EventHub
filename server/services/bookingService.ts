@@ -1,7 +1,8 @@
 import { db } from "../db";
-import { eq, and, ne } from "drizzle-orm";
+import { eq, and, ne, desc } from "drizzle-orm";
 import { vendorListings } from "@shared/schema";
 import { logger } from "../lib/logger";
+import { FREE_TIER_MAX_ACTIVE_LISTINGS } from "../lib/constants";
 import {
   asTrimmedString,
   parseIntegerValue,
@@ -68,6 +69,53 @@ export async function deactivateActiveListingsViolatingPublishGate(accountId?: s
   }
 
   return invalidIds.length;
+}
+
+/**
+ * Enforces the free-tier active-listing cap when a vendor drops from Pro to Free
+ * (subscription canceled or complimentary grant expired). Keeps the newest
+ * FREE_TIER_MAX_ACTIVE_LISTINGS active listings and moves the rest to "inactive".
+ *
+ * Listings are only deactivated, never deleted — the vendor keeps all their data
+ * and can re-activate a different one or upgrade to restore them all.
+ *
+ * package_item rows are excluded (managed by their parent container's lifecycle),
+ * matching deactivateActiveListingsViolatingPublishGate and the publish-cap gate.
+ */
+export async function deactivateExtraActiveListingsForFreeTier(accountId: string): Promise<number> {
+  const trimmed = asTrimmedString(accountId);
+  if (!trimmed) return 0;
+
+  const activeListings = await db
+    .select({ id: vendorListings.id })
+    .from(vendorListings)
+    .where(
+      and(
+        eq(vendorListings.accountId, trimmed),
+        eq(vendorListings.status, "active"),
+        ne(vendorListings.listingType, "package_item")
+      )
+    )
+    .orderBy(desc(vendorListings.createdAt));
+
+  // Keep the newest N; deactivate everything after that.
+  const toDeactivate = activeListings.slice(FREE_TIER_MAX_ACTIVE_LISTINGS).map((l) => l.id);
+
+  for (const listingId of toDeactivate) {
+    await db
+      .update(vendorListings)
+      .set({ status: "inactive", updatedAt: new Date() })
+      .where(eq(vendorListings.id, listingId));
+  }
+
+  if (toDeactivate.length > 0) {
+    logger.info(
+      { accountId: trimmed, count: toDeactivate.length },
+      "[free tier] deactivated extra active listings on downgrade"
+    );
+  }
+
+  return toDeactivate.length;
 }
 
 export async function checkListingAvailabilityForBookingRequest(params: {
@@ -143,8 +191,13 @@ export async function sendCancellationEmailsAsync(params: {
   };
   refundCents: number;
   serverUrl: string;
+  // Optional itemized receipt data (customer-cancel path). When provided, both
+  // emails show a line-by-line refund summary and the held-travel-fee notice.
+  serviceRefundCents?: number;
+  depositRefundCents?: number;
+  travelFeeHeld?: { amountCents: number; refundDeadlineLabel: string };
 }): Promise<void> {
-  const { booking, refundCents, serverUrl } = params;
+  const { booking, refundCents, serverUrl, serviceRefundCents, depositRefundCents, travelFeeHeld } = params;
   try {
     const tasks: Promise<any>[] = [];
     if (booking.customerEmail) {
@@ -158,6 +211,9 @@ export async function sendCancellationEmailsAsync(params: {
           cancelledBy: "customer",
           totalAmountCents: booking.totalAmount,
           refundAmountCents: refundCents,
+          serviceRefundCents,
+          depositRefundCents,
+          travelFeeHeld,
           serverUrl,
         })
       );
@@ -171,6 +227,9 @@ export async function sendCancellationEmailsAsync(params: {
           listingTitle: booking.listingTitle || "Service",
           role: "vendor",
           cancelledBy: "customer",
+          serviceRefundCents,
+          depositRefundCents,
+          travelFeeHeld,
           serverUrl,
         })
       );

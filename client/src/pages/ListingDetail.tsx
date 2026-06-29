@@ -973,11 +973,10 @@ export default function ListingDetailPage() {
    return sum + unitPrice * quantity;
  }, 0);
  const subtotalDollars = baseAmountDollars + addonTotalCents / 100;
- const serviceFeeEst = Math.round(subtotalDollars * 100 * 0.05) / 100;
  const depositDollars = data.securityDepositEnabled && (data.securityDepositCents ?? 0) > 0
    ? (data.securityDepositCents ?? 0) / 100
    : 0;
- const totalDollars = subtotalDollars + serviceFeeEst + depositDollars;
+ const totalDollars = subtotalDollars + depositDollars;
  return (
  <div className="rounded-2xl border border-border bg-muted/30 p-5 space-y-3">
  <h3 className="text-sm font-semibold text-foreground">Price breakdown</h3>
@@ -1004,10 +1003,6 @@ export default function ListingDetailPage() {
      </div>
    );
  })}
- <div className="flex justify-between gap-2">
-   <span className="text-muted-foreground">Service fee (est.)</span>
-   <span className="font-medium">{money(serviceFeeEst)}</span>
- </div>
  {depositDollars > 0 && (
    <div className="flex justify-between gap-2">
      <span className="text-muted-foreground">Security deposit <span className="text-xs">(refundable)</span></span>
@@ -1392,7 +1387,6 @@ function ReservationCard({
  <span className="text-muted-foreground">{t("listing.reservationCard.total")}</span>
  <span className="font-medium">{quantityTotalText ?? t("listing.reservationCard.notConfigured")}</span>
  </div>
- <div className="text-sm text-muted-foreground mt-1">{t("listing.reservationCard.serviceFee")}</div>
  </div>
 
  <div className="border-t border-border pt-3 text-sm text-muted-foreground">

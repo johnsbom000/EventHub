@@ -54,7 +54,8 @@ export function bookingRequestedTemplate(params: BookingRequestedParams): {
   html: string;
   text: string;
 } {
-  const { recipientName, counterpartName, eventDate, listingTitle, totalAmountCents, role, isInstant, serverUrl, addOns } = params;
+  const { recipientName, counterpartName, eventDate, listingTitle, totalAmountCents, role, isInstant, serverUrl, addOns, outsideServiceRadius, feeLabel } = params;
+  const radiusFeeLabel = feeLabel ?? "travel fee";
 
   const dashboardUrl = role === "vendor"
     ? `${serverUrl}/vendor/bookings`
@@ -86,11 +87,22 @@ export function bookingRequestedTemplate(params: BookingRequestedParams): {
       </div>`
     : "";
 
+  const outsideRadiusNote = outsideServiceRadius
+    ? role === "customer"
+      ? `<div style="background:#fff8f0;border-left:3px solid ${CORAL};padding:12px 16px;border-radius:4px;margin-bottom:20px;">
+          <p style="margin:0;font-size:13px;color:#b45309;">Your event is outside ${counterpartName}'s standard service area, so they may propose a ${radiusFeeLabel} for you to review and pay separately before the event.</p>
+        </div>`
+      : `<div style="background:#fff8f0;border-left:3px solid ${CORAL};padding:12px 16px;border-radius:4px;margin-bottom:20px;">
+          <p style="margin:0;font-size:13px;color:#b45309;">This event is outside your service area — you can propose a ${radiusFeeLabel} to the customer from your bookings dashboard.</p>
+        </div>`
+    : "";
+
   const body = `
     <h2 style="margin:0 0 16px;font-family:'Playfair Display',Georgia,serif;font-size:22px;color:${SLATE};">${heading}</h2>
     <p style="margin:0 0 12px;font-size:15px;line-height:1.6;">Hi ${recipientName},</p>
     <p style="margin:0 0 20px;font-size:15px;line-height:1.6;">${intro}</p>
     ${urgencyBanner}
+    ${outsideRadiusNote}
     <table style="width:100%;border-collapse:collapse;margin-bottom:24px;">
       <tr><td style="padding:8px 0;border-bottom:1px solid #f0eeec;font-size:14px;color:#666;">Service</td><td style="padding:8px 0;border-bottom:1px solid #f0eeec;font-size:14px;font-weight:600;text-align:right;">${listingTitle}</td></tr>
       ${(addOns ?? []).map(a => `<tr><td style="padding:8px 0;border-bottom:1px solid #f0eeec;font-size:14px;color:#666;">${a.title}</td><td style="padding:8px 0;border-bottom:1px solid #f0eeec;font-size:14px;text-align:right;">${formatCents(a.priceCents)}</td></tr>`).join("")}
@@ -113,6 +125,14 @@ export function bookingRequestedTemplate(params: BookingRequestedParams): {
         ? `New instant booking from ${counterpartName}.`
         : `New booking request from ${counterpartName}. Please accept or decline within 7 days or the booking will be automatically cancelled.`,
     ``,
+    ...(outsideServiceRadius
+      ? [
+          role === "customer"
+            ? `Note: Your event is outside ${counterpartName}'s standard service area, so they may propose a ${radiusFeeLabel} for you to review and pay separately before the event.`
+            : `Note: This event is outside your service area — you can propose a ${radiusFeeLabel} to the customer from your bookings dashboard.`,
+          ``,
+        ]
+      : []),
     `Service: ${listingTitle}`,
     ...(addOns ?? []).map(a => `${a.title}: ${formatCents(a.priceCents)}`),
     `Event Date: ${eventDate}`,

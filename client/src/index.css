@@ -882,3 +882,34 @@
   border-bottom: 1px solid hsl(var(--border));
   background: hsl(var(--background));
 }
+
+/* ===== Launch-deal moving palette outline =====
+   A masked, animated gradient ring that flows through the EventHub palette:
+   pink (#e07a6a) → turquoise (#9dd4cc) → gold (#c9a06a) → navy (#20243d).
+   Only the border animates (padding-box vs border-box mask XOR); content is
+   untouched. Thickness is tunable per element via --ring. Used on the landing
+   page launch-deal placements (sticky bar + closing-CTA deal panel). */
+.deal-outline { position: relative; }
+.deal-outline::before {
+  content: "";
+  position: absolute;
+  inset: 0;
+  border-radius: inherit;
+  padding: var(--ring, 2px);
+  background: linear-gradient(115deg,
+    #e07a6a, #9dd4cc, #c9a06a, #20243d, #e07a6a, #9dd4cc);
+  background-size: 300% 300%;
+  animation: deal-flow 7s linear infinite;
+  -webkit-mask: linear-gradient(#000 0 0) content-box, linear-gradient(#000 0 0);
+          mask: linear-gradient(#000 0 0) content-box, linear-gradient(#000 0 0);
+  -webkit-mask-composite: xor;
+          mask-composite: exclude;
+  pointer-events: none;
+}
+@keyframes deal-flow {
+  0%   { background-position: 0% 50%; }
+  100% { background-position: 300% 50%; }
+}
+@media (prefers-reduced-motion: reduce) {
+  .deal-outline::before { animation: none; }
+}

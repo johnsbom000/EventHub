@@ -51,7 +51,6 @@ import {
 } from "../services/customerAuth";
 import {
   ensureStripeCustomer,
-  recomputeBookingPaymentStatusInTx,
   markBookingAsPaymentFailedInTx,
   type LockedPaymentPayoutContext,
   loadPaymentPayoutContextForUpdateInTx,
@@ -168,7 +167,6 @@ import {
   sendDisputeResponseEmail,
   sendTravelFeeProposedEmail,
   sendTravelFeeRespondedEmail,
-  sendMarqueeInviteEmail,
 } from "../email";
 import { calculateRefund } from "../lib/calculateRefund";
 import {
@@ -293,19 +291,6 @@ import {
 import {
   VENDOR_FEE_RATE,
   CUSTOMER_FEE_RATE,
-  MARQUEE_VENDOR_MAX_SPOTS,
-  MARQUEE_HOLIDAY_BOOKING_COUNT,
-  MARQUEE_HOLIDAY_DAYS,
-  MARQUEE_REFERRAL_BONUS_BOOKINGS,
-  MARQUEE_REFERRAL_BONUS_FEE_RATE,
-  MARQUEE_VENDOR_FEE_RATE,
-  MARQUEE_RATE_MONTHS,
-  MARQUEE_CUSTOMER_FEE_RATE,
-  MARQUEE_CUSTOMER_FEE_MONTHS,
-  MARQUEE_VISIBILITY_MONTHS,
-  FOUNDING_VENDOR_HOLIDAY_BOOKING_COUNT,
-  FOUNDING_VENDOR_FEE_RATE,
-  FOUNDING_VENDOR_REFERRAL_BONUS_FEE_RATE,
   STRIPE_FEE_ESTIMATE_PERCENT,
   STRIPE_FEE_ESTIMATE_FIXED_CENTS,
   VENDOR_ABSORBS_STRIPE_FEES,
@@ -669,14 +654,44 @@ export function registerBookingRoutes(app: Express): void {
       // ── Calculate refund amounts ──────────────────────────────────────────
       const bookingRefundCents = safeRefundCents(payment, refundCalc.grossRefundCents);
 
-      // Travel fee refunds at the same percentage as the booking payment.
-      const travelFeeRefunds = travelFeePayments.map((tfp) => ({
-        payment: tfp,
-        refundCents: safeRefundCents(
-          tfp,
-          Math.floor(tfp.amount * refundCalc.grossRefundPercentage / 100)
-        ),
-      }));
+      // Travel/delivery fees are NOT refunded immediately on a *customer*
+      // cancellation. They are HELD for a fixed window (DISPUTE_WINDOW_HOURS) so
+      // the vendor can claim real travel costs already incurred, via a
+      // travel_cost_recovery dispute. If no dispute is filed, runTravelFeeRefundJob
+      // auto-refunds the held fee to the customer once the window elapses.
+      // (Vendor-initiated cancellations refund travel fees immediately in their
+      // own handlers — no hold applies there.)
+      const heldTravelFeePayments = travelFeePayments.filter(
+        (tfp) =>
+          isPaymentSucceededStatus(tfp.status) &&
+          Math.max(0, tfp.amount - (tfp.refundAmount ?? 0)) > 0
+      );
+      const heldTravelFeeCents = heldTravelFeePayments.reduce(
+        (sum, tfp) => sum + Math.max(0, tfp.amount - (tfp.refundAmount ?? 0)),
+        0
+      );
+      const travelHoldDeadline =
+        heldTravelFeeCents > 0
+          ? new Date(now.getTime() + DISPUTE_WINDOW_HOURS * 60 * 60 * 1000)
+          : null;
+      // Human-readable deadline in the event's local timezone, e.g. "Jun 27 at 3:14 PM".
+      const travelHoldDeadlineLabel = travelHoldDeadline
+        ? (() => {
+            const tz = booking.eventTimezone || "America/Denver";
+            const datePart = new Intl.DateTimeFormat("en-US", {
+              month: "short",
+              day: "numeric",
+              timeZone: tz,
+            }).format(travelHoldDeadline);
+            const timePart = new Intl.DateTimeFormat("en-US", {
+              hour: "numeric",
+              minute: "2-digit",
+              hour12: true,
+              timeZone: tz,
+            }).format(travelHoldDeadline);
+            return `${datePart} at ${timePart}`;
+          })()
+        : null;
 
       // Security deposits protect against event damage, so they are refunded on
       // cancellation independently of the listing's service cancellation policy.
@@ -702,16 +717,9 @@ export function registerBookingRoutes(app: Express): void {
           });
         }
 
-        for (const { payment: tfp, refundCents } of travelFeeRefunds) {
-          if (refundCents > 0) {
-            await refundBookingPayment({
-              paymentIntentId: tfp.stripePaymentIntentId,
-              amount: refundCents,
-              reason: "requested_by_customer",
-              idempotencyKey: `customer-cancel-travelfee:${bookingId}:${tfp.id}:${refundCents}`,
-            });
-          }
-        }
+        // NOTE: travel/delivery fees are intentionally NOT refunded here — they
+        // are held (see the held-travel logic below) and settled later by the
+        // sweep job or a dispute resolution.
 
         if (refundDepositNow && depositRefundCents > 0) {
           await refundBookingPayment({
@@ -728,9 +736,9 @@ export function registerBookingRoutes(app: Express): void {
       }
 
       // ── Persist in a transaction ───────────────────────────────────────────
-      const totalRefundedToCustomer = bookingRefundCents +
-        travelFeeRefunds.reduce((sum, r) => sum + r.refundCents, 0) +
-        depositRefundCents;
+      // Travel fees are held, not refunded now, so they are excluded from the
+      // immediate refund total shown to the customer.
+      const totalRefundedToCustomer = bookingRefundCents + depositRefundCents;
 
       await db.transaction(async (tx) => {
         // Update main booking payment
@@ -761,25 +769,21 @@ export function registerBookingRoutes(app: Express): void {
           })
           .where(eq(payments.id, payment.id));
 
-        // Update each travel fee payment
-        for (const { payment: tfp, refundCents } of travelFeeRefunds) {
-          if (refundCents > 0) {
-            const existingTfRefund = typeof tfp.refundAmount === "number" ? tfp.refundAmount : 0;
-            const newTfRefundTotal = existingTfRefund + refundCents;
-            await tx
-              .update(payments)
-              .set({
-                status: (newTfRefundTotal >= tfp.amount ? "refunded" : "partially_refunded") as any,
-                refundAmount: newTfRefundTotal,
-                refundReason: reason ? `customer_cancel: ${reason}` : "customer_cancel",
-                refundedAt: now,
-                payoutStatus: "cancelled",
-                payoutEligibleAt: null,
-                payoutBlockedReason: "customer_cancellation",
-                payoutAdjustedAmount: 0,
-              })
-              .where(eq(payments.id, tfp.id));
-          }
+        // Hold each travel/delivery fee instead of refunding it. The payment row
+        // stays "succeeded" (the charge is real and still on the platform
+        // balance); we mark its payout as blocked so the auto-payout worker never
+        // transfers it. runTravelFeeRefundJob (or a dispute resolution) settles it
+        // later. We do NOT set refundAmount/refundedAt here — nothing is refunded yet.
+        for (const tfp of heldTravelFeePayments) {
+          await tx
+            .update(payments)
+            .set({
+              payoutStatus: "blocked",
+              payoutEligibleAt: null,
+              payoutBlockedReason: "travel_fee_hold",
+              payoutAdjustedAmount: 0,
+            })
+            .where(eq(payments.id, tfp.id));
         }
 
         // Update security deposit payment if refunded now
@@ -811,11 +815,27 @@ export function registerBookingRoutes(app: Express): void {
 
       // ── Emails + Google Calendar sync (fire-and-forget) ───────────────────
       const serverUrl = appUrl();
-      void sendCancellationEmailsAsync({ booking, refundCents: totalRefundedToCustomer, serverUrl });
+      const travelHoldHtmlAmount = `$${(heldTravelFeeCents / 100).toFixed(2)}`;
+      const travelHoldReceipt =
+        heldTravelFeeCents > 0 && travelHoldDeadlineLabel
+          ? { amountCents: heldTravelFeeCents, refundDeadlineLabel: travelHoldDeadlineLabel }
+          : undefined;
+      void sendCancellationEmailsAsync({
+        booking,
+        refundCents: totalRefundedToCustomer,
+        serverUrl,
+        serviceRefundCents: bookingRefundCents,
+        depositRefundCents: refundDepositNow ? depositRefundCents : 0,
+        travelFeeHeld: travelHoldReceipt,
+      });
       void syncBookingToGoogleCalendarSafely(bookingId, "/api/bookings/:bookingId/cancel google-sync");
       await sendBookingSystemMessage({
         bookingId,
-        text: `This booking has been cancelled by the customer.${reason ? ` Reason: ${reason}.` : ""}`,
+        text: `This booking has been cancelled by the customer.${reason ? ` Reason: ${reason}.` : ""}${
+          travelHoldReceipt
+            ? ` Travel fee of ${travelHoldHtmlAmount} is on hold and is set to be refunded to the customer on ${travelHoldDeadlineLabel}.`
+            : ""
+        }`,
         metadata: { action: "customer_cancelled", reason: reason ?? null },
       });
       if (booking.vendorAccountId) {
@@ -824,8 +844,25 @@ export function registerBookingRoutes(app: Express): void {
           recipientType: "vendor",
           type: "booking_cancelled",
           title: "Booking cancelled",
-          message: `A booking for ${booking.eventDate}${reason ? ` was cancelled by the customer. Reason: ${reason}` : " has been cancelled by the customer"}.`,
+          message: `A booking for ${booking.eventDate}${reason ? ` was cancelled by the customer. Reason: ${reason}` : " has been cancelled by the customer"}.${
+            travelHoldReceipt
+              ? ` Travel fee of ${travelHoldHtmlAmount} is on hold until ${travelHoldDeadlineLabel} — request reimbursement before then if you incurred travel costs.`
+              : ""
+          }`,
           link: `/vendor/bookings?bookingId=${encodeURIComponent(bookingId)}`,
+          read: false,
+        }).catch(() => {});
+      }
+      if (booking.customerId) {
+        createNotification({
+          recipientId: booking.customerId,
+          recipientType: "customer",
+          type: "booking_cancelled",
+          title: "Booking cancelled",
+          message: travelHoldReceipt
+            ? `Your booking for ${booking.eventDate} was cancelled. Travel fee of ${travelHoldHtmlAmount} is on hold and is set to be refunded to you on ${travelHoldDeadlineLabel}.`
+            : `Your booking for ${booking.eventDate} has been cancelled.`,
+          link: `/dashboard/events`,
           read: false,
         }).catch(() => {});
       }
@@ -839,6 +876,14 @@ export function registerBookingRoutes(app: Express): void {
         refundPercentage: refundCalc.grossRefundPercentage,
         daysUntilEvent: refundCalc.daysUntilEvent,
         stripeRefundId: bookingStripeRefund?.id ?? null,
+        // Travel/delivery fee held for the dispute window (null when there was none).
+        travelFeeHeld:
+          heldTravelFeeCents > 0
+            ? {
+                amountCents: heldTravelFeeCents,
+                refundDeadlineIso: travelHoldDeadline?.toISOString() ?? null,
+              }
+            : null,
         message: totalRefundedToCustomer > 0
           ? `Booking cancelled. A refund of $${(totalRefundedToCustomer / 100).toFixed(2)} has been issued.`
           : "Booking cancelled. No refund applies per the cancellation policy.",
@@ -1191,17 +1236,6 @@ export function registerBookingRoutes(app: Express): void {
           googleConnectionStatus: vendorAccounts.googleConnectionStatus,
           googleCalendarId: vendorAccounts.googleCalendarId,
           shopActive: vendorAccounts.shopActive,
-          isMarqueeVendor: vendorAccounts.isMarqueeVendor,
-          marqueeHolidayBookingsUsed: vendorAccounts.marqueeHolidayBookingsUsed,
-          marqueeHolidayBonusBookings: vendorAccounts.marqueeHolidayBonusBookings,
-          marqueeHolidayEndsAt: vendorAccounts.marqueeHolidayEndsAt,
-          marqueeRateEndsAt: vendorAccounts.marqueeRateEndsAt,
-          marqueeCustomerFeeEndsAt: vendorAccounts.marqueeCustomerFeeEndsAt,
-          isFoundingVendor: vendorAccounts.isFoundingVendor,
-          foundingBenefitBookingsUsed: vendorAccounts.foundingBenefitBookingsUsed,
-          foundingReferralBonusBookingsRemaining: vendorAccounts.foundingReferralBonusBookingsRemaining,
-          foundingHolidayEndsAt: vendorAccounts.foundingHolidayEndsAt,
-          foundingRateEndsAt: vendorAccounts.foundingRateEndsAt,
         })
         .from(vendorAccounts)
         .where(and(eq(vendorAccounts.id, vendorIdToLoad), eq(vendorAccounts.active, true)))
@@ -1582,73 +1616,13 @@ export function registerBookingRoutes(app: Express): void {
       const discountedSubtotal = Math.max(0, subtotalAmount - discountAmountCents);
       // ── End discount resolution ────────────────────────────────────────────
 
-      // ── Marquee Vendor fee rates ───────────────────────────────────────────
-      // Fee holiday: 0% vendor fee until 20 bookings AND 30 days have both passed.
-      // (whichever comes LAST — holiday stays active until both thresholds are crossed)
-      // After holiday: 6% for 24 months, then standard 8%.
-      // Customer fee: 2.5% for first 12 months, then standard 5%.
-      const isMarqueeVendor = vendorAccount.isMarqueeVendor ?? false;
-      const now = new Date();
-      let effectiveCustomerFeeRate = CUSTOMER_FEE_RATE;
-      let effectiveVendorFeeRate = VENDOR_FEE_RATE;
-      if (isMarqueeVendor) {
-        // Customer fee window
-        const customerFeeActive = vendorAccount.marqueeCustomerFeeEndsAt
-          ? now < vendorAccount.marqueeCustomerFeeEndsAt
-          : true; // window not yet set (pre-activation) — default to active
-        effectiveCustomerFeeRate = customerFeeActive ? MARQUEE_CUSTOMER_FEE_RATE : CUSTOMER_FEE_RATE;
-
-        // Main holiday: active while EITHER booking limit OR time limit is still true
-        // (both must expire before the holiday ends — whichever comes LAST)
-        const bookingsUsed = vendorAccount.marqueeHolidayBookingsUsed ?? 0;
-        const bonusBookings = vendorAccount.marqueeHolidayBonusBookings ?? 0;
-        const underMainBookingLimit = bookingsUsed < MARQUEE_HOLIDAY_BOOKING_COUNT;
-        const underTimeLimit = vendorAccount.marqueeHolidayEndsAt
-          ? now < vendorAccount.marqueeHolidayEndsAt
-          : true; // pre-activation
-        const mainHolidayActive = underMainBookingLimit || underTimeLimit;
-
-        // Bonus phase: 4% on referral bonus bookings, only after main holiday ends,
-        // and only within the 24-month marquee window
-        const bonusPhaseActive =
-          !mainHolidayActive &&
-          bonusBookings > 0 &&
-          bookingsUsed < MARQUEE_HOLIDAY_BOOKING_COUNT + bonusBookings;
-
-        if (mainHolidayActive) {
-          effectiveVendorFeeRate = 0;
-        } else if (bonusPhaseActive) {
-          effectiveVendorFeeRate = MARQUEE_REFERRAL_BONUS_FEE_RATE;
-        } else if (vendorAccount.marqueeRateEndsAt && now < vendorAccount.marqueeRateEndsAt) {
-          effectiveVendorFeeRate = MARQUEE_VENDOR_FEE_RATE;
-        } else {
-          effectiveVendorFeeRate = VENDOR_FEE_RATE;
-        }
-      } else if (vendorAccount.isFoundingVendor) {
-        // Founding Vendor fee rates
-        // Holiday: 0% while EITHER booking count < 10 OR current time < foundingHolidayEndsAt
-        const fBookingsUsed = vendorAccount.foundingBenefitBookingsUsed ?? 0;
-        const fBonusRemaining = vendorAccount.foundingReferralBonusBookingsRemaining ?? 0;
-        const fUnderBookingLimit = fBookingsUsed < FOUNDING_VENDOR_HOLIDAY_BOOKING_COUNT;
-        const fUnderTimeLimit = vendorAccount.foundingHolidayEndsAt
-          ? now < vendorAccount.foundingHolidayEndsAt
-          : true; // pre-activation: treat holiday as still active
-        const fHolidayActive = fUnderBookingLimit || fUnderTimeLimit;
-
-        const fBonusPhaseActive = !fHolidayActive && fBonusRemaining > 0;
-
-        if (fHolidayActive) {
-          effectiveVendorFeeRate = 0;
-        } else if (fBonusPhaseActive) {
-          effectiveVendorFeeRate = FOUNDING_VENDOR_REFERRAL_BONUS_FEE_RATE;
-        } else if (vendorAccount.foundingRateEndsAt && now < vendorAccount.foundingRateEndsAt) {
-          effectiveVendorFeeRate = FOUNDING_VENDOR_FEE_RATE;
-        } else {
-          effectiveVendorFeeRate = VENDOR_FEE_RATE;
-        }
-      }
-
-      const customerFee = Math.round(discountedSubtotal * effectiveCustomerFeeRate);
+      // ── Fees ───────────────────────────────────────────────────────────────
+      // EventHub charges no platform or service fees. The customer pays exactly
+      // the (discounted) listing price plus any security deposit, and the vendor
+      // receives the full service subtotal. customerFee / platformFee remain as
+      // zeroed values so downstream snapshot/payout fields stay populated.
+      const customerFee = 0;
+      const platformFee = 0;
       // Security deposit: collected from customer on top of the service total but never
       // paid out to the vendor. Refunded to the customer after the dispute window closes
       // with no open vendor claim, or held by admin until a dispute is resolved.
@@ -1659,24 +1633,21 @@ export function registerBookingRoutes(app: Express): void {
       // Collect the full amount up-front at booking time — service total + security deposit
       // in a single Stripe PaymentIntent. The security deposit is tracked separately in the
       // payments table so it can be partially refunded without touching the service amount.
-      // vendorPayout / platformFee are calculated on the service subtotal only — the
-      // security deposit is excluded from payout calculations.
-      const enforcedTotalAmount = discountedSubtotal + customerFee + securityDepositCents;
-      const platformFee = Math.round(discountedSubtotal * effectiveVendorFeeRate);
-      const vendorPayout = discountedSubtotal - platformFee;
+      const enforcedTotalAmount = discountedSubtotal + securityDepositCents;
+      const vendorPayout = discountedSubtotal;
       const enforcedDepositAmount = enforcedTotalAmount;
       const bookingLifecycle = resolveBookingLifecycleMode({
         listingCategory: listingRow?.category ?? null,
         listingInstantBookEnabled: listingRow?.instantBookEnabled ?? false,
       });
-      // Any booking whose event falls outside the listing's service radius must go
-      // pending so the vendor can propose a travel fee or decline before confirming,
-      // regardless of category or instant-book setting.
+      // Booking status follows the listing's booking type only: instant-book auto-confirms,
+      // request-to-book stays pending for the vendor to accept/decline. Falling outside the
+      // service radius no longer forces a booking pending — the travel/delivery fee is handled
+      // separately via the proposal flow (which keys off outsideServiceRadius), on top of the
+      // already-confirmed (or pending) booking.
       const isDeliveryCategory =
         listingRow?.category === "Rentals" || listingRow?.category === "Catering";
-      const idealBookingStatus = bookingOutsideServiceRadius
-        ? "pending"
-        : bookingLifecycle.initialStatus;
+      const idealBookingStatus = bookingLifecycle.initialStatus;
       const bookingVendorProfileId = resolvedVendorProfileId ?? null;
       const customerNotes =
         typeof data.customerNotes === "string" && data.customerNotes.trim().length > 0
@@ -2143,7 +2114,7 @@ export function registerBookingRoutes(app: Express): void {
             bookingStatus === "confirmed"
               ? `Your booking for ${data.eventDate} is confirmed.`
               : `Your booking request for ${data.eventDate} was sent.`,
-          link: "/dashboard/events",
+          link: `/booking/${encodeURIComponent(booking.id)}`,
           read: false,
         }),
       ]);
@@ -2177,8 +2148,9 @@ export function registerBookingRoutes(app: Express): void {
       const serverUrl = appUrl();
       const emailTasks: Promise<any>[] = [];
       // isInstant reflects whether the booking was *actually* confirmed immediately.
-      // Outside-radius delivery bookings are forced to pending even when the listing
-      // has instant book enabled, so we use bookingStatus rather than isInstantBooking.
+      // Instant-book listings auto-confirm (even outside the service radius — the travel/
+      // delivery fee is proposed separately); request-to-book listings stay pending. We key
+      // off the resolved bookingStatus so the email copy always matches the booking's state.
       const emailIsInstant = bookingStatus === "confirmed";
       const emailFeeLabel: "delivery fee" | "travel fee" =
         isDeliveryCategory ? "delivery fee" : "travel fee";
@@ -2378,7 +2350,7 @@ export function registerBookingRoutes(app: Express): void {
             type: "travel_fee_proposed" as any,
             title: "Travel fee proposed",
             message: `${vendorRow?.businessName ?? "Your vendor"} proposed a travel/delivery fee of ${amountFormatted} for your booking on ${booking.eventDate}.`,
-            link: "/dashboard/events",
+            link: `/dashboard/messages?bookingId=${encodeURIComponent(bookingId)}`,
             read: false,
           }).catch(() => {});
 
@@ -2838,138 +2810,4 @@ export function registerBookingRoutes(app: Express): void {
     }
   );
 
-  app.post(
-    "/api/bookings/:bookingId/refund",
-    paymentRateLimiter,
-    requireCustomerAnyAuth,
-    async (req, res) => {
-      try {
-        const { bookingId } = req.params;
-        const requestedReason =
-          typeof req.body?.reason === "string" ? req.body.reason.trim().slice(0, 300) : "";
-        const customerAuth = await resolveCustomerAuthFromRequest(req, { createIfMissing: false });
-        if (!customerAuth?.id) {
-          return res.status(401).json({ error: "Customer authentication required" });
-        }
-
-        const [booking] = await db
-          .select({
-            id: bookings.id,
-            customerId: bookings.customerId,
-            depositPaidAt: bookings.depositPaidAt,
-          })
-          .from(bookings)
-          .where(eq(bookings.id, bookingId))
-          .limit(1);
-
-        if (!booking) {
-          return res.status(404).json({ error: "Booking not found" });
-        }
-        if (!booking.customerId || booking.customerId !== customerAuth.id) {
-          return res.status(403).json({ error: "You do not have access to this booking" });
-        }
-
-        if (booking.depositPaidAt) {
-          const hoursSinceDeposit = (Date.now() - booking.depositPaidAt.getTime()) / (1000 * 60 * 60);
-          if (hoursSinceDeposit > 72) {
-            return res.status(400).json({ error: "Refund period has expired (72 hours)" });
-          }
-        }
-
-        const depositPaymentRows = await db
-          .select({
-            id: payments.id,
-            bookingId: payments.bookingId,
-            stripePaymentIntentId: payments.stripePaymentIntentId,
-            amount: payments.amount,
-            status: payments.status,
-          })
-          .from(payments)
-          .where(and(eq(payments.bookingId, bookingId), eq(payments.paymentType, "booking")))
-          .orderBy(desc(payments.createdAt))
-          .limit(1);
-        const depositPayment = depositPaymentRows[0];
-
-        if (!depositPayment) {
-          return res.status(400).json({ error: "No deposit payment found" });
-        }
-        if (depositPayment.status === "refunded") {
-          return res.json({ message: "Booking refund already processed" });
-        }
-        if (!isPaymentSucceededStatus(depositPayment.status)) {
-          return res.status(400).json({ error: "Deposit payment is not in a refundable state" });
-        }
-
-        const stripeReason =
-          requestedReason === "duplicate" ||
-          requestedReason === "fraudulent" ||
-          requestedReason === "requested_by_customer"
-            ? requestedReason
-            : "requested_by_customer";
-
-        const { refundBookingPayment } = await import("../stripe");
-        const refund = await refundBookingPayment({
-          paymentIntentId: depositPayment.stripePaymentIntentId,
-          reason: stripeReason,
-          idempotencyKey: `booking-refund:${bookingId}:${depositPayment.id}`,
-        });
-
-        const now = new Date();
-        await db.transaction(async (tx) => {
-          await tx
-            .update(payments)
-            .set({
-              status: "refunded",
-              refundAmount: depositPayment.amount,
-              refundReason: requestedReason || stripeReason,
-              refundedAt: now,
-              payoutStatus: "cancelled",
-              payoutEligibleAt: null,
-              payoutBlockedReason: "fully_refunded",
-              payoutAdjustedAmount: 0,
-            })
-            .where(eq(payments.id, depositPayment.id));
-
-          // Cancel any other pending payments on this booking (belt-and-suspenders)
-          await tx
-            .update(payments)
-            .set({
-              status: "refunded",
-              refundAmount: depositPayment.amount,
-              refundReason: requestedReason || stripeReason,
-              refundedAt: now,
-              payoutStatus: "cancelled",
-              payoutEligibleAt: null,
-              payoutBlockedReason: "fully_refunded",
-              payoutAdjustedAmount: 0,
-            })
-            .where(
-              and(
-                eq(payments.bookingId, bookingId),
-                eq(payments.status, "pending")
-              )
-            );
-
-          await tx
-            .update(bookings)
-            .set({
-              status: "cancelled",
-              paymentStatus: "refunded",
-              cancellationReason: requestedReason || stripeReason,
-              cancelledAt: now,
-              updatedAt: now,
-            })
-            .where(eq(bookings.id, bookingId));
-
-          await recomputeBookingPaymentStatusInTx(tx, bookingId);
-        });
-
-        await syncBookingToGoogleCalendarSafely(bookingId, "/api/bookings/:bookingId/refund google-sync");
-
-        return res.json({ refund, message: "Booking cancelled and refund processed" });
-      } catch {
-        return res.status(500).json({ error: "Unable to process refund" });
-      }
-    }
-  );
 }

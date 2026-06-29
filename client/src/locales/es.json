@@ -1,4 +1,34 @@
 {
+    "ai": {
+      "draftReplyButton": "Redactar una respuesta",
+      "drafting": "Redactando…",
+      "draftHint": "Elige un borrador para editarlo antes de enviar — nada se envía automáticamente.",
+      "errorTitle": "Respuesta con IA",
+      "error": "No se pudo generar una respuesta. Inténtalo de nuevo.",
+      "limitReached": "Has usado todas tus respuestas de IA incluidas este mes. Activa el pago por uso en Facturación para seguir redactando.",
+      "proRequired": "Las respuestas con IA son una función Pro.",
+      "disabled": "Activa el asistente de IA en Facturación para redactar respuestas.",
+      "assistant": {
+        "title": "Asistente de mensajes con IA",
+        "desc": "Genera respuestas sugeridas para tus clientes desde tu bandeja. Tú revisas y editas cada borrador — nada se envía automáticamente.",
+        "enableLabel": "Activar borradores de respuesta con IA",
+        "meter": "{{used}} / {{included}} respuestas usadas este mes",
+        "resets": "Se restablece el {{date}}",
+        "overageLabel": "Pago por uso",
+        "overageHint": "Tras tu límite mensual, cada respuesta adicional cuesta ${{price}}.",
+        "hardStopHint": "La redacción se detiene en {{included}} respuestas/mes. Actívalo para continuar con pago por uso."
+      },
+      "faq": {
+        "title": "Documento de preguntas frecuentes",
+        "desc": "Sube un PDF con tus preguntas frecuentes y el asistente lo usará para escribir mejores respuestas.",
+        "upload": "Subir PDF",
+        "replace": "Reemplazar",
+        "remove": "Quitar",
+        "pdfOnly": "Solo PDF, hasta 10 MB.",
+        "noText": "No pudimos leer texto de ese PDF.",
+        "uploadError": "Error al subir. Inténtalo de nuevo."
+      }
+    },
   "nav": {
     "loginSignup": "Iniciar sesión / Registrarse",
     "vendor": {
@@ -116,7 +146,6 @@
       "availableQuantity": "{{count}} unidad idéntica disponible",
       "availableQuantity_plural": "{{count}} unidades idénticas disponibles",
       "total": "Total",
-      "serviceFee": "Se aplica una tarifa de servicio del 5% al finalizar la compra.",
       "cancellationPolicy": "Política de cancelación: ",
       "cancellationNone": "Sin cancelaciones.",
       "cancellationWithinHours": "Cancela al menos {{hours}} horas antes del evento para un reembolso completo.",
@@ -175,6 +204,7 @@
     "listings": "Listados",
     "messages": "Mensajes",
     "payments": "Pagos",
+    "billing": "Facturación",
     "discounts": "Descuentos",
     "reviews": "Reseñas",
     "notifications": "Notificaciones",
@@ -379,7 +409,7 @@
     "viewDetails": "Ver detalles",
     "feeBreakdown": "Desglose de Tarifas",
     "listingPrice": "Precio del listado",
-    "customerServiceFee": "Tarifa de servicio al cliente (5%)",
+    "customerServiceFee": "Tarifa de servicio al cliente",
     "customerTotal": "Total del cliente",
     "eventhubFee": "Tarifa de EventHub (8%)",
     "estimatedPayout": "Pago estimado",
@@ -778,7 +808,7 @@
     "s4Title": "4. Listados de Proveedores",
     "s4Body": "Los proveedores son los únicos responsables de la exactitud de sus listados, incluyendo precios, disponibilidad y descripciones de servicios. EventHub no verifica el contenido de los listados.",
     "s5Title": "5. Reservas y Pagos",
-    "s5Body": "Todas las reservas están sujetas a la aceptación del proveedor. Los pagos se procesan a través de Stripe. EventHub cobra una tarifa de plataforma en cada transacción. Los proveedores reciben pagos menos la tarifa de EventHub.",
+    "s5Body": "Todas las reservas están sujetas a la aceptación del proveedor. Los pagos se procesan a través de Stripe. EventHub no cobra tarifas de plataforma ni de servicio en las reservas; los proveedores reciben su pago completo, menos las tarifas estándar de procesamiento de pagos.",
     "s6Title": "6. Cancelaciones y Reembolsos",
     "s6Body": "Las políticas de cancelación las establecen los proveedores individuales y se muestran en cada listado. EventHub aplica la política declarada del proveedor. Los reembolsos se emiten según esa política.",
     "s7Title": "7. Disputas",
@@ -913,7 +943,6 @@
     "orderSummarySetupFee": "Tarifa de instalación",
     "orderSummaryTakedownFee": "Tarifa de desmontaje",
     "orderSummaryTravelFee": "Tarifa de viaje",
-    "orderSummaryServiceFee": "Tarifa de servicio (5%)",
     "orderSummaryTotal": "Total",
     "orderSummaryTaxesLater": "Impuestos calculados después",
     "cancellationPolicy": "Política de cancelación",
@@ -924,6 +953,8 @@
     "cardNumber": "Número de tarjeta",
     "termsDisclaimer": "Al confirmar esta reserva, aceptas nuestros Términos de Servicio, incluida la autorización de pago, la ventana de disputa de 48 horas desde la fecha del evento, la responsabilidad por daños y la asunción de riesgo de lesiones personales.",
     "placeOrder": "Pagar {{total}}",
+    "bookNow": "Reservar ahora",
+    "requestToBook": "Solicitar reserva",
     "placeOrderResume": "Reanudar pago {{total}}",
     "placeOrderLoading": {
       "creatingBooking": "Creando reserva...",

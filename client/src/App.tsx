@@ -1,4 +1,4 @@
-import { Switch, Route, useLocation } from "wouter";
+import { Switch, Route, Redirect, useLocation } from "wouter";
 import React, { useEffect, useRef, useState } from "react";
 import { QueryClientProvider, useQuery } from "@tanstack/react-query";
 import { queryClient, apiRequest, getQueryFn } from "./lib/queryClient";
@@ -43,8 +43,7 @@ import { deriveVendorDetection, type VendorMeState } from "@/lib/vendorState";
 import { useIsVendorOnly } from "@/hooks/useIsVendorOnly";
 import { useToast } from "@/hooks/use-toast";
 import Privacy from "@/pages/Privacy";
-import MarqueeVendorProgram from "@/pages/MarqueeVendorProgram";
-import FoundingVendorProgram from "@/pages/FoundingVendorProgram";
+import LinkExpired from "@/pages/LinkExpired";
 import VendorProvision from "@/pages/VendorProvision";
 
 type CustomerMeIntent = {
@@ -330,6 +329,9 @@ function Router() {
         <Route path="/vendor/discounts" component={VendorDiscounts} />
         <Route path="/vendor/reviews" component={VendorReviews} />
         <Route path="/vendor/notifications" component={VendorNotifications} />
+        {/* Billing now lives on the dashboard; keep the path as a redirect for
+            old links and Stripe return URLs. */}
+        <Route path="/vendor/billing"><Redirect to="/vendor/dashboard" /></Route>
         <Route path="/vendor/connect/refresh" component={VendorConnectRefresh} />
         <Route path="/vendor/connect/return" component={VendorConnectReturn} />
         <Route path="/vendor/disputes" component={VendorDisputes} />
@@ -337,9 +339,9 @@ function Router() {
         <Route path="/vendor/my-hub" component={MyHub} />
         <Route path="/my-hub" component={MyHub} />
 
-        {/* Program pages */}
-        <Route path="/vendor/marquee" component={MarqueeVendorProgram} />
-        <Route path="/vendor/founding" component={FoundingVendorProgram} />
+        {/* Retired vendor programs — old invite links now show an expired notice */}
+        <Route path="/vendor/marquee" component={LinkExpired} />
+        <Route path="/vendor/founding" component={LinkExpired} />
 
         {/* Legal */}
         <Route path="/terms" component={Terms} />

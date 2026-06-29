@@ -26,11 +26,13 @@ import {
   MessageSquare,
   Scale,
   Settings,
+  Sparkles,
   Star,
   Store,
   Tag,
   User,
 } from "lucide-react";
+import { Badge } from "@/components/ui/badge";
 import { Sheet, SheetContent, SheetTitle } from "@/components/ui/sheet";
 import { cn } from "@/lib/utils";
 import { Link, useLocation } from "wouter";
@@ -78,6 +80,7 @@ type VendorHeaderAccount = {
   vendorOnlySignup?: boolean;
   onboardingCompleted?: boolean;
   dashboardTourCompletedAt?: string | null;
+  isPro?: boolean | null;
 };
 
 const VENDOR_ME_SHELL_QUERY_KEY = ["/api/vendor/me", "shell-header"] as const;
@@ -401,6 +404,21 @@ export default function VendorShell({ children, onOpenAccountSettings }: VendorS
                 />
               </Link>
             )}
+
+            {/* Pro badge / upgrade pill, to the right of the wordmark */}
+            {vendorAccount?.isPro ? (
+              <Badge className="bg-[#4a6a7d] text-[#f5f0e8] gap-1" data-testid="badge-vendor-pro">
+                <Sparkles className="h-3 w-3" /> Pro
+              </Badge>
+            ) : vendorAccount?.id ? (
+              <Link
+                href="/vendor/dashboard#vendor-billing"
+                className="inline-flex items-center gap-1 rounded-full border border-[#4a6a7d]/40 px-2.5 py-0.5 text-xs font-medium text-[#4a6a7d] hover:bg-[#4a6a7d]/8"
+                data-testid="link-vendor-upgrade"
+              >
+                <Sparkles className="h-3 w-3" /> Upgrade to Pro
+              </Link>
+            ) : null}
           </div>
 
           <div className="flex items-center gap-3">
