@@ -19,7 +19,7 @@ export async function up() {
       ADD COLUMN IF NOT EXISTS customer_msg_email_last_sent_at timestamptz
   `);
 
-  console.log("[0134] vendor_inquiries msg-email cooldown columns added (nullable).");
+  console.log("[0138] vendor_inquiries msg-email cooldown columns added (nullable).");
 }
 
 export async function down() {
@@ -29,5 +29,5 @@ export async function down() {
       DROP COLUMN IF EXISTS customer_msg_email_last_sent_at
   `);
 
-  console.log("[0134] down: vendor_inquiries msg-email cooldown columns dropped.");
+  console.log("[0138] down: vendor_inquiries msg-email cooldown columns dropped.");
 }
