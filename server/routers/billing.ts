@@ -173,7 +173,9 @@ export async function applyStripeSubscriptionToVendor(subscription: {
   id: string;
   status: string;
   metadata?: Record<string, string> | null;
-  items?: { data?: Array<{ price?: { id?: string | null } | null }> } | null;
+  items?: { data?: Array<{ price?: { id?: string | null } | null; current_period_end?: number | null }> } | null;
+  // Legacy top-level field. Removed from the Subscription object in Stripe API
+  // 2026-04-22.dahlia (now lives on each item); kept here only as a fallback.
   current_period_end?: number | null;
   cancel_at_period_end?: boolean | null;
   customer?: string | null;
@@ -213,10 +215,15 @@ export async function applyStripeSubscriptionToVendor(subscription: {
       : "canceled";
 
   const priceId = subscription.items?.data?.[0]?.price?.id ?? null;
+  // As of Stripe API 2026-04-22.dahlia, current_period_end lives on the
+  // subscription item, not the subscription. Read the item first, fall back to
+  // the legacy top-level field for older API versions.
+  const periodEndUnix =
+    subscription.items?.data?.[0]?.current_period_end ??
+    subscription.current_period_end ??
+    null;
   const currentPeriodEnd =
-    typeof subscription.current_period_end === "number"
-      ? new Date(subscription.current_period_end * 1000)
-      : null;
+    typeof periodEndUnix === "number" ? new Date(periodEndUnix * 1000) : null;
 
   await db
     .update(vendorAccounts)
