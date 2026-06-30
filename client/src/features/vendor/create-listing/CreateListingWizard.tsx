@@ -1856,6 +1856,8 @@ export function CreateListingWizard({ onClose, initialListingType, parentListing
  }
 
  await queryClient.invalidateQueries({ queryKey: ["/api/vendor/listings"] });
+ // Meta Pixel conversion: vendor successfully published a new listing.
+ window.fbq?.("track", "CompleteRegistration");
  if (parentListingId) {
    try {
      await apiRequest("POST", `/api/vendor/listings/${parentListingId}/addon-links`, { addonListingId: id });

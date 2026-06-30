@@ -6,6 +6,11 @@ export function useTrackPageView() {
   const [location] = useLocation();
 
   useEffect(() => {
+    // Meta Pixel: fire PageView on first load and on every client-side route
+    // change (wouter `location`). Guarded — no-op until metaPixel.ts has
+    // defined window.fbq.
+    window.fbq?.("track", "PageView");
+
     let cancelled = false;
 
     void (async () => {

@@ -11,11 +11,15 @@ import { useAuth0 } from "@auth0/auth0-react";
 import { setTokenGetter } from "@/lib/authToken";
 import { setGlobal401Callback } from "@/lib/queryClient";
 import { installRuntimeFetchBaseUrl } from "@/lib/runtimeUrls";
+import { initMetaPixel } from "@/lib/metaPixel";
 import "./lib/i18n"; // initialise i18next before any component renders
 
 if (typeof window !== "undefined") {
   installRuntimeFetchBaseUrl();
   document.documentElement.style.colorScheme = "light";
+  // Define window.fbq and initialise the Meta Pixel before render. The first
+  // PageView (and subsequent ones) are fired by useTrackPageView.
+  initMetaPixel();
 }
 
 const INSECURE_PREVIEW_AUTH_MESSAGE =
