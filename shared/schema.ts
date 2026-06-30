@@ -17,6 +17,20 @@ import {
 import { createInsertSchema } from "drizzle-zod";
 import { z } from "zod";
 
+// ─────────────────────────────────────────────────────────────────────────────
+// SOURCE-OF-TRUTH NOTE
+// Database indexes and constraints are NOT fully declared in this file. Many
+// (e.g. the double-booking-prevention indexes, payout-scan indexes, and several
+// unique constraints) live ONLY in the raw SQL migrations under `migrations/`,
+// which are applied by the custom runner `server/migrate.ts`. This file is the
+// ORM/query + TypeScript type source — it does not declare every index.
+//
+// Therefore: NEVER run `drizzle-kit push` against a real database. It would diff
+// this file against the live DB and try to DROP every index/constraint not
+// declared here. The `db:push`/`db:migrate` scripts were removed for this reason.
+// To change the schema, hand-write a new `migrations/NNNN_*.ts` file.
+// ─────────────────────────────────────────────────────────────────────────────
+
 // Enums for type safety
 export const userRoleEnum = pgEnum("user_role", ["customer", "vendor", "admin"]);
 export const bookingStatusEnum = pgEnum("booking_status", [
@@ -296,10 +310,6 @@ export const vendorAccounts = pgTable(
     foundingRateEndsAt: timestamp("founding_rate_ends_at"),
     foundingVisibilityEndsAt: timestamp("founding_visibility_ends_at"),
     foundingReferralBonusBookingsRemaining: integer("founding_referral_bonus_bookings_remaining").notNull().default(0),
-    // Per-page dashboard tours this vendor has already seen (migration 0128).
-    // DORMANT: superseded by dashboardTourCompletedAt (migration 0133). No longer
-    // read or written; kept to avoid dropping a live column.
-    seenTourKeys: text("seen_tour_keys").array().notNull().default(sql`'{}'`),
     // When the vendor finished/dismissed the one-time onboarding tour shown on
     // their first dashboard visit (migration 0133). NULL = not completed yet.
     dashboardTourCompletedAt: timestamp("dashboard_tour_completed_at"),
@@ -1510,7 +1520,9 @@ export const vendorInquiries = pgTable("vendor_inquiries", {
   vendorAccountId: varchar("vendor_account_id", { length: 255 })
     .notNull()
     .references(() => vendorAccounts.id),
-  customerId: varchar("customer_id", { length: 255 }).notNull(),
+  customerId: varchar("customer_id", { length: 255 })
+    .notNull()
+    .references(() => users.id, { onDelete: "cascade" }),
   streamChannelId: varchar("stream_channel_id", { length: 255 }).notNull(),
   initialListingId: varchar("initial_listing_id", { length: 255 }).references(() => vendorListings.id),
   bookingId: varchar("booking_id", { length: 255 }).references(() => bookings.id),
