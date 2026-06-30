@@ -30,6 +30,7 @@ import { processSinglePayoutCandidate } from "./paymentService";
 import { reconcilePaymentIntent } from "./paymentReconcile";
 import { runReviewPromptJob } from "../jobs/reviewPromptJob";
 import { runStripeWebhookCleanupJob } from "../jobs/stripeWebhookCleanup";
+import { runDataRetentionCleanupJob } from "../jobs/dataRetentionCleanup";
 
 // Module-level lazy-init guards for DDL-side-effect tables
 let moderationTableReadyPromise: Promise<void> | null = null;
@@ -855,6 +856,19 @@ export function startStripeWebhookCleanupWorker() {
   startTimer.unref?.();
 }
 
+export function startDataRetentionCleanupWorker() {
+  const INTERVAL_MS = 24 * 60 * 60 * 1000;
+  const run = () => runDataRetentionCleanupJob({ logger: { log: logger.info.bind(logger), warn: logger.warn.bind(logger) } }).catch((err: any) => {
+    logger.warn("[data-retention] worker error: %s", err?.message || err);
+  });
+  const startTimer = setTimeout(() => {
+    void run();
+    const t = setInterval(() => void run(), INTERVAL_MS);
+    t.unref?.();
+  }, 25 * 60 * 1000);
+  startTimer.unref?.();
+}
+
 export function startBookingExpiryWorker() {
   let backoffMs = 5 * 60 * 1000;
   const MAX_BACKOFF_MS = 60 * 60 * 1000;
@@ -1210,4 +1224,5 @@ export function startAllBackgroundWorkers() {
   startBookingCompletionWorker();
   startAutoPayoutWorker();
   startStripeWebhookCleanupWorker();
+  startDataRetentionCleanupWorker();
 }
