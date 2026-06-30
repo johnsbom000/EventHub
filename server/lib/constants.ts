@@ -48,6 +48,12 @@ export const BOOKING_PENDING_EXPIRY_REASON = "payment_session_expired";
 export const BOOKING_VENDOR_RESPONSE_EXPIRY_DAYS = 7;
 export const BOOKING_VENDOR_NO_RESPONSE_REASON = "vendor_no_response";
 
+// ─── Analytics data retention ─────────────────────────────────────────────────
+// Append-only analytics logs (web_traffic, listing_traffic, event_log) are
+// trimmed past this window by the data-retention background sweep. Expired
+// notifications are cleaned via their own expires_at column, not this value.
+export const ANALYTICS_RETENTION_DAYS = 365;
+
 // ─── Listing validation ───────────────────────────────────────────────────────
 export const MIN_LISTING_PHOTO_COUNT = 3;
 export const LISTING_DESCRIPTION_MAX_CHARS = 1000;
