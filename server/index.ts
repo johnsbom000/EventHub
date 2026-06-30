@@ -56,6 +56,8 @@ app.use(
               AUTH0_DOMAIN ? `https://${AUTH0_DOMAIN}` : "",
               // Mapbox GL JS worker loaded via blob: URL
               "blob:",
+              // Meta Pixel loader (fbevents.js)
+              "https://connect.facebook.net",
             ].filter(Boolean),
             styleSrc: [
               "'self'",
@@ -78,6 +80,8 @@ app.use(
               "https://*.stripe.com",
               // Unsplash CDN for temporary landing page fake listing cards
               "https://images.unsplash.com",
+              // Meta Pixel tracking beacons (PageView/conversion pixels)
+              "https://www.facebook.com",
             ].filter(Boolean),
             connectSrc: [
               "'self'",
@@ -93,6 +97,9 @@ app.use(
               // Stream Chat API and WebSocket
               "https://*.stream-io-api.com",
               "wss://*.stream-io-api.com",
+              // Meta Pixel — loader source and event delivery endpoints
+              "https://connect.facebook.net",
+              "https://www.facebook.com",
             ].filter(Boolean),
             frameSrc: [
               // Stripe hosted payment UIs (3D Secure, Connect onboarding)
