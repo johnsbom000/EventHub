@@ -5619,6 +5619,16 @@ export function registerVendorRoutes(app: Express): void {
         return res.status(401).json({ error: "Vendor account not found" });
       }
 
+      // Replying to reviews (reputation management) is a Pro feature. Reading
+      // reviews stays free (GET /api/vendor/reviews is ungated).
+      if (!getVendorEntitlements(account).canManageReviews) {
+        return res.status(403).json({
+          error: "reviews_pro_required",
+          message: "Replying to reviews is a Pro feature. Upgrade to manage your reputation.",
+          upgradeUrl: "/vendor/dashboard#vendor-billing",
+        });
+      }
+
       const reviewId = req.params.id;
       const replySchema = z.object({ reply: z.string().min(1).max(2000) });
       const { reply } = replySchema.parse(req.body);
@@ -6076,6 +6086,15 @@ export function registerVendorRoutes(app: Express): void {
       const vendorAccount = await getVendorAccountFromRequest(req);
       if (!vendorAccount?.id) return res.status(401).json({ error: "Unauthorized" });
 
+      // Discounts & promos are a Pro feature.
+      if (!getVendorEntitlements(vendorAccount).canUseDiscounts) {
+        return res.status(403).json({
+          error: "discounts_pro_required",
+          message: "Discounts & promos are a Pro feature. Upgrade to create and run promotional offers.",
+          upgradeUrl: "/vendor/dashboard#vendor-billing",
+        });
+      }
+
       const createDiscountSchema = z.object({
         discountType: z.enum(["promo_code", "public_sale"]),
         code: z.string().max(32).optional(),
@@ -6179,6 +6198,16 @@ export function registerVendorRoutes(app: Express): void {
     try {
       const vendorAccount = await getVendorAccountFromRequest(req);
       if (!vendorAccount?.id) return res.status(401).json({ error: "Unauthorized" });
+
+      // Discounts & promos are a Pro feature. (DELETE stays open so a downgraded
+      // vendor can still remove any offers they created while on Pro.)
+      if (!getVendorEntitlements(vendorAccount).canUseDiscounts) {
+        return res.status(403).json({
+          error: "discounts_pro_required",
+          message: "Discounts & promos are a Pro feature. Upgrade to create and run promotional offers.",
+          upgradeUrl: "/vendor/dashboard#vendor-billing",
+        });
+      }
 
       const discountId = req.params.id?.trim();
       if (!discountId) return res.status(400).json({ error: "Discount ID required" });

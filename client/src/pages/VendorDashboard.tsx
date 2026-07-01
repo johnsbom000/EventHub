@@ -4,6 +4,7 @@ import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { useAuth0 } from "@auth0/auth0-react";
 import { useLocation } from "wouter";
 import VendorShell from "@/components/VendorShell";
+import { useUpgradeModal } from "@/components/UpgradeModal";
 import VendorBillingPanel from "@/components/VendorBillingPanel";
 
 
@@ -334,6 +335,7 @@ export default function VendorDashboard() {
  const [location, setLocation] = useLocation();
  const qc = useQueryClient();
  const { toast } = useToast();
+ const upgrade = useUpgradeModal();
 
  const {
  data: vendorAccount,
@@ -1342,7 +1344,7 @@ export default function VendorDashboard() {
 
  {/* Profile views — Pro-only; replaced with an upsell for Free vendors */}
  {analyticsLocked ? (
- <a href="#vendor-billing" className="group flex flex-col justify-center px-5 py-4" data-testid="analytics-upsell">
+ <button type="button" onClick={() => upgrade.open()} className="group flex flex-col justify-center px-5 py-4 text-left" data-testid="analytics-upsell">
  <div className="mb-1 flex items-center gap-2">
  <h2 className="font-heading text-[20px] leading-none tracking-tight text-[#4a6a7d]">{t("vendorDashboard.profileViews")}</h2>
  <Lock className="h-3.5 w-3.5 text-[#4a6a7d]" />
@@ -1351,7 +1353,7 @@ export default function VendorDashboard() {
  <Sparkles className="h-3.5 w-3.5" /> Unlock with Pro
  </span>
  <p className="mt-1.5 text-xs text-muted-foreground">Profile views, monthly trends &amp; recent activity</p>
- </a>
+ </button>
  ) : (
  <div className="px-5 py-4">
  <div className="mb-3 flex items-center justify-between">
@@ -1411,10 +1413,8 @@ export default function VendorDashboard() {
  <p className="flex-1 text-sm text-[#2a3a42]">
  Google Calendar sync is a Pro feature. Upgrade to automatically sync your bookings.
  </p>
- <Button asChild size="sm" className="bg-[#4a6a7d] hover:bg-[#3f5c6d] text-[#f5f0e8]">
- <a href="#vendor-billing">
+ <Button onClick={() => upgrade.open()} size="sm" className="bg-[#4a6a7d] hover:bg-[#3f5c6d] text-[#f5f0e8]">
  <Sparkles className="mr-1 h-3.5 w-3.5" /> Upgrade to Pro
- </a>
  </Button>
  </div>
  ) : !isGoogleConnected ? (

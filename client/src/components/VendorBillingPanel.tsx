@@ -22,6 +22,8 @@ import {
   Upload,
   Trash2,
   MessageSquareText,
+  Tag,
+  Star,
 } from "lucide-react";
 
 type AiSettings = {
@@ -41,6 +43,8 @@ type BillingInterval = "monthly" | "annual";
 
 const PRO_MONTHLY_LABEL = "$29";
 const PRO_ANNUAL_LABEL = "$290";
+const PRO_MONTHLY_STRUCK = "$39";
+const PRO_ANNUAL_STRUCK = "$390";
 
 function formatDate(value?: string | null): string | null {
   if (!value) return null;
@@ -270,16 +274,19 @@ export default function VendorBillingPanel() {
             <Feature ok>List, take bookings, and get paid — no fees</Feature>
             <Feature ok>1 active listing at a time</Feature>
             <Feature ok>Lifetime totals (bookings &amp; revenue)</Feature>
+            <Feature>AI reply assistant for messages</Feature>
+            <Feature>Discounts &amp; promo codes</Feature>
+            <Feature>Reputation management &amp; review replies</Feature>
             <Feature>Advanced analytics &amp; trends</Feature>
             <Feature>Google Calendar sync</Feature>
           </ul>
         </div>
 
         {/* Pro plan */}
-        <div className="rounded-2xl border-2 border-[#4a6a7d] bg-card p-6 flex flex-col relative">
+        <div className="deal-outline rounded-2xl bg-card p-6 flex flex-col relative" style={{ ["--ring" as any]: "2.5px" }}>
           <div className="absolute -top-3 left-6">
             <Badge className="bg-[#4a6a7d] text-[#f5f0e8] gap-1">
-              <Sparkles className="h-3 w-3" /> Most popular
+              <Sparkles className="h-3 w-3" /> Recommended
             </Badge>
           </div>
           <div className="flex items-center justify-between">
@@ -306,7 +313,12 @@ export default function VendorBillingPanel() {
           </div>
 
           <p className="mt-3 text-3xl font-bold">
-            {interval === "monthly" ? PRO_MONTHLY_LABEL : PRO_ANNUAL_LABEL}
+            <span className="mr-2 align-middle text-2xl font-semibold text-muted-foreground line-through">
+              {interval === "monthly" ? PRO_MONTHLY_STRUCK : PRO_ANNUAL_STRUCK}
+            </span>
+            <span className="deal-highlight">
+              {interval === "monthly" ? PRO_MONTHLY_LABEL : PRO_ANNUAL_LABEL}
+            </span>
             <span className="text-base font-normal text-muted-foreground">
               {interval === "monthly" ? "/month" : "/year"}
             </span>
@@ -318,6 +330,9 @@ export default function VendorBillingPanel() {
           <ul className="mt-5 space-y-2.5 text-sm">
             <Feature ok>Everything in Free</Feature>
             <Feature ok icon={<LayoutGrid className="h-4 w-4" />}>Unlimited active listings</Feature>
+            <Feature ok icon={<MessageSquareText className="h-4 w-4" />}>AI reply assistant for messages</Feature>
+            <Feature ok icon={<Tag className="h-4 w-4" />}>Discounts &amp; promo codes</Feature>
+            <Feature ok icon={<Star className="h-4 w-4" />}>Reputation management &amp; review replies</Feature>
             <Feature ok icon={<BarChart3 className="h-4 w-4" />}>Advanced analytics &amp; trends</Feature>
             <Feature ok icon={<CalendarClock className="h-4 w-4" />}>Google Calendar sync</Feature>
           </ul>
@@ -339,7 +354,7 @@ export default function VendorBillingPanel() {
               )
             ) : (
               <Button
-                className="w-full bg-[#4a6a7d] hover:bg-[#3f5c6d] text-[#f5f0e8]"
+                className="deal-fill w-full border-0 text-[#f5f0e8] hover:opacity-95"
                 onClick={() => startCheckout(interval)}
                 disabled={busy !== null}
               >
@@ -562,7 +577,7 @@ function Feature({
 }) {
   return (
     <li className={`flex items-center gap-2 ${ok ? "" : "text-muted-foreground/70"}`}>
-      <span className={ok ? "text-[#4a6a7d]" : "text-muted-foreground/40"}>
+      <span className={ok ? "deal-highlight text-[#4a6a7d]" : "text-muted-foreground/40"}>
         {ok ? icon ?? <Check className="h-4 w-4" /> : <span className="inline-block h-4 w-4 text-center">–</span>}
       </span>
       {children}

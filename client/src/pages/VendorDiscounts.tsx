@@ -6,6 +6,8 @@ import { apiRequest } from "@/lib/queryClient";
 import VendorShell from "@/components/VendorShell";
 import { Button } from "@/components/ui/button";
 import { DiscountModal } from "@/components/DiscountModal";
+import { useUpgradeModal } from "@/components/UpgradeModal";
+import type { VendorMeState } from "@/lib/vendorState";
 import {
   Tag,
   Plus,
@@ -16,6 +18,7 @@ import {
   CalendarRange,
   Users,
   Loader2,
+  Sparkles,
 } from "lucide-react";
 
 interface Discount {
@@ -48,6 +51,13 @@ export default function VendorDiscounts() {
   const { t } = useTranslation();
   const { isAuthenticated } = useAuth0();
   const queryClient = useQueryClient();
+  const upgrade = useUpgradeModal();
+
+  const { data: me } = useQuery<VendorMeState>({
+    queryKey: ["/api/vendor/me"],
+    enabled: isAuthenticated,
+  });
+  const isPro = Boolean(me?.isPro);
 
   const [activeTab, setActiveTab] = useState<Discount["status"]>("active");
   const [modalOpen, setModalOpen] = useState(false);
@@ -74,11 +84,19 @@ export default function VendorDiscounts() {
   });
 
   function openCreate() {
+    if (!isPro) {
+      upgrade.open();
+      return;
+    }
     setEditingDiscount(null);
     setModalOpen(true);
   }
 
   function openEdit(d: Discount) {
+    if (!isPro) {
+      upgrade.open();
+      return;
+    }
     setEditingDiscount(d);
     setModalOpen(true);
   }
@@ -108,6 +126,19 @@ export default function VendorDiscounts() {
             {t("vendorDiscounts.newDiscount")}
           </Button>
         </div>
+
+        {/* Pro gate: discounts & promos are a Pro feature. */}
+        {!isPro ? (
+          <div className="flex flex-wrap items-center gap-3 rounded-lg border border-[#4a6a7d]/30 bg-[#4a6a7d]/8 px-4 py-3" data-testid="discounts-pro-banner">
+            <Sparkles className="h-4 w-4 shrink-0 text-[#4a6a7d]" />
+            <p className="flex-1 text-sm text-[#2a3a42]">
+              Discounts &amp; promos are a Pro feature. Upgrade to create promo codes and run public sales.
+            </p>
+            <Button onClick={() => upgrade.open()} size="sm" className="bg-[#4a6a7d] hover:bg-[#3f5c6d] text-[#f5f0e8]">
+              <Sparkles className="mr-1 h-3.5 w-3.5" /> Upgrade to Pro
+            </Button>
+          </div>
+        ) : null}
 
         {/* Tabs */}
         <div className="flex gap-1 border-b border-[rgba(74,106,125,0.22)]">
