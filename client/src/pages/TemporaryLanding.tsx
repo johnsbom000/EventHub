@@ -461,6 +461,14 @@ const PRO_TRIAL_FEATURES = [
   "Google Calendar sync",
 ];
 
+// Mirrors the labels in components/UpgradeModal.tsx so the promo and the
+// in-dashboard upgrade path advertise the same prices.
+type BillingInterval = "monthly" | "annual";
+const PRO_MONTHLY_LABEL = "$29";
+const PRO_MONTHLY_STRUCK = "$39";
+const PRO_ANNUAL_LABEL = "$290";
+const PRO_ANNUAL_STRUCK = "$390";
+
 function ProTrialModal({
   open,
   onOpenChange,
@@ -468,8 +476,12 @@ function ProTrialModal({
 }: {
   open: boolean;
   onOpenChange: (value: boolean) => void;
-  onStart: () => void;
+  onStart: (interval: BillingInterval) => void;
 }) {
+  // Stripe Checkout locks the interval into the session, so the choice must be
+  // made here before redirecting. Default to monthly to match the headline.
+  const [interval, setInterval] = useState<BillingInterval>("monthly");
+  const isAnnual = interval === "annual";
   return (
     <Dialog open={open} onOpenChange={onOpenChange}>
       <DialogContent
@@ -490,16 +502,43 @@ function ProTrialModal({
             Get everything you need to run your event business, on us for a full
             month. No booking fees, cancel anytime.
           </p>
-          <div className="mt-5 flex items-baseline justify-center gap-2">
+
+          {/* Monthly / annual toggle — the chosen interval is locked into the
+              Stripe Checkout session that opens after signup. */}
+          <div className="mt-5 inline-flex rounded-full border border-[rgba(245,240,232,0.25)] p-0.5 text-sm">
+            <button
+              type="button"
+              onClick={() => setInterval("monthly")}
+              className={`rounded-full px-4 py-1 font-sans font-semibold transition-colors ${!isAnnual ? "bg-[#e07a6a] text-white" : "text-[rgba(245,240,232,0.7)]"}`}
+              data-testid="pro-trial-interval-monthly"
+            >
+              Monthly
+            </button>
+            <button
+              type="button"
+              onClick={() => setInterval("annual")}
+              className={`rounded-full px-4 py-1 font-sans font-semibold transition-colors ${isAnnual ? "bg-[#e07a6a] text-white" : "text-[rgba(245,240,232,0.7)]"}`}
+              data-testid="pro-trial-interval-annual"
+            >
+              Annual
+            </button>
+          </div>
+
+          <div className="mt-4 flex items-baseline justify-center gap-2">
             <span className="font-sans text-[0.98rem] text-[rgba(245,240,232,0.8)]">Then:</span>
             <span className="font-sans text-[1.15rem] font-medium text-[rgba(245,240,232,0.45)] line-through">
-              $39/mo
+              {isAnnual ? PRO_ANNUAL_STRUCK : PRO_MONTHLY_STRUCK}
             </span>
             <span className="font-heading text-[2.2rem] font-normal leading-none text-[#e07a6a]">
-              $29
+              {isAnnual ? PRO_ANNUAL_LABEL : PRO_MONTHLY_LABEL}
             </span>
-            <span className="font-sans text-[0.98rem] text-[rgba(245,240,232,0.8)]">/month</span>
+            <span className="font-sans text-[0.98rem] text-[rgba(245,240,232,0.8)]">
+              {isAnnual ? "/year" : "/month"}
+            </span>
           </div>
+          <p className="mt-1 font-sans text-[0.8rem] text-[rgba(245,240,232,0.55)]">
+            {isAnnual ? "2 months free vs. monthly" : "Billed monthly"}
+          </p>
         </div>
 
         {/* Body */}
@@ -517,7 +556,7 @@ function ProTrialModal({
 
           <button
             type="button"
-            onClick={onStart}
+            onClick={() => onStart(interval)}
             className="deal-fill mt-6 w-full rounded-[12px] border-0 px-6 py-3.5 font-sans text-[1.05rem] font-semibold text-[#f5f0e8] transition-opacity hover:opacity-95 focus:outline-none focus-visible:outline-none focus-visible:ring-0 focus-visible:ring-offset-0"
             data-testid="pro-trial-modal-start"
           >
@@ -554,6 +593,10 @@ export default function TemporaryLanding() {
   const [authModalOpen, setAuthModalOpen] = useState(false);
   const [authModalTab, setAuthModalTab] = useState<AuthTab>("login");
   const [proTrialOpen, setProTrialOpen] = useState(false);
+  // Tracks whether the pending signup came from the "Try Pro" promo (so it should
+  // route into Stripe checkout after provisioning) and which interval was chosen.
+  const [proTrialFlow, setProTrialFlow] = useState(false);
+  const [proTrialInterval, setProTrialInterval] = useState<BillingInterval>("monthly");
   const { loginWithRedirect } = useAuth0();
   const { toast } = useToast();
 
@@ -570,8 +613,15 @@ export default function TemporaryLanding() {
 
   // role = null opens the dialog on the "vendor or customer?" choice step;
   // a role pre-selects it and jumps straight to the sign-up methods.
-  const openSignup = (role: SignupRole | null = null) => {
+  // opts.proTrial marks the "Try Pro" cohort; every normal CTA omits it, which
+  // resets the flag so the pro-trial intent can't leak into an ordinary signup.
+  const openSignup = (
+    role: SignupRole | null = null,
+    opts: { proTrial?: boolean; interval?: BillingInterval } = {},
+  ) => {
     setSignupRole(role);
+    setProTrialFlow(Boolean(opts.proTrial));
+    setProTrialInterval(opts.interval ?? "monthly");
     setSignupOpen(true);
   };
   const openLogin = () => {
@@ -584,6 +634,18 @@ export default function TemporaryLanding() {
     // customer sign-ups go through /post-login, which routes them to /dashboard.
     if (role === "vendor") sessionStorage.setItem("eh:after-auth-intent", "vendor");
     else sessionStorage.removeItem("eh:after-auth-intent");
+
+    // "Try Pro" vendors also carry a pro-trial flag + chosen interval so that,
+    // once their vendor account is provisioned, VendorProvision redirects them
+    // into Stripe checkout instead of straight to the dashboard. Written only
+    // when actually proceeding to auth, and cleared for every other signup.
+    if (role === "vendor" && proTrialFlow) {
+      sessionStorage.setItem("eh:pro-trial-intent", "1");
+      sessionStorage.setItem("eh:pro-trial-interval", proTrialInterval);
+    } else {
+      sessionStorage.removeItem("eh:pro-trial-intent");
+      sessionStorage.removeItem("eh:pro-trial-interval");
+    }
 
     const authorizationParams: Record<string, string> = { screen_hint: "signup" };
     if (method === "google") {
@@ -917,9 +979,9 @@ export default function TemporaryLanding() {
       <ProTrialModal
         open={proTrialOpen}
         onOpenChange={setProTrialOpen}
-        onStart={() => {
+        onStart={(interval) => {
           setProTrialOpen(false);
-          openSignup("vendor");
+          openSignup("vendor", { proTrial: true, interval });
         }}
       />
     </div>
