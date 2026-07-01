@@ -449,6 +449,89 @@ function SignupDialog({
 }
 
 /* ---------------------------------------------------------------------------
+   Pro free-trial promo modal (auto-opens after a delay on the landing page)
+--------------------------------------------------------------------------- */
+
+const PRO_TRIAL_FEATURES = [
+  "Unlimited active listings",
+  "AI reply assistant for messages",
+  "Discounts & promo codes",
+  "Reputation Management",
+  "Advanced analytics & booking trends",
+  "Google Calendar sync",
+];
+
+function ProTrialModal({
+  open,
+  onOpenChange,
+  onStart,
+}: {
+  open: boolean;
+  onOpenChange: (value: boolean) => void;
+  onStart: () => void;
+}) {
+  return (
+    <Dialog open={open} onOpenChange={onOpenChange}>
+      <DialogContent
+        className="max-w-md overflow-hidden border-0 p-0"
+        data-testid="pro-trial-modal"
+      >
+        {/* Header banner */}
+        <div className="deal-outline bg-[#2a3a42] px-8 pb-8 pt-9 text-center text-[#f5f0e8]" style={{ ["--ring" as any]: "2px" }}>
+          <span className="inline-block rounded-full bg-[rgba(224,122,106,0.18)] px-3 py-1 font-sans text-[0.72rem] font-semibold uppercase tracking-[0.14em] text-[#e07a6a]">
+            Limited-time offer
+          </span>
+          <h2 className="mt-4 font-heading text-[2rem] font-light leading-[1.1]">
+            Try <span className="italic text-[#e07a6a]">Pro</span> for{" "}
+            <span className="font-normal">30 days free</span>
+          </h2>
+          <p className="mx-auto mt-3 max-w-xs font-sans text-[0.98rem] leading-[1.55] text-[rgba(245,240,232,0.8)]">
+            Get everything you need to run your event business, on us for a full
+            month. No booking fees, cancel anytime.
+          </p>
+          <div className="mt-5 flex items-baseline justify-center gap-2">
+            <span className="font-sans text-[0.98rem] text-[rgba(245,240,232,0.8)]">Then:</span>
+            <span className="font-sans text-[1.15rem] font-medium text-[rgba(245,240,232,0.45)] line-through">
+              $39/mo
+            </span>
+            <span className="font-heading text-[2.2rem] font-normal leading-none text-[#e07a6a]">
+              $29
+            </span>
+            <span className="font-sans text-[0.98rem] text-[rgba(245,240,232,0.8)]">/month</span>
+          </div>
+        </div>
+
+        {/* Body */}
+        <div className="px-8 pb-8 pt-6">
+          <ul className="space-y-2.5">
+            {PRO_TRIAL_FEATURES.map((feature) => (
+              <li key={feature} className="flex items-center gap-2.5 font-sans text-[0.98rem] text-[#2a3a42]">
+                <span className="flex h-5 w-5 flex-none items-center justify-center rounded-full bg-[rgba(74,106,125,0.12)] text-[#4a6a7d]">
+                  ✓
+                </span>
+                {feature}
+              </li>
+            ))}
+          </ul>
+
+          <button
+            type="button"
+            onClick={onStart}
+            className="deal-fill mt-6 w-full rounded-[12px] border-0 px-6 py-3.5 font-sans text-[1.05rem] font-semibold text-[#f5f0e8] transition-opacity hover:opacity-95"
+            data-testid="pro-trial-modal-start"
+          >
+            Try Pro for 30 days free →
+          </button>
+          <p className="mt-3 text-center font-sans text-[0.85rem] text-[#9aacb4]">
+            Cancel anytime, no commitment.
+          </p>
+        </div>
+      </DialogContent>
+    </Dialog>
+  );
+}
+
+/* ---------------------------------------------------------------------------
    Page
 --------------------------------------------------------------------------- */
 
@@ -469,8 +552,20 @@ export default function TemporaryLanding() {
   const [signupRole, setSignupRole] = useState<SignupRole | null>(null);
   const [authModalOpen, setAuthModalOpen] = useState(false);
   const [authModalTab, setAuthModalTab] = useState<AuthTab>("login");
+  const [proTrialOpen, setProTrialOpen] = useState(false);
   const { loginWithRedirect } = useAuth0();
   const { toast } = useToast();
+
+  // Auto-surface the "Try Pro for 30 days free" promo 5s after landing — once
+  // per browser session so returning/scrolling visitors aren't nagged.
+  useEffect(() => {
+    if (sessionStorage.getItem("eh:pro-trial-promo-seen")) return;
+    const timer = window.setTimeout(() => {
+      setProTrialOpen(true);
+      sessionStorage.setItem("eh:pro-trial-promo-seen", "1");
+    }, 5000);
+    return () => window.clearTimeout(timer);
+  }, []);
 
   // role = null opens the dialog on the "vendor or customer?" choice step;
   // a role pre-selects it and jumps straight to the sign-up methods.
@@ -816,6 +911,15 @@ export default function TemporaryLanding() {
         onOpenChange={setAuthModalOpen}
         defaultTab={authModalTab}
         returnTo="/post-login"
+      />
+
+      <ProTrialModal
+        open={proTrialOpen}
+        onOpenChange={setProTrialOpen}
+        onStart={() => {
+          setProTrialOpen(false);
+          openSignup("vendor");
+        }}
       />
     </div>
   );
