@@ -19,7 +19,7 @@ import { Textarea } from "@/components/ui/textarea";
 import { Calendar, ChevronLeft, ChevronRight, Clock, Globe, MapPin, MessageSquare, Sparkles, Lock } from "lucide-react";
 import VendorShell from "@/components/VendorShell";
 import { useUpgradeModal } from "@/components/UpgradeModal";
-import { apiRequest } from "@/lib/queryClient";
+import { apiRequest, getApiErrorMessage } from "@/lib/queryClient";
 import { useToast } from "@/hooks/use-toast";
 import { useFeeRates } from "@/hooks/useFeeRates";
 import { normalizeAmountToCents, deriveBookingAmounts } from "@/lib/bookingAmounts";
@@ -244,7 +244,7 @@ export default function VendorBookings() {
       await queryClient.invalidateQueries({ queryKey: ["/api/vendor/bookings"] });
     },
     onError: (err: Error) => {
-      toast({ title: "Couldn't archive booking", description: err.message, variant: "destructive" });
+      toast({ title: "Couldn't archive booking", description: getApiErrorMessage(err), variant: "destructive" });
     },
     onSettled: () => {
       setArchiveModalBookingId(null);
@@ -511,7 +511,7 @@ export default function VendorBookings() {
       setIsGoogleCalendarConnectLoading(false);
       toast({
         title: t("vendorBookings.calendarError"),
-        description: error?.message || "Please try again.",
+        description: getApiErrorMessage(error, "Please try again."),
         variant: "destructive",
       });
     }

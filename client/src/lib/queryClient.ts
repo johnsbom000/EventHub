@@ -40,6 +40,37 @@ export class ApiRequestError extends Error {
   }
 }
 
+// Extracts a clean, user-facing message from an error thrown by `apiRequest`.
+// `ApiRequestError.message` is formatted as "<status>: <raw body>" and the raw
+// body is usually JSON like `{"error":"..."}`, so a naive `err.message` toast
+// renders ugly text (e.g. `400: {"error":"..."}`). This surfaces the server's
+// real reason instead, falling back to a generic message when none is available.
+export function getApiErrorMessage(
+  error: unknown,
+  fallback = "Something went wrong. Please try again.",
+): string {
+  const raw =
+    error instanceof ApiRequestError
+      ? error.responseText
+      : error instanceof Error
+        ? error.message.replace(/^\d{3}:\s*/, "") // strip "400: " prefix
+        : typeof error === "string"
+          ? error
+          : "";
+  const text = raw?.trim();
+  if (!text) return fallback;
+  if (text.startsWith("{") || text.startsWith("[")) {
+    try {
+      const parsed = JSON.parse(text);
+      const msg = parsed?.error ?? parsed?.message;
+      if (typeof msg === "string" && msg.trim()) return msg.trim();
+    } catch {
+      /* not JSON — fall through to raw text */
+    }
+  }
+  return text;
+}
+
 export function getApiErrorStatus(error: unknown): number | null {
   if (!error) return null;
   if (typeof error === "object" && error !== null && "status" in error) {
