@@ -43,6 +43,11 @@ export default function VendorProvision() {
       setLocation("/");
       return;
     }
+    // Don't hijack the navigation while a provision submit is in flight — that
+    // handler invalidates /api/vendor/me (flipping hasVendorAccount to true) and
+    // owns the post-provision redirect itself (which may hand off to Stripe
+    // checkout for the "Try Pro" cohort).
+    if (isSubmitting) return;
     if (vendorMe?.hasVendorAccount) {
       // Returning vendor who already has an account: drop any pending pro-trial
       // intent so it can't fire on a later provision. They upgrade via the
@@ -54,7 +59,7 @@ export default function VendorProvision() {
       const tourCompleted = Boolean(vendorMe?.dashboardTourCompletedAt);
       setLocation(tourCompleted ? "/vendor/my-hub" : "/vendor/dashboard");
     }
-  }, [isAuthLoading, isAuthenticated, isVendorLoading, vendorMe, setLocation]);
+  }, [isAuthLoading, isAuthenticated, isVendorLoading, isSubmitting, vendorMe, setLocation]);
 
   useEffect(() => {
     if (!isAuthLoading && !isVendorLoading && inputRef.current) {
@@ -100,6 +105,15 @@ export default function VendorProvision() {
         throw new Error(err?.error || "Failed to create vendor account");
       }
 
+      // Read the "Try Pro" cohort flags BEFORE invalidating /api/vendor/me: that
+      // refetch flips hasVendorAccount to true and fires the early-redirect
+      // effect, which would otherwise clear these flags before we get here.
+      const proTrialIntent = sessionStorage.getItem("eh:pro-trial-intent");
+      const proTrialInterval =
+        sessionStorage.getItem("eh:pro-trial-interval") === "annual" ? "annual" : "monthly";
+      sessionStorage.removeItem("eh:pro-trial-intent");
+      sessionStorage.removeItem("eh:pro-trial-interval");
+
       await qc.invalidateQueries({ queryKey: ["/api/vendor/me"] });
       await qc.invalidateQueries({ queryKey: ["/api/customer/me"] });
 
@@ -108,11 +122,7 @@ export default function VendorProvision() {
       // /vendor/dashboard (timezone modal + tour fire there) on both success and
       // cancel; cancelling simply leaves them on the default freemium plan. Any
       // failure falls through to the dashboard so onboarding is never blocked.
-      if (sessionStorage.getItem("eh:pro-trial-intent")) {
-        const interval =
-          sessionStorage.getItem("eh:pro-trial-interval") === "annual" ? "annual" : "monthly";
-        sessionStorage.removeItem("eh:pro-trial-intent");
-        sessionStorage.removeItem("eh:pro-trial-interval");
+      if (proTrialIntent) {
         try {
           const checkoutRes = await fetch("/api/vendor/billing/checkout", {
             method: "POST",
@@ -120,7 +130,7 @@ export default function VendorProvision() {
               "Content-Type": "application/json",
               Authorization: `Bearer ${token}`,
             },
-            body: JSON.stringify({ interval }),
+            body: JSON.stringify({ interval: proTrialInterval }),
           });
           const checkoutJson = await checkoutRes.json().catch(() => ({} as any));
           if (checkoutRes.ok && checkoutJson?.url) {
