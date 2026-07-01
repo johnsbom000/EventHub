@@ -44,6 +44,11 @@ export default function VendorProvision() {
       return;
     }
     if (vendorMe?.hasVendorAccount) {
+      // Returning vendor who already has an account: drop any pending pro-trial
+      // intent so it can't fire on a later provision. They upgrade via the
+      // in-dashboard Pro CTA instead — this flow targets brand-new signups.
+      sessionStorage.removeItem("eh:pro-trial-intent");
+      sessionStorage.removeItem("eh:pro-trial-interval");
       // Un-toured vendors land on the dashboard so the onboarding tour can fire;
       // vendors who've already seen it keep going to My Hub.
       const tourCompleted = Boolean(vendorMe?.dashboardTourCompletedAt);
@@ -97,6 +102,35 @@ export default function VendorProvision() {
 
       await qc.invalidateQueries({ queryKey: ["/api/vendor/me"] });
       await qc.invalidateQueries({ queryKey: ["/api/customer/me"] });
+
+      // "Try Pro" cohort: now that the vendor account exists, hand off to Stripe
+      // Checkout to collect a card and start the 30-day trial. Stripe returns to
+      // /vendor/dashboard (timezone modal + tour fire there) on both success and
+      // cancel; cancelling simply leaves them on the default freemium plan. Any
+      // failure falls through to the dashboard so onboarding is never blocked.
+      if (sessionStorage.getItem("eh:pro-trial-intent")) {
+        const interval =
+          sessionStorage.getItem("eh:pro-trial-interval") === "annual" ? "annual" : "monthly";
+        sessionStorage.removeItem("eh:pro-trial-intent");
+        sessionStorage.removeItem("eh:pro-trial-interval");
+        try {
+          const checkoutRes = await fetch("/api/vendor/billing/checkout", {
+            method: "POST",
+            headers: {
+              "Content-Type": "application/json",
+              Authorization: `Bearer ${token}`,
+            },
+            body: JSON.stringify({ interval }),
+          });
+          const checkoutJson = await checkoutRes.json().catch(() => ({} as any));
+          if (checkoutRes.ok && checkoutJson?.url) {
+            window.location.href = checkoutJson.url;
+            return;
+          }
+        } catch {
+          // fall through to the dashboard below
+        }
+      }
 
       // A freshly provisioned vendor has never seen the tour — send them to the
       // dashboard so the timezone modal + onboarding tour fire.
