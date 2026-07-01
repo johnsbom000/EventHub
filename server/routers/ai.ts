@@ -1,14 +1,13 @@
 import type { Express } from "express";
 import multer from "multer";
-import crypto from "crypto";
-import path from "path";
 
 import { db } from "../db";
 import { eq } from "drizzle-orm";
 import { vendorAccounts } from "@shared/schema";
 import { getVendorAccountFromRequest, requireVendorAuth0 } from "../services/vendorAuth";
 import { getVendorEntitlements } from "../services/entitlementsService";
-import { uploadBufferToObjectStorage } from "../lib/objectStorage";
+import { resolveStoredUploadPath } from "../lib/objectStorage";
+import { persistUploadedFile } from "../lib/imageUpload";
 import { messagingRateLimiter, uploadRateLimiter, mutationRateLimiter } from "../lib/rateLimiters";
 import { logRouteError } from "../lib/routeHelpers";
 import {
@@ -27,7 +26,6 @@ import {
  * model references, and exposes the per-vendor settings + credit meter.
  */
 export function registerAiRoutes(app: Express): void {
-  const faqUploadsDir = path.join(process.cwd(), "server/uploads/vendor-faq");
   const faqUpload = multer({
     storage: multer.memoryStorage(),
     limits: { fileSize: 10 * 1024 * 1024 }, // 10MB
@@ -163,24 +161,13 @@ export function registerAiRoutes(app: Express): void {
             .json({ error: "no_text", message: "Couldn't read any text from that PDF." });
         }
 
-        // Store the raw PDF (object storage, with local-disk fallback like disputes).
-        const key = `vendor-faq/${crypto.randomUUID()}.pdf`;
-        let storageUrl: string;
-        const result = await uploadBufferToObjectStorage({
-          buffer: fileBuffer,
-          key,
+        // Store the raw PDF durably. persistUploadedFile requires object storage
+        // in production (throws on failure) — never writes to ephemeral disk there.
+        const { storagePath } = await persistUploadedFile(fileBuffer, "vendor-faq", {
           contentType: "application/pdf",
-        }).catch(() => null);
-
-        if (result?.url && result.url.startsWith("http")) {
-          storageUrl = result.url;
-        } else {
-          const fs = await import("fs");
-          if (!fs.existsSync(faqUploadsDir)) fs.mkdirSync(faqUploadsDir, { recursive: true });
-          const filename = `${crypto.randomUUID()}.pdf`;
-          fs.writeFileSync(path.join(faqUploadsDir, filename), fileBuffer);
-          storageUrl = `/uploads/vendor-faq/${filename}`;
-        }
+          ext: "pdf",
+        });
+        const storageUrl = resolveStoredUploadPath(storagePath) ?? storagePath;
 
         const saved = await saveVendorFaq({
           vendorAccountId: account.id,
