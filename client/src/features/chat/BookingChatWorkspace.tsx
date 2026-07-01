@@ -7,7 +7,7 @@ import { StreamChat, type Message as StreamMessage, type SendMessageOptions, typ
 import { CardElement, Elements, useElements, useStripe } from "@stripe/react-stripe-js";
 import { loadStripe } from "@stripe/stripe-js";
 
-import { apiRequest, ApiRequestError } from "@/lib/queryClient";
+import { apiRequest, ApiRequestError, getApiErrorMessage } from "@/lib/queryClient";
 import { trackEvent } from "@/lib/analytics";
 import { cn } from "@/lib/utils";
 import { Badge } from "@/components/ui/badge";
@@ -632,7 +632,7 @@ export function BookingChatWorkspace({ role, initialBookingId, initialVendorId }
       await refetchVendorProposals();
     },
     onError: (err: Error) => {
-      toast({ title: "Error", description: err.message, variant: "destructive" });
+      toast({ title: "Error", description: getApiErrorMessage(err), variant: "destructive" });
     },
   });
 
@@ -661,7 +661,7 @@ export function BookingChatWorkspace({ role, initialBookingId, initialVendorId }
       }
     },
     onError: (err: Error) => {
-      toast({ title: "Error", description: err.message, variant: "destructive" });
+      toast({ title: "Error", description: getApiErrorMessage(err), variant: "destructive" });
     },
   });
 
@@ -682,7 +682,7 @@ export function BookingChatWorkspace({ role, initialBookingId, initialVendorId }
       await refetchProposals();
     },
     onError: (err: Error) => {
-      toast({ title: "Error", description: err.message, variant: "destructive" });
+      toast({ title: "Error", description: getApiErrorMessage(err), variant: "destructive" });
     },
   });
 
@@ -746,7 +746,7 @@ export function BookingChatWorkspace({ role, initialBookingId, initialVendorId }
         toast({
           variant: "destructive",
           title: t("chat.errorOpenTitle"),
-          description: t("chat.errorOpenDesc"),
+          description: getApiErrorMessage(error, t("chat.errorOpenDesc")),
         });
       }
     });
