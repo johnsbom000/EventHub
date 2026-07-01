@@ -475,6 +475,7 @@ function ProTrialModal({
       <DialogContent
         className="max-w-md overflow-hidden border-0 p-0"
         data-testid="pro-trial-modal"
+        onOpenAutoFocus={(e) => e.preventDefault()}
       >
         {/* Header banner */}
         <div className="deal-outline bg-[#2a3a42] px-8 pb-8 pt-9 text-center text-[#f5f0e8]" style={{ ["--ring" as any]: "2px" }}>
@@ -517,7 +518,7 @@ function ProTrialModal({
           <button
             type="button"
             onClick={onStart}
-            className="deal-fill mt-6 w-full rounded-[12px] border-0 px-6 py-3.5 font-sans text-[1.05rem] font-semibold text-[#f5f0e8] transition-opacity hover:opacity-95"
+            className="deal-fill mt-6 w-full rounded-[12px] border-0 px-6 py-3.5 font-sans text-[1.05rem] font-semibold text-[#f5f0e8] transition-opacity hover:opacity-95 focus:outline-none focus-visible:outline-none focus-visible:ring-0 focus-visible:ring-offset-0"
             data-testid="pro-trial-modal-start"
           >
             Try Pro for 30 days free →
