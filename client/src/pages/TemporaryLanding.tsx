@@ -473,7 +473,7 @@ function ProTrialModal({
   return (
     <Dialog open={open} onOpenChange={onOpenChange}>
       <DialogContent
-        className="max-w-md overflow-hidden border-0 p-0"
+        className="max-w-md overflow-hidden border-0 p-0 focus:outline-none focus-visible:outline-none"
         data-testid="pro-trial-modal"
         onOpenAutoFocus={(e) => e.preventDefault()}
       >
