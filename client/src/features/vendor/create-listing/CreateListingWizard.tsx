@@ -34,7 +34,9 @@ import { Button } from "@/components/ui/button";
 import { useToast } from "@/hooks/use-toast";
 import { getFreshAccessToken } from "@/lib/authToken";
 import { DEFAULT_COVER_RATIO, type CoverRatio } from "@/lib/listingPhotos";
-import { getPublishFailureToastContent, isStripeNotConfiguredError } from "@/lib/publishFailureToast";
+import { getPublishFailureToastContent, isStripeNotConfiguredError, isListingLimitReachedError } from "@/lib/publishFailureToast";
+import { UpgradeModal } from "@/components/UpgradeModal";
+import { StripeSetupModal } from "@/components/StripeSetupModal";
 import { apiRequest, getApiErrorStatus, queryClient } from "@/lib/queryClient";
 import { cn } from "@/lib/utils";
 import type { LocationResult } from "@/types/location";
@@ -1647,6 +1649,11 @@ export function CreateListingWizard({ onClose, initialListingType, parentListing
  };
 
  const [showCancelConfirm, setShowCancelConfirm] = useState(false);
+ const [showUpgradeToPublish, setShowUpgradeToPublish] = useState(false);
+ const [showStripeSetup, setShowStripeSetup] = useState(false);
+ // Set right before the upgrade modal redirects to Stripe Checkout, so the
+ // beforeunload guard below doesn't pop a "Leave site?" prompt on the way out.
+ const suppressUnloadGuardRef = useRef(false);
 
  const handleCancelConfirmed = async () => {
  setShowCancelConfirm(false);
@@ -1679,6 +1686,7 @@ export function CreateListingWizard({ onClose, initialListingType, parentListing
  useEffect(() => {
  if (!hasMeaningfulData && !listingId) return;
  const handler = (e: BeforeUnloadEvent) => {
+   if (suppressUnloadGuardRef.current) return;
    e.preventDefault();
  };
  window.addEventListener("beforeunload", handler);
@@ -1872,6 +1880,23 @@ export function CreateListingWizard({ onClose, initialListingType, parentListing
  onComplete?.(id);
  handleCloseWizard();
  } catch (error) {
+ // Business-rule responses must be handled BEFORE handleAuthRequired: the cap
+ // returns 403 and isAuthRequiredError treats any 403 as a session error, which
+ // would otherwise pop a spurious "Session expired" sign-in modal. The draft is
+ // already saved (step 1 above), so we surface the right path instead.
+ //
+ // Free-plan vendor at their active-listing cap → upgrade modal.
+ if (isListingLimitReachedError(error)) {
+   setShowUpgradeToPublish(true);
+   return;
+ }
+ // Vendor hasn't finished Stripe Connect setup → payment-setup modal.
+ // (Don't call onStripeRequired — on the standalone create page it navigates
+ // away, which would unmount this modal before it renders.)
+ if (isStripeNotConfiguredError(error)) {
+   setShowStripeSetup(true);
+   return;
+ }
  if (handleAuthRequired(error, "Please sign in to continue publishing your listing.")) {
  return;
  }
@@ -1881,9 +1906,6 @@ export function CreateListingWizard({ onClose, initialListingType, parentListing
  description: publishError.description,
  variant: "destructive",
  });
- if (isStripeNotConfiguredError(error)) {
-   onStripeRequired?.();
- }
  } finally {
  setIsPublishing(false);
  publishInFlightRef.current = false;
@@ -2148,6 +2170,33 @@ export function CreateListingWizard({ onClose, initialListingType, parentListing
  </div>
  </div>
  )}
+
+ {/* Free-plan vendor hit the active-listing cap on publish. Their draft is
+     already saved — subscribing takes them to Checkout; X-ing out just exits. */}
+ <UpgradeModal
+   open={showUpgradeToPublish}
+   onOpenChange={(open) => {
+     if (open) return;
+     setShowUpgradeToPublish(false);
+     // Draft was saved during the publish attempt; dismissing saves + exits.
+     handleCloseWizard();
+   }}
+   title="Upgrade to Access Pro Benefits"
+   description="Publish unlimited listings, plus advanced analytics and Google Calendar sync."
+   onBeforeCheckout={() => {
+     suppressUnloadGuardRef.current = true;
+   }}
+ />
+
+ {/* Vendor clicked Publish without finishing Stripe setup. Draft is already
+     saved; "Set up payments" routes them to Stripe onboarding. */}
+ <StripeSetupModal
+   open={showStripeSetup}
+   onOpenChange={setShowStripeSetup}
+   onBeforeRedirect={() => {
+     suppressUnloadGuardRef.current = true;
+   }}
+ />
  </>
  );
 }

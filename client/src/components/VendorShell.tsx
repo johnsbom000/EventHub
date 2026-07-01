@@ -3,6 +3,7 @@ import { SidebarProvider } from "@/components/ui/sidebar";
 import { Button } from "@/components/ui/button";
 import VendorTourModal from "@/components/VendorTourModal";
 import { VendorTimezoneModal, useShowTimezoneModal } from "@/components/VendorTimezoneModal";
+import { useUpgradeModal } from "@/components/UpgradeModal";
 import { ONBOARDING_TOUR } from "@/lib/vendorTourContent";
 import {
   isTourActive,
@@ -117,6 +118,7 @@ export default function VendorShell({ children, onOpenAccountSettings }: VendorS
   const [location, setLocation] = useLocation();
   const { isAuthenticated, isLoading: isAuthLoading, getAccessTokenSilently, logout } = useAuth0();
   const queryClient = useQueryClient();
+  const upgrade = useUpgradeModal();
 
   const { data: vendorAccount } = useQuery<VendorHeaderAccount>({
     queryKey: VENDOR_ME_SHELL_QUERY_KEY,
@@ -411,13 +413,14 @@ export default function VendorShell({ children, onOpenAccountSettings }: VendorS
                 <Sparkles className="h-3 w-3" /> Pro
               </Badge>
             ) : vendorAccount?.id ? (
-              <Link
-                href="/vendor/dashboard#vendor-billing"
+              <button
+                type="button"
+                onClick={() => upgrade.open()}
                 className="inline-flex items-center gap-1 rounded-full border border-[#4a6a7d]/40 px-2.5 py-0.5 text-xs font-medium text-[#4a6a7d] hover:bg-[#4a6a7d]/8"
                 data-testid="link-vendor-upgrade"
               >
                 <Sparkles className="h-3 w-3" /> Upgrade to Pro
-              </Link>
+              </button>
             ) : null}
           </div>
 

@@ -1,4 +1,4 @@
-import { useMemo } from "react";
+import { useMemo, useState } from "react";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
@@ -135,6 +135,10 @@ export default function Step2_BusinessDetails({
   businessNameError,
 }: Step2BusinessDetailsProps) {
   const currentYear = new Date().getFullYear();
+  // Set true once the user clicks "Next" with something missing. Drives the
+  // inline "this field is required" messages (same pattern as the About the
+  // Owner step and the Create Listing wizard).
+  const [showValidation, setShowValidation] = useState(false);
   const hasAddressFields =
     formData.streetAddress.trim() !== "" ||
     formData.city.trim() !== "" ||
@@ -161,8 +165,8 @@ export default function Step2_BusinessDetails({
   }, [formData, isAddressVerified]);
 
   const addressError =
-    hasAddressFields && !isAddressVerified
-      ? "Select an address from the dropdown to verify it."
+    (hasAddressFields || showValidation) && !isAddressVerified
+      ? "Select your business address from the dropdown so we can verify it."
       : null;
   const shouldShowAddressInputs =
     isAddressVerified || hasAddressFields || Boolean(formData.marketLocation);
@@ -178,7 +182,12 @@ export default function Step2_BusinessDetails({
         className="vendor-onboarding-step-content space-y-6"
         onSubmit={(e) => {
           e.preventDefault();
-          if (!isComplete) return;
+          if (!isComplete) {
+            // Reveal which required fields are still missing instead of just
+            // leaving the button inert with no explanation.
+            setShowValidation(true);
+            return;
+          }
           onNext();
         }}
       >
@@ -187,7 +196,9 @@ export default function Step2_BusinessDetails({
               className="space-y-4 rounded-2xl border border-[rgba(154,172,180,0.55)] bg-[#ffffff] p-6 lg:col-[1/2]"
             >
             <div className="space-y-2">
-              <Label htmlFor="onboarding-business-name">Business name</Label>
+              <Label htmlFor="onboarding-business-name">
+                Business name <span className="text-destructive">*</span>
+              </Label>
               <Input
                 id="onboarding-business-name"
                 name="businessName"
@@ -198,15 +209,23 @@ export default function Step2_BusinessDetails({
                   updateFormData({ businessName: normalizeBusinessNameInput(e.target.value) })
                 }
                 required
-                className={businessNameError ? "border-red-500 focus-visible:ring-red-500" : ""}
+                className={
+                  businessNameError || (showValidation && formData.businessName.trim() === "")
+                    ? "border-red-500 focus-visible:ring-red-500"
+                    : ""
+                }
               />
-              {businessNameError && (
+              {businessNameError ? (
                 <p className="text-sm text-red-600">{businessNameError}</p>
-              )}
+              ) : showValidation && formData.businessName.trim() === "" ? (
+                <p className="text-sm text-destructive">Business name is required.</p>
+              ) : null}
             </div>
 
             <div className="space-y-2">
-              <Label>Business address</Label>
+              <Label>
+                Business address <span className="text-destructive">*</span>
+              </Label>
               <LocationPicker
                 value={formData.marketLocation || null}
                 onChange={(loc: LocationResult | null) => {
@@ -257,7 +276,9 @@ export default function Step2_BusinessDetails({
             {shouldShowAddressInputs ? (
               <>
                 <div className="space-y-2">
-                  <Label htmlFor="onboarding-street-address">Street address</Label>
+                  <Label htmlFor="onboarding-street-address">
+                    Street address <span className="text-destructive">*</span>
+                  </Label>
                   <Input
                     id="onboarding-street-address"
                     name="streetAddress"
@@ -273,11 +294,16 @@ export default function Step2_BusinessDetails({
                     }
                     required
                   />
+                  {showValidation && formData.streetAddress.trim() === "" ? (
+                    <p className="text-sm text-destructive">Street address is required.</p>
+                  ) : null}
                 </div>
 
                 <div className="grid grid-cols-2 gap-3">
                   <div className="space-y-2">
-                    <Label htmlFor="onboarding-city">City</Label>
+                    <Label htmlFor="onboarding-city">
+                      City <span className="text-destructive">*</span>
+                    </Label>
                     <Input
                       id="onboarding-city"
                       name="city"
@@ -293,9 +319,14 @@ export default function Step2_BusinessDetails({
                       }
                       required
                     />
+                    {showValidation && formData.city.trim() === "" ? (
+                      <p className="text-sm text-destructive">City is required.</p>
+                    ) : null}
                   </div>
                   <div className="space-y-2">
-                    <Label htmlFor="onboarding-state">State</Label>
+                    <Label htmlFor="onboarding-state">
+                      State <span className="text-destructive">*</span>
+                    </Label>
                     <Input
                       id="onboarding-state"
                       name="state"
@@ -311,11 +342,16 @@ export default function Step2_BusinessDetails({
                       }
                       required
                     />
+                    {showValidation && formData.state.trim() === "" ? (
+                      <p className="text-sm text-destructive">State is required.</p>
+                    ) : null}
                   </div>
                 </div>
 
                 <div className="space-y-2">
-                  <Label htmlFor="onboarding-zip">Zip</Label>
+                  <Label htmlFor="onboarding-zip">
+                    Zip <span className="text-destructive">*</span>
+                  </Label>
                   <Input
                     id="onboarding-zip"
                     name="zipCode"
@@ -331,6 +367,9 @@ export default function Step2_BusinessDetails({
                     }
                     required
                   />
+                  {showValidation && formData.zipCode.trim() === "" ? (
+                    <p className="text-sm text-destructive">Zip is required.</p>
+                  ) : null}
                 </div>
               </>
             ) : (
@@ -341,7 +380,9 @@ export default function Step2_BusinessDetails({
 
             <div className="grid grid-cols-2 gap-3">
               <div className="space-y-2">
-                <Label htmlFor="onboarding-business-phone">Business phone</Label>
+                <Label htmlFor="onboarding-business-phone">
+                  Business phone <span className="text-destructive">*</span>
+                </Label>
                 <Input
                   id="onboarding-business-phone"
                   name="businessPhone"
@@ -351,9 +392,14 @@ export default function Step2_BusinessDetails({
                   onChange={(e) => updateFormData({ businessPhone: e.target.value })}
                   required
                 />
+                {showValidation && formData.businessPhone.trim() === "" ? (
+                  <p className="text-sm text-destructive">Business phone is required.</p>
+                ) : null}
               </div>
               <div className="space-y-2">
-                <Label htmlFor="onboarding-business-email">Business email</Label>
+                <Label htmlFor="onboarding-business-email">
+                  Business email <span className="text-destructive">*</span>
+                </Label>
                 <Input
                   id="onboarding-business-email"
                   name="businessEmail"
@@ -364,10 +410,15 @@ export default function Step2_BusinessDetails({
                   type="email"
                   required
                 />
+                {showValidation && formData.businessEmail.trim() === "" ? (
+                  <p className="text-sm text-destructive">Business email is required.</p>
+                ) : null}
               </div>
             </div>
             <div className="space-y-2">
-              <Label htmlFor="onboarding-timezone">Your timezone</Label>
+              <Label htmlFor="onboarding-timezone">
+                Your timezone <span className="text-destructive">*</span>
+              </Label>
               <TimezoneSelect
                 id="onboarding-timezone"
                 value={formData.operatingTimezone}
@@ -465,7 +516,6 @@ export default function Step2_BusinessDetails({
 
             <Button
               type="submit"
-              disabled={!isComplete}
               className="min-h-[2.7rem] px-6 font-sans text-[1.2rem] font-medium"
             >
               Next

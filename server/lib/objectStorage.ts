@@ -26,6 +26,17 @@ export function isObjectStorageConfigured(): boolean {
   return missingObjectStorageVars().length === 0;
 }
 
+/**
+ * Whether an upload may fall back to the local container filesystem when object
+ * storage isn't configured. ONLY true for genuine local dev — never in
+ * production, and never on Railway (whose disk is ephemeral and wiped on every
+ * redeploy, which would silently lose vendors' uploaded files). Railway always
+ * injects RAILWAY_ENVIRONMENT, so this holds even if NODE_ENV were unset.
+ */
+export function localFallbackAllowed(): boolean {
+  return process.env.NODE_ENV !== "production" && !process.env.RAILWAY_ENVIRONMENT;
+}
+
 function getConfig(): ObjectStorageConfig {
   const bucket = process.env.OBJECT_STORAGE_BUCKET;
   const endpoint = process.env.OBJECT_STORAGE_ENDPOINT;
@@ -58,7 +69,7 @@ function buildClient() {
   });
 }
 
-export type UploadFolder = "listings" | "vendor-shops" | "disputes" | "vendor-faq";
+export type UploadFolder = "listings" | "vendor-shops" | "disputes" | "vendor-faq" | "feedback";
 
 export function makeObjectKey(folder: UploadFolder, originalName?: string): string {
   const safeOriginal = (originalName || "image.jpg").replace(/[^a-zA-Z0-9._-]/g, "-");

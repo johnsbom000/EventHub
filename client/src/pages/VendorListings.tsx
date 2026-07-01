@@ -6,7 +6,6 @@ import { Card } from "@/components/ui/card";
 import { Button } from "@/components/ui/button";
 import { Badge } from "@/components/ui/badge";
 import { Plus, Edit, Eye, Sparkles, Lock } from "lucide-react";
-import { Link } from "wouter";
 import type { VendorMeState } from "@/lib/vendorState";
 import { CreateListingWizard } from "@/features/vendor/create-listing/CreateListingWizard";
 import { useQuery, useMutation } from "@tanstack/react-query";
@@ -14,6 +13,9 @@ import { queryClient } from "@/lib/queryClient";
 import { useToast } from "@/hooks/use-toast";
 import { useLocation } from "wouter";
 import VendorShell from "@/components/VendorShell";
+import { useUpgradeModal } from "@/components/UpgradeModal";
+import { StripeSetupModal } from "@/components/StripeSetupModal";
+import { getPublishErrorCode, getPublishFailureToastContent } from "@/lib/publishFailureToast";
 import {
   coverRatioToAspectRatio,
   getCoverPhotoIndex,
@@ -52,6 +54,8 @@ export default function VendorListings() {
   const [showCreateWizard, setShowCreateWizard] = useState(false);
   const [, setLocation] = useLocation();
   const { toast } = useToast();
+  const upgrade = useUpgradeModal();
+  const [showStripeSetup, setShowStripeSetup] = useState(false);
   const { isAuthenticated, isLoading: isAuthLoading } = useAuth0();
 
   const { data: listings = [], isLoading: loadingListings } = useQuery({
@@ -131,24 +135,14 @@ export default function VendorListings() {
     mutationFn: async (listing: AnyListing) => {
       const listingId = String(listing?.id || "").trim();
       if (!listingId) throw new Error("Missing listing id");
+      // apiRequest throws an ApiRequestError on any non-2xx (it does NOT return a
+      // non-ok Response), so the error code is parsed from that error in onError.
       const response = await apiRequest(
         "PATCH",
         `/api/vendor/listings/${listingId}/publish`,
         buildPublishPayloadFromListing(listing)
       );
-      const payload = await response.json().catch(() => null);
-      if (!response.ok) {
-        const err = Object.assign(
-          new Error(
-            Array.isArray(payload?.reasons)
-              ? payload.reasons.join(" ")
-              : payload?.error || "Unable to publish listing"
-          ),
-          { code: payload?.error }
-        );
-        throw err;
-      }
-      return payload;
+      return response.json().catch(() => null);
     },
     onSuccess: () => {
       queryClient.invalidateQueries({ queryKey: ["/api/vendor/listings"] });
@@ -158,7 +152,8 @@ export default function VendorListings() {
       });
     },
     onError: (error: any) => {
-      if (error?.code === "onboarding_incomplete") {
+      const code = getPublishErrorCode(error);
+      if (code === "onboarding_incomplete") {
         toast({
           title: "Finish your profile first",
           description: "Complete vendor onboarding before publishing a listing.",
@@ -173,21 +168,18 @@ export default function VendorListings() {
         } as any);
         return;
       }
-      if (error?.code === "listing_limit_reached") {
-        toast({
-          title: "Free plan limit reached",
-          description: "Your free plan includes 1 active listing. Upgrade to Pro for unlimited.",
-          action: (
-            <a href="/vendor/dashboard#vendor-billing" className="underline font-semibold text-sm">
-              Upgrade to Pro
-            </a>
-          ),
-        } as any);
+      if (code === "listing_limit_reached") {
+        upgrade.open();
         return;
       }
+      if (code === "stripe_not_configured") {
+        setShowStripeSetup(true);
+        return;
+      }
+      const publishError = getPublishFailureToastContent(error);
       toast({
-        title: "Publish failed",
-        description: error?.message || "Unable to publish listing.",
+        title: publishError.title,
+        description: publishError.description,
         variant: "destructive",
       });
     },
@@ -435,10 +427,8 @@ export default function VendorListings() {
               <p className="flex-1 text-sm text-[#2a3a42]">
                 Your free plan includes 1 active listing. You can keep building drafts — upgrade to Pro to publish unlimited listings.
               </p>
-              <Button asChild size="sm" className="bg-[#4a6a7d] hover:bg-[#3f5c6d] text-[#f5f0e8]">
-                <Link href="/vendor/dashboard#vendor-billing">
-                  <Sparkles className="mr-1 h-3.5 w-3.5" /> Upgrade to Pro
-                </Link>
+              <Button onClick={() => upgrade.open()} size="sm" className="bg-[#4a6a7d] hover:bg-[#3f5c6d] text-[#f5f0e8]">
+                <Sparkles className="mr-1 h-3.5 w-3.5" /> Upgrade to Pro
               </Button>
             </div>
           ) : null}
@@ -475,6 +465,9 @@ export default function VendorListings() {
             <CreateListingWizard onClose={() => setShowCreateWizard(false)} />
           </div>
         )}
+
+        {/* Vendor clicked Publish on a draft without finishing Stripe setup. */}
+        <StripeSetupModal open={showStripeSetup} onOpenChange={setShowStripeSetup} />
       </>
     </VendorShell>
   );

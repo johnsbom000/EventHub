@@ -12,6 +12,7 @@ import {
   detectUploadedImageFormat,
   decodeImageDataUrlToBuffer,
   persistUploadedImage,
+  persistUploadedFile,
 } from "../lib/imageUpload";
 import {
   assertCanonicalBookingSchemaReady,
@@ -176,10 +177,8 @@ import {
 import { checkContent, blockReasonSummary } from "../../shared/circumvention-detection";
 import { translateListingAsync, getListingTranslation, ensureListingTranslation, resolveRequestLanguage } from "../translationService";
 import {
-  uploadBufferToObjectStorage,
   makeObjectKey,
   resolveStoredUploadPath,
-  isObjectStorageConfigured,
   type UploadFolder,
 } from "../lib/objectStorage";
 import {
@@ -444,20 +443,13 @@ app.post(
       try {
         let url: string;
         if (mimetype === "application/pdf") {
-          // PDFs bypass image processing — store raw
-          const ext = "pdf";
-          const key = `disputes/${crypto.randomUUID()}.${ext}`;
-          const result = await uploadBufferToObjectStorage({ buffer: fileBuffer, key, contentType: "application/pdf" });
-          url = result.url;
-          if (!url.startsWith("http")) {
-            // object storage not configured — fall back to local
-            const fs = await import("fs");
-            const localDir = disputeUploadsDir;
-            if (!fs.existsSync(localDir)) fs.mkdirSync(localDir, { recursive: true });
-            const filename = `${crypto.randomUUID()}.pdf`;
-            fs.writeFileSync(path.join(localDir, filename), fileBuffer);
-            url = `/uploads/disputes/${filename}`;
-          }
+          // PDFs bypass image processing — store raw. persistUploadedFile requires
+          // object storage in production (throws on failure), never ephemeral disk.
+          const { storagePath } = await persistUploadedFile(fileBuffer, "disputes", {
+            contentType: "application/pdf",
+            ext: "pdf",
+          });
+          url = resolveStoredUploadPath(storagePath) ?? storagePath;
         } else {
           const persisted = await persistUploadedImage(fileBuffer, disputeUploadsDir);
           const storagePath = `/uploads/disputes/${persisted.filename}`;
@@ -1832,8 +1824,6 @@ app.post(
   // Customers and vendors can submit feature requests and bug reports.
   // Admins can view and flag submissions for follow-up.
 
-  const feedbackUploadsDir = path.join(process.cwd(), "server/uploads/feedback");
-
   const feedbackAttachmentUpload = multer({
     storage: multer.memoryStorage(),
     limits: { fileSize: 10 * 1024 * 1024 }, // 10 MB
@@ -1853,18 +1843,14 @@ app.post(
       try {
         if (!req.file) return res.status(400).json({ error: "No file provided or file type not allowed" });
 
-        const ext = path.extname(req.file.originalname).toLowerCase() || ".bin";
-        const filename = `${crypto.randomUUID()}${ext}`;
-
-        if (isObjectStorageConfigured()) {
-          const key = `feedback/${filename}`;
-          const { url } = await uploadBufferToObjectStorage({ buffer: req.file.buffer, key, contentType: req.file.mimetype });
-          return res.json({ url });
-        }
-
-        await fs.mkdir(feedbackUploadsDir, { recursive: true });
-        await fs.writeFile(path.join(feedbackUploadsDir, filename), req.file.buffer);
-        return res.json({ url: `/uploads/feedback/${filename}` });
+        // persistUploadedFile requires object storage in production (throws on
+        // failure), never ephemeral disk. Dev falls back to local disk.
+        const ext = path.extname(req.file.originalname).replace(/^\./, "").toLowerCase() || "bin";
+        const { storagePath } = await persistUploadedFile(req.file.buffer, "feedback", {
+          contentType: req.file.mimetype,
+          ext,
+        });
+        return res.json({ url: resolveStoredUploadPath(storagePath) ?? storagePath });
       } catch (err: any) {
         return respondWithInternalServerError(req, res, err);
       }

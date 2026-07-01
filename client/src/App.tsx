@@ -45,6 +45,7 @@ import { useToast } from "@/hooks/use-toast";
 import Privacy from "@/pages/Privacy";
 import LinkExpired from "@/pages/LinkExpired";
 import VendorProvision from "@/pages/VendorProvision";
+import { UpgradeModalProvider } from "@/components/UpgradeModal";
 
 type CustomerMeIntent = {
   vendorIntentPending?: boolean;
@@ -412,10 +413,10 @@ function AppContent() {
   }, [location]);
 
   return (
-    <>
+    <UpgradeModalProvider>
       <AdminAutoRedirect />
       <Router />
-    </>
+    </UpgradeModalProvider>
   );
 }
 

@@ -34,6 +34,10 @@ export interface VendorEntitlements {
   maxActiveListings: number;
   canUseAnalytics: boolean;
   canUseGoogleSync: boolean;
+  /** Create & manage discount / promo codes. Pro only. */
+  canUseDiscounts: boolean;
+  /** Reply to customer reviews (reputation management). Pro only. */
+  canManageReviews: boolean;
   plan: "free" | "pro";
   status: VendorSubscriptionStatus;
   /**
@@ -115,6 +119,8 @@ export function getVendorEntitlements(
     maxActiveListings: isPro ? Infinity : FREE_TIER_MAX_ACTIVE_LISTINGS,
     canUseAnalytics: isPro,
     canUseGoogleSync: isPro,
+    canUseDiscounts: isPro,
+    canManageReviews: isPro,
     plan: isPro ? "pro" : "free",
     status,
     reason,

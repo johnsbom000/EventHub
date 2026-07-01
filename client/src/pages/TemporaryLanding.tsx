@@ -709,6 +709,15 @@ export default function TemporaryLanding() {
                 <span className="mt-0.5 text-[#9dd4cc]">✓</span> Unlimited listings + advanced analytics
               </li>
               <li className="flex items-start gap-2.5 font-sans text-[0.98rem] text-[rgba(245,240,232,0.92)]">
+                <span className="mt-0.5 text-[#c9a06a]">✓</span> AI reply assistant for customer messages
+              </li>
+              <li className="flex items-start gap-2.5 font-sans text-[0.98rem] text-[rgba(245,240,232,0.92)]">
+                <span className="mt-0.5 text-[#e07a6a]">✓</span> Discounts &amp; promo codes to drive bookings
+              </li>
+              <li className="flex items-start gap-2.5 font-sans text-[0.98rem] text-[rgba(245,240,232,0.92)]">
+                <span className="mt-0.5 text-[#9dd4cc]">✓</span> Reputation management &amp; review replies
+              </li>
+              <li className="flex items-start gap-2.5 font-sans text-[0.98rem] text-[rgba(245,240,232,0.92)]">
                 <span className="mt-0.5 text-[#c9a06a]">✓</span> Google Calendar sync — never double-book
               </li>
               <li className="flex items-start gap-2.5 font-sans text-[0.98rem] text-[rgba(245,240,232,0.92)]">
