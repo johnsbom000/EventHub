@@ -71,8 +71,8 @@ const AUTH_REQUIRED_MESSAGE_PATTERNS = [
 
 const CATEGORY_OPTIONS = [
  { value: "Rental", label: "Rental" },
- { value: "Venue", label: "Venue" },
  { value: "Service", label: "Service" },
+ { value: "Venue", label: "Venue" },
  { value: "Catering", label: "Caterer" },
 ] as const;
 

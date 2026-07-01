@@ -152,10 +152,10 @@ export const DEFAULT_DRAFT: ListingDraft = {
 };
 
 export const CATEGORY_OPTIONS = [
-  { value: "Catering" as ListingCategory, label: "Caterer" },
   { value: "Rental" as ListingCategory, label: "Rental" },
   { value: "Service" as ListingCategory, label: "Service" },
   { value: "Venue" as ListingCategory, label: "Venue" },
+  { value: "Catering" as ListingCategory, label: "Caterer" },
 ] as const;
 
 export const LISTING_TAG_KEY = "__listing__";
