@@ -92,8 +92,8 @@ export function registerBillingRoutes(app: Express) {
       const priceLabel = interval === "annual" ? "$290/year" : "$29/month";
       const submitMessage =
         trialPeriodDays > 0
-          ? `Free for ${trialPeriodDays} days. After your trial, your Launch Offer rate stays ${priceLabel} for the life of your subscription — it never increases. Cancel anytime.`
-          : `Your Launch Offer rate stays ${priceLabel} for the life of your subscription — it never increases. Cancel anytime.`;
+          ? `Free for ${trialPeriodDays} days. After your trial, your Launch Offer rate is ${priceLabel}.`
+          : `Your Launch Offer rate is ${priceLabel}.`;
 
       const base = appUrl();
       const { createSubscriptionCheckoutSession } = await import("../stripe");
