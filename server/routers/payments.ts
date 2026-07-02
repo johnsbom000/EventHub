@@ -303,7 +303,6 @@ import {
   CUSTOMER_FEE_RATE,
   STRIPE_FEE_ESTIMATE_PERCENT,
   STRIPE_FEE_ESTIMATE_FIXED_CENTS,
-  VENDOR_ABSORBS_STRIPE_FEES,
   PAYOUT_RELEASE_MODE,
   AUTO_PAYOUT_INTERVAL_MS,
   BOOKING_PENDING_EXPIRY_MINUTES,
@@ -883,7 +882,7 @@ export function registerPaymentRoutes(app: Express): void {
             stripeConnectedAccountId: payment.stripeConnectedAccountId,
             stripeChargeId: payment.stripeChargeId ?? chargeId,
             stripeTransferId: payment.stripeTransferId,
-            vendorAbsorbsStripeFees: VENDOR_ABSORBS_STRIPE_FEES,
+            vendorAbsorbsStripeFees: payment.vendorAbsorbsStripeFees ?? false,
           }, now);
 
           await tx
@@ -964,7 +963,7 @@ export function registerPaymentRoutes(app: Express): void {
               stripeConnectedAccountId: payment.stripeConnectedAccountId,
               stripeChargeId: payment.stripeChargeId ?? chargeId,
               stripeTransferId: payment.stripeTransferId,
-              vendorAbsorbsStripeFees: VENDOR_ABSORBS_STRIPE_FEES,
+              vendorAbsorbsStripeFees: payment.vendorAbsorbsStripeFees ?? false,
             }, now);
 
             await tx
@@ -1304,7 +1303,7 @@ export function registerPaymentRoutes(app: Express): void {
                 stripeConnectedAccountId: locked.stripeConnectedAccountId,
                 stripeChargeId: locked.stripeChargeId,
                 stripeTransferId: locked.stripeTransferId,
-                vendorAbsorbsStripeFees: VENDOR_ABSORBS_STRIPE_FEES,
+                vendorAbsorbsStripeFees: locked.vendorAbsorbsStripeFees ?? false,
               },
               nowLocked
             );

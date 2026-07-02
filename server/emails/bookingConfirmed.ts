@@ -36,6 +36,11 @@ export interface BookingConfirmedParams {
   role: "customer" | "vendor";
   serverUrl: string;
   addOns?: Array<{ title: string; priceCents: number }>;
+  // Vendor-only payout breakdown. When the vendor bears Stripe's processing fee,
+  // pass the estimated fee and their resulting net payout so the email shows the
+  // deduction transparently. Omitted (or fee <= 0) => no breakdown is rendered.
+  stripeProcessingFeeCents?: number;
+  vendorNetPayoutCents?: number;
 }
 
 export function bookingConfirmedTemplate(params: BookingConfirmedParams): {
@@ -57,21 +62,44 @@ export function bookingConfirmedTemplate(params: BookingConfirmedParams): {
     ? "Your EventHub booking is confirmed"
     : "EventHub: Booking confirmed";
 
+  // Vendor payout breakdown: show the booking total, Stripe's processing fee
+  // deduction, and the resulting net payout. Only when the vendor bears the fee
+  // (fee > 0 and a net payout is supplied) — otherwise fall back to a plain Total.
+  const feeCents = Math.max(0, Math.round(params.stripeProcessingFeeCents ?? 0));
+  const showVendorPayout =
+    role === "vendor" && feeCents > 0 && typeof params.vendorNetPayoutCents === "number";
+  const netPayoutCents = Math.max(0, Math.round(params.vendorNetPayoutCents ?? 0));
+
+  const totalsRows = showVendorPayout
+    ? `
+      <tr><td style="padding:8px 0;border-bottom:1px solid #f0eeec;font-size:14px;color:#666;">Booking total</td><td style="padding:8px 0;border-bottom:1px solid #f0eeec;font-size:14px;font-weight:600;text-align:right;">${formatCents(totalAmountCents)}</td></tr>
+      <tr><td style="padding:8px 0;border-bottom:1px solid #f0eeec;font-size:14px;color:#666;">Stripe Processing Fee</td><td style="padding:8px 0;border-bottom:1px solid #f0eeec;font-size:14px;text-align:right;color:#666;">− ${formatCents(feeCents)}</td></tr>
+      <tr><td style="padding:8px 0;font-size:14px;color:#666;">Your net payout</td><td style="padding:8px 0;font-size:14px;font-weight:700;text-align:right;color:${CORAL};">${formatCents(netPayoutCents)}</td></tr>`
+    : `<tr><td style="padding:8px 0;font-size:14px;color:#666;">Total</td><td style="padding:8px 0;font-size:14px;font-weight:700;text-align:right;color:${CORAL};">${formatCents(totalAmountCents)}</td></tr>`;
+
+  const payoutNote = showVendorPayout
+    ? `<p style="margin:0 0 20px;font-size:12px;line-height:1.6;color:#999;">EventHub takes no commission. The only deduction is Stripe's standard payment-processing fee (2.9% + $0.30) for handling the card payment. This is an estimate — your final payout reflects Stripe's actual fee.</p>`
+    : "";
+
   const body = `
     <h2 style="margin:0 0 16px;font-family:'Playfair Display',Georgia,serif;font-size:22px;color:${SLATE};">Booking Confirmed</h2>
     <p style="margin:0 0 12px;font-size:15px;line-height:1.6;">Hi ${recipientName},</p>
     <p style="margin:0 0 20px;font-size:15px;line-height:1.6;">${intro}</p>
-    <table style="width:100%;border-collapse:collapse;margin-bottom:24px;">
+    <table style="width:100%;border-collapse:collapse;margin-bottom:${payoutNote ? "12px" : "24px"};">
       <tr><td style="padding:8px 0;border-bottom:1px solid #f0eeec;font-size:14px;color:#666;">Service</td><td style="padding:8px 0;border-bottom:1px solid #f0eeec;font-size:14px;font-weight:600;text-align:right;">${listingTitle}</td></tr>
       ${(addOns ?? []).map(a => `<tr><td style="padding:8px 0;border-bottom:1px solid #f0eeec;font-size:14px;color:#666;">${a.title}</td><td style="padding:8px 0;border-bottom:1px solid #f0eeec;font-size:14px;text-align:right;">${formatCents(a.priceCents)}</td></tr>`).join("")}
       <tr><td style="padding:8px 0;border-bottom:1px solid #f0eeec;font-size:14px;color:#666;">Event Date</td><td style="padding:8px 0;border-bottom:1px solid #f0eeec;font-size:14px;font-weight:600;text-align:right;">${eventDate}</td></tr>
-      <tr><td style="padding:8px 0;font-size:14px;color:#666;">Total</td><td style="padding:8px 0;font-size:14px;font-weight:700;text-align:right;color:${CORAL};">${formatCents(totalAmountCents)}</td></tr>
+      ${totalsRows}
     </table>
+    ${payoutNote}
     <a href="${dashboardUrl}" style="display:inline-block;background:${CORAL};color:#fff;text-decoration:none;padding:12px 28px;border-radius:6px;font-size:14px;font-weight:600;">View Booking</a>
   `;
 
   const addonLines = (addOns ?? []).map(a => `${a.title}: ${formatCents(a.priceCents)}`).join("\n");
-  const text = `Booking Confirmed\n\nHi ${recipientName},\n\n${role === "customer" ? `Your booking with ${counterpartName} has been confirmed.` : `You confirmed a booking from ${counterpartName}.`}\n\nService: ${listingTitle}${addonLines ? "\n" + addonLines : ""}\nEvent Date: ${eventDate}\nTotal: ${formatCents(totalAmountCents)}\n\nView your booking: ${dashboardUrl}`;
+  const totalsText = showVendorPayout
+    ? `Booking total: ${formatCents(totalAmountCents)}\nStripe Processing Fee: - ${formatCents(feeCents)}\nYour net payout: ${formatCents(netPayoutCents)}\n\nEventHub takes no commission. The only deduction is Stripe's standard payment-processing fee (2.9% + $0.30). This is an estimate — your final payout reflects Stripe's actual fee.`
+    : `Total: ${formatCents(totalAmountCents)}`;
+  const text = `Booking Confirmed\n\nHi ${recipientName},\n\n${role === "customer" ? `Your booking with ${counterpartName} has been confirmed.` : `You confirmed a booking from ${counterpartName}.`}\n\nService: ${listingTitle}${addonLines ? "\n" + addonLines : ""}\nEvent Date: ${eventDate}\n${totalsText}\n\nView your booking: ${dashboardUrl}`;
 
   return { subject, html: baseWrapper(body), text };
 }

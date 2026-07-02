@@ -482,7 +482,10 @@
     "stripeNotConnected": "Conecta Stripe para recibir pagos",
     "stripeNotConnectedDesc": "Vincula tu cuenta de Stripe para empezar a recibir pagos por tus reservas.",
     "dateNotSet": "Fecha no establecida",
-    "bookingNumber": "Reserva #{{id}}"
+    "bookingNumber": "Reserva #{{id}}",
+    "bookingTotal": "Total de la reserva",
+    "stripeProcessingFee": "Comisión de procesamiento de Stripe",
+    "yourPayout": "Tu pago"
   },
   "vendorDiscounts": {
     "pageTitle": "Descuentos",

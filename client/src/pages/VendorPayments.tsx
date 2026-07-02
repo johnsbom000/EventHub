@@ -12,6 +12,8 @@ type VendorPaymentHistoryItem = {
   id: string;
   netAmount?: number | null;
   grossAmount?: number | null;
+  grossPayoutAmount?: number | null;
+  stripeProcessingFeeAmount?: number | null;
   status?: string | null;
   eventDate?: string | null;
   createdAt?: string | null;
@@ -216,20 +218,39 @@ export default function VendorPayments() {
             </div>
           ) : (
             <div className="space-y-3">
-              {history.map((payment) => (
-                <div key={payment.id} className="flex items-center justify-between gap-3 rounded-lg border p-4">
-                  <div>
-                    <div className="font-medium">{t("vendorPayments.bookingNumber", { id: payment.id.slice(0, 8) })}</div>
-                    <div className="text-sm text-muted-foreground">
-                      {payment.eventDate || t("vendorPayments.dateNotSet")}
+              {history.map((payment) => {
+                const stripeFeeCents = Number(payment.stripeProcessingFeeAmount ?? 0);
+                const grossPayoutCents = Number(
+                  payment.grossPayoutAmount ?? payment.netAmount ?? 0
+                );
+                const showBreakdown = stripeFeeCents > 0;
+                return (
+                  <div key={payment.id} className="flex items-start justify-between gap-3 rounded-lg border p-4">
+                    <div>
+                      <div className="font-medium">{t("vendorPayments.bookingNumber", { id: payment.id.slice(0, 8) })}</div>
+                      <div className="text-sm text-muted-foreground">
+                        {payment.eventDate || t("vendorPayments.dateNotSet")}
+                      </div>
+                    </div>
+                    <div className="text-right">
+                      <div className="text-sm capitalize text-muted-foreground">{payment.status || "pending"}</div>
+                      {showBreakdown && (
+                        <div className="mt-1 space-y-0.5 text-xs text-muted-foreground">
+                          <div className="flex justify-between gap-4">
+                            <span>{t("vendorPayments.bookingTotal")}</span>
+                            <span>{formatUsdFromCents(grossPayoutCents)}</span>
+                          </div>
+                          <div className="flex justify-between gap-4">
+                            <span>{t("vendorPayments.stripeProcessingFee")}</span>
+                            <span>− {formatUsdFromCents(stripeFeeCents)}</span>
+                          </div>
+                        </div>
+                      )}
+                      <div className="mt-1 font-medium">{formatUsdFromCents(Number(payment.netAmount ?? 0))}</div>
                     </div>
                   </div>
-                  <div className="text-right">
-                    <div className="text-sm capitalize text-muted-foreground">{payment.status || "pending"}</div>
-                    <div className="font-medium">{formatUsdFromCents(Number(payment.netAmount ?? 0))}</div>
-                  </div>
-                </div>
-              ))}
+                );
+              })}
             </div>
           )}
         </section>

@@ -132,6 +132,7 @@ export type LockedPaymentPayoutContext = {
   stripeChargeId: string | null;
   stripeTransferId: string | null;
   payoutAdjustedAmount: number | null;
+  vendorAbsorbsStripeFees: boolean | null;
 };
 
 export async function loadPaymentPayoutContextForUpdateInTx(
@@ -159,7 +160,8 @@ export async function loadPaymentPayoutContextForUpdateInTx(
       p.stripe_connected_account_id as "stripeConnectedAccountId",
       p.stripe_charge_id as "stripeChargeId",
       p.stripe_transfer_id as "stripeTransferId",
-      p.payout_adjusted_amount as "payoutAdjustedAmount"
+      p.payout_adjusted_amount as "payoutAdjustedAmount",
+      p.vendor_absorbs_stripe_fees as "vendorAbsorbsStripeFees"
     from payments p
     inner join bookings b on b.id = p.booking_id
     left join dispute_cases dc on dc.booking_id = b.id
@@ -211,7 +213,7 @@ export async function refreshPaymentPayoutStateInTx(
       stripeConnectedAccountId: paymentContext.stripeConnectedAccountId,
       stripeChargeId: paymentContext.stripeChargeId,
       stripeTransferId: paymentContext.stripeTransferId,
-      vendorAbsorbsStripeFees: VENDOR_ABSORBS_STRIPE_FEES,
+      vendorAbsorbsStripeFees: paymentContext.vendorAbsorbsStripeFees ?? false,
     },
     now
   );
@@ -434,7 +436,7 @@ export async function processSinglePayoutCandidate(params: {
           stripeConnectedAccountId: locked.stripeConnectedAccountId,
           stripeChargeId: locked.stripeChargeId,
           stripeTransferId: locked.stripeTransferId,
-          vendorAbsorbsStripeFees: VENDOR_ABSORBS_STRIPE_FEES,
+          vendorAbsorbsStripeFees: locked.vendorAbsorbsStripeFees ?? false,
         },
         nowLocked
       );
@@ -600,6 +602,7 @@ export async function ensurePaymentRecordForIntentInTx(
       vendorNetPayoutAmount: payments.vendorNetPayoutAmount,
       stripeProcessingFeeEstimate: payments.stripeProcessingFeeEstimate,
       actualStripeFeeAmount: payments.actualStripeFeeAmount,
+      vendorAbsorbsStripeFees: payments.vendorAbsorbsStripeFees,
       refundAmount: payments.refundAmount,
       disputeStatus: payments.disputeStatus,
       payoutStatus: payments.payoutStatus,
@@ -841,7 +844,7 @@ export async function applyPaymentIntentSuccessInTx(
     stripeConnectedAccountId: payment.stripeConnectedAccountId ?? fallbackStripeConnectedAccountId,
     stripeChargeId: payment.stripeChargeId ?? latestChargeId,
     stripeTransferId: payment.stripeTransferId,
-    vendorAbsorbsStripeFees: VENDOR_ABSORBS_STRIPE_FEES,
+    vendorAbsorbsStripeFees: payment.vendorAbsorbsStripeFees ?? false,
   }, now);
 
   await tx
@@ -1106,6 +1109,9 @@ export async function initializeBookingPayment(input: {
     vendorGrossAmount,
     vendorNetPayoutAmount,
     stripeProcessingFeeEstimate,
+    // Snapshot the fee policy at booking time so a later platform-default flip
+    // never retroactively changes payouts for bookings already made.
+    vendorAbsorbsStripeFees: VENDOR_ABSORBS_STRIPE_FEES,
     stripeConnectedAccountId: vendorAccount.stripeConnectId,
     paymentType: "booking",
     status: "pending",

@@ -144,12 +144,16 @@ export function firePaymentSucceededSideEffects(args: {
           b.subtotal_amount_cents   as "subtotalCents",
           b.customer_fee_amount_cents as "feeCents",
           (b.total_amount - coalesce(b.security_deposit_cents, 0)) as "totalCents",
-          p.stripe_payment_intent_id as "paymentIntentId"
+          p.stripe_payment_intent_id as "paymentIntentId",
+          p.vendor_absorbs_stripe_fees as "vendorAbsorbsStripeFees",
+          p.vendor_net_payout_amount as "vendorNetPayoutCents",
+          p.stripe_processing_fee_estimate as "stripeProcessingFeeCents"
         from payments p
         join bookings b on b.id = p.booking_id
         join users u on u.id = b.customer_id
         join vendor_accounts va on va.id = b.vendor_account_id
         where p.stripe_payment_intent_id = ${paymentIntentId}
+          and p.payment_type = 'booking'
         limit 1
       `);
       const receipt = extractRows<{
@@ -163,6 +167,9 @@ export function firePaymentSucceededSideEffects(args: {
         feeCents: number | null;
         totalCents: number;
         paymentIntentId: string;
+        vendorAbsorbsStripeFees: boolean | null;
+        vendorNetPayoutCents: number | null;
+        stripeProcessingFeeCents: number | null;
       }>(receiptRows)[0];
       const receiptAddonRows: any = bookingId
         ? await db.execute(drizzleSql`
@@ -195,6 +202,17 @@ export function firePaymentSucceededSideEffects(args: {
         );
       }
       if (receipt?.vendorEmail) {
+        // When the vendor bears Stripe's fee, show the estimated deduction and
+        // resulting net payout in their confirmation email. Net = vendor gross
+        // (their service earnings) minus the estimated processing fee, matching
+        // the payout deduction. Old bookings (flag false) get a plain Total.
+        const absorbsFee = receipt.vendorAbsorbsStripeFees === true;
+        const feeEstimateCents = Math.max(0, Math.round(receipt.stripeProcessingFeeCents ?? 0));
+        const vendorGrossCents = Math.max(
+          0,
+          Math.round(receipt.vendorNetPayoutCents ?? receipt.totalCents ?? 0)
+        );
+        const showPayout = absorbsFee && feeEstimateCents > 0;
         emailTasks.push(
           sendBookingConfirmedEmail(receipt.vendorEmail, {
             recipientName: receipt.vendorName || "Vendor",
@@ -205,6 +223,12 @@ export function firePaymentSucceededSideEffects(args: {
             addOns: receiptAddOns,
             role: "vendor",
             serverUrl,
+            ...(showPayout
+              ? {
+                  stripeProcessingFeeCents: feeEstimateCents,
+                  vendorNetPayoutCents: Math.max(0, vendorGrossCents - feeEstimateCents),
+                }
+              : {}),
           })
         );
       }

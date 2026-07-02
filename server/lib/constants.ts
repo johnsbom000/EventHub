@@ -36,7 +36,16 @@ export const STRIPE_PRICE_AI_OVERAGE = process.env.STRIPE_PRICE_AI_OVERAGE || ""
 // ─── Stripe fee estimation ────────────────────────────────────────────────────
 export const STRIPE_FEE_ESTIMATE_PERCENT = 0.029;
 export const STRIPE_FEE_ESTIMATE_FIXED_CENTS = 30;
-export const VENDOR_ABSORBS_STRIPE_FEES = false;
+// Vendors bear Stripe's payment-processing fee (customer pays the clean list
+// price; the fee is deducted from the vendor's payout). Positioning: EventHub
+// still takes no cut — this is Stripe charging to use Stripe.
+//
+// This is the platform DEFAULT for NEW bookings only. It is snapshotted onto
+// each payment row (payments.vendor_absorbs_stripe_fees) at creation time, and
+// every payout computation reads that per-row value — never this constant
+// directly. So flipping this does not touch bookings already made under the
+// prior "keep 100%" terms. Do not read this constant at payout time.
+export const VENDOR_ABSORBS_STRIPE_FEES = true;
 
 // ─── Payout / payment lifecycle ───────────────────────────────────────────────
 export const PAYOUT_RELEASE_MODE = "auto_24h_hold";

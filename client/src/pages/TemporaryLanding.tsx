@@ -500,7 +500,7 @@ function ProTrialModal({
           </h2>
           <p className="mx-auto mt-3 max-w-xs font-sans text-[0.98rem] leading-[1.55] text-[rgba(245,240,232,0.8)]">
             Get everything you need to run your event business, on us for a full
-            month. No booking fees, cancel anytime.
+            month. No EventHub fees, cancel anytime.
           </p>
 
           {/* Monthly / annual toggle — the chosen interval is locked into the
@@ -680,7 +680,7 @@ export default function TemporaryLanding() {
               <span className="mx-1.5 font-semibold text-[#e07a6a]">$29/mo</span>
               <span className="text-[rgba(245,240,232,0.55)] line-through">$39</span>
               <span className="mx-1.5 text-[rgba(245,240,232,0.4)]">·</span>
-              <span className="text-[rgba(245,240,232,0.85)]">No booking fees, ever.</span>
+              <span className="text-[rgba(245,240,232,0.85)]">No EventHub fees, ever.</span>
             </span>
             <button
               type="button"
@@ -861,7 +861,7 @@ export default function TemporaryLanding() {
             </p>
             <ul className="mt-6 grid gap-3 sm:grid-cols-2">
               <li className="flex items-start gap-2.5 font-sans text-[0.98rem] text-[rgba(245,240,232,0.92)]">
-                <span className="mt-0.5 text-[#e07a6a]">✓</span> Keep 100% of every booking — we never take a cut
+                <span className="mt-0.5 text-[#e07a6a]">✓</span> No EventHub commission — we never take a cut of your bookings
               </li>
               <li className="flex items-start gap-2.5 font-sans text-[0.98rem] text-[rgba(245,240,232,0.92)]">
                 <span className="mt-0.5 text-[#9dd4cc]">✓</span> Unlimited listings + advanced analytics
@@ -899,7 +899,7 @@ export default function TemporaryLanding() {
               </button>
             </div>
             <p className="mt-4 font-sans text-[0.9rem] text-[rgba(245,240,232,0.6)]">
-              No booking fees · Secure payouts via Stripe · Cancel anytime
+              No EventHub fees · Secure payouts via Stripe · Cancel anytime
             </p>
           </div>
         </div>

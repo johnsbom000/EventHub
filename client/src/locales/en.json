@@ -482,7 +482,10 @@
     "stripeNotConnected": "Connect Stripe to get paid",
     "stripeNotConnectedDesc": "Link your Stripe account to start receiving payments for your bookings.",
     "dateNotSet": "Date not set",
-    "bookingNumber": "Booking #{{id}}"
+    "bookingNumber": "Booking #{{id}}",
+    "bookingTotal": "Booking total",
+    "stripeProcessingFee": "Stripe Processing Fee",
+    "yourPayout": "Your payout"
   },
   "vendorDiscounts": {
     "pageTitle": "Discounts",
