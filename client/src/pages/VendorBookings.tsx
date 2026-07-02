@@ -1,5 +1,5 @@
 import React, { useMemo, useState } from "react";
-import { useLocation, Link } from "wouter";
+import { useLocation } from "wouter";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { useAuth0 } from "@auth0/auth0-react";
 import { useTranslation } from "react-i18next";
@@ -18,7 +18,8 @@ import {
 import { Textarea } from "@/components/ui/textarea";
 import { Calendar, ChevronLeft, ChevronRight, Clock, Globe, MapPin, MessageSquare, Sparkles, Lock } from "lucide-react";
 import VendorShell from "@/components/VendorShell";
-import { apiRequest } from "@/lib/queryClient";
+import { useUpgradeModal } from "@/components/UpgradeModal";
+import { apiRequest, getApiErrorMessage } from "@/lib/queryClient";
 import { useToast } from "@/hooks/use-toast";
 import { useFeeRates } from "@/hooks/useFeeRates";
 import { normalizeAmountToCents, deriveBookingAmounts } from "@/lib/bookingAmounts";
@@ -129,6 +130,7 @@ type VendorMe = {
 export default function VendorBookings() {
   const { t, i18n } = useTranslation();
   const [, setLocation] = useLocation();
+  const upgrade = useUpgradeModal();
   const { isAuthenticated, getAccessTokenSilently } = useAuth0();
   const queryClient = useQueryClient();
   const { toast } = useToast();
@@ -242,7 +244,7 @@ export default function VendorBookings() {
       await queryClient.invalidateQueries({ queryKey: ["/api/vendor/bookings"] });
     },
     onError: (err: Error) => {
-      toast({ title: "Couldn't archive booking", description: err.message, variant: "destructive" });
+      toast({ title: "Couldn't archive booking", description: getApiErrorMessage(err), variant: "destructive" });
     },
     onSettled: () => {
       setArchiveModalBookingId(null);
@@ -509,7 +511,7 @@ export default function VendorBookings() {
       setIsGoogleCalendarConnectLoading(false);
       toast({
         title: t("vendorBookings.calendarError"),
-        description: error?.message || "Please try again.",
+        description: getApiErrorMessage(error, "Please try again."),
         variant: "destructive",
       });
     }
@@ -543,10 +545,12 @@ export default function VendorBookings() {
                       Google Calendar sync is a Pro feature.
                     </p>
                     <div className="mt-4">
-                      <Button asChild className="bg-[#4a6a7d] hover:bg-[#3f5c6d] text-[#f5f0e8]">
-                        <Link href="/vendor/dashboard#vendor-billing" data-testid="button-upgrade-google-calendar-bookings">
-                          <Sparkles className="mr-1 h-3.5 w-3.5" /> Upgrade to Pro
-                        </Link>
+                      <Button
+                        onClick={() => upgrade.open()}
+                        className="bg-[#4a6a7d] hover:bg-[#3f5c6d] text-[#f5f0e8]"
+                        data-testid="button-upgrade-google-calendar-bookings"
+                      >
+                        <Sparkles className="mr-1 h-3.5 w-3.5" /> Upgrade to Pro
                       </Button>
                     </div>
                   </>

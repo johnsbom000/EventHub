@@ -84,6 +84,17 @@ export function registerBillingRoutes(app: Express) {
       // subscription (prevents repeat-trial abuse on resubscribe).
       const trialPeriodDays = account.stripeSubscriptionId ? 0 : PRO_TRIAL_PERIOD_DAYS;
 
+      // The launch coupon is a `forever` discount, so the discounted rate is the
+      // permanent price — but Stripe's hosted page shows the pre-discount amount
+      // with a discount line, which reads as a temporary teaser. Spell out the
+      // ongoing price under the submit button so vendors know it never rises.
+      // Labels mirror the launch prices in client UpgradeModal/ProTrialModal.
+      const priceLabel = interval === "annual" ? "$290/year" : "$29/month";
+      const submitMessage =
+        trialPeriodDays > 0
+          ? `Free for ${trialPeriodDays} days. After your trial, your Launch Offer rate is ${priceLabel}.`
+          : `Your Launch Offer rate is ${priceLabel}.`;
+
       const base = appUrl();
       const { createSubscriptionCheckoutSession } = await import("../stripe");
       const session = await createSubscriptionCheckoutSession({
@@ -92,6 +103,7 @@ export function registerBillingRoutes(app: Express) {
         vendorAccountId: account.id,
         trialPeriodDays,
         couponId: STRIPE_COUPON_PRO || undefined,
+        submitMessage,
         successUrl: `${base}/vendor/dashboard?checkout=success`,
         cancelUrl: `${base}/vendor/dashboard?checkout=cancelled`,
       });

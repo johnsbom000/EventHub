@@ -4,6 +4,7 @@ import {
   uploadBufferToObjectStorage,
   makeObjectKey,
   isObjectStorageConfigured,
+  localFallbackAllowed,
   type UploadFolder,
 } from "./objectStorage";
 
@@ -80,7 +81,7 @@ export async function persistUploadedImage(buffer: Buffer, dir: string): Promise
   const key = makeObjectKey(folder, `image.${format}`);
   const filename = key.split("/").pop()!;
 
-  if (!isObjectStorageConfigured() && process.env.NODE_ENV !== "production") {
+  if (!isObjectStorageConfigured() && localFallbackAllowed()) {
     await fs.mkdir(dir, { recursive: true });
     await fs.writeFile(path.join(dir, filename), buffer);
     return { filename, format };
@@ -90,4 +91,31 @@ export async function persistUploadedImage(buffer: Buffer, dir: string): Promise
 
   // Return just the base filename so callers can build /uploads/<folder>/<filename> as before
   return { filename, format };
+}
+
+/**
+ * Persist an arbitrary uploaded file (e.g. a PDF) with the SAME durability
+ * guarantee as persistUploadedImage: object storage is the only write path in
+ * production (or whenever S3 is configured) and throws on failure — the local
+ * fallback is dev-only. Returns the `/uploads/<folder>/<filename>` path so
+ * callers stay backward-compatible with resolveStoredUploadPath().
+ */
+export async function persistUploadedFile(
+  buffer: Buffer,
+  folder: UploadFolder,
+  opts: { contentType: string; ext: string },
+): Promise<{ storagePath: string; filename: string }> {
+  const key = makeObjectKey(folder, `file.${opts.ext}`);
+  const filename = key.split("/").pop()!;
+  const storagePath = `/uploads/${folder}/${filename}`;
+
+  if (!isObjectStorageConfigured() && localFallbackAllowed()) {
+    const dir = path.join(process.cwd(), "server/uploads", folder);
+    await fs.mkdir(dir, { recursive: true });
+    await fs.writeFile(path.join(dir, filename), buffer);
+    return { storagePath, filename };
+  }
+
+  await uploadBufferToObjectStorage({ buffer, key, contentType: opts.contentType });
+  return { storagePath, filename };
 }

@@ -592,10 +592,12 @@ export async function createSubscriptionCheckoutSession(params: {
   vendorAccountId: string;
   trialPeriodDays?: number;
   couponId?: string;
+  /** Optional reassurance shown above the submit button (e.g. the ongoing price). */
+  submitMessage?: string;
   successUrl: string;
   cancelUrl: string;
 }): Promise<Stripe.Checkout.Session> {
-  const { stripeCustomerId, priceId, vendorAccountId, trialPeriodDays, couponId, successUrl, cancelUrl } = params;
+  const { stripeCustomerId, priceId, vendorAccountId, trialPeriodDays, couponId, submitMessage, successUrl, cancelUrl } = params;
 
   // A coupon (auto-applied launch discount) and allow_promotion_codes are
   // mutually exclusive in Checkout — Stripe rejects both. When we have a coupon,
@@ -616,6 +618,7 @@ export async function createSubscriptionCheckoutSession(params: {
     },
     // Mirror the identifiers onto the session too for checkout.session.completed.
     metadata: { vendorAccountId, kind: "vendor_pro_subscription" },
+    ...(submitMessage ? { custom_text: { submit: { message: submitMessage } } } : {}),
     success_url: successUrl,
     cancel_url: cancelUrl,
     ...discountConfig,

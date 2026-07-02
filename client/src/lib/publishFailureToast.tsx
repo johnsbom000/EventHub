@@ -113,6 +113,22 @@ export function isStripeNotConfiguredError(error: unknown): boolean {
   return payload?.error === "stripe_not_configured";
 }
 
+export function isListingLimitReachedError(error: unknown): boolean {
+  const payload = extractPublishErrorPayload(error);
+  return payload?.error === "listing_limit_reached";
+}
+
+/**
+ * Robustly pulls the server error code (e.g. "stripe_not_configured") out of a
+ * publish failure. Works whether the error is a plain object, a raw JSON string,
+ * or an ApiRequestError whose message is "400: {json}" — so callers don't have
+ * to rely on a `.code` property that apiRequest's thrown error doesn't carry.
+ */
+export function getPublishErrorCode(error: unknown): string | undefined {
+  const payload = extractPublishErrorPayload(error);
+  return typeof payload?.error === "string" ? payload.error : undefined;
+}
+
 export function getPublishFailureToastContent(error: unknown): {
   title: string;
   description: ReactNode;

@@ -885,11 +885,14 @@
 
 /* ===== Launch-deal moving palette outline =====
    A masked, animated gradient ring that flows through the EventHub palette:
-   pink (#e07a6a) → turquoise (#9dd4cc) → gold (#c9a06a) → navy (#20243d).
+   pink (#e07a6a) → turquoise (#9dd4cc) → gold (#c9a06a) → slate (#4a6a7d).
    Only the border animates (padding-box vs border-box mask XOR); content is
    untouched. Thickness is tunable per element via --ring. Used on the landing
    page launch-deal placements (sticky bar + closing-CTA deal panel). */
-.deal-outline { position: relative; }
+/* `:not(.fixed)` so it doesn't clobber the positioning of already-fixed
+   elements (e.g. a Radix DialogContent) — a fixed box is already a containing
+   block for the absolutely-positioned ::before ring. */
+.deal-outline:not(.fixed) { position: relative; }
 .deal-outline::before {
   content: "";
   position: absolute;
@@ -897,7 +900,7 @@
   border-radius: inherit;
   padding: var(--ring, 2px);
   background: linear-gradient(115deg,
-    #e07a6a, #9dd4cc, #c9a06a, #20243d, #e07a6a, #9dd4cc);
+    #e07a6a, #9dd4cc, #c9a06a, #4a6a7d, #e07a6a, #9dd4cc);
   background-size: 300% 300%;
   animation: deal-flow 7s linear infinite;
   -webkit-mask: linear-gradient(#000 0 0) content-box, linear-gradient(#000 0 0);
@@ -912,4 +915,37 @@
 }
 @media (prefers-reduced-motion: reduce) {
   .deal-outline::before { animation: none; }
+}
+
+/* Attention highlight that cycles through the same palette as .deal-outline.
+   Drives `color`, so it works on lucide icons (stroke=currentColor) and text
+   alike. Pair with a static text color class as the reduced-motion fallback. */
+.deal-highlight { animation: deal-highlight-flow 7s linear infinite; }
+@keyframes deal-highlight-flow {
+  0%, 100% { color: #e07a6a; }
+  25%      { color: #9dd4cc; }
+  50%      { color: #c9a06a; }
+  75%      { color: #4a6a7d; }
+}
+@media (prefers-reduced-motion: reduce) {
+  .deal-highlight { animation: none; }
+}
+
+/* Animated gradient FILL in the same palette — for CTAs that should flow with
+   the highlight instead of a flat brand color. Uses its own keyframes that
+   OSCILLATE (0%→100%→0%) rather than wrap, so there's no hard snap back to the
+   first color — every transition is a real gradient blend. Very slow drift. */
+.deal-fill {
+  background: linear-gradient(115deg,
+    #e07a6a, #9dd4cc, #c9a06a, #4a6a7d, #e07a6a, #9dd4cc);
+  background-size: 300% 300%;
+  animation: deal-fill-flow 40s ease-in-out infinite;
+}
+@keyframes deal-fill-flow {
+  0%   { background-position: 0% 50%; }
+  50%  { background-position: 100% 50%; }
+  100% { background-position: 0% 50%; }
+}
+@media (prefers-reduced-motion: reduce) {
+  .deal-fill { animation: none; }
 }
