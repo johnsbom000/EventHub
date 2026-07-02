@@ -9,6 +9,7 @@ import {
 import { ensureStripeCustomer } from "../services/paymentService";
 import { getVendorEntitlements, isCompActive } from "../services/entitlementsService";
 import { deactivateExtraActiveListingsForFreeTier } from "../services/bookingService";
+import { disconnectGoogleCalendarForVendor } from "../google";
 import { appUrl, logRouteError, respondWithInternalServerError } from "../lib/routeHelpers";
 import { mutationRateLimiter } from "../lib/rateLimiters";
 import {
@@ -168,6 +169,8 @@ export async function reconcileVendorSubscriptionState<
       })
       .where(eq(vendorAccounts.id, account.id));
     await deactivateExtraActiveListingsForFreeTier(account.id);
+    // Google Calendar sync is Pro-only — tear it down when the comp grant lapses.
+    await disconnectGoogleCalendarForVendor(account.id);
     return { ...account, subscriptionPlan: "free", subscriptionStatus: "none" };
   }
   return account;
