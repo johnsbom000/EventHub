@@ -342,7 +342,7 @@ export default function VendorOnboarding() {
  };
 
  const markStepComplete = (stepId: number) => {
- if (stepId < 1 || stepId >= STEPS.length) return;
+ if (stepId < 1 || stepId > STEPS.length) return;
  setCompletedStepIds((prev) => (prev.includes(stepId) ? prev : [...prev, stepId].sort((a, b) => a - b)));
  trackEvent("vendor_onboarding_step_completed", { step: stepId });
  };

@@ -110,6 +110,68 @@ export default function AuthModal({
     });
   };
 
+  const [isSendingReset, setIsSendingReset] = useState(false);
+
+  // Trigger Auth0's password-reset email via the public Authentication API
+  // change_password endpoint. This actually resets the password, unlike the
+  // previous behavior (which just restarted a normal login).
+  const handleForgotPassword = async () => {
+    const targetEmail = email?.trim();
+    if (!targetEmail) {
+      toast({
+        title: "Enter your email first",
+        description:
+          "Type the email for your account in the field above, then click “Forgot password?” again.",
+        variant: "destructive",
+      });
+      return;
+    }
+
+    const domain = String(import.meta.env.VITE_AUTH0_DOMAIN || "").trim();
+    const clientId = String(import.meta.env.VITE_AUTH0_CLIENT_ID || "").trim();
+    const connection = String(
+      import.meta.env.VITE_AUTH0_DB_CONNECTION || "Username-Password-Authentication"
+    ).trim();
+
+    if (!domain || !clientId) {
+      toast({
+        title: "Password reset unavailable",
+        description: "Authentication isn’t configured. Please contact support.",
+        variant: "destructive",
+      });
+      return;
+    }
+
+    setIsSendingReset(true);
+    try {
+      const res = await fetch(`https://${domain}/dbconnections/change_password`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ client_id: clientId, email: targetEmail, connection }),
+      });
+      if (!res.ok) {
+        throw new Error((await res.text().catch(() => "")) || "reset_failed");
+      }
+      // Neutral copy — never reveal whether an account exists for the email.
+      toast({
+        title: "Check your email",
+        description:
+          "If an account exists for that email, a password reset link is on its way.",
+      });
+    } catch (err: any) {
+      toast({
+        title: "Couldn’t send reset email",
+        description:
+          typeof err?.message === "string" && err.message !== "reset_failed"
+            ? err.message.slice(0, 200)
+            : "Something went wrong. Please try again in a moment.",
+        variant: "destructive",
+      });
+    } finally {
+      setIsSendingReset(false);
+    }
+  };
+
   const isLogin = activeTab === "login";
   const primaryButtonLabel = isLogin ? "Log in" : "Create account";
 
@@ -232,9 +294,10 @@ export default function AuthModal({
                   type="button"
                   variant="ghost"
                   className="h-auto min-h-0 p-0 font-sans text-[1.25rem] font-medium text-[#3f5f8a] hover:bg-transparent hover:text-[#2f4f78] hover:underline"
-                  onClick={continueWithEmail}
+                  onClick={handleForgotPassword}
+                  disabled={isSendingReset}
                 >
-                  Forgot password?
+                  {isSendingReset ? "Sending…" : "Forgot password?"}
                 </Button>
               </div>
             )}
