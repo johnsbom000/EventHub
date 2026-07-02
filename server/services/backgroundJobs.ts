@@ -1,5 +1,5 @@
 import { db } from "../db";
-import { eq, and, or, inArray, sql as drizzleSql } from "drizzle-orm";
+import { eq, and, or, inArray, isNotNull, sql as drizzleSql } from "drizzle-orm";
 import { bookings, payments, vendorAccounts, users, vendorSuspensions, vendorProfiles } from "@shared/schema";
 import { logger } from "../lib/logger";
 import { appUrl } from "../lib/routeHelpers";
@@ -27,6 +27,7 @@ import { deleteStreamBookingChannel, isChatExpiredForEventDate, isStreamChatConf
 import { syncBookingToGoogleCalendarSafely, runGoogleBookingSyncVerificationForVendorAccount } from "./googleSyncService";
 import { renewExpiringGoogleCalendarWatchChannels } from "../google";
 import { processSinglePayoutCandidate } from "./paymentService";
+import { checkAccountOnboardingStatus } from "../stripe";
 import { reconcilePaymentIntent } from "./paymentReconcile";
 import { runReviewPromptJob } from "../jobs/reviewPromptJob";
 import { runStripeWebhookCleanupJob } from "../jobs/stripeWebhookCleanup";
@@ -536,6 +537,103 @@ export async function runAutoPayoutTickWithResult(): Promise<boolean> {
   } finally {
     autoPayoutTickInFlight = false;
     await releaseWorkerLock("payout");
+  }
+}
+
+/**
+ * Flip `stripeOnboardingComplete = true` for a single connected account if
+ * Stripe now reports onboarding as complete. Idempotent and safe to call from
+ * both the reconciliation worker (below) and the `account.updated` webhook.
+ *
+ * Fixes the gap where the flag was only ever flipped when the vendor's browser
+ * happened to hit `/api/vendor/connect/status` — a vendor whose account Stripe
+ * verified asynchronously (or who bounced off the return URL) would otherwise
+ * stay un-bookable indefinitely.
+ *
+ * Returns true only when the flag was actually flipped (was false, now complete).
+ */
+export async function reconcileVendorStripeOnboarding(
+  stripeConnectId: string | null | undefined
+): Promise<boolean> {
+  const trimmed = asTrimmedString(stripeConnectId);
+  if (!trimmed) return false;
+
+  const [account] = await db
+    .select({
+      id: vendorAccounts.id,
+      stripeOnboardingComplete: vendorAccounts.stripeOnboardingComplete,
+    })
+    .from(vendorAccounts)
+    .where(eq(vendorAccounts.stripeConnectId, trimmed))
+    .limit(1);
+
+  // Nothing to do if we don't recognize the account or it's already complete.
+  if (!account || account.stripeOnboardingComplete) return false;
+
+  const status = await checkAccountOnboardingStatus(trimmed);
+  if (!status.complete) return false;
+
+  await db
+    .update(vendorAccounts)
+    .set({ stripeOnboardingComplete: true })
+    .where(eq(vendorAccounts.id, account.id));
+
+  logger.info(
+    "[stripe-connect-reconcile] vendor %s onboarding now complete — marked payout-ready",
+    account.id
+  );
+  return true;
+}
+
+/**
+ * Periodic reconciliation: scan vendors that have a connected account but are
+ * still marked incomplete, and flip any that Stripe now reports as complete.
+ * This is the delivery-independent guarantee behind onboarding completion —
+ * it works even if the `account.updated` webhook never arrives.
+ */
+export async function runStripeConnectReconcileJob(): Promise<number> {
+  const lockAcquired = await tryAcquireWorkerLock(
+    "stripe_connect_reconcile",
+    20 * 60 * 1000
+  );
+  if (!lockAcquired) {
+    logger.info("[stripe-connect-reconcile] lock held by another instance — skipping");
+    return 0;
+  }
+  try {
+    const pending = await db
+      .select({ stripeConnectId: vendorAccounts.stripeConnectId })
+      .from(vendorAccounts)
+      .where(
+        and(
+          isNotNull(vendorAccounts.stripeConnectId),
+          eq(vendorAccounts.stripeOnboardingComplete, false)
+        )
+      )
+      .limit(100);
+
+    let flipped = 0;
+    for (const row of pending) {
+      try {
+        if (await reconcileVendorStripeOnboarding(row.stripeConnectId)) flipped += 1;
+      } catch (err: any) {
+        // One bad account must not halt the batch.
+        logger.warn(
+          "[stripe-connect-reconcile] check failed for %s: %s",
+          row.stripeConnectId,
+          err?.message || err
+        );
+      }
+    }
+    if (flipped > 0) {
+      logger.info(
+        "[stripe-connect-reconcile] flipped %d vendor(s) to onboarding-complete",
+        flipped
+      );
+    }
+    return flipped;
+  } finally {
+    await releaseWorkerLock("stripe_connect_reconcile");
   }
 }
 
@@ -1210,6 +1308,16 @@ export function startTravelFeeRefundWorker() {
   startTimer.unref?.();
 }
 
+export function startStripeConnectReconcileWorker() {
+  const INTERVAL_MS = 10 * 60 * 1000;
+  const startTimer = setTimeout(() => {
+    void runStripeConnectReconcileJob();
+    const t = setInterval(() => void runStripeConnectReconcileJob(), INTERVAL_MS);
+    t.unref?.();
+  }, 3 * 60 * 1000);
+  startTimer.unref?.();
+}
+
 export function startAllBackgroundWorkers() {
   startBookingExpiryWorker();
   startChatCleanupWorker();
@@ -1223,6 +1331,7 @@ export function startAllBackgroundWorkers() {
   startTravelFeeRefundWorker();
   startBookingCompletionWorker();
   startAutoPayoutWorker();
+  startStripeConnectReconcileWorker();
   startStripeWebhookCleanupWorker();
   startDataRetentionCleanupWorker();
 }

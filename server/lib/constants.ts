@@ -39,7 +39,10 @@ export const STRIPE_FEE_ESTIMATE_FIXED_CENTS = 30;
 export const VENDOR_ABSORBS_STRIPE_FEES = false;
 
 // ─── Payout / payment lifecycle ───────────────────────────────────────────────
-export const PAYOUT_RELEASE_MODE = "auto_24h_hold";
+// Payouts auto-release after the 72h post-event dispute window (see
+// DISPUTE_WINDOW_HOURS / payoutEligibility.ts). The literal was previously
+// mislabeled "auto_24h_hold".
+export const PAYOUT_RELEASE_MODE = "auto_72h_hold";
 export const AUTO_PAYOUT_INTERVAL_MS = 10 * 60 * 1000; // 10 minutes
 
 // ─── Booking expiry ───────────────────────────────────────────────────────────
