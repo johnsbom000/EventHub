@@ -24,6 +24,7 @@ import {
   runAutoPayoutTick,
   runAutoPayoutTickWithResult,
   startAutoPayoutWorker,
+  reconcileVendorStripeOnboarding,
 } from "../services/backgroundJobs";
 import {
   type VendorProfileContext,
@@ -221,6 +222,7 @@ import {
   stopGoogleCalendarWatchChannel,
   syncEventHubBookingToGoogleCalendar,
   fetchGoogleAccountEmail,
+  disconnectGoogleCalendarForVendor,
 } from "../google";
 import {
   handleGoogleCalendarWebhook,
@@ -466,143 +468,12 @@ export function registerPaymentRoutes(app: Express): void {
     }
   );
 
-  // ---------------------------------------------------------------------------
-  // Hosted Checkout Session — marketplace destination charge
-  // ---------------------------------------------------------------------------
-  // Creates a Stripe-hosted checkout page for a direct listing purchase.
-  // The payment flows through the platform account and the net amount is
-  // automatically transferred to the vendor via a destination charge.
-  //
-  // Usage: POST /api/checkout/session  { listingId: "..." }
-  // Returns: { url: "https://checkout.stripe.com/..." }
-  //
-  // After the customer pays, Stripe fires checkout.session.completed to
-  // /api/stripe/webhook and the session metadata links it back to the listing.
-
-  const checkoutSessionSchema = z.object({
-    listingId: z.string().min(1),
-  });
-
-  app.post("/api/checkout/session", mutationRateLimiter, requireCustomerAnyAuth, async (req, res) => {
-    // Direct-checkout flow is not production-ready: payments.bookingId is NOT NULL so no
-    // payment record can be created, and the payout worker has no path to pay the vendor.
-    // Remove this gate when the direct-purchase booking flow is implemented.
-    return res.status(501).json({
-      error: "Direct checkout is not yet available.",
-      code: "direct_checkout_not_implemented",
-    });
-
-    try {
-      const { listingId } = checkoutSessionSchema.parse(req.body);
-
-      // ── 1. Resolve the listing ──────────────────────────────────────────
-      const [listing] = await db
-        .select({
-          id: vendorListings.id,
-          title: vendorListings.title,
-          priceCents: vendorListings.priceCents,
-          status: vendorListings.status,
-          accountId: vendorListings.accountId,
-        })
-        .from(vendorListings)
-        .where(eq(vendorListings.id, listingId))
-        .limit(1);
-
-      if (!listing) {
-        return res.status(404).json({ error: "Listing not found" });
-      }
-      if (listing.status !== "active") {
-        return res.status(400).json({ error: "This listing is not available for purchase" });
-      }
-      if (listing.priceCents == null || listing.priceCents! <= 0) {
-        return res.status(400).json({ error: "Listing does not have a valid price" });
-      }
-
-      // ── 2. Resolve the vendor's connected Stripe account ───────────────
-      const [vendor] = await db
-        .select({
-          stripeConnectId: vendorAccounts.stripeConnectId,
-          stripeOnboardingComplete: vendorAccounts.stripeOnboardingComplete,
-        })
-        .from(vendorAccounts)
-        .where(eq(vendorAccounts.id, listing.accountId))
-        .limit(1);
-
-      if (!vendor?.stripeConnectId || !vendor.stripeOnboardingComplete) {
-        return res.status(400).json({ error: "Vendor payment processing is not set up" });
-      }
-
-      // ── 3. Calculate fees ───────────────────────────────────────────────
-      // application_fee_amount: the cut the platform retains from this charge.
-      // The vendor receives: listingPrice − applicationFee − Stripe processing fee.
-      const applicationFeeAmountCents = Math.round(listing.priceCents! * VENDOR_FEE_RATE);
-
-      // ── 4. Build redirect URLs ──────────────────────────────────────────
-      const appBaseUrl = (process.env.APP_URL || "http://localhost:5173").trim().replace(/\/+$/, "");
-
-      // {CHECKOUT_SESSION_ID} is a Stripe template literal — it is replaced by
-      // the real session ID at redirect time, allowing the success page to verify
-      // the payment via GET /api/checkout/session/:sessionId.
-      const successUrl = `${appBaseUrl}/checkout/success?session_id={CHECKOUT_SESSION_ID}`;
-      const cancelUrl = `${appBaseUrl}/checkout/cancel`;
-
-      // ── 5. Create the Stripe Checkout Session ──────────────────────────
-      const { createCheckoutSession } = await import("../stripe");
-
-      const session = await createCheckoutSession({
-        listingName: listing.title || "EventHub Service",
-        amountCents: listing.priceCents!,
-        currency: "usd",
-        applicationFeeAmountCents,
-        vendorStripeAccountId: vendor.stripeConnectId!,
-        successUrl,
-        cancelUrl,
-        // Store IDs in metadata so the checkout.session.completed webhook
-        // can reconcile this payment with the listing and vendor in our DB.
-        metadata: {
-          listingId: listing.id,
-          vendorAccountId: listing.accountId,
-          vendorStripeAccountId: vendor.stripeConnectId!,
-          applicationFeeAmountCents: applicationFeeAmountCents.toString(),
-        },
-      });
-
-      // Return the hosted checkout URL — the client should redirect to this.
-      return res.json({ url: session.url, sessionId: session.id });
-    } catch (error: any) {
-      return respondWithInternalServerError(req, res, error);
-    }
-  });
-
-  // GET /api/checkout/session/:sessionId — verify a completed checkout session.
-  // Called by the success page to confirm payment before showing confirmation UI.
-  app.get("/api/checkout/session/:sessionId", requireCustomerAnyAuth, async (req, res) => {
-    try {
-      const sessionId = asTrimmedString(req.params.sessionId);
-      if (!sessionId) {
-        return res.status(400).json({ error: "Missing session ID" });
-      }
-
-      const { stripeClient } = await import("../stripe");
-
-      // Retrieve the session and expand the payment_intent so we can expose
-      // payment status without requiring a separate API call from the client.
-      const session = await stripeClient.checkout.sessions.retrieve(sessionId, {
-        expand: ["payment_intent"],
-      });
-
-      return res.json({
-        sessionId: session.id,
-        paymentStatus: session.payment_status,   // "paid" | "unpaid" | "no_payment_required"
-        status: session.status,                   // "open" | "complete" | "expired"
-        amountTotal: session.amount_total,
-        currency: session.currency,
-        metadata: session.metadata,
-      });
-    } catch (error: any) {
-      return respondWithInternalServerError(req, res, error);
-    }
-  });
+  // Note: the legacy hosted-checkout destination-charge routes
+  // (POST/GET /api/checkout/session) and stripe.createCheckoutSession were
+  // removed — they had no client callers and bypassed the 72h payout hold +
+  // eligibility checks. All real payments go through the booking payment-intent
+  // flow (separate charges & transfers). The checkout.session.completed webhook
+  // handler below is retained for defensiveness.
 
   app.post("/api/stripe/webhook", async (req, res) => {
     try {
@@ -1075,9 +946,12 @@ export function registerPaymentRoutes(app: Express): void {
         const subscriptionId = asTrimmedString(subscription?.id);
         if (subscriptionId) {
           const { vendorAccountId } = await markVendorSubscriptionCanceled(subscriptionId);
-          // Drop to Free: trim extra active listings down to the free-tier cap.
+          // Drop to Free: trim extra active listings down to the free-tier cap and
+          // tear down Google Calendar sync (a Pro-only feature) so it stops for the
+          // now-free vendor.
           if (vendorAccountId) {
             await deactivateExtraActiveListingsForFreeTier(vendorAccountId);
+            await disconnectGoogleCalendarForVendor(vendorAccountId);
           }
         }
       } else if (eventType === "invoice.payment_failed") {
@@ -1103,6 +977,22 @@ export function registerPaymentRoutes(app: Express): void {
                 inArray(vendorAccounts.subscriptionStatus, ["active", "trialing", "past_due"])
               )
             );
+        }
+      } else if (
+        eventType === "account.updated" ||
+        eventType === "account.application.authorized" ||
+        eventType.startsWith("v2.core.account")
+      ) {
+        // Fast-path for Connect onboarding completion. The classic
+        // `account.updated` fires for V1 accounts; V2 recipient accounts emit
+        // `v2.core.account[...]` events. Either way we re-check status and flip
+        // the payout-ready flag. This is best-effort — the reconciliation worker
+        // (runStripeConnectReconcileJob) is the delivery-independent guarantee.
+        const accountObject = event?.data?.object ?? {};
+        const connectedAccountId =
+          asTrimmedString((accountObject as any)?.id) || asTrimmedString(event?.account);
+        if (connectedAccountId) {
+          await reconcileVendorStripeOnboarding(connectedAccountId);
         }
       }
 
