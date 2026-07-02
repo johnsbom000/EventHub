@@ -4459,10 +4459,12 @@ export function registerVendorRoutes(app: Express): void {
           b.payout_blocked_reason as "payoutBlockedReason",
           b.paid_out_at as "paidOutAt",
           b.outside_service_radius as "outsideServiceRadius",
-          b.instant_book_snapshot as "instantBookSnapshot"
+          b.instant_book_snapshot as "instantBookSnapshot",
+          u.name as "customerName"
         from bookings b
         left join events e on e.id = b.event_id
         left join vendor_listings listing_owner on listing_owner.id = b.listing_id
+        left join users u on u.id = b.customer_id
         where coalesce(b.vendor_account_id, listing_owner.account_id) = ${vendorAccountId}
           and b.vendor_dismissed_at is null
         order by b.created_at desc
@@ -5425,6 +5427,12 @@ export function registerVendorRoutes(app: Express): void {
       const historyWithContext = await attachBookingItemContext(historyBase as any);
 
       return res.json({
+        // Frontend (VendorPayments.tsx) reads `totalNetEarned` ("all-time earnings
+        // net of fees" = released + still-pending) and `upcomingNetPayout` ("eligible
+        // completed jobs pending release" = pending). Keep the original keys too for
+        // any other consumers.
+        totalNetEarned: totalPaidOut + pendingNetPayout,
+        upcomingNetPayout: pendingNetPayout,
         totalPaidOut,
         pendingNetPayout,
         blockedCount,

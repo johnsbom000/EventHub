@@ -16,6 +16,16 @@ import { sql as drizzleSql } from "drizzle-orm";
  */
 export async function tryAcquireWorkerLock(lockId: string, staleAfterMs: number): Promise<boolean> {
   try {
+    // Self-seed the lock row. Acquisition is UPDATE-only, so a lock whose row was
+    // never seeded (e.g. a new worker added without a seed migration) would match
+    // zero rows forever and the job would silently skip every tick. Inserting at
+    // epoch here makes the row immediately acquirable and keeps seeding in lockstep
+    // with the code that uses the lock.
+    await db.execute(drizzleSql`
+      INSERT INTO worker_locks (lock_id, locked_at)
+      VALUES (${lockId}, '1970-01-01'::timestamptz)
+      ON CONFLICT (lock_id) DO NOTHING
+    `);
     const staleAt = new Date(Date.now() - staleAfterMs);
     const result = await db.execute(drizzleSql`
       UPDATE worker_locks
