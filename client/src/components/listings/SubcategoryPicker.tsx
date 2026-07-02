@@ -124,7 +124,7 @@ function TwoLevelPicker({
   className?: string;
 }) {
   const typeOptions = getTypes(categoryKey);
-  const detailLabel = categoryKey === "Catering" ? "Cuisine" : "Sub-type";
+  const detailLabel = categoryKey === "Catering" ? "Sub-Type" : "Sub-type";
   const typeLabel = categoryKey === "Catering" ? "Catering Type" : "Venue Type";
 
   const detailOptions =

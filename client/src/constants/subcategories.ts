@@ -123,6 +123,7 @@ export const CATERING_CUISINES = [
   "Cultural / Religious",
   "European",
   "Farm-to-Table",
+  "Gift Baskets",
   "Gluten-Free",
   "Keto",
   "Latin",
