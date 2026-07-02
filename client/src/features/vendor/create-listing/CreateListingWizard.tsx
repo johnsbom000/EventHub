@@ -1461,23 +1461,54 @@ export function CreateListingWizard({ onClose, initialListingType, parentListing
  const allowedMimeTypes = new Set(["image/jpeg", "image/png", "image/webp"]);
  const selectedFiles = Array.from(files);
 
- const rejectedHeic = selectedFiles.filter(
- (file) =>
+ const isHeic = (file: File) =>
  file.type === "image/heic" ||
  file.type === "image/heif" ||
  file.name.toLowerCase().endsWith(".heic") ||
- file.name.toLowerCase().endsWith(".heif"),
- );
+ file.name.toLowerCase().endsWith(".heif");
 
- if (rejectedHeic.length > 0) {
+ const heicFiles = selectedFiles.filter(isHeic);
+
+ // Convert iPhone HEIC/HEIF photos to JPEG in-browser so mobile vendors aren't
+ // dead-ended (iPhone's default camera format is HEIC). heic2any is imported
+ // lazily so it only loads when a HEIC file is actually picked.
+ const convertedHeicFiles: File[] = [];
+ if (heicFiles.length > 0) {
+ try {
+ const heicModule = (await import("heic2any")) as any;
+ const heic2any = heicModule.default ?? heicModule;
+ for (const file of heicFiles) {
+ try {
+ const converted = await heic2any({
+ blob: file,
+ toType: "image/jpeg",
+ quality: 0.9,
+ });
+ const blob: Blob = Array.isArray(converted) ? converted[0] : converted;
+ const baseName = file.name.replace(/\.(heic|heif)$/i, "") || "photo";
+ convertedHeicFiles.push(
+ new File([blob], `${baseName}.jpg`, { type: "image/jpeg" }),
+ );
+ } catch {
+ // Skip this single file; surfaced in the aggregate notice below.
+ }
+ }
+ } catch {
+ // Library failed to load entirely — fall through to the notice below.
+ }
+ }
+
+ const failedHeicCount = heicFiles.length - convertedHeicFiles.length;
+ if (failedHeicCount > 0) {
  toast({
- title: "Unsupported image format",
- description: "Please upload JPG, PNG, or WebP files.",
+ title: "Couldn’t convert some photos",
+ description:
+ "We couldn’t process some HEIC/HEIF images. Please upload JPG, PNG, or WebP instead.",
  variant: "destructive",
  });
  }
 
- const acceptedFiles = selectedFiles.filter((file) => {
+ const nativeAcceptedFiles = selectedFiles.filter((file) => {
  const lowerName = file.name.toLowerCase();
  return (
  allowedMimeTypes.has(file.type) ||
@@ -1487,6 +1518,8 @@ export function CreateListingWizard({ onClose, initialListingType, parentListing
  lowerName.endsWith(".webp")
  );
  });
+
+ const acceptedFiles = [...nativeAcceptedFiles, ...convertedHeicFiles];
 
  if (acceptedFiles.length === 0) return;
 
