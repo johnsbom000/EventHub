@@ -47,6 +47,7 @@ type VendorBooking = {
   eventEndTime?: string | null;
   itemTitle?: string | null;
   parentListingTitle?: string | null;
+  customerName?: string | null;
   customerEventTitle?: string | null;
   customerNotes?: string | null;
   customerQuestions?: string | null;
@@ -91,6 +92,18 @@ function isChatWindowOpen(eventDate: string | null | undefined): boolean {
   const endOfDay = new Date(`${eventDate}T23:59:59.999Z`);
   if (Number.isNaN(endOfDay.getTime())) return true;
   return Date.now() <= endOfDay.getTime() + 48 * 60 * 60 * 1000;
+}
+
+// True once the event's end time has passed. Uses the same local-time parsing
+// convention as the rest of this page (see parsedBookings) and mirrors the
+// backend completion cutoff in server/routers/vendor.ts.
+function isEventEnded(eventDate?: string | null, eventEndTime?: string | null): boolean {
+  if (!eventDate) return false;
+  const end = eventEndTime
+    ? new Date(`${eventDate}T${eventEndTime}`)
+    : new Date(`${eventDate}T23:59:59`);
+  if (Number.isNaN(end.getTime())) return false;
+  return Date.now() > end.getTime();
 }
 
 function getTzAbbr(tz: string): string {
@@ -304,6 +317,7 @@ export default function VendorBookings() {
           ...deriveBookingAmounts(b, vendorFeeRate),
           googleSyncLabel: isGoogleSynced ? "synced" : "unsynced",
           status: normalizeStatus(b.status),
+          isPast: isEventEnded(b.eventDate, b.eventEndTime),
           raw: b,
         };
       })
@@ -318,16 +332,17 @@ export default function VendorBookings() {
         estimatedPayoutCents: number;
         googleSyncLabel: "synced" | "unsynced";
         status: string;
+        isPast: boolean;
         raw: VendorBooking;
       }>;
   }, [bookings]);
 
   const tabFilteredItems = useMemo(() => {
-    const startOfToday = new Date();
-    startOfToday.setHours(0, 0, 0, 0);
-    const matchesTab = (x: { date: Date; status: string }) => {
+    const matchesTab = (x: { date: Date; status: string; isPast: boolean }) => {
       if (activeTab === "all") return true;
-      if (activeTab === "upcoming") return x.date >= startOfToday && x.status === "confirmed";
+      if (activeTab === "upcoming") return x.status === "confirmed" && !x.isPast;
+      if (activeTab === "completed")
+        return x.status === "completed" || (x.status === "confirmed" && x.isPast);
       return x.status === activeTab;
     };
 
@@ -787,7 +802,11 @@ export default function VendorBookings() {
                           : item.raw.itemTitle || `Booking #${item.id.slice(0, 8)}`}
                       </div>
                       <div className="flex items-center gap-2 text-sm">
-                        <span className="capitalize text-muted-foreground">{item.status || "unknown"}</span>
+                        <span className="capitalize text-muted-foreground">
+                          {item.status === "confirmed" && item.isPast
+                            ? "Awaiting completion"
+                            : item.status || "unknown"}
+                        </span>
                         <span
                           className={[
                             "rounded-full border px-2 py-0.5 text-sm font-medium uppercase tracking-wide",
@@ -871,6 +890,12 @@ export default function VendorBookings() {
                     </div>
                     {expandedBookingId === item.id ? (
                       <div className="mt-3 rounded-md border bg-muted/30 p-3 space-y-3">
+                        {item.raw.customerName ? (
+                          <div className="space-y-1">
+                            <div className="text-sm uppercase tracking-wide text-muted-foreground">Customer</div>
+                            <div className="text-sm">{item.raw.customerName}</div>
+                          </div>
+                        ) : null}
                         {isTimezoneMismatch(item.raw.eventTimezone, item.raw.vendorTimezoneSnapshot) ? (
                           <div className="rounded-md border border-violet-200 bg-violet-50 p-3 flex items-start gap-2">
                             <Clock className="h-4 w-4 text-violet-600 mt-0.5 shrink-0" />
@@ -962,8 +987,10 @@ export default function VendorBookings() {
                         </Button>
                       </div>
                     ) : null}
-                    {/* Confirmed (instant-book auto-confirmed, or an accepted request): Cancel only — completion is handled automatically */}
-                    {item.status === "confirmed" ? (
+                    {/* Confirmed & upcoming: vendor may still cancel. Completion is
+                        normally automatic, but once the event has ended we swap Cancel
+                        for a manual "Mark as complete" so the booking can't linger. */}
+                    {item.status === "confirmed" && !item.isPast ? (
                       <div className="mt-3 flex items-center gap-2">
                         <Button
                           size="sm"
@@ -977,6 +1004,22 @@ export default function VendorBookings() {
                         </Button>
                       </div>
                     ) : null}
+                    {item.status === "confirmed" && item.isPast ? (
+                      <div className="mt-3 flex items-center gap-2">
+                        <Button
+                          size="sm"
+                          onClick={() => {
+                            setActionBookingId(item.id);
+                            bookingActionMutation.mutate({ id: item.id, status: "completed" });
+                          }}
+                          disabled={bookingActionMutation.isPending}
+                        >
+                          {bookingActionMutation.isPending && actionBookingId === item.id
+                            ? "Marking complete…"
+                            : "Mark as complete"}
+                        </Button>
+                      </div>
+                    ) : null}
                     {bookingActionMutation.isError && actionBookingId === item.id ? (
                       <div className="mt-2 text-sm text-destructive">
                         {bookingActionMutation.error instanceof Error
@@ -987,6 +1030,7 @@ export default function VendorBookings() {
 
                     {/* Travel / delivery fee proposal */}
                     {item.raw.outsideServiceRadius &&
+                      !item.isPast &&
                       (item.status === "pending" || item.status === "confirmed") ? (
                       item.raw.travelFeeProposal?.status === "accepted" ? (
                         <div className="mt-3 rounded-lg border border-emerald-200 bg-emerald-50 p-3 flex items-start gap-2">
