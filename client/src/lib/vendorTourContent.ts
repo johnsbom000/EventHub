@@ -31,7 +31,7 @@ export const LISTINGS_PATH = "/vendor/listings";
 export const MESSAGES_PATH = "/vendor/messages";
 
 export const ONBOARDING_TOUR: PageTour = {
-  allowClose: true,
+  allowClose: false,
   steps: [
     {
       title: "Welcome to Your Vendor Workspace",
