@@ -156,7 +156,17 @@ export default function VendorProvision() {
     }
   };
 
-  if (isAuthLoading || isVendorLoading) {
+  // Only ever render the business-name form for an authenticated user who does
+  // NOT yet have a vendor account — the one legitimate case. Everyone else (still
+  // loading, unauthenticated, or already a vendor) gets the loader while the
+  // redirect effect above runs, so an established vendor never even flashes the
+  // form. The isSubmitting exception keeps the form up during a provision submit,
+  // when the handler itself flips hasVendorAccount and owns the redirect.
+  if (
+    isAuthLoading ||
+    isVendorLoading ||
+    (!isSubmitting && (!isAuthenticated || vendorMe?.hasVendorAccount))
+  ) {
     return (
       <div className="min-h-screen flex items-center justify-center bg-background">
         <p className="text-sm text-muted-foreground">Loading…</p>
