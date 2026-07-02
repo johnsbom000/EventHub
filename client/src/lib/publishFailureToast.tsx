@@ -118,6 +118,11 @@ export function isListingLimitReachedError(error: unknown): boolean {
   return payload?.error === "listing_limit_reached";
 }
 
+export function isOnboardingIncompleteError(error: unknown): boolean {
+  const payload = extractPublishErrorPayload(error);
+  return payload?.error === "onboarding_incomplete";
+}
+
 /**
  * Robustly pulls the server error code (e.g. "stripe_not_configured") out of a
  * publish failure. Works whether the error is a plain object, a raw JSON string,
@@ -147,6 +152,24 @@ export function getPublishFailureToastContent(error: unknown): {
               dashboard
             </a>{" "}
             to finish payment setup — your listing will stay as a draft until then.
+          </p>
+        </div>
+      ),
+    };
+  }
+
+  if (payload?.error === "onboarding_incomplete") {
+    return {
+      title: "Finish your vendor profile",
+      description: (
+        <div className="space-y-1">
+          <p>Complete your vendor onboarding before publishing this listing.</p>
+          <p>
+            Head to{" "}
+            <a href="/vendor/onboarding" className="underline font-medium">
+              vendor onboarding
+            </a>{" "}
+            to finish your profile — your listing will stay as a draft until then.
           </p>
         </div>
       ),

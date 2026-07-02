@@ -1397,6 +1397,60 @@ export async function stopAllGoogleCalendarWatchChannelsForVendor(
 }
 
 /**
+ * Full Google Calendar teardown for a vendor: best-effort OAuth token revocation,
+ * stop every watch channel, and clear the stored connection. Shared by the manual
+ * disconnect route and the automatic teardown that runs when a vendor loses Pro
+ * (subscription canceled or comp grant expired) — Google Calendar sync is Pro-only,
+ * so the live connection must end when Pro does. Idempotent and cheap for the common
+ * case: no-ops immediately if the vendor never connected Google.
+ */
+export async function disconnectGoogleCalendarForVendor(
+  vendorAccountId: string
+): Promise<void> {
+  const [account] = await db
+    .select({
+      googleAccessToken: vendorAccounts.googleAccessToken,
+      googleConnectionStatus: vendorAccounts.googleConnectionStatus,
+    })
+    .from(vendorAccounts)
+    .where(eq(vendorAccounts.id, vendorAccountId))
+    .limit(1);
+
+  if (!account) return;
+  // Nothing to tear down for a vendor who never connected Google.
+  if (account.googleConnectionStatus !== "connected" && !account.googleAccessToken) {
+    return;
+  }
+
+  // Best-effort token revocation — non-fatal if it fails.
+  if (account.googleAccessToken) {
+    try {
+      const rawToken = decryptToken(account.googleAccessToken);
+      await fetch(`https://oauth2.googleapis.com/revoke?token=${encodeURIComponent(rawToken)}`, {
+        method: "POST",
+        headers: { "Content-Type": "application/x-www-form-urlencoded" },
+      });
+    } catch (revokeErr) {
+      logger.warn({ vendorAccountId }, "[google disconnect] token revocation failed (non-fatal)");
+    }
+  }
+
+  await stopAllGoogleCalendarWatchChannelsForVendor(vendorAccountId);
+
+  await db
+    .update(vendorAccounts)
+    .set({
+      googleAccessToken: null,
+      googleRefreshToken: null,
+      googleTokenExpiresAt: null,
+      googleCalendarId: null,
+      googleConnectionStatus: "disconnected",
+      googleAccountEmail: null,
+    })
+    .where(eq(vendorAccounts.id, vendorAccountId));
+}
+
+/**
  * Renews all watch channels expiring within the next 3 days.
  * Called by the renewal cron job (runs daily).
  * Returns a summary of renewed / failed channels.

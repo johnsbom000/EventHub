@@ -160,6 +160,33 @@ async function ensureGoogleSyncEntitlement(vendorAccountId: string, res: any): P
   }
   return true;
 }
+
+// Express-middleware form of the Pro gate above. Placed in the route chain (after
+// vendor auth) so EVERY Google Calendar operation endpoint is guarded — not just
+// the connect flow. Without this, a vendor who connected while on Pro and then
+// downgraded could keep driving sync (map events, sync bookings, etc.) on the free
+// tier via direct API calls.
+async function requireGoogleSyncPro(req: any, res: any, next: any): Promise<void> {
+  try {
+    const account = await getVendorAccountFromRequest(req);
+    if (!account?.id) {
+      res.status(404).json({ error: "Vendor account not found" });
+      return;
+    }
+    if (!getVendorEntitlements(account).canUseGoogleSync) {
+      res.status(403).json({
+        error: "pro_required",
+        message: "Google Calendar sync is a Pro feature. Upgrade to connect your calendar.",
+        upgradeUrl: "/vendor/dashboard#vendor-billing",
+      });
+      return;
+    }
+    next();
+  } catch (err) {
+    logRouteError("requireGoogleSyncPro", err);
+    res.status(500).json({ error: "Unable to verify subscription" });
+  }
+}
 import multer from "multer";
 import { promises as fs } from "fs";
 import path from "path";
@@ -227,6 +254,7 @@ import {
   stopGoogleCalendarWatchChannel,
   syncEventHubBookingToGoogleCalendar,
   fetchGoogleAccountEmail,
+  disconnectGoogleCalendarForVendor,
 } from "../google";
 import {
   handleGoogleCalendarWebhook,
@@ -601,32 +629,7 @@ export function registerGoogleRoutes(app: Express): void {
         return res.status(400).json({ error: "Google Calendar is not connected" });
       }
 
-      // Best-effort token revocation — non-fatal if it fails
-      if (account.googleAccessToken) {
-        try {
-          const rawToken = decryptToken(account.googleAccessToken);
-          await fetch(`https://oauth2.googleapis.com/revoke?token=${encodeURIComponent(rawToken)}`, {
-            method: "POST",
-            headers: { "Content-Type": "application/x-www-form-urlencoded" },
-          });
-        } catch (revokeErr) {
-          logger.warn({ vendorAccountId: account.id }, "[google disconnect] token revocation failed (non-fatal)");
-        }
-      }
-
-      await stopAllGoogleCalendarWatchChannelsForVendor(account.id);
-
-      await db
-        .update(vendorAccounts)
-        .set({
-          googleAccessToken: null,
-          googleRefreshToken: null,
-          googleTokenExpiresAt: null,
-          googleCalendarId: null,
-          googleConnectionStatus: "disconnected",
-          googleAccountEmail: null,
-        })
-        .where(eq(vendorAccounts.id, account.id));
+      await disconnectGoogleCalendarForVendor(account.id);
 
       return res.json({ success: true });
     } catch (error: any) {
@@ -643,7 +646,7 @@ export function registerGoogleRoutes(app: Express): void {
     listingId: z.string().trim().min(1, "Listing id is required"),
   });
 
-  app.get("/api/google/calendars", ...requireVendorAuth0, async (req, res) => {
+  app.get("/api/google/calendars", ...requireVendorAuth0, requireGoogleSyncPro, async (req, res) => {
     try {
       const account = await getVendorAccountFromRequest(req);
       if (!account?.id) {
@@ -661,21 +664,11 @@ export function registerGoogleRoutes(app: Express): void {
     }
   });
 
-  app.post("/api/google/calendars/select", mutationRateLimiter, ...requireVendorAuth0, async (req, res) => {
+  app.post("/api/google/calendars/select", mutationRateLimiter, ...requireVendorAuth0, requireGoogleSyncPro, async (req, res) => {
     try {
       const account = await getVendorAccountFromRequest(req);
       if (!account?.id) {
         return res.status(404).json({ error: "Account not found" });
-      }
-
-      // Google Calendar sync is a Pro feature — block downgraded vendors from
-      // re-pointing a calendar even if a stale token remains.
-      if (!getVendorEntitlements(account).canUseGoogleSync) {
-        return res.status(403).json({
-          error: "pro_required",
-          message: "Google Calendar sync is a Pro feature. Upgrade to connect your calendar.",
-          upgradeUrl: "/vendor/dashboard#vendor-billing",
-        });
       }
 
       const { calendarId } = selectGoogleCalendarSchema.parse(req.body ?? {});
@@ -739,7 +732,7 @@ export function registerGoogleRoutes(app: Express): void {
     }
   });
 
-  app.post("/api/google/calendars/create", mutationRateLimiter, ...requireVendorAuth0, async (_req, res) => {
+  app.post("/api/google/calendars/create", mutationRateLimiter, ...requireVendorAuth0, requireGoogleSyncPro, async (_req, res) => {
     // Disabled: auto-creating calendars requires auth/calendar (broad scope).
     // We now request only calendar.events + calendar.calendarlist.readonly.
     // Vendors should select an existing calendar from the dropdown instead.
@@ -749,7 +742,7 @@ export function registerGoogleRoutes(app: Express): void {
     });
   });
 
-  app.post("/api/google/calendars/sync-existing", mutationRateLimiter, ...requireVendorAuth0, async (req, res) => {
+  app.post("/api/google/calendars/sync-existing", mutationRateLimiter, ...requireVendorAuth0, requireGoogleSyncPro, async (req, res) => {
     try {
       const account = await getVendorAccountFromRequest(req);
       if (!account?.id) {
@@ -785,7 +778,7 @@ export function registerGoogleRoutes(app: Express): void {
     }
   });
 
-  app.get("/api/google/events/unmatched", ...requireVendorAuth0, async (req, res) => {
+  app.get("/api/google/events/unmatched", ...requireVendorAuth0, requireGoogleSyncPro, async (req, res) => {
     try {
       const account = await getVendorAccountFromRequest(req);
       if (!account?.id) {
@@ -853,7 +846,7 @@ export function registerGoogleRoutes(app: Express): void {
     }
   });
 
-  app.get("/api/google/events/mapped", ...requireVendorAuth0, async (req, res) => {
+  app.get("/api/google/events/mapped", ...requireVendorAuth0, requireGoogleSyncPro, async (req, res) => {
     try {
       const account = await getVendorAccountFromRequest(req);
       if (!account?.id) {
@@ -915,7 +908,7 @@ export function registerGoogleRoutes(app: Express): void {
     }
   });
 
-  app.post("/api/google/events/map", mutationRateLimiter, ...requireVendorAuth0, async (req, res) => {
+  app.post("/api/google/events/map", mutationRateLimiter, ...requireVendorAuth0, requireGoogleSyncPro, async (req, res) => {
     try {
       const account = await getVendorAccountFromRequest(req);
       if (!account?.id) {
@@ -1000,7 +993,7 @@ export function registerGoogleRoutes(app: Express): void {
     }
   });
 
-  app.delete("/api/google/events/map/:googleEventId", mutationRateLimiter, ...requireVendorAuth0, async (req, res) => {
+  app.delete("/api/google/events/map/:googleEventId", mutationRateLimiter, ...requireVendorAuth0, requireGoogleSyncPro, async (req, res) => {
     try {
       const account = await getVendorAccountFromRequest(req);
       if (!account?.id) {
@@ -1035,7 +1028,7 @@ export function registerGoogleRoutes(app: Express): void {
   });
 
   // Mark an unmatched Google Calendar event as a vacation block
-  app.post("/api/google/events/mark-vacation", mutationRateLimiter, ...requireVendorAuth0, async (req, res) => {
+  app.post("/api/google/events/mark-vacation", mutationRateLimiter, ...requireVendorAuth0, requireGoogleSyncPro, async (req, res) => {
     try {
       const account = await getVendorAccountFromRequest(req);
       if (!account?.id) {
@@ -1129,7 +1122,7 @@ export function registerGoogleRoutes(app: Express): void {
     }
   });
 
-  app.get("/api/google/bookings/reconciliation", ...requireVendorAuth0, async (req, res) => {
+  app.get("/api/google/bookings/reconciliation", ...requireVendorAuth0, requireGoogleSyncPro, async (req, res) => {
     try {
       const account = await getVendorAccountFromRequest(req);
       if (!account?.id) {
@@ -1143,7 +1136,7 @@ export function registerGoogleRoutes(app: Express): void {
     }
   });
 
-  app.get("/api/google/bookings/verification/run", ...requireVendorAuth0, async (req, res) => {
+  app.get("/api/google/bookings/verification/run", ...requireVendorAuth0, requireGoogleSyncPro, async (req, res) => {
     try {
       const account = await getVendorAccountFromRequest(req);
       if (!account?.id) {
@@ -1331,7 +1324,7 @@ export function registerGoogleRoutes(app: Express): void {
     }
   });
 
-  app.post("/api/google/bookings/reconciliation/:bookingId/repair", mutationRateLimiter, ...requireVendorAuth0, async (req, res) => {
+  app.post("/api/google/bookings/reconciliation/:bookingId/repair", mutationRateLimiter, ...requireVendorAuth0, requireGoogleSyncPro, async (req, res) => {
     try {
       const account = await getVendorAccountFromRequest(req);
       if (!account?.id) {
