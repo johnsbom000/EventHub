@@ -61,7 +61,7 @@ export function vendorWelcomeTemplate(params: VendorWelcomeParams): {
       </tr>
       <tr>
         <td style="padding:10px 0;font-size:14px;">
-          <strong style="color:${CORAL};">4.</strong>&nbsp; Respond to booking requests quickly — fast responses get more bookings
+          <strong style="color:${CORAL};">4.</strong>&nbsp; Share your &ldquo;My Hub&rdquo; storefront URL on your ads and socials
         </td>
       </tr>
     </table>
@@ -79,7 +79,7 @@ export function vendorWelcomeTemplate(params: VendorWelcomeParams): {
     `1. Create your first listing`,
     `2. Add photos and a detailed description`,
     `3. Connect your bank account to receive payouts`,
-    `4. Respond to booking requests quickly`,
+    `4. Share your "My Hub" storefront URL on your ads and socials`,
     ``,
     `Go to your dashboard: ${serverUrl}/vendor/dashboard`,
   ].join("\n");
