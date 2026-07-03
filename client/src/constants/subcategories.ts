@@ -240,7 +240,12 @@ export function getTypes(categoryKey: CategoryKey): readonly string[] {
 
 /** Returns the second-level options (cuisines for Catering, subtypes for Venues). */
 export function getDetailOptions(categoryKey: CategoryKey, type: string): readonly string[] {
-  if (categoryKey === "Catering") return CATERING_CUISINES;
+  if (categoryKey === "Catering") {
+    // "Gift Baskets" is only offered under the "Other" catering type.
+    return type === "Other"
+      ? CATERING_CUISINES
+      : CATERING_CUISINES.filter((c) => c !== "Gift Baskets");
+  }
   if (categoryKey === "Venues") return VENUE_TYPES_WITH_SUBTYPES[type] ?? [];
   return [];
 }
