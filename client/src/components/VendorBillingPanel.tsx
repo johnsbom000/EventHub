@@ -271,7 +271,7 @@ export default function VendorBillingPanel() {
           <p className="mt-1 text-3xl font-bold">$0</p>
           <p className="text-sm text-muted-foreground">Everything you need to get started.</p>
           <ul className="mt-5 space-y-2.5 text-sm">
-            <Feature ok>List, take bookings, and get paid — no fees</Feature>
+            <Feature ok>List, take bookings, and get paid — no EventHub commission</Feature>
             <Feature ok>1 active listing at a time</Feature>
             <Feature ok>Lifetime totals (bookings &amp; revenue)</Feature>
             <Feature>AI reply assistant for messages</Feature>

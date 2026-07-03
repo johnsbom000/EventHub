@@ -731,9 +731,19 @@ export const payments = pgTable("payments", {
   totalAmount: integer("total_amount"),
   platformFeeAmount: integer("platform_fee_amount"),
   vendorGrossAmount: integer("vendor_gross_amount"),
+  // NAMING TRAP: despite the name, this holds the vendor's GROSS-of-Stripe-fee
+  // service earnings (booking total minus platform fee — NOT minus Stripe's
+  // processing fee). The Stripe fee is deducted downstream in
+  // deriveAdjustedVendorPayoutAmount when vendor_absorbs_stripe_fees is true.
+  // Do not rename — too many read sites and stored Stripe metadata depend on it.
   vendorNetPayoutAmount: integer("vendor_net_payout_amount"),
   stripeProcessingFeeEstimate: integer("stripe_processing_fee_estimate"),
   actualStripeFeeAmount: integer("actual_stripe_fee_amount"),
+  // Per-payment snapshot of the fee policy at booking time. When true, Stripe's
+  // processing fee is deducted from the vendor's payout. Captured per-row (not
+  // read from the global constant at payout) so flipping the platform default
+  // only affects NEW bookings, never ones made under the old "keep 100%" terms.
+  vendorAbsorbsStripeFees: boolean("vendor_absorbs_stripe_fees").notNull().default(false),
   disputeStatus: text("dispute_status"),
   payoutStatus: payoutStatusEnum("payout_status").notNull().default("not_ready"),
   payoutEligibleAt: timestamp("payout_eligible_at"),

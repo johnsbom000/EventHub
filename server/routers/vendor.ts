@@ -5284,6 +5284,9 @@ export function registerVendorRoutes(app: Express): void {
         payoutStatus?: string | null;
         payoutEligibleAt?: Date | string | null;
         paidOutAt?: Date | string | null;
+        vendorAbsorbsStripeFees?: boolean | null;
+        actualStripeFeeAmount?: number | null;
+        stripeProcessingFeeEstimate?: number | null;
       }> = [];
       const bookingRows: any = await db.execute(drizzleSql`
         select
@@ -5304,10 +5307,14 @@ export function registerVendorRoutes(app: Express): void {
           b.created_at as "createdAt",
           b.payout_status as "payoutStatus",
           b.payout_eligible_at as "payoutEligibleAt",
-          b.paid_out_at as "paidOutAt"
+          b.paid_out_at as "paidOutAt",
+          bp.vendor_absorbs_stripe_fees as "vendorAbsorbsStripeFees",
+          bp.actual_stripe_fee_amount as "actualStripeFeeAmount",
+          bp.stripe_processing_fee_estimate as "stripeProcessingFeeEstimate"
         from bookings b
         left join events e on e.id = b.event_id
         left join vendor_listings listing_owner on listing_owner.id = b.listing_id
+        left join payments bp on bp.booking_id = b.id and bp.payment_type = 'booking'
         where coalesce(b.vendor_account_id, listing_owner.account_id) = ${vendorAccountId}
         order by b.created_at desc
       `);
@@ -5365,7 +5372,8 @@ export function registerVendorRoutes(app: Express): void {
       }
 
       const now = new Date();
-      const toNetCents = (r: { id: string; vendorPayout?: number | null }) => {
+      // Vendor's gross service earnings (before Stripe's processing fee).
+      const toGrossPayoutCents = (r: { id: string; vendorPayout?: number | null }) => {
         const typedVendorPayout = normalizeAmountToCents(r.vendorPayout);
         if (typedVendorPayout > 0) return typedVendorPayout;
 
@@ -5374,6 +5382,29 @@ export function registerVendorRoutes(app: Express): void {
         const vendorFee = Math.round(baseAmountCents * VENDOR_FEE_RATE);
         return Math.max(0, baseAmountCents - vendorFee);
       };
+
+      // Stripe's processing fee borne by the vendor on this booking, if any.
+      // Prefer Stripe's actual settled fee; fall back to the estimate. Zero for
+      // bookings made before the vendor-absorbs-fee policy (flag false).
+      const toStripeFeeCents = (r: {
+        vendorAbsorbsStripeFees?: boolean | null;
+        actualStripeFeeAmount?: number | null;
+        stripeProcessingFeeEstimate?: number | null;
+      }) => {
+        if (r.vendorAbsorbsStripeFees !== true) return 0;
+        const actual = normalizeAmountToCents(r.actualStripeFeeAmount);
+        if (actual > 0) return actual;
+        return Math.max(0, normalizeAmountToCents(r.stripeProcessingFeeEstimate));
+      };
+
+      // Actual take-home: gross service earnings minus Stripe's processing fee.
+      const toNetCents = (r: {
+        id: string;
+        vendorPayout?: number | null;
+        vendorAbsorbsStripeFees?: boolean | null;
+        actualStripeFeeAmount?: number | null;
+        stripeProcessingFeeEstimate?: number | null;
+      }) => Math.max(0, toGrossPayoutCents(r) - toStripeFeeCents(r));
 
       const toPlatformFeeCents = (r: { id: string; platformFee?: number | null }) => {
         const typed = normalizeAmountToCents(r.platformFee);
@@ -5407,7 +5438,9 @@ export function registerVendorRoutes(app: Express): void {
           grossCentsFromTypedTotal > 0
             ? grossCentsFromTypedTotal
             : baseAmountCents + (typedCustomerFeeCents > 0 ? typedCustomerFeeCents : Math.round(baseAmountCents * CUSTOMER_FEE_RATE));
-        const netCents = toNetCents(r);
+        const grossPayoutCents = toGrossPayoutCents(r);
+        const stripeProcessingFeeCents = toStripeFeeCents(r);
+        const netCents = Math.max(0, grossPayoutCents - stripeProcessingFeeCents);
         const platformFeeAmount = toPlatformFeeCents(r);
         return {
           id: r.id,
@@ -5420,6 +5453,11 @@ export function registerVendorRoutes(app: Express): void {
           listingTitleSnapshot: r.listingTitleSnapshot ?? null,
           netAmount: netCents,
           grossAmount: grossCents,
+          // Vendor payout breakdown: gross service earnings, Stripe's processing
+          // fee deducted, and the resulting take-home (netAmount). EventHub still
+          // takes no commission (platformFeeAmount stays 0).
+          grossPayoutAmount: grossPayoutCents,
+          stripeProcessingFeeAmount: stripeProcessingFeeCents,
           platformFeeAmount,
         };
       });

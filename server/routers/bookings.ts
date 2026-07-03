@@ -2526,6 +2526,7 @@ export function registerBookingRoutes(app: Express): void {
           vendorNetPayoutAmount,
           vendorGrossAmount: proposal.amountCents,
           stripeProcessingFeeEstimate,
+          vendorAbsorbsStripeFees: VENDOR_ABSORBS_STRIPE_FEES,
           vendorStripeAccountId: vendorAccount.stripeConnectId,
           vendorAccountId: booking.vendorAccountId ?? undefined,
           description: `Travel fee – booking ${bookingId}`,
@@ -2545,6 +2546,9 @@ export function registerBookingRoutes(app: Express): void {
           vendorGrossAmount: proposal.amountCents,
           vendorNetPayoutAmount,
           stripeProcessingFeeEstimate,
+          // Snapshot the fee policy at booking time (same contract as booking
+          // payments): payout math reads this row flag, never the live constant.
+          vendorAbsorbsStripeFees: VENDOR_ABSORBS_STRIPE_FEES,
           stripeConnectedAccountId: vendorAccount.stripeConnectId,
           paymentType: "travel_fee",
           status: "pending",
