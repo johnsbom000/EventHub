@@ -5287,6 +5287,9 @@ export function registerVendorRoutes(app: Express): void {
         vendorAbsorbsStripeFees?: boolean | null;
         actualStripeFeeAmount?: number | null;
         stripeProcessingFeeEstimate?: number | null;
+        travelFeeGrossAmount?: number | null;
+        travelFeeStripeFeeAmount?: number | null;
+        travelFeeNetAmount?: number | null;
       }> = [];
       const bookingRows: any = await db.execute(drizzleSql`
         select
@@ -5310,11 +5313,35 @@ export function registerVendorRoutes(app: Express): void {
           b.paid_out_at as "paidOutAt",
           bp.vendor_absorbs_stripe_fees as "vendorAbsorbsStripeFees",
           bp.actual_stripe_fee_amount as "actualStripeFeeAmount",
-          bp.stripe_processing_fee_estimate as "stripeProcessingFeeEstimate"
+          bp.stripe_processing_fee_estimate as "stripeProcessingFeeEstimate",
+          tf.tf_gross as "travelFeeGrossAmount",
+          tf.tf_stripe_fee as "travelFeeStripeFeeAmount",
+          tf.tf_net as "travelFeeNetAmount"
         from bookings b
         left join events e on e.id = b.event_id
         left join vendor_listings listing_owner on listing_owner.id = b.listing_id
         left join payments bp on bp.booking_id = b.id and bp.payment_type = 'booking'
+        -- Aggregated (a booking can have multiple accepted travel-fee proposals)
+        -- so the booking row never duplicates. Only successfully-charged travel
+        -- fees count; refunded ones drop out via the status filter.
+        left join (
+          select
+            booking_id,
+            sum(coalesce(vendor_net_payout_amount, amount, 0)) as tf_gross,
+            sum(case when vendor_absorbs_stripe_fees
+                     then coalesce(actual_stripe_fee_amount, stripe_processing_fee_estimate, 0)
+                     else 0 end) as tf_stripe_fee,
+            sum(coalesce(
+              payout_adjusted_amount,
+              greatest(0, coalesce(vendor_net_payout_amount, amount, 0)
+                - case when vendor_absorbs_stripe_fees
+                       then coalesce(actual_stripe_fee_amount, stripe_processing_fee_estimate, 0)
+                       else 0 end)
+            )) as tf_net
+          from payments
+          where payment_type = 'travel_fee' and status = 'succeeded'
+          group by booking_id
+        ) tf on tf.booking_id = b.id
         where coalesce(b.vendor_account_id, listing_owner.account_id) = ${vendorAccountId}
         order by b.created_at desc
       `);
@@ -5397,14 +5424,24 @@ export function registerVendorRoutes(app: Express): void {
         return Math.max(0, normalizeAmountToCents(r.stripeProcessingFeeEstimate));
       };
 
-      // Actual take-home: gross service earnings minus Stripe's processing fee.
+      // Travel-fee earnings for this booking (already net of Stripe's fee and
+      // refunds via payout_adjusted_amount in the SQL aggregate). Zero when the
+      // booking has no successfully-charged travel fee.
+      const toTravelFeeNetCents = (r: { travelFeeNetAmount?: number | null }) =>
+        Math.max(0, normalizeAmountToCents(r.travelFeeNetAmount));
+
+      // Actual take-home: gross service earnings minus Stripe's processing fee,
+      // plus net travel-fee earnings. Travel fees release on the same 72h
+      // post-event schedule as the booking payment, so they're bucketed with
+      // the booking's payout status here (display-level simplification).
       const toNetCents = (r: {
         id: string;
         vendorPayout?: number | null;
         vendorAbsorbsStripeFees?: boolean | null;
         actualStripeFeeAmount?: number | null;
         stripeProcessingFeeEstimate?: number | null;
-      }) => Math.max(0, toGrossPayoutCents(r) - toStripeFeeCents(r));
+        travelFeeNetAmount?: number | null;
+      }) => Math.max(0, toGrossPayoutCents(r) - toStripeFeeCents(r)) + toTravelFeeNetCents(r);
 
       const toPlatformFeeCents = (r: { id: string; platformFee?: number | null }) => {
         const typed = normalizeAmountToCents(r.platformFee);
@@ -5438,9 +5475,16 @@ export function registerVendorRoutes(app: Express): void {
           grossCentsFromTypedTotal > 0
             ? grossCentsFromTypedTotal
             : baseAmountCents + (typedCustomerFeeCents > 0 ? typedCustomerFeeCents : Math.round(baseAmountCents * CUSTOMER_FEE_RATE));
+        const travelFeeGrossCents = Math.max(0, normalizeAmountToCents(r.travelFeeGrossAmount));
+        const travelFeeStripeFeeCents = Math.max(0, normalizeAmountToCents(r.travelFeeStripeFeeAmount));
+        const travelFeeNetCents = toTravelFeeNetCents(r);
+        // Breakdown lines must sum: bookingGross + travelFee − stripeFee ≈ net,
+        // so grossPayoutAmount stays booking-only and the travel fee is its own
+        // additive line; the fee line covers both charges.
         const grossPayoutCents = toGrossPayoutCents(r);
-        const stripeProcessingFeeCents = toStripeFeeCents(r);
-        const netCents = Math.max(0, grossPayoutCents - stripeProcessingFeeCents);
+        const stripeProcessingFeeCents = toStripeFeeCents(r) + travelFeeStripeFeeCents;
+        const netCents =
+          Math.max(0, toGrossPayoutCents(r) - toStripeFeeCents(r)) + travelFeeNetCents;
         const platformFeeAmount = toPlatformFeeCents(r);
         return {
           id: r.id,
@@ -5458,6 +5502,9 @@ export function registerVendorRoutes(app: Express): void {
           // takes no commission (platformFeeAmount stays 0).
           grossPayoutAmount: grossPayoutCents,
           stripeProcessingFeeAmount: stripeProcessingFeeCents,
+          // Travel fee earned on this booking (0 when none) — its own breakdown
+          // line, additive to grossPayoutAmount; its net is included in netAmount.
+          travelFeeAmount: travelFeeGrossCents,
           platformFeeAmount,
         };
       });

@@ -1034,7 +1034,7 @@ export function registerPaymentRoutes(app: Express): void {
         new Set((payload.paymentIds ?? []).map((id) => asTrimmedString(id)).filter(Boolean))
       );
 
-      const whereClauses: any[] = [eq(payments.paymentType, "booking")];
+      const whereClauses: any[] = [inArray(payments.paymentType, ["booking", "travel_fee"])];
       if (bookingIds.length > 0) {
         whereClauses.push(inArray(payments.bookingId, bookingIds));
       }
