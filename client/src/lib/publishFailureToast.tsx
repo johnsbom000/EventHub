@@ -176,6 +176,13 @@ export function getPublishFailureToastContent(error: unknown): {
     };
   }
 
+  if (payload?.error === "account_suspended" && typeof payload.message === "string" && payload.message.trim()) {
+    return {
+      title: "Account suspended",
+      description: payload.message,
+    };
+  }
+
   const reasons = normalizeReasons(payload);
 
   if (reasons.length === 0) {

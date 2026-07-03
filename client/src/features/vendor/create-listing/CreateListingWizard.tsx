@@ -34,9 +34,10 @@ import { Button } from "@/components/ui/button";
 import { useToast } from "@/hooks/use-toast";
 import { getFreshAccessToken } from "@/lib/authToken";
 import { DEFAULT_COVER_RATIO, type CoverRatio } from "@/lib/listingPhotos";
-import { getPublishFailureToastContent, isStripeNotConfiguredError, isListingLimitReachedError } from "@/lib/publishFailureToast";
+import { getPublishFailureToastContent, isStripeNotConfiguredError, isListingLimitReachedError, isOnboardingIncompleteError } from "@/lib/publishFailureToast";
 import { UpgradeModal } from "@/components/UpgradeModal";
 import { StripeSetupModal } from "@/components/StripeSetupModal";
+import { OnboardingRequiredModal } from "@/components/OnboardingRequiredModal";
 import { apiRequest, getApiErrorStatus, queryClient } from "@/lib/queryClient";
 import { cn } from "@/lib/utils";
 import type { LocationResult } from "@/types/location";
@@ -467,7 +468,12 @@ function boundsFromCircleFeature(feature: any) {
 
 function isAuthRequiredError(error: unknown): boolean {
  const status = getApiErrorStatus(error);
- if (status === 401 || status === 403) return true;
+ // Only a 401 means the session/token itself is bad — the API's auth layer
+ // (requireAuth0) always responds 401 for token failures. 403s here are
+ // business rules (onboarding_incomplete, listing_limit_reached,
+ // account_suspended, …), so a 403 only counts as an auth error when its
+ // body matches the message patterns below.
+ if (status === 401) return true;
 
  const extractText = (value: unknown): string[] => {
  if (typeof value === "string") return [value];
@@ -1684,6 +1690,7 @@ export function CreateListingWizard({ onClose, initialListingType, parentListing
  const [showCancelConfirm, setShowCancelConfirm] = useState(false);
  const [showUpgradeToPublish, setShowUpgradeToPublish] = useState(false);
  const [showStripeSetup, setShowStripeSetup] = useState(false);
+ const [showOnboardingRequired, setShowOnboardingRequired] = useState(false);
  // Set right before the upgrade modal redirects to Stripe Checkout, so the
  // beforeunload guard below doesn't pop a "Leave site?" prompt on the way out.
  const suppressUnloadGuardRef = useRef(false);
@@ -1913,14 +1920,20 @@ export function CreateListingWizard({ onClose, initialListingType, parentListing
  onComplete?.(id);
  handleCloseWizard();
  } catch (error) {
- // Business-rule responses must be handled BEFORE handleAuthRequired: the cap
- // returns 403 and isAuthRequiredError treats any 403 as a session error, which
- // would otherwise pop a spurious "Session expired" sign-in modal. The draft is
- // already saved (step 1 above), so we surface the right path instead.
+ // Business-rule responses must be handled BEFORE handleAuthRequired so a
+ // publish rejection never reads as a session problem. The draft is already
+ // saved (step 1 above), so we surface the right path instead.
  //
  // Free-plan vendor at their active-listing cap → upgrade modal.
  if (isListingLimitReachedError(error)) {
    setShowUpgradeToPublish(true);
+   return;
+ }
+ // Vendor hasn't completed profile onboarding → finish-profile modal.
+ // (The server checks this before Stripe, so a brand-new vendor sees this
+ // first, then the Stripe modal on their next attempt.)
+ if (isOnboardingIncompleteError(error)) {
+   setShowOnboardingRequired(true);
    return;
  }
  // Vendor hasn't finished Stripe Connect setup → payment-setup modal.
@@ -2226,6 +2239,16 @@ export function CreateListingWizard({ onClose, initialListingType, parentListing
  <StripeSetupModal
    open={showStripeSetup}
    onOpenChange={setShowStripeSetup}
+   onBeforeRedirect={() => {
+     suppressUnloadGuardRef.current = true;
+   }}
+ />
+
+ {/* Vendor clicked Publish without completing vendor onboarding. Draft is
+     already saved; "Finish my profile" routes them to vendor onboarding. */}
+ <OnboardingRequiredModal
+   open={showOnboardingRequired}
+   onOpenChange={setShowOnboardingRequired}
    onBeforeRedirect={() => {
      suppressUnloadGuardRef.current = true;
    }}
