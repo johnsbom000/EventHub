@@ -303,6 +303,7 @@ export async function createBookingPaymentIntent(params: {
   vendorNetPayoutAmount: number;        // what the vendor receives after fees
   vendorGrossAmount?: number;           // vendor gross before Stripe fee
   stripeProcessingFeeEstimate?: number; // estimated Stripe processing fee
+  vendorAbsorbsStripeFees?: boolean;    // fee policy snapshot at booking time
   vendorStripeAccountId: string;        // connected account ID for later transfer
   vendorAccountId?: string;
   listingId?: string;
@@ -328,6 +329,7 @@ export async function createBookingPaymentIntent(params: {
     vendorNetPayoutAmount,
     vendorGrossAmount,
     stripeProcessingFeeEstimate,
+    vendorAbsorbsStripeFees,
     vendorStripeAccountId,
     vendorAccountId,
     listingId,
@@ -352,6 +354,10 @@ export async function createBookingPaymentIntent(params: {
     vendorGross: Math.max(0, Math.round(vendorGrossAmount ?? amount)).toString(),
     totalAmount: Math.max(0, Math.round(totalAmount ?? amount)).toString(),
     stripeProcessingFeeEstimate: Math.max(0, Math.round(stripeProcessingFeeEstimate ?? 0)).toString(),
+    // Fee policy snapshot at booking time. Always emitted so webhook recovery
+    // can reconstruct the per-row flag; intents created before this key existed
+    // parse to null and fall back to the live platform default.
+    vendorAbsorbsStripeFees: vendorAbsorbsStripeFees === true ? "true" : "false",
     // payoutHold: platform will not transfer funds until eligibility is confirmed.
     payoutHold: "true",
     // Record the connected account ID so the webhook can look up the vendor

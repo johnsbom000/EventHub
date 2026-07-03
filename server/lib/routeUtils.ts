@@ -67,6 +67,21 @@ export function parseIntegerValue(value: unknown): number | null {
   return Math.trunc(n);
 }
 
+/**
+ * Parses a tri-state boolean from Stripe metadata ("true"/"false" strings).
+ * Returns null when the key is absent or unrecognized — callers use null to
+ * mean "metadata predates this key" and apply their own fallback.
+ */
+export function parseOptionalBooleanFlag(value: unknown): boolean | null {
+  if (typeof value === "boolean") return value;
+  if (typeof value === "string") {
+    const normalized = value.trim().toLowerCase();
+    if (normalized === "true") return true;
+    if (normalized === "false") return false;
+  }
+  return null;
+}
+
 // ─── Payment state ────────────────────────────────────────────────────────────
 
 export function normalizePaymentStateValue(value: unknown): string {

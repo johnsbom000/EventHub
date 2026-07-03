@@ -132,6 +132,7 @@ export type LockedPaymentPayoutContext = {
   stripeChargeId: string | null;
   stripeTransferId: string | null;
   payoutAdjustedAmount: number | null;
+  vendorAbsorbsStripeFees: boolean | null;
 };
 
 export async function loadPaymentPayoutContextForUpdateInTx(
@@ -159,12 +160,17 @@ export async function loadPaymentPayoutContextForUpdateInTx(
       p.stripe_connected_account_id as "stripeConnectedAccountId",
       p.stripe_charge_id as "stripeChargeId",
       p.stripe_transfer_id as "stripeTransferId",
-      p.payout_adjusted_amount as "payoutAdjustedAmount"
+      p.payout_adjusted_amount as "payoutAdjustedAmount",
+      p.vendor_absorbs_stripe_fees as "vendorAbsorbsStripeFees"
     from payments p
     inner join bookings b on b.id = p.booking_id
     left join dispute_cases dc on dc.booking_id = b.id
     where p.id = ${paymentId}
-    for update
+    -- Lock only the payments row: plain FOR UPDATE tries to lock every joined
+    -- table and Postgres rejects locking the nullable side of an outer join
+    -- ("FOR UPDATE cannot be applied to the nullable side of an outer join"),
+    -- which made every payout refresh/candidate load throw.
+    for update of p
   `);
   const row = extractRows<LockedPaymentPayoutContext>(rows)[0];
   return row?.paymentId ? row : null;
@@ -211,7 +217,7 @@ export async function refreshPaymentPayoutStateInTx(
       stripeConnectedAccountId: paymentContext.stripeConnectedAccountId,
       stripeChargeId: paymentContext.stripeChargeId,
       stripeTransferId: paymentContext.stripeTransferId,
-      vendorAbsorbsStripeFees: VENDOR_ABSORBS_STRIPE_FEES,
+      vendorAbsorbsStripeFees: paymentContext.vendorAbsorbsStripeFees ?? false,
     },
     now
   );
@@ -434,7 +440,7 @@ export async function processSinglePayoutCandidate(params: {
           stripeConnectedAccountId: locked.stripeConnectedAccountId,
           stripeChargeId: locked.stripeChargeId,
           stripeTransferId: locked.stripeTransferId,
-          vendorAbsorbsStripeFees: VENDOR_ABSORBS_STRIPE_FEES,
+          vendorAbsorbsStripeFees: locked.vendorAbsorbsStripeFees ?? false,
         },
         nowLocked
       );
@@ -582,6 +588,7 @@ export async function ensurePaymentRecordForIntentInTx(
     fallbackVendorNetPayoutAmount?: number | null;
     fallbackStripeProcessingFeeEstimate?: number | null;
     fallbackStripeConnectedAccountId?: string | null;
+    fallbackVendorAbsorbsStripeFees?: boolean | null;
   }
 ) {
   const paymentIntentId = asTrimmedString(params.paymentIntentId);
@@ -600,6 +607,7 @@ export async function ensurePaymentRecordForIntentInTx(
       vendorNetPayoutAmount: payments.vendorNetPayoutAmount,
       stripeProcessingFeeEstimate: payments.stripeProcessingFeeEstimate,
       actualStripeFeeAmount: payments.actualStripeFeeAmount,
+      vendorAbsorbsStripeFees: payments.vendorAbsorbsStripeFees,
       refundAmount: payments.refundAmount,
       disputeStatus: payments.disputeStatus,
       payoutStatus: payments.payoutStatus,
@@ -712,6 +720,11 @@ export async function ensurePaymentRecordForIntentInTx(
       vendorGrossAmount,
       vendorNetPayoutAmount,
       stripeProcessingFeeEstimate,
+      // Fee policy at booking time, recovered from PaymentIntent metadata.
+      // Legacy intents (created before the metadata key existed) pass null and
+      // fall back to the live platform default — the only place the constant
+      // is read outside normal row creation, and still creation-time.
+      vendorAbsorbsStripeFees: params.fallbackVendorAbsorbsStripeFees ?? VENDOR_ABSORBS_STRIPE_FEES,
       stripeConnectedAccountId: connectedAccountId,
       payoutStatus: "not_ready",
       payoutEligibleAt,
@@ -736,6 +749,8 @@ export async function ensurePaymentRecordForIntentInTx(
       payoutAdjustedAmount: payments.payoutAdjustedAmount,
       paidOutAt: payments.paidOutAt,
       actualStripeFeeAmount: payments.actualStripeFeeAmount,
+      stripeProcessingFeeEstimate: payments.stripeProcessingFeeEstimate,
+      vendorAbsorbsStripeFees: payments.vendorAbsorbsStripeFees,
       stripeChargeId: payments.stripeChargeId,
       stripeTransferId: payments.stripeTransferId,
       stripeConnectedAccountId: payments.stripeConnectedAccountId,
@@ -773,6 +788,7 @@ export async function applyPaymentIntentSuccessInTx(
     fallbackVendorNetPayoutAmount?: number | null;
     fallbackStripeProcessingFeeEstimate?: number | null;
     fallbackStripeConnectedAccountId?: string | null;
+    fallbackVendorAbsorbsStripeFees?: boolean | null;
   }
 ): Promise<{ bookingId: string | null; alreadyProcessed: boolean }> {
   const {
@@ -794,12 +810,32 @@ export async function applyPaymentIntentSuccessInTx(
     fallbackVendorNetPayoutAmount: params.fallbackVendorNetPayoutAmount,
     fallbackStripeProcessingFeeEstimate,
     fallbackStripeConnectedAccountId,
+    fallbackVendorAbsorbsStripeFees: params.fallbackVendorAbsorbsStripeFees,
   });
   if (!payment?.id || !payment.bookingId) return { bookingId: null, alreadyProcessed: false };
 
   // Idempotency: already applied by another confirmation path — skip re-applying
-  // and signal callers not to re-fire one-time side effects.
+  // and signal callers not to re-fire one-time side effects. One exception: if
+  // this delivery carries Stripe's REAL settled fee (balance_transaction.fee)
+  // and the row still holds the estimate from an earlier path that couldn't
+  // fetch it, persist the real fee and refresh payout math — but only while
+  // nothing has been transferred yet. Callers only pass actualStripeFeeAmount
+  // non-null when it came from a real balance-transaction fetch, never an
+  // estimate, so this overwrite is always estimate→actual.
   if (isPaymentSucceededStatus(payment.status)) {
+    const incomingActualFee = parseIntegerValue(actualStripeFeeAmount);
+    const storedActualFee = parseIntegerValue(payment.actualStripeFeeAmount);
+    const notYetPaidOut =
+      !payment.paidOutAt &&
+      !asTrimmedString(payment.stripeTransferId) &&
+      normalizePaymentStateValue(payment.payoutStatus) !== "paid";
+    if (incomingActualFee != null && incomingActualFee !== storedActualFee && notYetPaidOut) {
+      await tx
+        .update(payments)
+        .set({ actualStripeFeeAmount: incomingActualFee })
+        .where(eq(payments.id, payment.id));
+      await refreshPaymentPayoutStateInTx(tx, payment.id, new Date());
+    }
     return { bookingId: payment.bookingId, alreadyProcessed: true };
   }
 
@@ -841,7 +877,7 @@ export async function applyPaymentIntentSuccessInTx(
     stripeConnectedAccountId: payment.stripeConnectedAccountId ?? fallbackStripeConnectedAccountId,
     stripeChargeId: payment.stripeChargeId ?? latestChargeId,
     stripeTransferId: payment.stripeTransferId,
-    vendorAbsorbsStripeFees: VENDOR_ABSORBS_STRIPE_FEES,
+    vendorAbsorbsStripeFees: payment.vendorAbsorbsStripeFees ?? false,
   }, now);
 
   await tx
@@ -949,6 +985,7 @@ export async function applyPaymentIntentFailureInTx(
     fallbackVendorNetPayoutAmount?: number | null;
     fallbackStripeProcessingFeeEstimate?: number | null;
     fallbackStripeConnectedAccountId?: string | null;
+    fallbackVendorAbsorbsStripeFees?: boolean | null;
   }
 ): Promise<{ bookingId: string | null }> {
   const payment = await ensurePaymentRecordForIntentInTx(tx, { ...params });
@@ -1077,6 +1114,7 @@ export async function initializeBookingPayment(input: {
     vendorNetPayoutAmount,
     vendorGrossAmount,
     stripeProcessingFeeEstimate,
+    vendorAbsorbsStripeFees: VENDOR_ABSORBS_STRIPE_FEES,
     vendorStripeAccountId: vendorAccount.stripeConnectId,
     vendorAccountId: booking.vendorAccountId,
     listingId: booking.listingId ?? undefined,
@@ -1106,6 +1144,9 @@ export async function initializeBookingPayment(input: {
     vendorGrossAmount,
     vendorNetPayoutAmount,
     stripeProcessingFeeEstimate,
+    // Snapshot the fee policy at booking time so a later platform-default flip
+    // never retroactively changes payouts for bookings already made.
+    vendorAbsorbsStripeFees: VENDOR_ABSORBS_STRIPE_FEES,
     stripeConnectedAccountId: vendorAccount.stripeConnectId,
     paymentType: "booking",
     status: "pending",

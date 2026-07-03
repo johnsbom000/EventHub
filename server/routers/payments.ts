@@ -256,6 +256,7 @@ import {
   parseMoneyToCents,
   parseLatLngValue,
   parseIntegerValue,
+  parseOptionalBooleanFlag,
   normalizePaymentStateValue,
   toCanonicalPaymentStatus,
   isPaymentSucceededStatus,
@@ -305,7 +306,6 @@ import {
   CUSTOMER_FEE_RATE,
   STRIPE_FEE_ESTIMATE_PERCENT,
   STRIPE_FEE_ESTIMATE_FIXED_CENTS,
-  VENDOR_ABSORBS_STRIPE_FEES,
   PAYOUT_RELEASE_MODE,
   AUTO_PAYOUT_INTERVAL_MS,
   BOOKING_PENDING_EXPIRY_MINUTES,
@@ -558,6 +558,9 @@ export function registerPaymentRoutes(app: Express): void {
             asTrimmedString((metadata as any)?.stripeConnectedAccountId) ||
             asTrimmedString((metadata as any)?.vendorStripeAccountId) ||
             null;
+          const fallbackVendorAbsorbsStripeFees = parseOptionalBooleanFlag(
+            (metadata as any)?.vendorAbsorbsStripeFees
+          );
 
           let latestChargeId = "";
           let actualStripeFeeAmount: number | null = null;
@@ -607,6 +610,7 @@ export function registerPaymentRoutes(app: Express): void {
                 fallbackVendorNetPayoutAmount,
                 fallbackStripeProcessingFeeEstimate,
                 fallbackStripeConnectedAccountId,
+                fallbackVendorAbsorbsStripeFees,
               })
             );
           } else {
@@ -622,6 +626,7 @@ export function registerPaymentRoutes(app: Express): void {
                 fallbackVendorNetPayoutAmount,
                 fallbackStripeProcessingFeeEstimate,
                 fallbackStripeConnectedAccountId,
+                fallbackVendorAbsorbsStripeFees,
               })
             );
           }
@@ -668,6 +673,7 @@ export function registerPaymentRoutes(app: Express): void {
                 refundAmount: payments.refundAmount,
                 vendorNetPayoutAmount: payments.vendorNetPayoutAmount,
                 actualStripeFeeAmount: payments.actualStripeFeeAmount,
+                vendorAbsorbsStripeFees: payments.vendorAbsorbsStripeFees,
                 stripeConnectedAccountId: payments.stripeConnectedAccountId,
                 stripeChargeId: payments.stripeChargeId,
                 stripeTransferId: payments.stripeTransferId,
@@ -754,7 +760,7 @@ export function registerPaymentRoutes(app: Express): void {
             stripeConnectedAccountId: payment.stripeConnectedAccountId,
             stripeChargeId: payment.stripeChargeId ?? chargeId,
             stripeTransferId: payment.stripeTransferId,
-            vendorAbsorbsStripeFees: VENDOR_ABSORBS_STRIPE_FEES,
+            vendorAbsorbsStripeFees: payment.vendorAbsorbsStripeFees ?? false,
           }, now);
 
           await tx
@@ -835,7 +841,7 @@ export function registerPaymentRoutes(app: Express): void {
               stripeConnectedAccountId: payment.stripeConnectedAccountId,
               stripeChargeId: payment.stripeChargeId ?? chargeId,
               stripeTransferId: payment.stripeTransferId,
-              vendorAbsorbsStripeFees: VENDOR_ABSORBS_STRIPE_FEES,
+              vendorAbsorbsStripeFees: payment.vendorAbsorbsStripeFees ?? false,
             }, now);
 
             await tx
@@ -1194,7 +1200,7 @@ export function registerPaymentRoutes(app: Express): void {
                 stripeConnectedAccountId: locked.stripeConnectedAccountId,
                 stripeChargeId: locked.stripeChargeId,
                 stripeTransferId: locked.stripeTransferId,
-                vendorAbsorbsStripeFees: VENDOR_ABSORBS_STRIPE_FEES,
+                vendorAbsorbsStripeFees: locked.vendorAbsorbsStripeFees ?? false,
               },
               nowLocked
             );
