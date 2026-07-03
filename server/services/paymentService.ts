@@ -166,7 +166,11 @@ export async function loadPaymentPayoutContextForUpdateInTx(
     inner join bookings b on b.id = p.booking_id
     left join dispute_cases dc on dc.booking_id = b.id
     where p.id = ${paymentId}
-    for update
+    -- Lock only the payments row: plain FOR UPDATE tries to lock every joined
+    -- table and Postgres rejects locking the nullable side of an outer join
+    -- ("FOR UPDATE cannot be applied to the nullable side of an outer join"),
+    -- which made every payout refresh/candidate load throw.
+    for update of p
   `);
   const row = extractRows<LockedPaymentPayoutContext>(rows)[0];
   return row?.paymentId ? row : null;
