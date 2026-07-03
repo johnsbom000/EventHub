@@ -515,7 +515,11 @@ export async function runAutoPayoutTickWithResult(): Promise<boolean> {
       .from(payments)
       .where(
         and(
-          eq(payments.paymentType, "booking"),
+          // Travel fees are vendor earnings too — they ride the same payout
+          // pipeline as booking payments (same 72h dispute-window eligibility,
+          // same per-row fee snapshot). Cancelled bookings' travel fees sit at
+          // payout_status 'blocked' (travel_fee_hold) so they are never picked up.
+          inArray(payments.paymentType, ["booking", "travel_fee"]),
           eq(payments.stripeTransferId, null as any),
           inArray(payments.payoutStatus, ["not_ready", "eligible", "scheduled"])
         )

@@ -484,7 +484,8 @@
     "dateNotSet": "Fecha no establecida",
     "bookingNumber": "Reserva #{{id}}",
     "bookingTotal": "Total de la reserva",
-    "stripeProcessingFee": "Comisión de procesamiento de Stripe"
+    "stripeProcessingFee": "Comisión de procesamiento de Stripe",
+    "travelFee": "Tarifa de viaje"
   },
   "vendorDiscounts": {
     "pageTitle": "Descuentos",

@@ -14,6 +14,7 @@ type VendorPaymentHistoryItem = {
   grossAmount?: number | null;
   grossPayoutAmount?: number | null;
   stripeProcessingFeeAmount?: number | null;
+  travelFeeAmount?: number | null;
   status?: string | null;
   eventDate?: string | null;
   createdAt?: string | null;
@@ -220,10 +221,11 @@ export default function VendorPayments() {
             <div className="space-y-3">
               {history.map((payment) => {
                 const stripeFeeCents = Number(payment.stripeProcessingFeeAmount ?? 0);
+                const travelFeeCents = Number(payment.travelFeeAmount ?? 0);
                 const grossPayoutCents = Number(
                   payment.grossPayoutAmount ?? payment.netAmount ?? 0
                 );
-                const showBreakdown = stripeFeeCents > 0;
+                const showBreakdown = stripeFeeCents > 0 || travelFeeCents > 0;
                 return (
                   <div key={payment.id} className="flex items-start justify-between gap-3 rounded-lg border p-4">
                     <div>
@@ -240,10 +242,18 @@ export default function VendorPayments() {
                             <span>{t("vendorPayments.bookingTotal")}</span>
                             <span>{formatUsdFromCents(grossPayoutCents)}</span>
                           </div>
-                          <div className="flex justify-between gap-4">
-                            <span>{t("vendorPayments.stripeProcessingFee")}</span>
-                            <span>− {formatUsdFromCents(stripeFeeCents)}</span>
-                          </div>
+                          {travelFeeCents > 0 && (
+                            <div className="flex justify-between gap-4">
+                              <span>{t("vendorPayments.travelFee")}</span>
+                              <span>+ {formatUsdFromCents(travelFeeCents)}</span>
+                            </div>
+                          )}
+                          {stripeFeeCents > 0 && (
+                            <div className="flex justify-between gap-4">
+                              <span>{t("vendorPayments.stripeProcessingFee")}</span>
+                              <span>− {formatUsdFromCents(stripeFeeCents)}</span>
+                            </div>
+                          )}
                         </div>
                       )}
                       <div className="mt-1 font-medium">{formatUsdFromCents(Number(payment.netAmount ?? 0))}</div>
