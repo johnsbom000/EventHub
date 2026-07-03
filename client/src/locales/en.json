@@ -484,8 +484,7 @@
     "dateNotSet": "Date not set",
     "bookingNumber": "Booking #{{id}}",
     "bookingTotal": "Booking total",
-    "stripeProcessingFee": "Stripe Processing Fee",
-    "yourPayout": "Your payout"
+    "stripeProcessingFee": "Stripe Processing Fee"
   },
   "vendorDiscounts": {
     "pageTitle": "Discounts",

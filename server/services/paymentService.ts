@@ -584,6 +584,7 @@ export async function ensurePaymentRecordForIntentInTx(
     fallbackVendorNetPayoutAmount?: number | null;
     fallbackStripeProcessingFeeEstimate?: number | null;
     fallbackStripeConnectedAccountId?: string | null;
+    fallbackVendorAbsorbsStripeFees?: boolean | null;
   }
 ) {
   const paymentIntentId = asTrimmedString(params.paymentIntentId);
@@ -715,6 +716,11 @@ export async function ensurePaymentRecordForIntentInTx(
       vendorGrossAmount,
       vendorNetPayoutAmount,
       stripeProcessingFeeEstimate,
+      // Fee policy at booking time, recovered from PaymentIntent metadata.
+      // Legacy intents (created before the metadata key existed) pass null and
+      // fall back to the live platform default — the only place the constant
+      // is read outside normal row creation, and still creation-time.
+      vendorAbsorbsStripeFees: params.fallbackVendorAbsorbsStripeFees ?? VENDOR_ABSORBS_STRIPE_FEES,
       stripeConnectedAccountId: connectedAccountId,
       payoutStatus: "not_ready",
       payoutEligibleAt,
@@ -739,6 +745,8 @@ export async function ensurePaymentRecordForIntentInTx(
       payoutAdjustedAmount: payments.payoutAdjustedAmount,
       paidOutAt: payments.paidOutAt,
       actualStripeFeeAmount: payments.actualStripeFeeAmount,
+      stripeProcessingFeeEstimate: payments.stripeProcessingFeeEstimate,
+      vendorAbsorbsStripeFees: payments.vendorAbsorbsStripeFees,
       stripeChargeId: payments.stripeChargeId,
       stripeTransferId: payments.stripeTransferId,
       stripeConnectedAccountId: payments.stripeConnectedAccountId,
@@ -776,6 +784,7 @@ export async function applyPaymentIntentSuccessInTx(
     fallbackVendorNetPayoutAmount?: number | null;
     fallbackStripeProcessingFeeEstimate?: number | null;
     fallbackStripeConnectedAccountId?: string | null;
+    fallbackVendorAbsorbsStripeFees?: boolean | null;
   }
 ): Promise<{ bookingId: string | null; alreadyProcessed: boolean }> {
   const {
@@ -797,12 +806,32 @@ export async function applyPaymentIntentSuccessInTx(
     fallbackVendorNetPayoutAmount: params.fallbackVendorNetPayoutAmount,
     fallbackStripeProcessingFeeEstimate,
     fallbackStripeConnectedAccountId,
+    fallbackVendorAbsorbsStripeFees: params.fallbackVendorAbsorbsStripeFees,
   });
   if (!payment?.id || !payment.bookingId) return { bookingId: null, alreadyProcessed: false };
 
   // Idempotency: already applied by another confirmation path — skip re-applying
-  // and signal callers not to re-fire one-time side effects.
+  // and signal callers not to re-fire one-time side effects. One exception: if
+  // this delivery carries Stripe's REAL settled fee (balance_transaction.fee)
+  // and the row still holds the estimate from an earlier path that couldn't
+  // fetch it, persist the real fee and refresh payout math — but only while
+  // nothing has been transferred yet. Callers only pass actualStripeFeeAmount
+  // non-null when it came from a real balance-transaction fetch, never an
+  // estimate, so this overwrite is always estimate→actual.
   if (isPaymentSucceededStatus(payment.status)) {
+    const incomingActualFee = parseIntegerValue(actualStripeFeeAmount);
+    const storedActualFee = parseIntegerValue(payment.actualStripeFeeAmount);
+    const notYetPaidOut =
+      !payment.paidOutAt &&
+      !asTrimmedString(payment.stripeTransferId) &&
+      normalizePaymentStateValue(payment.payoutStatus) !== "paid";
+    if (incomingActualFee != null && incomingActualFee !== storedActualFee && notYetPaidOut) {
+      await tx
+        .update(payments)
+        .set({ actualStripeFeeAmount: incomingActualFee })
+        .where(eq(payments.id, payment.id));
+      await refreshPaymentPayoutStateInTx(tx, payment.id, new Date());
+    }
     return { bookingId: payment.bookingId, alreadyProcessed: true };
   }
 
@@ -952,6 +981,7 @@ export async function applyPaymentIntentFailureInTx(
     fallbackVendorNetPayoutAmount?: number | null;
     fallbackStripeProcessingFeeEstimate?: number | null;
     fallbackStripeConnectedAccountId?: string | null;
+    fallbackVendorAbsorbsStripeFees?: boolean | null;
   }
 ): Promise<{ bookingId: string | null }> {
   const payment = await ensurePaymentRecordForIntentInTx(tx, { ...params });
@@ -1080,6 +1110,7 @@ export async function initializeBookingPayment(input: {
     vendorNetPayoutAmount,
     vendorGrossAmount,
     stripeProcessingFeeEstimate,
+    vendorAbsorbsStripeFees: VENDOR_ABSORBS_STRIPE_FEES,
     vendorStripeAccountId: vendorAccount.stripeConnectId,
     vendorAccountId: booking.vendorAccountId,
     listingId: booking.listingId ?? undefined,

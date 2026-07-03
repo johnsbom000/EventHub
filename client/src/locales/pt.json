@@ -484,8 +484,7 @@
     "dateNotSet": "Data não definida",
     "bookingNumber": "Reserva #{{id}}",
     "bookingTotal": "Total da reserva",
-    "stripeProcessingFee": "Taxa de processamento da Stripe",
-    "yourPayout": "Seu pagamento"
+    "stripeProcessingFee": "Taxa de processamento da Stripe"
   },
   "vendorDiscounts": {
     "pageTitle": "Descontos",

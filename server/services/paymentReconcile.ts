@@ -2,7 +2,7 @@ import { db } from "../db";
 import { sql as drizzleSql } from "drizzle-orm";
 import { logger } from "../lib/logger";
 import { appUrl } from "../lib/routeHelpers";
-import { asTrimmedString, extractRows, parseIntegerValue } from "../lib/routeUtils";
+import { asTrimmedString, extractRows, parseIntegerValue, parseOptionalBooleanFlag } from "../lib/routeUtils";
 import { logEvent } from "../lib/events";
 import { createNotification } from "../lib/notificationHelpers";
 import { sendPaymentReceiptEmail, sendBookingConfirmedEmail } from "../email";
@@ -38,6 +38,7 @@ function fallbacksFromPaymentIntent(paymentIntent: PaymentIntentLike) {
       parseIntegerValue((metadata as any)?.vendorNetPayout) ??
       parseIntegerValue((metadata as any)?.vendorPayout),
     fallbackStripeProcessingFeeEstimate: parseIntegerValue((metadata as any)?.stripeProcessingFeeEstimate),
+    fallbackVendorAbsorbsStripeFees: parseOptionalBooleanFlag((metadata as any)?.vendorAbsorbsStripeFees),
     fallbackStripeConnectedAccountId:
       asTrimmedString((metadata as any)?.stripeConnectedAccountId) ||
       asTrimmedString((metadata as any)?.vendorStripeAccountId) ||

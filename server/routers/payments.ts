@@ -256,6 +256,7 @@ import {
   parseMoneyToCents,
   parseLatLngValue,
   parseIntegerValue,
+  parseOptionalBooleanFlag,
   normalizePaymentStateValue,
   toCanonicalPaymentStatus,
   isPaymentSucceededStatus,
@@ -557,6 +558,9 @@ export function registerPaymentRoutes(app: Express): void {
             asTrimmedString((metadata as any)?.stripeConnectedAccountId) ||
             asTrimmedString((metadata as any)?.vendorStripeAccountId) ||
             null;
+          const fallbackVendorAbsorbsStripeFees = parseOptionalBooleanFlag(
+            (metadata as any)?.vendorAbsorbsStripeFees
+          );
 
           let latestChargeId = "";
           let actualStripeFeeAmount: number | null = null;
@@ -606,6 +610,7 @@ export function registerPaymentRoutes(app: Express): void {
                 fallbackVendorNetPayoutAmount,
                 fallbackStripeProcessingFeeEstimate,
                 fallbackStripeConnectedAccountId,
+                fallbackVendorAbsorbsStripeFees,
               })
             );
           } else {
@@ -621,6 +626,7 @@ export function registerPaymentRoutes(app: Express): void {
                 fallbackVendorNetPayoutAmount,
                 fallbackStripeProcessingFeeEstimate,
                 fallbackStripeConnectedAccountId,
+                fallbackVendorAbsorbsStripeFees,
               })
             );
           }
@@ -667,6 +673,7 @@ export function registerPaymentRoutes(app: Express): void {
                 refundAmount: payments.refundAmount,
                 vendorNetPayoutAmount: payments.vendorNetPayoutAmount,
                 actualStripeFeeAmount: payments.actualStripeFeeAmount,
+                vendorAbsorbsStripeFees: payments.vendorAbsorbsStripeFees,
                 stripeConnectedAccountId: payments.stripeConnectedAccountId,
                 stripeChargeId: payments.stripeChargeId,
                 stripeTransferId: payments.stripeTransferId,
