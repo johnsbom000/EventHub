@@ -68,7 +68,10 @@ export async function recomputeBookingPaymentStatusInTx(tx: any, bookingId: stri
   );
 
   const nextPaymentStatus = deriveBookingPaymentStatusFromScheduleStatuses(
-    bookingPaymentRows.map((row: { status?: string | null }) => row.status)
+    bookingPaymentRows.map((row: { status?: string | null; paymentType?: string | null }) => ({
+      status: row.status,
+      paymentType: row.paymentType,
+    }))
   );
 
   // depositPaidAt = when the main booking payment was first collected.
@@ -1009,7 +1012,13 @@ export async function applyPaymentIntentFailureInTx(
     .where(eq(payments.id, payment.id));
 
   const nextBookingPaymentStatus = await recomputeBookingPaymentStatusInTx(tx, payment.bookingId);
-  if (nextBookingPaymentStatus === "failed") {
+  // Only a failed BOOKING payment may kill the booking. A declined travel-fee
+  // attempt on an already-paid booking must leave it confirmed (defense in
+  // depth — the status derivation above ignores failed travel_fee rows too).
+  if (
+    nextBookingPaymentStatus === "failed" &&
+    normalizePaymentStateValue(payment.paymentType) === "booking"
+  ) {
     await markBookingAsPaymentFailedInTx(tx, payment.bookingId, "stripe_payment_failed");
   }
   return { bookingId: payment.bookingId };
