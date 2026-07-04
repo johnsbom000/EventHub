@@ -529,6 +529,12 @@ export function registerCircumventionRoutes(app: Express): void {
   // POST /api/chat/circumvention/flag
   // Called by the chat client when a message is hard-blocked.
   // Logs the flag, issues a warning, and returns the vendor's new warning state.
+  //
+  // SECURITY: this route is advisory only. The authoritative scan is the
+  // server-side checkContent/handleCircumventionViolation path; the
+  // client-supplied `matches` are stored as evidence on the flag row but must
+  // never influence strike severity (escalation depends solely on the count of
+  // prior flags for the vendor, not on `matches` content).
   app.post("/api/chat/circumvention/flag", messagingRateLimiter, requireDualAuthAuth0, async (req, res) => {
     try {
       const payload = z.object({
@@ -613,19 +619,40 @@ export function registerCircumventionRoutes(app: Express): void {
         contentSnapshot: z.string().min(1).max(2000),
         listingId: z.string().optional(),
         bookingId: z.string().optional(),
-        vendorAccountId: z.string().optional(),
       }).parse(req.body ?? {});
 
       const reportedByUserId =
         (await resolveCustomerAuthFromRequest(req, { createIfMissing: false }))?.id ?? null;
+
+      // The reported vendor is derived from a server-validated reference
+      // (listing or booking), never from a client-supplied vendorAccountId.
+      let reportedVendorAccountId: string | null = null;
+      if (payload.listingId) {
+        const [listing] = await db
+          .select({ accountId: vendorListings.accountId })
+          .from(vendorListings)
+          .where(eq(vendorListings.id, payload.listingId))
+          .limit(1);
+        reportedVendorAccountId = listing?.accountId ?? null;
+      }
+      if (!reportedVendorAccountId && payload.bookingId) {
+        const [booking] = await db
+          .select({ vendorAccountId: bookings.vendorAccountId })
+          .from(bookings)
+          .where(eq(bookings.id, payload.bookingId))
+          .limit(1);
+        reportedVendorAccountId = booking?.vendorAccountId ?? null;
+      }
+      if (!reportedVendorAccountId) {
+        return res.status(400).json({ error: "A valid listingId or bookingId is required" });
+      }
 
       await db.insert(circumventionFlags).values({
         flagType: "customer_report",
         contentType: payload.contentType,
         contentSnapshot: payload.contentSnapshot,
         matches: [],
-        vendorAccountId: payload.vendorAccountId ?? undefined,
-        userId: payload.vendorAccountId ? undefined : (reportedByUserId ?? undefined),
+        vendorAccountId: reportedVendorAccountId,
         reportedByUserId: reportedByUserId ?? undefined,
         listingId: payload.listingId ?? undefined,
         bookingId: payload.bookingId ?? undefined,
