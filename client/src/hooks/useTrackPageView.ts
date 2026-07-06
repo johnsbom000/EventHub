@@ -1,6 +1,7 @@
 import { useEffect } from "react";
 import { useLocation } from "wouter";
 import { getFreshAccessToken } from "@/lib/authToken";
+import { phCapture } from "@/lib/posthog";
 
 export function useTrackPageView() {
   const [location] = useLocation();
@@ -10,6 +11,10 @@ export function useTrackPageView() {
     // change (wouter `location`). Guarded — no-op until metaPixel.ts has
     // defined window.fbq.
     window.fbq?.("track", "PageView");
+
+    // PostHog pageview on the same cadence (auto-capture is disabled in
+    // initPostHog because it misses SPA route changes).
+    phCapture("$pageview");
 
     let cancelled = false;
 
