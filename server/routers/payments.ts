@@ -943,7 +943,16 @@ export function registerPaymentRoutes(app: Express): void {
         eventType === "customer.subscription.updated"
       ) {
         const subscription = event?.data?.object ?? {};
-        await applyStripeSubscriptionToVendor(subscription);
+        const subscriptionId = asTrimmedString(subscription?.id);
+        if (subscriptionId) {
+          // Webhook deliveries carry no ordering guarantee: a late
+          // subscription.updated (status active) delivered after
+          // subscription.deleted would resurrect a canceled vendor to Pro.
+          // Applying the CURRENT state retrieved from Stripe (instead of the
+          // event payload snapshot) is immune to delivery order.
+          const freshSubscription = await stripe.subscriptions.retrieve(subscriptionId);
+          await applyStripeSubscriptionToVendor(freshSubscription as any);
+        }
       } else if (eventType === "customer.subscription.deleted") {
         const subscription = event?.data?.object ?? {};
         const subscriptionId = asTrimmedString(subscription?.id);
@@ -1040,8 +1049,14 @@ export function registerPaymentRoutes(app: Express): void {
       }
       if (bookingIds.length === 0 && paymentIds.length === 0) {
         whereClauses.push(isNull(payments.stripeTransferId));
+        // 'scheduled' rows are actively claimed by a processor (CAS in
+        // processSinglePayoutCandidate) — re-processing them here would race
+        // the claim owner. Stuck claims are handled by the payout tick's
+        // stale-claim recovery; admins can still target them via explicit
+        // paymentIds. 'blocked' stays admin-reprocessable (including
+        // 'transfer_failed_permanent', which the auto worker never retries).
         whereClauses.push(
-          drizzleSql`${payments.payoutStatus} in ('not_ready', 'eligible', 'scheduled', 'blocked')`
+          drizzleSql`${payments.payoutStatus} in ('not_ready', 'eligible', 'blocked')`
         );
       }
 

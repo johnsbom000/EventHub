@@ -10,8 +10,10 @@ import {
   normalizePaymentStateValue,
   isPaymentSucceededStatus,
   isPaymentRefundedOrPartiallyRefundedStatus,
+  isStripeResourceMissingError,
   estimateStripeProcessingFeeCents,
   deriveBookingPaymentStatusFromScheduleStatuses,
+  MAX_PAYOUT_TRANSFER_RETRIES,
 } from "../lib/routeUtils";
 import {
   VENDOR_FEE_RATE,
@@ -378,6 +380,28 @@ export async function processSinglePayoutCandidate(params: {
     }
   } catch (stripeErr: any) {
     logger.error(`[payout] Stripe charge verification failed for payment ${paymentId}:`, stripeErr?.message);
+    // resource_missing is deterministic — the recorded charge id doesn't exist
+    // at Stripe, so retrying every tick can never succeed. Park the row in a
+    // terminal blocked state so it leaves the 25-slot candidate window instead
+    // of jamming the batch forever. Transient errors keep the skip-and-retry.
+    if (isStripeResourceMissingError(stripeErr)) {
+      await db
+        .update(payments)
+        .set({
+          payoutStatus: "blocked",
+          payoutBlockedReason: "stripe_charge_not_found",
+          payoutAdjustedAmount: payoutAmount,
+        })
+        .where(eq(payments.id, paymentId));
+      return {
+        paymentId,
+        bookingId,
+        outcome: "blocked",
+        reason: "stripe_charge_not_found",
+        payoutAmount,
+        transferId: null,
+      };
+    }
     return {
       paymentId,
       bookingId,
@@ -388,6 +412,40 @@ export async function processSinglePayoutCandidate(params: {
     };
   }
 
+  // Compare-and-swap claim: exactly one processor (auto worker, admin endpoint,
+  // overlapping instance) may move the row eligible → scheduled before creating
+  // the transfer. The loser sees 0 rows and skips — no second transfer. Claimed
+  // rows are excluded from the candidate queries; if we die between claim and
+  // persist, the stale-claim recovery step in the payout tick either adopts the
+  // Stripe transfer (by transfer_group + metadata.paymentId) or releases the
+  // claim back to 'eligible' after 30 minutes.
+  const claimed = await db
+    .update(payments)
+    .set({ payoutStatus: "scheduled", payoutScheduledAt: new Date() })
+    .where(
+      and(
+        eq(payments.id, paymentId),
+        isNull(payments.stripeTransferId),
+        eq(payments.payoutStatus, "eligible")
+      )
+    )
+    .returning({ id: payments.id });
+  if (claimed.length === 0) {
+    return {
+      paymentId,
+      bookingId,
+      outcome: "skipped",
+      reason: "payout_claim_lost",
+      payoutAmount,
+      transferId: null,
+    };
+  }
+
+  // Tracks whether the Stripe transfer was actually created, so the catch block
+  // can tell "transfer failed" (safe to auto-retry) apart from "persist failed
+  // after the money moved" (must NOT re-enter the retry loop — a retry after
+  // the 24h idempotency-key expiry would create a second transfer).
+  let createdTransfer: { id: string } | null = null;
   try {
     const { transferToVendor } = await import("../stripe");
     const transfer = await transferToVendor({
@@ -402,8 +460,13 @@ export async function processSinglePayoutCandidate(params: {
         payoutAmount: String(payoutAmount),
         sourceChargeId: chargeId,
       },
-      idempotencyKey: `eventhub-payout:${paymentId}:${payoutAmount}`,
+      // Amount-free on purpose: a retry after the payout amount changed (e.g. a
+      // refund landed in between) hits Stripe's idempotency_error instead of
+      // silently creating a SECOND transfer for the new amount. The catch below
+      // then blocks the row for review.
+      idempotencyKey: `eventhub-payout:${paymentId}`,
     });
+    createdTransfer = transfer;
 
     const persisted = await db.transaction(async (tx) => {
       const locked = await loadPaymentPayoutContextForUpdateInTx(tx, paymentId);
@@ -449,19 +512,35 @@ export async function processSinglePayoutCandidate(params: {
       );
 
       if (!eligibilityLocked.eligible) {
+        // Eligibility flipped between the transfer and this persist (e.g. a
+        // refund or dispute landed in the gap) — but the Stripe transfer HAS
+        // been created and the money HAS moved. Discarding transfer.id here
+        // would orphan a real money movement with no DB trace. Always persist
+        // the transfer and route the row to the manual-recovery workflow
+        // (mirrors the existing refund_after_payout_manual_recovery pattern).
+        // Decision (user-approved): flag for manual recovery, do NOT
+        // auto-reverse — reversals can drive connected accounts negative and
+        // fight legitimate partial-refund cases.
+        logger.error(
+          `[payout] payment ${paymentId} became ineligible AFTER transfer ${transfer.id} was created ` +
+          `(reason: ${eligibilityLocked.payoutBlockedReason || "not_eligible"}). ` +
+          `Persisting transfer and flagging for manual recovery.`
+        );
         await tx
           .update(payments)
           .set({
-            payoutStatus: eligibilityLocked.payoutStatus,
+            stripeTransferId: transfer.id,
+            paidOutAt: nowLocked,
+            payoutStatus: "blocked",
+            payoutBlockedReason: "transfer_after_ineligible_manual_recovery",
             payoutEligibleAt: eligibilityLocked.payoutEligibleAt,
-            payoutBlockedReason: eligibilityLocked.payoutBlockedReason,
-            payoutAdjustedAmount: eligibilityLocked.adjustedPayoutAmount,
+            payoutAdjustedAmount: payoutAmount,
           })
           .where(eq(payments.id, paymentId));
         return {
-          outcome: eligibilityLocked.payoutStatus === "blocked" ? "blocked" : "skipped",
-          reason: eligibilityLocked.payoutBlockedReason || "not_eligible",
-          transferId: null as string | null,
+          outcome: "blocked" as const,
+          reason: "transfer_after_ineligible_manual_recovery",
+          transferId: transfer.id as string | null,
         };
       }
 
@@ -474,6 +553,7 @@ export async function processSinglePayoutCandidate(params: {
           paidOutAt: nowLocked,
           payoutBlockedReason: null,
           payoutAdjustedAmount: payoutAmount,
+          payoutTransferRetryCount: 0,
         })
         .where(eq(payments.id, paymentId));
 
@@ -559,14 +639,58 @@ export async function processSinglePayoutCandidate(params: {
       typeof error?.message === "string" && error.message.trim().length > 0
         ? error.message.trim().slice(0, 200)
         : "transfer_failed";
-    await db
+
+    if (createdTransfer) {
+      // The money moved but the persist (or the payout email path) failed.
+      // Leave the row at 'scheduled' — the stale-claim recovery step in the
+      // payout tick will find the transfer via transfer_group +
+      // metadata.paymentId and persist it, instead of a blind retry that could
+      // double-pay once the idempotency key expires.
+      logger.error(
+        `[payout] persist failed AFTER transfer ${createdTransfer.id} was created for payment ${paymentId}: ${errorMessage}. ` +
+        `Leaving claim in place for stale-claim recovery.`
+      );
+      return {
+        paymentId,
+        bookingId,
+        outcome: "skipped",
+        reason: "persist_failed_after_transfer",
+        payoutAmount,
+        transferId: createdTransfer.id,
+      };
+    }
+
+    // Transfer creation failed — nothing moved. Count the attempt and keep the
+    // row auto-retryable ('transfer_failed') until MAX_PAYOUT_TRANSFER_RETRIES,
+    // then park it as 'transfer_failed_permanent' (admin-only reprocessing).
+    // Increment and reason are one atomic UPDATE: every reference to
+    // payout_transfer_retry_count in SET reads the pre-update value, so the
+    // CASE sees the same old-count + 1 that gets written. Keep the CASE in sync
+    // with payoutTransferFailureBlockedReason in routeUtils.
+    const [failureRow] = await db
       .update(payments)
       .set({
         payoutStatus: "blocked",
-        payoutBlockedReason: "transfer_failed",
+        payoutTransferRetryCount: drizzleSql`${payments.payoutTransferRetryCount} + 1`,
+        payoutBlockedReason: drizzleSql`case when ${payments.payoutTransferRetryCount} + 1 >= ${MAX_PAYOUT_TRANSFER_RETRIES} then 'transfer_failed_permanent' else 'transfer_failed' end`,
         payoutAdjustedAmount: payoutAmount,
       })
-      .where(eq(payments.id, paymentId));
+      .where(eq(payments.id, paymentId))
+      .returning({
+        retryCount: payments.payoutTransferRetryCount,
+        blockedReason: payments.payoutBlockedReason,
+      });
+    if (failureRow?.blockedReason === "transfer_failed_permanent") {
+      logger.error(
+        `[payout] transfer for payment ${paymentId} failed ${failureRow.retryCount} times — ` +
+        `marked transfer_failed_permanent (admin reprocessing only): ${errorMessage}`
+      );
+    } else {
+      logger.warn(
+        `[payout] transfer failed for payment ${paymentId} (attempt ${failureRow?.retryCount ?? "?"}), ` +
+        `will auto-retry: ${errorMessage}`
+      );
+    }
     return {
       paymentId,
       bookingId,
@@ -577,6 +701,35 @@ export async function processSinglePayoutCandidate(params: {
     };
   }
 }
+
+// Field shape shared by the PaymentIntent lookup and the lost-insert-race
+// re-select in ensurePaymentRecordForIntentInTx.
+const paymentRecordForIntentSelection = {
+  id: payments.id,
+  bookingId: payments.bookingId,
+  paymentType: payments.paymentType,
+  status: payments.status,
+  amount: payments.amount,
+  totalAmount: payments.totalAmount,
+  platformFeeAmount: payments.platformFeeAmount,
+  vendorGrossAmount: payments.vendorGrossAmount,
+  vendorNetPayoutAmount: payments.vendorNetPayoutAmount,
+  stripeProcessingFeeEstimate: payments.stripeProcessingFeeEstimate,
+  actualStripeFeeAmount: payments.actualStripeFeeAmount,
+  vendorAbsorbsStripeFees: payments.vendorAbsorbsStripeFees,
+  refundAmount: payments.refundAmount,
+  disputeStatus: payments.disputeStatus,
+  payoutStatus: payments.payoutStatus,
+  payoutEligibleAt: payments.payoutEligibleAt,
+  payoutBlockedReason: payments.payoutBlockedReason,
+  payoutAdjustedAmount: payments.payoutAdjustedAmount,
+  paidOutAt: payments.paidOutAt,
+  stripeChargeId: payments.stripeChargeId,
+  stripeTransferId: payments.stripeTransferId,
+  stripeConnectedAccountId: payments.stripeConnectedAccountId,
+  customerId: payments.customerId,
+  vendorAccountId: payments.vendorAccountId,
+};
 
 export async function ensurePaymentRecordForIntentInTx(
   tx: any,
@@ -598,32 +751,7 @@ export async function ensurePaymentRecordForIntentInTx(
   if (!paymentIntentId) return null;
 
   const existingRows = await tx
-    .select({
-      id: payments.id,
-      bookingId: payments.bookingId,
-      paymentType: payments.paymentType,
-      status: payments.status,
-      amount: payments.amount,
-      totalAmount: payments.totalAmount,
-      platformFeeAmount: payments.platformFeeAmount,
-      vendorGrossAmount: payments.vendorGrossAmount,
-      vendorNetPayoutAmount: payments.vendorNetPayoutAmount,
-      stripeProcessingFeeEstimate: payments.stripeProcessingFeeEstimate,
-      actualStripeFeeAmount: payments.actualStripeFeeAmount,
-      vendorAbsorbsStripeFees: payments.vendorAbsorbsStripeFees,
-      refundAmount: payments.refundAmount,
-      disputeStatus: payments.disputeStatus,
-      payoutStatus: payments.payoutStatus,
-      payoutEligibleAt: payments.payoutEligibleAt,
-      payoutBlockedReason: payments.payoutBlockedReason,
-      payoutAdjustedAmount: payments.payoutAdjustedAmount,
-      paidOutAt: payments.paidOutAt,
-      stripeChargeId: payments.stripeChargeId,
-      stripeTransferId: payments.stripeTransferId,
-      stripeConnectedAccountId: payments.stripeConnectedAccountId,
-      customerId: payments.customerId,
-      vendorAccountId: payments.vendorAccountId,
-    })
+    .select(paymentRecordForIntentSelection)
     .from(payments)
     .where(eq(payments.stripePaymentIntentId, paymentIntentId))
     // When a deposit is collected in the same PaymentIntent, two rows exist.
@@ -734,6 +862,10 @@ export async function ensurePaymentRecordForIntentInTx(
       paymentType: (normalizePaymentStateValue(params.fallbackPaymentType) || "booking") as "booking" | "security_deposit" | "travel_fee",
       status: "pending",
     })
+    // Two concurrent appliers (e.g. duplicate webhook deliveries racing the
+    // sync reconcile) can both miss the lookup and insert. Losing quietly and
+    // adopting the winner's row below beats 500ing the whole webhook tx.
+    .onConflictDoNothing()
     .returning({
       id: payments.id,
       bookingId: payments.bookingId,
@@ -761,7 +893,17 @@ export async function ensurePaymentRecordForIntentInTx(
       vendorAccountId: payments.vendorAccountId,
     });
 
-  return inserted ?? null;
+  if (inserted) return inserted;
+
+  // Insert lost a concurrent-recovery race — adopt the winner's row instead of
+  // aborting the caller's transaction.
+  const [adopted] = await tx
+    .select(paymentRecordForIntentSelection)
+    .from(payments)
+    .where(eq(payments.stripePaymentIntentId, paymentIntentId))
+    .orderBy(drizzleSql`CASE WHEN payment_type = 'booking' THEN 0 ELSE 1 END`)
+    .limit(1);
+  return adopted ?? null;
 }
 
 /**

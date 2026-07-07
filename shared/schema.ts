@@ -751,6 +751,11 @@ export const payments = pgTable("payments", {
   paidOutAt: timestamp("paid_out_at"),
   payoutBlockedReason: text("payout_blocked_reason"),
   payoutAdjustedAmount: integer("payout_adjusted_amount"),
+  // Count of failed transfer attempts for this payout. Rows blocked as
+  // 'transfer_failed' are auto-retried until MAX_PAYOUT_TRANSFER_RETRIES, then
+  // parked as 'transfer_failed_permanent' (admin-only reprocessing). Reset to 0
+  // on a successful transfer persist.
+  payoutTransferRetryCount: integer("payout_transfer_retry_count").notNull().default(0),
   paymentType: paymentTypeEnum("payment_type").notNull(),
   status: paymentStatusEnum("status").notNull().default("pending"),
   refundAmount: integer("refund_amount"),

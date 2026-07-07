@@ -67,7 +67,11 @@ async function main() {
     left join vendor_accounts va on va.id = b.vendor_account_id
     where p.payment_type in ('booking', 'travel_fee')
       and p.stripe_transfer_id is null
-      and p.payout_status in ('not_ready', 'eligible', 'scheduled', 'blocked')
+      -- 'scheduled' rows are actively claimed by a payout processor (CAS in
+      -- processSinglePayoutCandidate) — feeding them back into the pipeline
+      -- would race the claim owner. Stuck claims are handled by the payout
+      -- tick's stale-claim recovery.
+      and p.payout_status in ('not_ready', 'eligible', 'blocked')
       and b.status != 'cancelled'
     order by p.payout_eligible_at asc nulls last, p.created_at asc
   `);
