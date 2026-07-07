@@ -1,4 +1,5 @@
 import { useEffect, useState } from "react";
+import { useTranslation } from "react-i18next";
 import { ChevronLeft, LayoutGrid } from "lucide-react";
 
 type PhotoCollageProps = {
@@ -8,6 +9,7 @@ type PhotoCollageProps = {
 };
 
 export default function PhotoCollage({ photos, title }: PhotoCollageProps) {
+  const { t } = useTranslation();
   const [galleryOpen, setGalleryOpen] = useState(false);
 
   useEffect(() => {
@@ -36,7 +38,7 @@ export default function PhotoCollage({ photos, title }: PhotoCollageProps) {
           <button
             type="button"
             onClick={() => setGalleryOpen(true)}
-            title="Show all photos"
+            title={t("listing.showAllPhotos")}
             className={`${tileClass} flex-1`}
           >
             <img
@@ -53,7 +55,7 @@ export default function PhotoCollage({ photos, title }: PhotoCollageProps) {
                   key={`${src}-${index}`}
                   type="button"
                   onClick={() => setGalleryOpen(true)}
-                  title="Show all photos"
+                  title={t("listing.showAllPhotos")}
                   className={tileClass}
                 >
                   <img
@@ -73,7 +75,7 @@ export default function PhotoCollage({ photos, title }: PhotoCollageProps) {
           className="absolute bottom-4 right-4 inline-flex items-center gap-2 rounded-lg border border-border bg-white/95 px-3 py-2 text-sm font-medium text-foreground shadow-sm hover:bg-white"
         >
           <LayoutGrid className="h-4 w-4" />
-          Show all photos
+          {t("listing.showAllPhotos")}
         </button>
       </div>
 

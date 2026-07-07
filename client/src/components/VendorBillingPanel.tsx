@@ -60,6 +60,7 @@ function formatDate(value?: string | null): string | null {
  * `?checkout=success` query param for the post-checkout confirmation.
  */
 export default function VendorBillingPanel() {
+  const { t } = useTranslation();
   const { isAuthenticated, getAccessTokenSilently } = useAuth0();
   const [location] = useLocation();
   const [interval, setInterval] = useState<BillingInterval>("annual");
@@ -248,7 +249,7 @@ export default function VendorBillingPanel() {
       <div>
         <h2 className="font-heading text-[20px] leading-none tracking-tight mb-2">Billing &amp; Plan</h2>
         <p className="text-sm text-muted-foreground">
-          EventHub charges no fees on your bookings. Upgrade to Pro to grow with unlimited listings, analytics, and calendar sync.
+          {t("vendorDashboard.billingIntro")}
         </p>
       </div>
 

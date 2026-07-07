@@ -162,6 +162,7 @@
     }
   },
   "vendorShell": {
+    "upgradeToPro": "Upgrade to Pro",
     "backToMarketplace": "Back to Marketplace",
     "vendorAccount": "Vendor Account",
     "active": "Active: {{name}}",
@@ -220,6 +221,11 @@
     "myProfile": "My profile"
   },
   "vendorDashboard": {
+    "unlockWithPro": "Unlock with Pro",
+    "analyticsUpsellDesc": "Profile views, monthly trends & recent activity",
+    "upgradeToPro": "Upgrade to Pro",
+    "googleSyncProFeature": "Google Calendar sync is a Pro feature. Upgrade to automatically sync your bookings.",
+    "billingIntro": "EventHub charges no fees on your bookings. Upgrade to Pro to grow with unlimited listings, analytics, and calendar sync.",
     "pageTitle": "Dashboard",
     "noActiveProfile": "No active vendor profile.",
     "totalBookings": "Total Bookings",
@@ -1024,7 +1030,7 @@
   },
   "notFound": {
     "title": "404 Page Not Found",
-    "description": "Did you forget to add the page to the router?"
+    "description": "The page you're looking for doesn't exist or may have been moved."
   },
   "circumventionWarning": {
     "hardBlockTitle": "Content blocked",
@@ -1179,5 +1185,207 @@
     "toastErrorTitle": "Failed to submit",
     "toastErrorDesc": "Please try again.",
     "toastUploadFailed": "Upload failed"
+  },
+  "landing": {
+    "sampleTag": "Sample preview",
+    "sampleListings": {
+      "bouncyCastle": "Bouncy Castle Rental",
+      "luxuryArch": "Luxury Floral Wood Arch",
+      "weddingDj": "Wedding DJ & Sound Package",
+      "rusticBarn": "Rustic Barn Venue Rental",
+      "cottonCandy": "Cotton Candy Machine Rental",
+      "beverageBar": "Mobile Beverage & Bar Service",
+      "tablesChairs": "Tables & Chairs + Decor",
+      "edisonLights": "Edison String Light Canopy",
+      "wineBarrel": "Wine Barrel Rental"
+    },
+    "mockDashboard": {
+      "title": "Vendor dashboard",
+      "thisMonth": "This month",
+      "bookings": "Bookings",
+      "responseRate": "Response rate",
+      "earningsCaption": "Earnings · last 7 weeks"
+    },
+    "mockListings": {
+      "title": "My listings",
+      "newListing": "+ New listing"
+    },
+    "mockBookings": {
+      "title": "Upcoming bookings",
+      "row1Name": "Garden wedding · 120 guests",
+      "row1Date": "Sat, Jul 12",
+      "row2Name": "Corporate gala · downtown",
+      "row2Date": "Fri, Jul 25",
+      "row3Name": "Birthday party · backyard",
+      "row3Date": "Sun, Aug 03",
+      "statusConfirmed": "Confirmed",
+      "statusPending": "Pending"
+    },
+    "mockPayouts": {
+      "title": "Payouts",
+      "availableBalance": "Available balance",
+      "securedByStripe": "Secured by Stripe",
+      "item1": "Photo Booth + Props",
+      "item2": "Floral Wood Arch",
+      "item3": "DJ & Sound Package"
+    },
+    "mockChat": {
+      "title": "Messages · Emma R.",
+      "msg1": "Just booked the photo booth for July 12th! The event will be on the 2nd floor",
+      "msg2": "Great, we'll arrive at 2pm to set up. Will someone be there to show us where to put the booth?",
+      "msg3": "Yes, I'll make sure someone is there to coordinate. Thank you!"
+    },
+    "search": {
+      "anyCity": "Any city",
+      "eventType": "Wedding, Party…",
+      "selectDate": "Select date",
+      "rentals": "Rentals",
+      "button": "Search"
+    },
+    "signup": {
+      "dialogTitle": "Sign up for EventHub",
+      "dialogDescription": "Choose how you want to use EventHub and pick a sign-up method.",
+      "back": "Back",
+      "roleTitle": "How do you want to use EventHub?",
+      "roleSubtitle": "Choose how you'd like to get started.",
+      "vendorChoiceTitle": "List my services",
+      "vendorChoiceSubtitle": "Create a vendor account",
+      "customerChoiceTitle": "Book event vendors",
+      "customerChoiceSubtitle": "Create a customer account",
+      "vendorTitle": "Create your vendor account",
+      "customerTitle": "Create your customer account",
+      "vendorSubtitle": "Sign up to start listing your services on EventHub.",
+      "customerSubtitle": "Sign up to discover and book vendors for your event.",
+      "continueGoogle": "Continue with Google",
+      "or": "or",
+      "continueEmail": "Continue with email",
+      "termsAgreement": "By signing up you agree to our <terms>Terms</terms> & <privacy>Privacy Policy</privacy>",
+      "alreadyHaveAccount": "Already have an account?",
+      "logIn": "Log in"
+    },
+    "proModal": {
+      "dialogTitle": "Try Pro for 30 days free",
+      "dialogDescription": "Limited-time offer: start a 30-day free trial of EventHub Pro.",
+      "limitedTime": "Limited-time offer",
+      "title": "Try <pro>Pro</pro> for <free>30 days free</free>",
+      "body": "Get everything you need to run your event business, on us for a full month. No EventHub fees, cancel anytime.",
+      "monthly": "Monthly",
+      "annual": "Annual",
+      "then": "Then:",
+      "perMonth": "/month",
+      "perYear": "/year",
+      "annualSavings": "2 months free vs. monthly",
+      "billedMonthly": "Billed monthly",
+      "features": {
+        "unlimitedListings": "Unlimited active listings",
+        "aiReplies": "AI reply assistant for messages",
+        "discounts": "Discounts & promo codes",
+        "reputation": "Reputation Management",
+        "analytics": "Advanced analytics & booking trends",
+        "calendarSync": "Google Calendar sync"
+      },
+      "cta": "Try Pro for 30 days free →",
+      "cancelAnytime": "Cancel anytime, no commitment."
+    },
+    "bar": {
+      "price": "$29/mo",
+      "noFees": "No EventHub fees, ever.",
+      "cta": "Start free →"
+    },
+    "header": {
+      "logIn": "Log in",
+      "getStarted": "Get started"
+    },
+    "hero": {
+      "eyebrow": "For event vendors",
+      "title": "Run your event business, <accent>all in one place.</accent>",
+      "subtitle": "EventHub is the marketplace where event vendors list their services, manage bookings, message customers, and get paid securely, without spreadsheets, scattered DMs, or chasing invoices.",
+      "ctaVendor": "Get started as a vendor",
+      "logIn": "Log in",
+      "trustLine": "Free to list · Secure payouts via Stripe · Cancel anytime"
+    },
+    "vendorSection": {
+      "eyebrow": "The vendor experience",
+      "title": "Everything you need to grow your event business",
+      "subtitle": "From your first listing to your next payout, EventHub gives you the tools to run a professional event business.",
+      "listings": {
+        "eyebrow": "Listings",
+        "title": "Create and showcase your services",
+        "body": "Build beautiful listings with photos, pricing, and availability in minutes. Your storefront is ready to take bookings the moment you publish.",
+        "bullet1": "Rich photo galleries and descriptions",
+        "bullet2": "Flexible pricing and packages",
+        "bullet3": "Your own shareable vendor page"
+      },
+      "bookings": {
+        "eyebrow": "Bookings",
+        "title": "Manage every booking and date",
+        "body": "See requests, confirmations, and your calendar in one place. EventHub blocks double-bookings automatically so you never get caught out.",
+        "bullet1": "Accept or decline requests in a tap",
+        "bullet2": "Automatic double-booking protection",
+        "bullet3": "A clear view of what's coming up"
+      },
+      "payments": {
+        "eyebrow": "Payments",
+        "title": "Get paid securely, on time",
+        "body": "Customers pay through EventHub and funds are paid out to your bank via Stripe. No invoices to chase, no awkward money conversations.",
+        "bullet1": "Secure checkout powered by Stripe",
+        "bullet2": "Automatic payouts to your bank",
+        "bullet3": "Track earnings and payout history"
+      },
+      "messaging": {
+        "eyebrow": "Messaging",
+        "title": "Nail down the details in one inbox",
+        "body": "Customers book straight from your listing, so messaging is where you sort out the specifics afterward, like setup times, special requests, and logistics, all tied to the booking.",
+        "bullet1": "In-app chat tied to every booking",
+        "bullet2": "Clarify setup, timing, and special requests",
+        "bullet3": "Notifications so you never miss a message"
+      }
+    },
+    "customerSection": {
+      "eyebrow": "The customer experience",
+      "title": "And customers love the other side",
+      "subtitle": "Hosts discover trusted vendors, compare options, and book everything for their event in one place, which means more qualified bookings landing in your inbox."
+    },
+    "howItWorks": {
+      "eyebrow": "How it works",
+      "title": "Live in three steps",
+      "step1Title": "List your services",
+      "step1Body": "Create your vendor profile and publish your first listing in minutes.",
+      "step2Title": "Get booked",
+      "step2Body": "Customers find you, message you, and request bookings on your dates.",
+      "step3Title": "Get paid",
+      "step3Body": "Take secure payments and receive automatic payouts via Stripe."
+    },
+    "closing": {
+      "title": "Ready to grow your event business?",
+      "subtitle": "Join EventHub and start taking bookings for your services today.",
+      "launchOffer": "Launch offer",
+      "dealTitle": "Go Pro at our launch price.",
+      "dealPricing": "<struck>$39/mo</struck><strong> $29/mo</strong>, or <strong>$290/year</strong> <struck>$390</struck><muted> + 2 months free.</muted>",
+      "deal1": "No EventHub commission — we never take a cut of your bookings",
+      "deal2": "Unlimited listings + advanced analytics",
+      "deal3": "AI reply assistant for customer messages",
+      "deal4": "Discounts & promo codes to drive bookings",
+      "deal5": "Reputation management & review replies",
+      "deal6": "Google Calendar sync — never double-book",
+      "deal7": "30 days free, cancel anytime",
+      "cta": "Start your 30-day free trial — $29/mo",
+      "logIn": "Log in",
+      "trustLine": "No EventHub fees · Secure payouts via Stripe · Cancel anytime"
+    },
+    "footer": {
+      "description": "The all-in-one platform for event vendors to list services, manage bookings, and get paid. It's also where hosts find and book the perfect vendors for any event.",
+      "company": "Company",
+      "terms": "Terms of Service",
+      "privacy": "Privacy Policy",
+      "contact": "Contact & support",
+      "copyright": "© {{year}} EventHub. All rights reserved.",
+      "termsShort": "Terms",
+      "privacyShort": "Privacy"
+    },
+    "toast": {
+      "signupFailedTitle": "Sign up failed",
+      "signupFailedFallback": "Something went wrong. Please try again."
+    }
   }
 }

@@ -36,6 +36,11 @@ export function LanguageProvider({ children }: { children: React.ReactNode }) {
     }
   }, [i18n.language]); // eslint-disable-line react-hooks/exhaustive-deps
 
+  // Keep <html lang> in sync for accessibility and SEO (index.html ships lang="en").
+  useEffect(() => {
+    document.documentElement.lang = language;
+  }, [language]);
+
   const setLanguage = useCallback(
     async (code: LanguageCode) => {
       setLanguageState(code);

@@ -419,7 +419,7 @@ export default function VendorShell({ children, onOpenAccountSettings }: VendorS
                 className="inline-flex items-center gap-1 rounded-full border border-[#4a6a7d]/40 px-2.5 py-0.5 text-xs font-medium text-[#4a6a7d] hover:bg-[#4a6a7d]/8"
                 data-testid="link-vendor-upgrade"
               >
-                <Sparkles className="h-3 w-3" /> Upgrade to Pro
+                <Sparkles className="h-3 w-3" /> {t("vendorShell.upgradeToPro")}
               </button>
             ) : null}
           </div>
