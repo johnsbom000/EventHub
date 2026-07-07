@@ -1,5 +1,5 @@
 import { db } from "../db";
-import { eq, and, or, inArray, isNotNull, sql as drizzleSql } from "drizzle-orm";
+import { eq, and, or, inArray, isNull, isNotNull, sql as drizzleSql } from "drizzle-orm";
 import { bookings, payments, vendorAccounts, users, vendorSuspensions, vendorProfiles } from "@shared/schema";
 import { logger } from "../lib/logger";
 import { appUrl } from "../lib/routeHelpers";
@@ -7,6 +7,8 @@ import {
   asTrimmedString,
   extractRows,
   parseIntegerValue,
+  attemptBookingRefundsWithFn,
+  attemptDepositRefundWithFn,
 } from "../lib/routeUtils";
 import {
   BOOKING_PENDING_EXPIRY_MINUTES,
@@ -351,48 +353,79 @@ export async function cancelUnansweredBookingRequests(): Promise<number> {
           )
         );
 
-      // Mark the booking cancelled.
-      await db
-        .update(bookings)
-        .set({
-          status: "cancelled" as const,
-          cancellationReason: BOOKING_VENDOR_NO_RESPONSE_REASON,
-          cancelledAt: now,
-          updatedAt: now,
-        })
-        .where(eq(bookings.id, row.id));
+      // Cheap pre-flight: skip if the vendor responded since the candidate
+      // query ran (shrinks the refund-vs-acceptance race window).
+      const [currentBooking] = await db
+        .select({ status: bookings.status })
+        .from(bookings)
+        .where(eq(bookings.id, row.id))
+        .limit(1);
+      if (currentBooking?.status !== "pending") continue;
 
-      // Issue full refunds and mark each payment record.
-      let totalRefundedCents = 0;
-      for (const p of bookingPayments) {
-        const alreadyRefunded = typeof p.refundAmount === "number" ? p.refundAmount : 0;
-        const refundable = Math.max(0, p.amount - alreadyRefunded);
-        if (refundable > 0 && p.stripePaymentIntentId) {
-          try {
-            await refundBookingPayment({
-              paymentIntentId: p.stripePaymentIntentId,
-              amount: refundable,
-              reason: "duplicate",
-              idempotencyKey: `vendor-no-response:${row.id}:${p.id}`,
-            });
-          } catch (stripeErr: any) {
-            logger.warn(`[vendor-no-response] Stripe refund failed for payment ${p.id}:`, stripeErr?.message);
-          }
-        }
-        await db
-          .update(payments)
+      // Refunds FIRST. If any Stripe refund fails, the booking is left
+      // 'pending' so the next hourly tick re-selects it and retries under the
+      // same idempotency keys. The old order (cancel first, then refund,
+      // mark refunded even on failure) silently ate customer money: a failed
+      // refund was recorded as refunded and never retried.
+      const refundOutcome = await attemptBookingRefundsWithFn({
+        bookingId: row.id,
+        rows: bookingPayments,
+        idempotencyPrefix: "vendor-no-response",
+        reason: "duplicate",
+        refundFn: refundBookingPayment,
+      });
+
+      if (!refundOutcome.ok) {
+        const stripeErr: any = refundOutcome.error;
+        logger.error(
+          `[vendor-no-response] Stripe refund failed for payment ${refundOutcome.failedPaymentId} (booking ${row.id}) — leaving booking pending for retry:`,
+          stripeErr?.message || stripeErr
+        );
+        continue;
+      }
+
+      const totalRefundedCents = refundOutcome.totalRefundedCents;
+
+      // All refunds landed — cancel the booking and mark the payments in one
+      // transaction. The compare-and-swap on status='pending' means a vendor
+      // acceptance that raced us wins the booking status; the payment rows are
+      // still marked refunded because the money HAS gone back to the customer.
+      const casWon = await db.transaction(async (tx) => {
+        const claimed = await tx
+          .update(bookings)
           .set({
-            status: "refunded" as any,
-            refundAmount: p.amount,
-            refundReason: BOOKING_VENDOR_NO_RESPONSE_REASON,
-            refundedAt: now,
-            payoutStatus: "cancelled",
-            payoutEligibleAt: null,
-            payoutBlockedReason: BOOKING_VENDOR_NO_RESPONSE_REASON,
-            payoutAdjustedAmount: 0,
+            status: "cancelled" as const,
+            cancellationReason: BOOKING_VENDOR_NO_RESPONSE_REASON,
+            cancelledAt: now,
+            updatedAt: now,
           })
-          .where(eq(payments.id, p.id));
-        totalRefundedCents += refundable;
+          .where(and(eq(bookings.id, row.id), eq(bookings.status, "pending")))
+          .returning({ id: bookings.id });
+
+        for (const p of bookingPayments) {
+          await tx
+            .update(payments)
+            .set({
+              status: "refunded" as any,
+              refundAmount: p.amount,
+              refundReason: BOOKING_VENDOR_NO_RESPONSE_REASON,
+              refundedAt: now,
+              payoutStatus: "cancelled",
+              payoutEligibleAt: null,
+              payoutBlockedReason: BOOKING_VENDOR_NO_RESPONSE_REASON,
+              payoutAdjustedAmount: 0,
+            })
+            .where(eq(payments.id, p.id));
+        }
+
+        return claimed.length > 0;
+      });
+
+      if (!casWon) {
+        logger.error(
+          `[vendor-no-response] booking ${row.id} changed status between refund and cancel — refunds were issued (${totalRefundedCents} cents) but booking was NOT cancelled; needs manual review`
+        );
+        continue;
       }
 
       // Fire-and-forget: emails + calendar sync.
@@ -520,7 +553,9 @@ export async function runAutoPayoutTickWithResult(): Promise<boolean> {
           // same per-row fee snapshot). Cancelled bookings' travel fees sit at
           // payout_status 'blocked' (travel_fee_hold) so they are never picked up.
           inArray(payments.paymentType, ["booking", "travel_fee"]),
-          eq(payments.stripeTransferId, null as any),
+          // eq(col, null) renders "= NULL" which matches nothing — this worker
+          // selected zero candidates until it was switched to isNull().
+          isNull(payments.stripeTransferId),
           inArray(payments.payoutStatus, ["not_ready", "eligible", "scheduled"])
         )
       )
@@ -653,6 +688,7 @@ export async function runSecurityDepositRefundJob(): Promise<number> {
         p.id                       AS payment_id,
         p.stripe_payment_intent_id AS stripe_pi_id,
         p.amount                   AS deposit_cents,
+        p.refund_amount            AS refund_amount_cents,
         b.id                       AS booking_id,
         b.listing_title_snapshot   AS listing_title
       FROM payments p
@@ -678,6 +714,7 @@ export async function runSecurityDepositRefundJob(): Promise<number> {
       payment_id: string;
       stripe_pi_id: string | null;
       deposit_cents: number;
+      refund_amount_cents: number | null;
       booking_id: string;
       listing_title: string | null;
     }>(eligible);
@@ -690,23 +727,54 @@ export async function runSecurityDepositRefundJob(): Promise<number> {
     let refunded = 0;
 
     for (const row of rows) {
-      if (!row.stripe_pi_id) {
+      const alreadyRefunded =
+        typeof row.refund_amount_cents === "number" ? row.refund_amount_cents : 0;
+
+      // The deposit shares its PaymentIntent with the booking payment, so the
+      // refund MUST carry an explicit amount — an amount-less refund returns
+      // the entire remaining charge, including the vendor's service payment.
+      const outcome = await attemptDepositRefundWithFn({
+        paymentId: row.payment_id,
+        stripePaymentIntentId: row.stripe_pi_id,
+        depositCents: row.deposit_cents,
+        alreadyRefundedCents: alreadyRefunded,
+        refundFn: refundBookingPayment,
+      });
+
+      if (outcome.action === "skipped_no_payment_intent") {
         logger.warn("[security-deposit-refund] payment %s has no stripe_pi_id — skipping", row.payment_id);
         continue;
       }
-      try {
-        await refundBookingPayment({
-          paymentIntentId: row.stripe_pi_id,
-          reason: "requested_by_customer",
-          idempotencyKey: `auto-deposit-refund:${row.payment_id}`,
-        });
 
+      if (outcome.action === "skipped_zero_remaining") {
+        // Deposit already fully refunded elsewhere — stamp the booking so this
+        // row stops being re-selected every tick (mirrors the travel-fee job's
+        // clear-hold path).
+        await db
+          .update(bookings)
+          .set({ securityDepositRefundedAt: now, updatedAt: now })
+          .where(eq(bookings.id, row.booking_id));
+        continue;
+      }
+
+      if (outcome.action === "failed") {
+        const rowErr: any = outcome.error;
+        logger.warn(
+          "[security-deposit-refund] failed for payment=%s booking=%s: %s",
+          row.payment_id,
+          row.booking_id,
+          rowErr?.message || rowErr
+        );
+        continue;
+      }
+
+      try {
         await db.transaction(async (tx) => {
           await tx
             .update(payments)
             .set({
               status: "refunded",
-              refundAmount: row.deposit_cents,
+              refundAmount: alreadyRefunded + outcome.amountCents,
               refundReason: "auto_deposit_refund_72h",
               refundedAt: now,
               payoutStatus: "cancelled",
@@ -726,11 +794,11 @@ export async function runSecurityDepositRefundJob(): Promise<number> {
         logger.info(
           "[security-deposit-refund] refunded booking=%s amount=%d cents",
           row.booking_id,
-          row.deposit_cents
+          outcome.amountCents
         );
       } catch (rowErr: any) {
         logger.warn(
-          "[security-deposit-refund] failed for payment=%s booking=%s: %s",
+          "[security-deposit-refund] persist failed for payment=%s booking=%s: %s",
           row.payment_id,
           row.booking_id,
           rowErr?.message || rowErr
