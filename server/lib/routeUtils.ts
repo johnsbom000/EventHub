@@ -179,6 +179,62 @@ export function isStripeChargeAlreadyRefundedError(err: unknown): boolean {
   return code === "charge_already_refunded";
 }
 
+/**
+ * Stripe returns `resource_missing` when the referenced object (e.g. a charge
+ * id) does not exist. Unlike a network blip this is deterministic — retrying
+ * the same lookup can never succeed, so callers should park the row in a
+ * terminal blocked state instead of re-selecting it every tick forever.
+ */
+export function isStripeResourceMissingError(err: unknown): boolean {
+  const candidate = err as { code?: unknown; raw?: { code?: unknown } } | null;
+  const code = candidate?.code ?? candidate?.raw?.code;
+  return code === "resource_missing";
+}
+
+// ─── Payout transfer retry policy ─────────────────────────────────────────────
+
+/** Failed payout transfers are auto-retried up to this many attempts. */
+export const MAX_PAYOUT_TRANSFER_RETRIES = 10;
+
+/**
+ * Blocked reason after a failed transfer attempt, given the retry count AFTER
+ * this failure was counted. 'transfer_failed' rows are re-selected by the
+ * auto-payout worker; 'transfer_failed_permanent' rows are admin-only.
+ *
+ * Must stay in sync with the SQL CASE in processSinglePayoutCandidate's catch
+ * block (increment and reason are written there in one atomic UPDATE).
+ */
+export function payoutTransferFailureBlockedReason(
+  retryCountAfterFailure: number
+): "transfer_failed" | "transfer_failed_permanent" {
+  return retryCountAfterFailure >= MAX_PAYOUT_TRANSFER_RETRIES
+    ? "transfer_failed_permanent"
+    : "transfer_failed";
+}
+
+/**
+ * Pure mirror of the auto-payout worker's candidate predicate (the WHERE clause
+ * in runAutoPayoutTickWithResult). A payment is auto-processable when nothing
+ * has been transferred yet and it is either awaiting eligibility or blocked by
+ * a retryable transfer failure. Must stay in sync with that query.
+ */
+export function isAutoPayoutCandidate(row: {
+  paymentType: string | null | undefined;
+  stripeTransferId: string | null | undefined;
+  payoutStatus: string | null | undefined;
+  payoutBlockedReason: string | null | undefined;
+}): boolean {
+  const paymentType = normalizePaymentStateValue(row.paymentType);
+  if (paymentType !== "booking" && paymentType !== "travel_fee") return false;
+  if (asTrimmedString(row.stripeTransferId)) return false;
+  const payoutStatus = normalizePaymentStateValue(row.payoutStatus);
+  if (payoutStatus === "not_ready" || payoutStatus === "eligible") return true;
+  return (
+    payoutStatus === "blocked" &&
+    asTrimmedString(row.payoutBlockedReason) === "transfer_failed"
+  );
+}
+
 export function computeRemainingRefundableCents(
   amountCents: unknown,
   alreadyRefundedCents: unknown
@@ -260,7 +316,7 @@ export async function attemptBookingRefundsWithFn(params: {
 }
 
 export type DepositRefundAttemptResult =
-  | { action: "refunded"; amountCents: number }
+  | { action: "refunded"; amountCents: number; alreadyRefunded?: boolean }
   | { action: "skipped_zero_remaining" }
   | { action: "skipped_no_payment_intent" }
   | { action: "failed"; error: unknown };
@@ -293,6 +349,12 @@ export async function attemptDepositRefundWithFn(params: {
     });
     return { action: "refunded", amountCents: remaining };
   } catch (error) {
+    if (isStripeChargeAlreadyRefundedError(error)) {
+      // Crash recovery: the refund landed on a previous attempt but the DB
+      // write didn't. Treat as refunded so the caller persists the terminal
+      // state instead of re-selecting this row every tick forever.
+      return { action: "refunded", amountCents: remaining, alreadyRefunded: true };
+    }
     return { action: "failed", error };
   }
 }

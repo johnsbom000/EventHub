@@ -706,3 +706,24 @@ export async function transferToVendor(params: {
 
   return transfer;
 }
+
+/**
+ * Looks up an already-created transfer for a payment by scanning the booking's
+ * transfer group and matching `metadata.paymentId` (set on every transfer by
+ * processSinglePayoutCandidate). Used by the stale-claim recovery step: when a
+ * payout was claimed (`payout_status = 'scheduled'`) but the process died
+ * between the Stripe transfer and the DB persist, this tells us whether the
+ * money actually moved — adopt the transfer if it did, release the claim if not.
+ */
+export async function findExistingTransferForPayment(params: {
+  transferGroup: string;
+  paymentId: string;
+}): Promise<Stripe.Transfer | null> {
+  const transfers = await stripeClient.transfers.list({
+    transfer_group: params.transferGroup,
+    limit: 100,
+  });
+  return (
+    transfers.data.find((transfer) => transfer.metadata?.paymentId === params.paymentId) ?? null
+  );
+}

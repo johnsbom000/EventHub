@@ -110,4 +110,23 @@ assert.equal(computeRemainingRefundableCents(null, 1_000), 0);
   assert.ok(result.action === "failed" && result.error === boom);
 }
 
+// ── charge_already_refunded ⇒ success (crash recovery, terminal state) ───────
+// The refund landed on a prior crashed run; the caller must persist "refunded"
+// instead of re-selecting this row every tick forever.
+{
+  const alreadyRefundedError = Object.assign(new Error("Charge has already been refunded."), {
+    code: "charge_already_refunded",
+  });
+  const result = await attemptDepositRefundWithFn({
+    paymentId: "dep-6",
+    stripePaymentIntentId: "pi_shared",
+    depositCents: 5_000,
+    alreadyRefundedCents: 1_000,
+    refundFn: async () => {
+      throw alreadyRefundedError;
+    },
+  });
+  assert.deepEqual(result, { action: "refunded", amountCents: 4_000, alreadyRefunded: true });
+}
+
 console.log("deposit-refund-split: all assertions passed");
