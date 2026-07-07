@@ -1,4 +1,5 @@
 import { getFreshAccessToken } from "@/lib/authToken";
+import { phCapture } from "@/lib/posthog";
 
 const SESSION_KEY = "eh_session_id";
 
@@ -19,6 +20,10 @@ export function trackEvent(
   name: string,
   properties: Record<string, unknown> = {}
 ): void {
+  // Dual-send: PostHog gets every event too (funnels/session replay), while
+  // /api/events stays the durable first-party copy in event_log.
+  phCapture(name, properties);
+
   void (async () => {
     try {
       const headers: HeadersInit = { "Content-Type": "application/json" };
@@ -41,6 +46,7 @@ export function trackEventBeacon(
   name: string,
   properties: Record<string, unknown> = {}
 ): void {
+  phCapture(name, properties);
   try {
     const payload = JSON.stringify({ name, properties, sessionId: getSessionId() });
     navigator.sendBeacon("/api/events", new Blob([payload], { type: "application/json" }));
