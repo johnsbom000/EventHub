@@ -162,6 +162,7 @@
     }
   },
   "vendorShell": {
+    "upgradeToPro": "Mejorar a Pro",
     "backToMarketplace": "Volver al Mercado",
     "vendorAccount": "Cuenta de Proveedor",
     "active": "Activo: {{name}}",
@@ -220,6 +221,11 @@
     "myProfile": "Mi perfil"
   },
   "vendorDashboard": {
+    "unlockWithPro": "Desbloquea con Pro",
+    "analyticsUpsellDesc": "Vistas de perfil, tendencias mensuales y actividad reciente",
+    "upgradeToPro": "Mejorar a Pro",
+    "googleSyncProFeature": "La sincronización con Google Calendar es una función Pro. Mejora tu plan para sincronizar tus reservas automáticamente.",
+    "billingIntro": "EventHub no cobra comisiones por tus reservas. Mejora a Pro para crecer con listados ilimitados, analíticas y sincronización de calendario.",
     "pageTitle": "Panel",
     "noActiveProfile": "Sin perfil de proveedor activo.",
     "totalBookings": "Total de Reservas",
@@ -1024,7 +1030,7 @@
   },
   "notFound": {
     "title": "404 Página no encontrada",
-    "description": "¿Olvidaste agregar la página al enrutador?"
+    "description": "La página que buscas no existe o puede haber sido movida."
   },
   "circumventionWarning": {
     "hardBlockTitle": "Contenido bloqueado",
@@ -1179,5 +1185,207 @@
     "toastErrorTitle": "Error al enviar",
     "toastErrorDesc": "Por favor, intenta de nuevo.",
     "toastUploadFailed": "Error al subir el archivo"
+  },
+  "landing": {
+    "sampleTag": "Vista de ejemplo",
+    "sampleListings": {
+      "bouncyCastle": "Alquiler de castillo inflable",
+      "luxuryArch": "Arco de madera floral de lujo",
+      "weddingDj": "Paquete de DJ y sonido para bodas",
+      "rusticBarn": "Alquiler de granero rústico para eventos",
+      "cottonCandy": "Alquiler de máquina de algodón de azúcar",
+      "beverageBar": "Servicio móvil de bar y bebidas",
+      "tablesChairs": "Mesas y sillas + decoración",
+      "edisonLights": "Dosel de luces Edison",
+      "wineBarrel": "Alquiler de barriles de vino"
+    },
+    "mockDashboard": {
+      "title": "Panel del proveedor",
+      "thisMonth": "Este mes",
+      "bookings": "Reservas",
+      "responseRate": "Tasa de respuesta",
+      "earningsCaption": "Ganancias · últimas 7 semanas"
+    },
+    "mockListings": {
+      "title": "Mis listados",
+      "newListing": "+ Nuevo listado"
+    },
+    "mockBookings": {
+      "title": "Próximas reservas",
+      "row1Name": "Boda en jardín · 120 invitados",
+      "row1Date": "sáb, 12 jul",
+      "row2Name": "Gala corporativa · centro",
+      "row2Date": "vie, 25 jul",
+      "row3Name": "Fiesta de cumpleaños · patio trasero",
+      "row3Date": "dom, 3 ago",
+      "statusConfirmed": "Confirmada",
+      "statusPending": "Pendiente"
+    },
+    "mockPayouts": {
+      "title": "Pagos",
+      "availableBalance": "Saldo disponible",
+      "securedByStripe": "Protegido por Stripe",
+      "item1": "Cabina de fotos + accesorios",
+      "item2": "Arco de madera floral",
+      "item3": "Paquete de DJ y sonido"
+    },
+    "mockChat": {
+      "title": "Mensajes · Emma R.",
+      "msg1": "¡Acabo de reservar la cabina de fotos para el 12 de julio! El evento será en el segundo piso",
+      "msg2": "Genial, llegaremos a las 2pm para instalar. ¿Habrá alguien para indicarnos dónde colocar la cabina?",
+      "msg3": "Sí, me aseguraré de que alguien esté ahí para coordinar. ¡Gracias!"
+    },
+    "search": {
+      "anyCity": "Cualquier ciudad",
+      "eventType": "Boda, fiesta…",
+      "selectDate": "Elige una fecha",
+      "rentals": "Alquileres",
+      "button": "Buscar"
+    },
+    "signup": {
+      "dialogTitle": "Regístrate en EventHub",
+      "dialogDescription": "Elige cómo quieres usar EventHub y un método de registro.",
+      "back": "Atrás",
+      "roleTitle": "¿Cómo quieres usar EventHub?",
+      "roleSubtitle": "Elige cómo te gustaría empezar.",
+      "vendorChoiceTitle": "Ofrecer mis servicios",
+      "vendorChoiceSubtitle": "Crear una cuenta de proveedor",
+      "customerChoiceTitle": "Reservar proveedores de eventos",
+      "customerChoiceSubtitle": "Crear una cuenta de cliente",
+      "vendorTitle": "Crea tu cuenta de proveedor",
+      "customerTitle": "Crea tu cuenta de cliente",
+      "vendorSubtitle": "Regístrate para empezar a publicar tus servicios en EventHub.",
+      "customerSubtitle": "Regístrate para descubrir y reservar proveedores para tu evento.",
+      "continueGoogle": "Continuar con Google",
+      "or": "o",
+      "continueEmail": "Continuar con correo electrónico",
+      "termsAgreement": "Al registrarte aceptas nuestros <terms>Términos</terms> y <privacy>Política de Privacidad</privacy>",
+      "alreadyHaveAccount": "¿Ya tienes una cuenta?",
+      "logIn": "Inicia sesión"
+    },
+    "proModal": {
+      "dialogTitle": "Prueba Pro gratis por 30 días",
+      "dialogDescription": "Oferta por tiempo limitado: comienza una prueba gratuita de 30 días de EventHub Pro.",
+      "limitedTime": "Oferta por tiempo limitado",
+      "title": "Prueba <pro>Pro</pro> <free>gratis por 30 días</free>",
+      "body": "Consigue todo lo que necesitas para gestionar tu negocio de eventos, por nuestra cuenta durante un mes completo. Sin comisiones de EventHub, cancela cuando quieras.",
+      "monthly": "Mensual",
+      "annual": "Anual",
+      "then": "Después:",
+      "perMonth": "/mes",
+      "perYear": "/año",
+      "annualSavings": "2 meses gratis vs. mensual",
+      "billedMonthly": "Facturación mensual",
+      "features": {
+        "unlimitedListings": "Listados activos ilimitados",
+        "aiReplies": "Asistente de respuestas con IA para mensajes",
+        "discounts": "Descuentos y códigos promocionales",
+        "reputation": "Gestión de reputación",
+        "analytics": "Analíticas avanzadas y tendencias de reservas",
+        "calendarSync": "Sincronización con Google Calendar"
+      },
+      "cta": "Prueba Pro gratis por 30 días →",
+      "cancelAnytime": "Cancela cuando quieras, sin compromiso."
+    },
+    "bar": {
+      "price": "$29/mes",
+      "noFees": "Sin comisiones de EventHub, nunca.",
+      "cta": "Empieza gratis →"
+    },
+    "header": {
+      "logIn": "Iniciar sesión",
+      "getStarted": "Empezar"
+    },
+    "hero": {
+      "eyebrow": "Para proveedores de eventos",
+      "title": "Gestiona tu negocio de eventos, <accent>todo en un solo lugar.</accent>",
+      "subtitle": "EventHub es el marketplace donde los proveedores de eventos publican sus servicios, gestionan reservas, se comunican con los clientes y cobran de forma segura, sin hojas de cálculo, mensajes dispersos ni facturas por cobrar.",
+      "ctaVendor": "Empieza como proveedor",
+      "logIn": "Iniciar sesión",
+      "trustLine": "Publicar es gratis · Pagos seguros vía Stripe · Cancela cuando quieras"
+    },
+    "vendorSection": {
+      "eyebrow": "La experiencia del proveedor",
+      "title": "Todo lo que necesitas para hacer crecer tu negocio de eventos",
+      "subtitle": "Desde tu primer listado hasta tu próximo pago, EventHub te da las herramientas para gestionar un negocio de eventos profesional.",
+      "listings": {
+        "eyebrow": "Listados",
+        "title": "Crea y muestra tus servicios",
+        "body": "Crea listados atractivos con fotos, precios y disponibilidad en minutos. Tu tienda está lista para recibir reservas en cuanto publiques.",
+        "bullet1": "Galerías de fotos y descripciones completas",
+        "bullet2": "Precios y paquetes flexibles",
+        "bullet3": "Tu propia página de proveedor para compartir"
+      },
+      "bookings": {
+        "eyebrow": "Reservas",
+        "title": "Gestiona cada reserva y cada fecha",
+        "body": "Ve solicitudes, confirmaciones y tu calendario en un solo lugar. EventHub bloquea las reservas duplicadas automáticamente para que nunca te tomen por sorpresa.",
+        "bullet1": "Acepta o rechaza solicitudes con un toque",
+        "bullet2": "Protección automática contra reservas duplicadas",
+        "bullet3": "Una vista clara de lo que viene"
+      },
+      "payments": {
+        "eyebrow": "Pagos",
+        "title": "Cobra de forma segura y a tiempo",
+        "body": "Los clientes pagan a través de EventHub y los fondos se transfieren a tu banco vía Stripe. Sin facturas que perseguir ni conversaciones incómodas sobre dinero.",
+        "bullet1": "Pago seguro con tecnología de Stripe",
+        "bullet2": "Transferencias automáticas a tu banco",
+        "bullet3": "Controla tus ganancias y el historial de pagos"
+      },
+      "messaging": {
+        "eyebrow": "Mensajería",
+        "title": "Concreta los detalles en una sola bandeja",
+        "body": "Los clientes reservan directamente desde tu listado, así que la mensajería es donde defines los detalles después: horarios de montaje, solicitudes especiales y logística, todo vinculado a la reserva.",
+        "bullet1": "Chat integrado vinculado a cada reserva",
+        "bullet2": "Aclara montaje, horarios y solicitudes especiales",
+        "bullet3": "Notificaciones para que nunca pierdas un mensaje"
+      }
+    },
+    "customerSection": {
+      "eyebrow": "La experiencia del cliente",
+      "title": "Y a los clientes les encanta el otro lado",
+      "subtitle": "Los anfitriones descubren proveedores de confianza, comparan opciones y reservan todo para su evento en un solo lugar, lo que significa más reservas calificadas en tu bandeja."
+    },
+    "howItWorks": {
+      "eyebrow": "Cómo funciona",
+      "title": "Listo en tres pasos",
+      "step1Title": "Publica tus servicios",
+      "step1Body": "Crea tu perfil de proveedor y publica tu primer listado en minutos.",
+      "step2Title": "Recibe reservas",
+      "step2Body": "Los clientes te encuentran, te escriben y solicitan reservas en tus fechas.",
+      "step3Title": "Recibe tus pagos",
+      "step3Body": "Acepta pagos seguros y recibe transferencias automáticas vía Stripe."
+    },
+    "closing": {
+      "title": "¿Listo para hacer crecer tu negocio de eventos?",
+      "subtitle": "Únete a EventHub y empieza a recibir reservas para tus servicios hoy.",
+      "launchOffer": "Oferta de lanzamiento",
+      "dealTitle": "Hazte Pro a nuestro precio de lanzamiento.",
+      "dealPricing": "<struck>$39/mes</struck><strong> $29/mes</strong>, o <strong>$290/año</strong> <struck>$390</struck><muted> + 2 meses gratis.</muted>",
+      "deal1": "Sin comisión de EventHub — nunca nos quedamos con parte de tus reservas",
+      "deal2": "Listados ilimitados + analíticas avanzadas",
+      "deal3": "Asistente de respuestas con IA para mensajes de clientes",
+      "deal4": "Descuentos y códigos promocionales para impulsar reservas",
+      "deal5": "Gestión de reputación y respuestas a reseñas",
+      "deal6": "Sincronización con Google Calendar — nunca dupliques reservas",
+      "deal7": "30 días gratis, cancela cuando quieras",
+      "cta": "Comienza tu prueba gratuita de 30 días — $29/mes",
+      "logIn": "Iniciar sesión",
+      "trustLine": "Sin comisiones de EventHub · Pagos seguros vía Stripe · Cancela cuando quieras"
+    },
+    "footer": {
+      "description": "La plataforma todo en uno para que los proveedores de eventos publiquen servicios, gestionen reservas y cobren. También es donde los anfitriones encuentran y reservan los proveedores perfectos para cualquier evento.",
+      "company": "Compañía",
+      "terms": "Términos de Servicio",
+      "privacy": "Política de Privacidad",
+      "contact": "Contacto y soporte",
+      "copyright": "© {{year}} EventHub. Todos los derechos reservados.",
+      "termsShort": "Términos",
+      "privacyShort": "Privacidad"
+    },
+    "toast": {
+      "signupFailedTitle": "Error al registrarse",
+      "signupFailedFallback": "Algo salió mal. Inténtalo de nuevo."
+    }
   }
 }
