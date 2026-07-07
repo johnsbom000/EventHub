@@ -101,6 +101,19 @@ export async function normalizeProfileNamesForAccount(account: any) {
   `);
 }
 
+/**
+ * Strip encrypted Google OAuth token fields before a vendor account row is
+ * cached on the request (or otherwise handed to route code). Routes must never
+ * see these fields — a `res.json(account)` would leak ciphertext. Code that
+ * needs the tokens (server/google.ts) loads them by account id with its own
+ * projected query, never from `req.vendorAccount`.
+ */
+export function sanitizeVendorAccount(account: any) {
+  if (!account || typeof account !== "object") return account ?? undefined;
+  const { googleAccessToken, googleRefreshToken, googleTokenExpiresAt, ...safe } = account;
+  return safe;
+}
+
 export async function getVendorAccountFromRequest(req: any) {
   const cached = req.vendorAccount;
   if (cached?.id) return cached;
@@ -113,7 +126,7 @@ export async function getVendorAccountFromRequest(req: any) {
     .from(vendorAccounts)
     .where(eq(vendorAccounts.id, vendorId))
     .limit(1);
-  const account = rows[0];
+  const account = sanitizeVendorAccount(rows[0]);
   if (account) {
     req.vendorAccount = account;
   }
@@ -157,7 +170,7 @@ export async function requireVendorAccountAuth0(req: any, res: any, next: any) {
     };
 
     // Also expose account directly if useful later
-    req.vendorAccount = account;
+    req.vendorAccount = sanitizeVendorAccount(account);
 
     return next();
   } catch (err: any) {
@@ -217,7 +230,7 @@ export async function resolveActiveVendorProfile(req: any): Promise<VendorProfil
       .set({ activeProfileId: activeProfile.id })
       .where(eq(vendorAccounts.id, account.id))
       .returning();
-    req.vendorAccount = updatedAccount ?? account;
+    req.vendorAccount = sanitizeVendorAccount(updatedAccount) ?? account;
   }
 
   const context: VendorProfileContext = {
