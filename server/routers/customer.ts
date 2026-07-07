@@ -975,8 +975,16 @@ export function registerCustomerRoutes(app: Express): void {
 
   app.post("/api/events", eventsRateLimiter, requireCustomerAnyAuth, async (req, res) => {
     try {
-      const validatedData = insertEventSchema.parse(req.body);
-      const [event] = await db.insert(events).values({ ...validatedData }).returning();
+      const customerAuth = await resolveCustomerAuthFromRequest(req, { createIfMissing: true });
+      if (!customerAuth?.id) {
+        return res.status(401).json({ error: "Authentication required" });
+      }
+      // customerId always comes from the authenticated identity, never the body.
+      const validatedData = insertEventSchema.omit({ customerId: true }).parse(req.body);
+      const [event] = await db
+        .insert(events)
+        .values({ ...validatedData, customerId: customerAuth.id })
+        .returning();
       res.json(event);
     } catch (error: any) {
       logRouteError("/api/events POST", error);
@@ -986,7 +994,15 @@ export function registerCustomerRoutes(app: Express): void {
 
   app.get("/api/events/:eventId/recommendations", requireCustomerAnyAuth, async (req, res) => {
     try {
-      const [event] = await db.select().from(events).where(eq(events.id, req.params.eventId));
+      const customerAuth = await resolveCustomerAuthFromRequest(req, { createIfMissing: false });
+      if (!customerAuth?.id) {
+        return res.status(401).json({ error: "Authentication required" });
+      }
+      // Scoped to the caller so this route can't be used to probe other users' event ids.
+      const [event] = await db
+        .select()
+        .from(events)
+        .where(and(eq(events.id, req.params.eventId), eq(events.customerId, customerAuth.id)));
       if (!event) {
         return res.status(404).json({ error: "Event not found" });
       }

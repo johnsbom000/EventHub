@@ -54,10 +54,7 @@ import {
   ensureStripeCustomer,
   recomputeBookingPaymentStatusInTx,
   markBookingAsPaymentFailedInTx,
-  type LockedPaymentPayoutContext,
-  loadPaymentPayoutContextForUpdateInTx,
   getDisputeCaseStatusInTx,
-  refreshPaymentPayoutStateInTx,
   processSinglePayoutCandidate,
   ensurePaymentRecordForIntentInTx,
   initializeBookingPayment,
@@ -946,7 +943,16 @@ export function registerPaymentRoutes(app: Express): void {
         eventType === "customer.subscription.updated"
       ) {
         const subscription = event?.data?.object ?? {};
-        await applyStripeSubscriptionToVendor(subscription);
+        const subscriptionId = asTrimmedString(subscription?.id);
+        if (subscriptionId) {
+          // Webhook deliveries carry no ordering guarantee: a late
+          // subscription.updated (status active) delivered after
+          // subscription.deleted would resurrect a canceled vendor to Pro.
+          // Applying the CURRENT state retrieved from Stripe (instead of the
+          // event payload snapshot) is immune to delivery order.
+          const freshSubscription = await stripe.subscriptions.retrieve(subscriptionId);
+          await applyStripeSubscriptionToVendor(freshSubscription as any);
+        }
       } else if (eventType === "customer.subscription.deleted") {
         const subscription = event?.data?.object ?? {};
         const subscriptionId = asTrimmedString(subscription?.id);
@@ -1043,8 +1049,14 @@ export function registerPaymentRoutes(app: Express): void {
       }
       if (bookingIds.length === 0 && paymentIds.length === 0) {
         whereClauses.push(isNull(payments.stripeTransferId));
+        // 'scheduled' rows are actively claimed by a processor (CAS in
+        // processSinglePayoutCandidate) — re-processing them here would race
+        // the claim owner. Stuck claims are handled by the payout tick's
+        // stale-claim recovery; admins can still target them via explicit
+        // paymentIds. 'blocked' stays admin-reprocessable (including
+        // 'transfer_failed_permanent', which the auto worker never retries).
         whereClauses.push(
-          drizzleSql`${payments.payoutStatus} in ('not_ready', 'eligible', 'scheduled', 'blocked')`
+          drizzleSql`${payments.payoutStatus} in ('not_ready', 'eligible', 'blocked')`
         );
       }
 
@@ -1067,207 +1079,22 @@ export function registerPaymentRoutes(app: Express): void {
         transferId: string | null;
       }> = [];
 
-      const { transferToVendor } = await import("../stripe");
-
+      // Same implementation as the auto-payout worker: eligibility refresh,
+      // Stripe charge cross-check, transfer, locked persist, payout email.
+      // The endpoint keeps only its own candidate query (explicit ids +
+      // 'blocked' rows are admin-reprocessable here, unlike the worker).
       for (const candidate of payoutCandidates) {
         const paymentId = asTrimmedString(candidate.paymentId);
         const bookingId = asTrimmedString(candidate.bookingId);
         if (!paymentId || !bookingId) continue;
 
-        const now = new Date();
-        const refreshed = await db.transaction(async (tx) =>
-          refreshPaymentPayoutStateInTx(tx, paymentId, now)
+        results.push(
+          await processSinglePayoutCandidate({
+            paymentId,
+            bookingId,
+            dryRun,
+          })
         );
-
-        if (!refreshed?.paymentContext) {
-          results.push({
-            paymentId,
-            bookingId,
-            outcome: "skipped",
-            reason: "payment_not_found",
-            payoutAmount: 0,
-            transferId: null,
-          });
-          continue;
-        }
-
-        const eligibility = refreshed.payoutEligibility;
-        const payoutAmount = Math.max(0, Math.round(eligibility.adjustedPayoutAmount || 0));
-
-        if (!eligibility.eligible) {
-          results.push({
-            paymentId,
-            bookingId,
-            outcome: eligibility.payoutStatus === "blocked" ? "blocked" : "skipped",
-            reason: eligibility.payoutBlockedReason || "not_eligible",
-            payoutAmount,
-            transferId: null,
-          });
-          continue;
-        }
-
-        if (dryRun) {
-          results.push({
-            paymentId,
-            bookingId,
-            outcome: "eligible",
-            reason: null,
-            payoutAmount,
-            transferId: null,
-          });
-          continue;
-        }
-
-        const connectedAccountId = asTrimmedString(
-          refreshed.paymentContext.stripeConnectedAccountId
-        );
-        const chargeId = asTrimmedString(refreshed.paymentContext.stripeChargeId);
-
-        if (!connectedAccountId || !chargeId || payoutAmount <= 0) {
-          await db
-            .update(payments)
-            .set({
-              payoutStatus: "blocked",
-              payoutBlockedReason: "missing_transfer_requirements",
-              payoutAdjustedAmount: payoutAmount,
-            })
-            .where(eq(payments.id, paymentId));
-          results.push({
-            paymentId,
-            bookingId,
-            outcome: "blocked",
-            reason: "missing_transfer_requirements",
-            payoutAmount,
-            transferId: null,
-          });
-          continue;
-        }
-
-        try {
-          const transfer = await transferToVendor({
-            amount: payoutAmount,
-            vendorStripeAccountId: connectedAccountId,
-            description: `EventHub payout for booking ${bookingId}`,
-            sourceTransaction: chargeId,
-            transferGroup: `booking_${bookingId}`,
-            metadata: {
-              bookingId,
-              paymentId,
-              payoutAmount: String(payoutAmount),
-              sourceChargeId: chargeId,
-            },
-            idempotencyKey: `eventhub-payout:${paymentId}:${payoutAmount}`,
-          });
-
-          const persisted = await db.transaction(async (tx) => {
-            const locked = await loadPaymentPayoutContextForUpdateInTx(tx, paymentId);
-            if (!locked?.paymentId || !locked.bookingId) {
-              return {
-                outcome: "skipped" as const,
-                reason: "payment_not_found",
-                transferId: null as string | null,
-              };
-            }
-
-            const existingTransferId = asTrimmedString(locked.stripeTransferId);
-            if (existingTransferId) {
-              return {
-                outcome: "duplicate" as const,
-                reason: "already_paid",
-                transferId: existingTransferId,
-              };
-            }
-
-            const nowLocked = new Date();
-            const eligibilityLocked = computePayoutEligibility(
-              {
-                bookingStatus: locked.bookingStatus,
-                paymentStatus: locked.paymentStatus,
-                payoutStatus: locked.payoutStatus,
-                payoutBlockedReason: locked.payoutBlockedReason,
-                disputeStatus: locked.disputeStatus,
-                disputeCaseStatus: locked.disputeCaseStatus,
-                paidOutAt: locked.paidOutAt,
-                payoutEligibleAt: locked.payoutEligibleAt,
-                bookingEndAt: locked.bookingEndAt,
-                totalAmount:
-                  parseIntegerValue(locked.totalAmount) ??
-                  parseIntegerValue(locked.amount) ??
-                  0,
-                refundedAmount: parseIntegerValue(locked.refundAmount) ?? 0,
-                vendorNetPayoutAmount: parseIntegerValue(locked.vendorNetPayoutAmount) ?? 0,
-                actualStripeFeeAmount: locked.actualStripeFeeAmount,
-                stripeConnectedAccountId: locked.stripeConnectedAccountId,
-                stripeChargeId: locked.stripeChargeId,
-                stripeTransferId: locked.stripeTransferId,
-                vendorAbsorbsStripeFees: locked.vendorAbsorbsStripeFees ?? false,
-              },
-              nowLocked
-            );
-
-            if (!eligibilityLocked.eligible) {
-              await tx
-                .update(payments)
-                .set({
-                  payoutStatus: eligibilityLocked.payoutStatus,
-                  payoutEligibleAt: eligibilityLocked.payoutEligibleAt,
-                  payoutBlockedReason: eligibilityLocked.payoutBlockedReason,
-                  payoutAdjustedAmount: eligibilityLocked.adjustedPayoutAmount,
-                })
-                .where(eq(payments.id, paymentId));
-              return {
-                outcome: eligibilityLocked.payoutStatus === "blocked" ? "blocked" : "skipped",
-                reason: eligibilityLocked.payoutBlockedReason || "not_eligible",
-                transferId: null as string | null,
-              };
-            }
-
-            await tx
-              .update(payments)
-              .set({
-                stripeTransferId: transfer.id,
-                payoutStatus: "paid",
-                payoutScheduledAt: nowLocked,
-                paidOutAt: nowLocked,
-                payoutBlockedReason: null,
-                payoutAdjustedAmount: payoutAmount,
-              })
-              .where(eq(payments.id, paymentId));
-
-            return {
-              outcome: "paid" as const,
-              reason: null as string | null,
-              transferId: transfer.id,
-            };
-          });
-
-          results.push({
-            paymentId,
-            bookingId,
-            outcome: persisted.outcome as "paid" | "eligible" | "blocked" | "skipped" | "duplicate",
-            reason: persisted.reason,
-            payoutAmount,
-            transferId: persisted.transferId,
-          });
-        } catch (error: any) {
-          logger.error("[admin payout] transfer error:", error?.message || error);
-          await db
-            .update(payments)
-            .set({
-              payoutStatus: "blocked",
-              payoutBlockedReason: "transfer_failed",
-              payoutAdjustedAmount: payoutAmount,
-            })
-            .where(eq(payments.id, paymentId));
-          results.push({
-            paymentId,
-            bookingId,
-            outcome: "blocked",
-            reason: "transfer_failed",
-            payoutAmount,
-            transferId: null,
-          });
-        }
       }
 
       const summary = {
@@ -1328,7 +1155,7 @@ export function registerPaymentRoutes(app: Express): void {
         JOIN bookings b ON b.id = p.booking_id
         LEFT JOIN vendor_accounts va ON va.id = p.vendor_account_id
         LEFT JOIN users u ON u.id = p.customer_id
-        WHERE p.payment_type = 'booking'
+        WHERE p.payment_type IN ('booking', 'travel_fee')
         ORDER BY p.created_at DESC
         LIMIT 200
       `);
@@ -1339,7 +1166,9 @@ export function registerPaymentRoutes(app: Express): void {
           COUNT(*)::int                       AS count,
           COALESCE(SUM(payout_adjusted_amount), 0)::bigint AS total_cents
         FROM payments
-        WHERE payment_type = 'deposit'
+        -- 'deposit' is not a payment_type enum value (it's 'security_deposit');
+        -- comparing the enum against it threw and 500'd this whole endpoint.
+        WHERE payment_type IN ('booking', 'travel_fee')
         GROUP BY payout_status
       `);
 

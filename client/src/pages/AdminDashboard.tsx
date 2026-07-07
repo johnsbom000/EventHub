@@ -86,14 +86,28 @@ function PageHeading({ title, description }: { title: string; description?: stri
   );
 }
 
+function QueryErrorCard({ message }: { message?: string }) {
+  return (
+    <Card className="border-destructive/50 bg-destructive/5">
+      <CardContent className="py-10 text-center">
+        <AlertTriangle className="h-6 w-6 text-destructive mx-auto mb-2" />
+        <p className="text-sm font-medium text-destructive">
+          {message ?? "Something went wrong loading this data."}
+        </p>
+        <p className="text-xs text-muted-foreground mt-1">Check the server logs, then refresh the page.</p>
+      </CardContent>
+    </Card>
+  );
+}
+
 // ─── Section: Overview ────────────────────────────────────────────────────────
 
 function OverviewSection({ isAdmin }: { isAdmin: boolean }) {
   const { data: userStats } = useQuery<any>({ queryKey: ["/api/admin/stats/users"], enabled: isAdmin });
   const { data: bookingStats } = useQuery<any>({ queryKey: ["/api/admin/stats/bookings"], enabled: isAdmin });
   const { data: bookingDetail } = useQuery<any>({ queryKey: ["/api/admin/stats/bookings/detail"], enabled: isAdmin });
-  const { data: revenue } = useQuery<any>({ queryKey: ["/api/admin/stats/revenue"], enabled: isAdmin });
-  const { data: disputes = [] } = useQuery<any[]>({ queryKey: ["/api/admin/disputes"], enabled: isAdmin });
+  const { data: revenue, isError: revenueError } = useQuery<any>({ queryKey: ["/api/admin/stats/revenue"], enabled: isAdmin });
+  const { data: disputes = [], isError: disputesError } = useQuery<any[]>({ queryKey: ["/api/admin/disputes"], enabled: isAdmin });
   const { data: stripeBalance } = useQuery<any>({ queryKey: ["/api/admin/stripe/balance"], enabled: isAdmin });
 
   const openDisputes = disputes.filter(
@@ -113,7 +127,7 @@ function OverviewSection({ isAdmin }: { isAdmin: boolean }) {
         <StatCard title="Total Bookings" value={bookingStats?.totalBookings ?? 0} sub={`${bookingStats?.completedBookings ?? 0} completed`} icon={<Calendar className="h-4 w-4 text-muted-foreground" />} />
         <StatCard title="Gross Revenue" value={fmt((bookingStats?.totalRevenue ?? 0) * 100)} sub="All time" icon={<DollarSign className="h-4 w-4 text-muted-foreground" />} />
         <StatCard title="Platform Earnings" value={fmt((bookingStats?.totalFeeEarnings ?? 0) * 100)} sub="Fees collected" icon={<CreditCard className="h-4 w-4 text-muted-foreground" />} />
-        <StatCard title="Open Disputes" value={openDisputes} sub="Needs your review" icon={<AlertTriangle className="h-4 w-4 text-muted-foreground" />} />
+        <StatCard title="Open Disputes" value={disputesError ? "—" : openDisputes} sub={disputesError ? "Failed to load" : "Needs your review"} icon={<AlertTriangle className="h-4 w-4 text-muted-foreground" />} />
       </div>
 
       <div className="grid gap-4 grid-cols-1 md:grid-cols-3 mb-6">
@@ -140,9 +154,9 @@ function OverviewSection({ isAdmin }: { isAdmin: boolean }) {
             <CardTitle className="text-sm font-medium text-muted-foreground">Avg Booking Value</CardTitle>
           </CardHeader>
           <CardContent>
-            <div className="text-2xl font-bold">{fmt(revenue?.overall?.avgBookingValueCents ?? 0)}</div>
+            <div className="text-2xl font-bold">{revenueError ? "—" : fmt(revenue?.overall?.avgBookingValueCents ?? 0)}</div>
             <p className="text-xs text-muted-foreground mt-1">
-              {(revenue?.overall?.avgBookingsPerVendorPerMonth ?? 0).toFixed(1)} bookings/vendor/mo
+              {revenueError ? "Failed to load" : `${(revenue?.overall?.avgBookingsPerVendorPerMonth ?? 0).toFixed(1)} bookings/vendor/mo`}
             </p>
           </CardContent>
         </Card>
@@ -156,15 +170,23 @@ function OverviewSection({ isAdmin }: { isAdmin: boolean }) {
             </CardTitle>
           </CardHeader>
           <CardContent>
-            <ResponsiveContainer width="100%" height={220}>
-              <BarChart data={revenue?.monthly ?? []}>
-                <CartesianGrid strokeDasharray="3 3" />
-                <XAxis dataKey="month" tickFormatter={(v) => v.slice(5)} />
-                <YAxis tickFormatter={(v) => `$${(v / 100).toFixed(0)}`} />
-                <Tooltip formatter={(v: any) => fmt(Number(v))} />
-                <Bar dataKey="revenueCents" name="Revenue" fill="hsl(var(--primary))" />
-              </BarChart>
-            </ResponsiveContainer>
+            {revenueError ? (
+              <div className="h-[220px] flex flex-col items-center justify-center text-center">
+                <AlertTriangle className="h-5 w-5 text-destructive mb-2" />
+                <p className="text-sm font-medium text-destructive">Couldn't load revenue data.</p>
+                <p className="text-xs text-muted-foreground mt-1">Check the server logs, then refresh the page.</p>
+              </div>
+            ) : (
+              <ResponsiveContainer width="100%" height={220}>
+                <BarChart data={revenue?.monthly ?? []}>
+                  <CartesianGrid strokeDasharray="3 3" />
+                  <XAxis dataKey="month" tickFormatter={(v) => v.slice(5)} />
+                  <YAxis tickFormatter={(v) => `$${(v / 100).toFixed(0)}`} />
+                  <Tooltip formatter={(v: any) => fmt(Number(v))} />
+                  <Bar dataKey="revenueCents" name="Revenue" fill="hsl(var(--primary))" />
+                </BarChart>
+              </ResponsiveContainer>
+            )}
           </CardContent>
         </Card>
         <Card>
@@ -193,10 +215,19 @@ function OverviewSection({ isAdmin }: { isAdmin: boolean }) {
 // ─── Section: Revenue ─────────────────────────────────────────────────────────
 
 function RevenueSection({ isAdmin }: { isAdmin: boolean }) {
-  const { data: revenue } = useQuery<any>({ queryKey: ["/api/admin/stats/revenue"], enabled: isAdmin });
+  const { data: revenue, isError } = useQuery<any>({ queryKey: ["/api/admin/stats/revenue"], enabled: isAdmin });
   const currentYear = new Date().getFullYear();
   const annualThis = revenue?.annual?.find((a: any) => a.year === currentYear);
   const annualLast = revenue?.annual?.find((a: any) => a.year === currentYear - 1);
+
+  if (isError) {
+    return (
+      <>
+        <PageHeading title="Revenue" description="Gross booking value, platform earnings, and projections" />
+        <QueryErrorCard message="Couldn't load revenue analytics." />
+      </>
+    );
+  }
 
   return (
     <>
@@ -674,7 +705,7 @@ function DisputesSection({ isAdmin }: { isAdmin: boolean }) {
   const [statusFilter, setStatusFilter] = useState("");
   const [typeFilter, setTypeFilter] = useState("");
 
-  const { data: cases = [] } = useQuery<AdminDisputeCase[]>({
+  const { data: cases = [], isError } = useQuery<AdminDisputeCase[]>({
     queryKey: ["/api/admin/disputes", statusFilter, typeFilter],
     queryFn: () => {
       const params = new URLSearchParams();
@@ -689,7 +720,10 @@ function DisputesSection({ isAdmin }: { isAdmin: boolean }) {
 
   return (
     <>
-      <PageHeading title="Disputes" description={`${openCount} open case${openCount !== 1 ? "s" : ""} awaiting your review`} />
+      <PageHeading
+        title="Disputes"
+        description={isError ? "Dispute cases could not be loaded" : `${openCount} open case${openCount !== 1 ? "s" : ""} awaiting your review`}
+      />
 
       <div className="space-y-3 mb-5">
         <div className="flex items-center gap-2 flex-wrap">
@@ -729,7 +763,9 @@ function DisputesSection({ isAdmin }: { isAdmin: boolean }) {
         </div>
       </div>
 
-      {cases.length === 0 ? (
+      {isError ? (
+        <QueryErrorCard message="Couldn't load dispute cases." />
+      ) : cases.length === 0 ? (
         <Card>
           <CardContent className="py-10 text-center text-muted-foreground">
             No dispute cases found{statusFilter || typeFilter ? " for the selected filters" : ""}.

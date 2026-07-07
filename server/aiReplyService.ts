@@ -12,6 +12,10 @@ import {
 } from "./lib/constants";
 import { getVendorEntitlements } from "./services/entitlementsService";
 import {
+  getBookingChatContextById,
+  listVendorInquiryChannels,
+} from "./services/chatService";
+import {
   getRecentMessagesForChannel,
   toStreamBookingChannelId,
   type StreamReplyMessage,
@@ -245,6 +249,63 @@ function toAnthropicMessages(
   return mapped;
 }
 
+// ─── Conversation ownership ─────────────────────────────────────────────────────
+
+// Stream channel-id prefixes (must match BOOKING_CHANNEL_PREFIX / INQUIRY_CHANNEL_PREFIX
+// in streamChat.ts, where they are not exported).
+const BOOKING_CHANNEL_ID_PREFIX = "booking_";
+const INQUIRY_CHANNEL_ID_PREFIX = "inquiry_";
+
+/** Resolve a booking and require it to belong to the calling vendor. Returns the booking id. */
+async function assertBookingOwnedBy(account: VendorAccount, bookingId: string): Promise<string> {
+  const booking = await getBookingChatContextById(bookingId);
+  if (!booking) {
+    throw new AiReplyError("ai_not_found", 404, "Booking not found");
+  }
+  if (!booking.vendorAccountId || booking.vendorAccountId !== account.id) {
+    throw new AiReplyError("ai_forbidden", 403, "You do not have access to this conversation");
+  }
+  return booking.bookingId;
+}
+
+/**
+ * Resolve the Stream channel for a draft request, enforcing that the underlying
+ * conversation belongs to the calling vendor BEFORE any chat history is read.
+ * A raw channelId is never trusted: booking channels are re-derived from the
+ * ownership-checked booking id, and inquiry channels must appear in the caller's
+ * own inquiry list. Anything unverifiable is rejected.
+ */
+async function resolveAuthorizedChannel(
+  account: VendorAccount,
+  params: { bookingId?: string; channelId?: string }
+): Promise<{ channelId: string; verifiedBookingId: string | null }> {
+  const bookingId = params.bookingId?.trim();
+  const channelId = params.channelId?.trim();
+
+  if (bookingId) {
+    const verified = await assertBookingOwnedBy(account, bookingId);
+    return { channelId: toStreamBookingChannelId(verified), verifiedBookingId: verified };
+  }
+
+  if (channelId) {
+    if (channelId.startsWith(BOOKING_CHANNEL_ID_PREFIX)) {
+      const candidate = channelId.slice(BOOKING_CHANNEL_ID_PREFIX.length);
+      const verified = await assertBookingOwnedBy(account, candidate);
+      return { channelId: toStreamBookingChannelId(verified), verifiedBookingId: verified };
+    }
+    if (channelId.startsWith(INQUIRY_CHANNEL_ID_PREFIX)) {
+      const inquiries = await listVendorInquiryChannels(account.id);
+      if (!inquiries.some((inquiry) => inquiry.inquiryChannelId === channelId)) {
+        throw new AiReplyError("ai_forbidden", 403, "You do not have access to this conversation");
+      }
+      return { channelId, verifiedBookingId: null };
+    }
+    throw new AiReplyError("ai_forbidden", 403, "You do not have access to this conversation");
+  }
+
+  throw new AiReplyError("ai_bad_request", 400, "A bookingId or channelId is required");
+}
+
 // ─── Draft generation ───────────────────────────────────────────────────────────
 
 export interface GenerateResult {
@@ -279,13 +340,9 @@ export async function generateSuggestedReplies(params: {
     isOverage = true;
   }
 
-  // Resolve the Stream channel and gather context.
-  const channelId =
-    (params.channelId && params.channelId.trim()) ||
-    (params.bookingId ? toStreamBookingChannelId(params.bookingId) : "");
-  if (!channelId) {
-    throw new AiReplyError("ai_bad_request", 400, "A bookingId or channelId is required");
-  }
+  // Resolve the Stream channel and gather context. Ownership is enforced here,
+  // before any chat history leaves Stream.
+  const { channelId, verifiedBookingId } = await resolveAuthorizedChannel(account, params);
 
   const [history, faq] = await Promise.all([
     getRecentMessagesForChannel(channelId, HISTORY_MESSAGE_LIMIT),
@@ -330,7 +387,7 @@ export async function generateSuggestedReplies(params: {
   const outputTokens = Number(response.usage?.output_tokens) || 0;
   await db.insert(aiReplyUsage).values({
     vendorAccountId: account.id,
-    bookingId: params.bookingId || null,
+    bookingId: verifiedBookingId,
     inputTokens,
     outputTokens,
     repliesReturned: safeReplies.length,

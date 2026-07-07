@@ -1,5 +1,5 @@
 import { db } from "../db";
-import { eq, and, or, inArray, isNotNull, sql as drizzleSql } from "drizzle-orm";
+import { eq, and, or, inArray, isNull, isNotNull, lt, sql as drizzleSql } from "drizzle-orm";
 import { bookings, payments, vendorAccounts, users, vendorSuspensions, vendorProfiles } from "@shared/schema";
 import { logger } from "../lib/logger";
 import { appUrl } from "../lib/routeHelpers";
@@ -7,6 +7,9 @@ import {
   asTrimmedString,
   extractRows,
   parseIntegerValue,
+  attemptBookingRefundsWithFn,
+  attemptDepositRefundWithFn,
+  isStripeChargeAlreadyRefundedError,
 } from "../lib/routeUtils";
 import {
   BOOKING_PENDING_EXPIRY_MINUTES,
@@ -27,7 +30,7 @@ import { deleteStreamBookingChannel, isChatExpiredForEventDate, isStreamChatConf
 import { syncBookingToGoogleCalendarSafely, runGoogleBookingSyncVerificationForVendorAccount } from "./googleSyncService";
 import { renewExpiringGoogleCalendarWatchChannels } from "../google";
 import { processSinglePayoutCandidate } from "./paymentService";
-import { checkAccountOnboardingStatus } from "../stripe";
+import { checkAccountOnboardingStatus, findExistingTransferForPayment } from "../stripe";
 import { reconcilePaymentIntent } from "./paymentReconcile";
 import { runReviewPromptJob } from "../jobs/reviewPromptJob";
 import { runStripeWebhookCleanupJob } from "../jobs/stripeWebhookCleanup";
@@ -351,48 +354,79 @@ export async function cancelUnansweredBookingRequests(): Promise<number> {
           )
         );
 
-      // Mark the booking cancelled.
-      await db
-        .update(bookings)
-        .set({
-          status: "cancelled" as const,
-          cancellationReason: BOOKING_VENDOR_NO_RESPONSE_REASON,
-          cancelledAt: now,
-          updatedAt: now,
-        })
-        .where(eq(bookings.id, row.id));
+      // Cheap pre-flight: skip if the vendor responded since the candidate
+      // query ran (shrinks the refund-vs-acceptance race window).
+      const [currentBooking] = await db
+        .select({ status: bookings.status })
+        .from(bookings)
+        .where(eq(bookings.id, row.id))
+        .limit(1);
+      if (currentBooking?.status !== "pending") continue;
 
-      // Issue full refunds and mark each payment record.
-      let totalRefundedCents = 0;
-      for (const p of bookingPayments) {
-        const alreadyRefunded = typeof p.refundAmount === "number" ? p.refundAmount : 0;
-        const refundable = Math.max(0, p.amount - alreadyRefunded);
-        if (refundable > 0 && p.stripePaymentIntentId) {
-          try {
-            await refundBookingPayment({
-              paymentIntentId: p.stripePaymentIntentId,
-              amount: refundable,
-              reason: "duplicate",
-              idempotencyKey: `vendor-no-response:${row.id}:${p.id}`,
-            });
-          } catch (stripeErr: any) {
-            logger.warn(`[vendor-no-response] Stripe refund failed for payment ${p.id}:`, stripeErr?.message);
-          }
-        }
-        await db
-          .update(payments)
+      // Refunds FIRST. If any Stripe refund fails, the booking is left
+      // 'pending' so the next hourly tick re-selects it and retries under the
+      // same idempotency keys. The old order (cancel first, then refund,
+      // mark refunded even on failure) silently ate customer money: a failed
+      // refund was recorded as refunded and never retried.
+      const refundOutcome = await attemptBookingRefundsWithFn({
+        bookingId: row.id,
+        rows: bookingPayments,
+        idempotencyPrefix: "vendor-no-response",
+        reason: "duplicate",
+        refundFn: refundBookingPayment,
+      });
+
+      if (!refundOutcome.ok) {
+        const stripeErr: any = refundOutcome.error;
+        logger.error(
+          `[vendor-no-response] Stripe refund failed for payment ${refundOutcome.failedPaymentId} (booking ${row.id}) — leaving booking pending for retry:`,
+          stripeErr?.message || stripeErr
+        );
+        continue;
+      }
+
+      const totalRefundedCents = refundOutcome.totalRefundedCents;
+
+      // All refunds landed — cancel the booking and mark the payments in one
+      // transaction. The compare-and-swap on status='pending' means a vendor
+      // acceptance that raced us wins the booking status; the payment rows are
+      // still marked refunded because the money HAS gone back to the customer.
+      const casWon = await db.transaction(async (tx) => {
+        const claimed = await tx
+          .update(bookings)
           .set({
-            status: "refunded" as any,
-            refundAmount: p.amount,
-            refundReason: BOOKING_VENDOR_NO_RESPONSE_REASON,
-            refundedAt: now,
-            payoutStatus: "cancelled",
-            payoutEligibleAt: null,
-            payoutBlockedReason: BOOKING_VENDOR_NO_RESPONSE_REASON,
-            payoutAdjustedAmount: 0,
+            status: "cancelled" as const,
+            cancellationReason: BOOKING_VENDOR_NO_RESPONSE_REASON,
+            cancelledAt: now,
+            updatedAt: now,
           })
-          .where(eq(payments.id, p.id));
-        totalRefundedCents += refundable;
+          .where(and(eq(bookings.id, row.id), eq(bookings.status, "pending")))
+          .returning({ id: bookings.id });
+
+        for (const p of bookingPayments) {
+          await tx
+            .update(payments)
+            .set({
+              status: "refunded" as any,
+              refundAmount: p.amount,
+              refundReason: BOOKING_VENDOR_NO_RESPONSE_REASON,
+              refundedAt: now,
+              payoutStatus: "cancelled",
+              payoutEligibleAt: null,
+              payoutBlockedReason: BOOKING_VENDOR_NO_RESPONSE_REASON,
+              payoutAdjustedAmount: 0,
+            })
+            .where(eq(payments.id, p.id));
+        }
+
+        return claimed.length > 0;
+      });
+
+      if (!casWon) {
+        logger.error(
+          `[vendor-no-response] booking ${row.id} changed status between refund and cancel — refunds were issued (${totalRefundedCents} cents) but booking was NOT cancelled; needs manual review`
+        );
+        continue;
       }
 
       // Fire-and-forget: emails + calendar sync.
@@ -492,13 +526,98 @@ export async function runAutoPayoutTick() {
   await runAutoPayoutTickWithResult();
 }
 
+/**
+ * Stale-claim recovery for the payout pipeline. A row at payout_status
+ * 'scheduled' with no stripe_transfer_id means a processor claimed it (the CAS
+ * in processSinglePayoutCandidate) and then died before persisting. Claimed
+ * rows are excluded from the candidate queries, so without this step they would
+ * be stranded forever. For each claim older than 30 minutes, ask Stripe whether
+ * the transfer actually happened (transfer_group + metadata.paymentId):
+ *  - transfer exists → the money moved; persist it as paid.
+ *  - no transfer     → the claim is dead; release it back to 'eligible' so the
+ *    normal pipeline retries.
+ */
+export async function recoverStalePayoutClaims(): Promise<number> {
+  const STALE_CLAIM_MINUTES = 30;
+  let recovered = 0;
+  try {
+    const staleCutoff = new Date(Date.now() - STALE_CLAIM_MINUTES * 60 * 1000);
+    const staleClaims = await db
+      .select({
+        paymentId: payments.id,
+        bookingId: payments.bookingId,
+      })
+      .from(payments)
+      .where(
+        and(
+          eq(payments.payoutStatus, "scheduled"),
+          isNull(payments.stripeTransferId),
+          isNotNull(payments.payoutScheduledAt),
+          lt(payments.payoutScheduledAt, staleCutoff)
+        )
+      )
+      .limit(20);
+
+    for (const claim of staleClaims) {
+      try {
+        const transfer = await findExistingTransferForPayment({
+          transferGroup: `booking_${claim.bookingId}`,
+          paymentId: claim.paymentId,
+        });
+        const now = new Date();
+        if (transfer) {
+          logger.error(
+            `[payout] stale claim for payment ${claim.paymentId} has an unrecorded Stripe transfer ` +
+            `${transfer.id} — adopting it (crash between transfer and persist)`
+          );
+          await db
+            .update(payments)
+            .set({
+              stripeTransferId: transfer.id,
+              payoutStatus: "paid",
+              paidOutAt: now,
+              payoutBlockedReason: null,
+              payoutAdjustedAmount: transfer.amount,
+              payoutTransferRetryCount: 0,
+            })
+            .where(and(eq(payments.id, claim.paymentId), isNull(payments.stripeTransferId)));
+        } else {
+          await db
+            .update(payments)
+            .set({ payoutStatus: "eligible" })
+            .where(
+              and(
+                eq(payments.id, claim.paymentId),
+                eq(payments.payoutStatus, "scheduled"),
+                isNull(payments.stripeTransferId)
+              )
+            );
+          logger.warn(
+            `[payout] released stale payout claim for payment ${claim.paymentId} (no transfer found at Stripe)`
+          );
+        }
+        recovered += 1;
+      } catch (rowErr: any) {
+        // A Stripe blip on one row must not strand the rest — retry next tick.
+        logger.warn(
+          `[payout] stale-claim recovery failed for payment ${claim.paymentId}:`,
+          rowErr?.message || rowErr
+        );
+      }
+    }
+  } catch (err: any) {
+    logger.warn("[payout] stale-claim recovery scan failed:", err?.message || err);
+  }
+  return recovered;
+}
+
 export async function runAutoPayoutTickWithResult(): Promise<boolean> {
   if (autoPayoutTickInFlight) return false;
 
   // Distributed lock: stale after 15 min (1.5× the 10-min tick interval).
   // Prevents double-payouts if two instances briefly overlap during a deploy.
-  const lockAcquired = await tryAcquireWorkerLock("payout", 15 * 60 * 1000);
-  if (!lockAcquired) {
+  const lockToken = await tryAcquireWorkerLock("payout", 15 * 60 * 1000);
+  if (!lockToken) {
     logger.info("[auto-payout] lock held by another instance — skipping tick");
     return false;
   }
@@ -506,6 +625,10 @@ export async function runAutoPayoutTickWithResult(): Promise<boolean> {
   autoPayoutTickInFlight = true;
   try {
     await expireStalePendingBookings();
+
+    // Recover claims stranded by a crash between transfer and persist BEFORE
+    // scanning for new candidates.
+    await recoverStalePayoutClaims();
 
     const payoutCandidates = await db
       .select({
@@ -520,8 +643,22 @@ export async function runAutoPayoutTickWithResult(): Promise<boolean> {
           // same per-row fee snapshot). Cancelled bookings' travel fees sit at
           // payout_status 'blocked' (travel_fee_hold) so they are never picked up.
           inArray(payments.paymentType, ["booking", "travel_fee"]),
-          eq(payments.stripeTransferId, null as any),
-          inArray(payments.payoutStatus, ["not_ready", "eligible", "scheduled"])
+          // eq(col, null) renders "= NULL" which matches nothing — this worker
+          // selected zero candidates until it was switched to isNull().
+          isNull(payments.stripeTransferId),
+          // 'scheduled' rows are actively claimed by a processor — never
+          // re-select them here; recoverStalePayoutClaims owns stuck ones.
+          // 'blocked'/'transfer_failed' rows are auto-retried (capped by
+          // payout_transfer_retry_count; 'transfer_failed_permanent' rows are
+          // admin-only). Keep this predicate in sync with isAutoPayoutCandidate
+          // in routeUtils.
+          or(
+            inArray(payments.payoutStatus, ["not_ready", "eligible"]),
+            and(
+              eq(payments.payoutStatus, "blocked"),
+              eq(payments.payoutBlockedReason, "transfer_failed")
+            )
+          )
         )
       )
       .orderBy(drizzleSql`${payments.payoutEligibleAt} asc`, drizzleSql`${payments.createdAt} asc`)
@@ -540,7 +677,7 @@ export async function runAutoPayoutTickWithResult(): Promise<boolean> {
     return true;
   } finally {
     autoPayoutTickInFlight = false;
-    await releaseWorkerLock("payout");
+    await releaseWorkerLock("payout", lockToken);
   }
 }
 
@@ -596,11 +733,11 @@ export async function reconcileVendorStripeOnboarding(
  * it works even if the `account.updated` webhook never arrives.
  */
 export async function runStripeConnectReconcileJob(): Promise<number> {
-  const lockAcquired = await tryAcquireWorkerLock(
+  const lockToken = await tryAcquireWorkerLock(
     "stripe_connect_reconcile",
     20 * 60 * 1000
   );
-  if (!lockAcquired) {
+  if (!lockToken) {
     logger.info("[stripe-connect-reconcile] lock held by another instance — skipping");
     return 0;
   }
@@ -637,13 +774,13 @@ export async function runStripeConnectReconcileJob(): Promise<number> {
     }
     return flipped;
   } finally {
-    await releaseWorkerLock("stripe_connect_reconcile");
+    await releaseWorkerLock("stripe_connect_reconcile", lockToken);
   }
 }
 
 export async function runSecurityDepositRefundJob(): Promise<number> {
-  const lockAcquired = await tryAcquireWorkerLock("security_deposit_refund", 70 * 60 * 1000);
-  if (!lockAcquired) {
+  const lockToken = await tryAcquireWorkerLock("security_deposit_refund", 70 * 60 * 1000);
+  if (!lockToken) {
     logger.info("[security-deposit-refund] lock held by another instance — skipping");
     return 0;
   }
@@ -653,12 +790,16 @@ export async function runSecurityDepositRefundJob(): Promise<number> {
         p.id                       AS payment_id,
         p.stripe_payment_intent_id AS stripe_pi_id,
         p.amount                   AS deposit_cents,
+        p.refund_amount            AS refund_amount_cents,
         b.id                       AS booking_id,
         b.listing_title_snapshot   AS listing_title
       FROM payments p
       JOIN bookings b ON b.id = p.booking_id
       WHERE p.payment_type = 'security_deposit'
         AND p.status = 'succeeded'
+        -- Rows stamped unprocessable (no PaymentIntent to refund against) are
+        -- terminal — without this they'd occupy the LIMIT 50 window forever.
+        AND (p.payout_blocked_reason IS DISTINCT FROM 'deposit_refund_unprocessable')
         AND b.security_deposit_cents > 0
         AND b.security_deposit_refunded_at IS NULL
         AND (
@@ -678,6 +819,7 @@ export async function runSecurityDepositRefundJob(): Promise<number> {
       payment_id: string;
       stripe_pi_id: string | null;
       deposit_cents: number;
+      refund_amount_cents: number | null;
       booking_id: string;
       listing_title: string | null;
     }>(eligible);
@@ -690,23 +832,63 @@ export async function runSecurityDepositRefundJob(): Promise<number> {
     let refunded = 0;
 
     for (const row of rows) {
-      if (!row.stripe_pi_id) {
-        logger.warn("[security-deposit-refund] payment %s has no stripe_pi_id — skipping", row.payment_id);
+      const alreadyRefunded =
+        typeof row.refund_amount_cents === "number" ? row.refund_amount_cents : 0;
+
+      // The deposit shares its PaymentIntent with the booking payment, so the
+      // refund MUST carry an explicit amount — an amount-less refund returns
+      // the entire remaining charge, including the vendor's service payment.
+      const outcome = await attemptDepositRefundWithFn({
+        paymentId: row.payment_id,
+        stripePaymentIntentId: row.stripe_pi_id,
+        depositCents: row.deposit_cents,
+        alreadyRefundedCents: alreadyRefunded,
+        refundFn: refundBookingPayment,
+      });
+
+      if (outcome.action === "skipped_no_payment_intent") {
+        // No PaymentIntent will ever appear on this row — park it as terminal
+        // so it stops re-entering the batch every tick (needs manual review).
+        logger.warn(
+          "[security-deposit-refund] payment %s has no stripe_pi_id — marking unprocessable",
+          row.payment_id
+        );
+        await db
+          .update(payments)
+          .set({ payoutBlockedReason: "deposit_refund_unprocessable" })
+          .where(eq(payments.id, row.payment_id));
         continue;
       }
-      try {
-        await refundBookingPayment({
-          paymentIntentId: row.stripe_pi_id,
-          reason: "requested_by_customer",
-          idempotencyKey: `auto-deposit-refund:${row.payment_id}`,
-        });
 
+      if (outcome.action === "skipped_zero_remaining") {
+        // Deposit already fully refunded elsewhere — stamp the booking so this
+        // row stops being re-selected every tick (mirrors the travel-fee job's
+        // clear-hold path).
+        await db
+          .update(bookings)
+          .set({ securityDepositRefundedAt: now, updatedAt: now })
+          .where(eq(bookings.id, row.booking_id));
+        continue;
+      }
+
+      if (outcome.action === "failed") {
+        const rowErr: any = outcome.error;
+        logger.warn(
+          "[security-deposit-refund] failed for payment=%s booking=%s: %s",
+          row.payment_id,
+          row.booking_id,
+          rowErr?.message || rowErr
+        );
+        continue;
+      }
+
+      try {
         await db.transaction(async (tx) => {
           await tx
             .update(payments)
             .set({
               status: "refunded",
-              refundAmount: row.deposit_cents,
+              refundAmount: alreadyRefunded + outcome.amountCents,
               refundReason: "auto_deposit_refund_72h",
               refundedAt: now,
               payoutStatus: "cancelled",
@@ -726,11 +908,11 @@ export async function runSecurityDepositRefundJob(): Promise<number> {
         logger.info(
           "[security-deposit-refund] refunded booking=%s amount=%d cents",
           row.booking_id,
-          row.deposit_cents
+          outcome.amountCents
         );
       } catch (rowErr: any) {
         logger.warn(
-          "[security-deposit-refund] failed for payment=%s booking=%s: %s",
+          "[security-deposit-refund] persist failed for payment=%s booking=%s: %s",
           row.payment_id,
           row.booking_id,
           rowErr?.message || rowErr
@@ -746,7 +928,7 @@ export async function runSecurityDepositRefundJob(): Promise<number> {
     logger.warn("[security-deposit-refund] job failed: %s", err?.message || err);
     return 0;
   } finally {
-    await releaseWorkerLock("security_deposit_refund");
+    await releaseWorkerLock("security_deposit_refund", lockToken);
   }
 }
 
@@ -758,8 +940,8 @@ export async function runSecurityDepositRefundJob(): Promise<number> {
  * unresolved dispute exists for the booking. Mirrors runSecurityDepositRefundJob.
  */
 export async function runTravelFeeRefundJob(): Promise<number> {
-  const lockAcquired = await tryAcquireWorkerLock("travel_fee_refund", 70 * 60 * 1000);
-  if (!lockAcquired) {
+  const lockToken = await tryAcquireWorkerLock("travel_fee_refund", 70 * 60 * 1000);
+  if (!lockToken) {
     logger.info("[travel-fee-refund] lock held by another instance — skipping");
     return 0;
   }
@@ -806,7 +988,17 @@ export async function runTravelFeeRefundJob(): Promise<number> {
 
     for (const row of rows) {
       if (!row.stripe_pi_id) {
-        logger.warn("[travel-fee-refund] payment %s has no stripe_pi_id — skipping", row.payment_id);
+        // No PaymentIntent will ever appear on this row — park it as terminal.
+        // The candidate query requires payout_blocked_reason = 'travel_fee_hold',
+        // so changing the reason drops it from the batch (needs manual review).
+        logger.warn(
+          "[travel-fee-refund] payment %s has no stripe_pi_id — marking unprocessable",
+          row.payment_id
+        );
+        await db
+          .update(payments)
+          .set({ payoutBlockedReason: "travel_refund_unprocessable" })
+          .where(eq(payments.id, row.payment_id));
         continue;
       }
       const alreadyRefunded = typeof row.refund_amount_cents === "number" ? row.refund_amount_cents : 0;
@@ -820,12 +1012,23 @@ export async function runTravelFeeRefundJob(): Promise<number> {
         continue;
       }
       try {
-        await refundBookingPayment({
-          paymentIntentId: row.stripe_pi_id,
-          amount: remainingCents,
-          reason: "requested_by_customer",
-          idempotencyKey: `auto-travel-refund:${row.payment_id}`,
-        });
+        try {
+          await refundBookingPayment({
+            paymentIntentId: row.stripe_pi_id,
+            amount: remainingCents,
+            reason: "requested_by_customer",
+            idempotencyKey: `auto-travel-refund:${row.payment_id}`,
+          });
+        } catch (refundErr) {
+          // Crash recovery: the refund landed on a previous attempt but the DB
+          // write didn't. Fall through and persist the terminal state instead
+          // of re-selecting this row every tick forever.
+          if (!isStripeChargeAlreadyRefundedError(refundErr)) throw refundErr;
+          logger.warn(
+            "[travel-fee-refund] payment %s already refunded at Stripe — persisting as refunded",
+            row.payment_id
+          );
+        }
 
         await db.transaction(async (tx) => {
           await tx
@@ -867,13 +1070,13 @@ export async function runTravelFeeRefundJob(): Promise<number> {
     logger.warn("[travel-fee-refund] job failed: %s", err?.message || err);
     return 0;
   } finally {
-    await releaseWorkerLock("travel_fee_refund");
+    await releaseWorkerLock("travel_fee_refund", lockToken);
   }
 }
 
 export async function runBookingCompletionJob(): Promise<number> {
-  const lockAcquired = await tryAcquireWorkerLock("booking_auto_complete", 5 * 60 * 60 * 1000);
-  if (!lockAcquired) {
+  const lockToken = await tryAcquireWorkerLock("booking_auto_complete", 5 * 60 * 60 * 1000);
+  if (!lockToken) {
     logger.info("[booking-completion] lock held by another instance — skipping");
     return 0;
   }
@@ -901,7 +1104,7 @@ export async function runBookingCompletionJob(): Promise<number> {
     logger.warn("[booking-completion] job failed: %s", err?.message || err);
     return 0;
   } finally {
-    await releaseWorkerLock("booking_auto_complete");
+    await releaseWorkerLock("booking_auto_complete", lockToken);
   }
 }
 
@@ -976,8 +1179,8 @@ export function startBookingExpiryWorker() {
   const MAX_BACKOFF_MS = 60 * 60 * 1000;
 
   const tick = async () => {
-    const lockAcquired = await tryAcquireWorkerLock("booking_expiry", 8 * 60 * 1000);
-    if (!lockAcquired) return;
+    const lockToken = await tryAcquireWorkerLock("booking_expiry", 8 * 60 * 1000);
+    if (!lockToken) return;
     try {
       const expiredCount = await expireStalePendingBookings();
       if (expiredCount > 0) logger.info(`[booking expiry] expired stale pending bookings: ${expiredCount}`);
@@ -988,7 +1191,7 @@ export function startBookingExpiryWorker() {
       logger.warn("[booking expiry] cleanup failed:", error?.message || error);
       backoffMs = Math.min(backoffMs * 2, MAX_BACKOFF_MS);
     } finally {
-      await releaseWorkerLock("booking_expiry");
+      await releaseWorkerLock("booking_expiry", lockToken);
     }
   };
 

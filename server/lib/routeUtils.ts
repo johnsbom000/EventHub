@@ -119,8 +119,30 @@ export function shouldCountBookingAsInventoryReserved(status: unknown) {
   return normalized === "pending" || normalized === "confirmed" || normalized === "completed";
 }
 
-export function deriveBookingPaymentStatusFromScheduleStatuses(rawStatuses: unknown[]) {
-  const statuses = rawStatuses.map(toCanonicalPaymentStatus).filter(Boolean);
+export type PaymentScheduleEntry = {
+  status: unknown;
+  paymentType?: unknown;
+};
+
+// Travel-fee rows only participate in the booking's payment status once they
+// carry real money state. A failed or still-pending travel-fee attempt must
+// never drag down a booking whose main payment succeeded (a declined travel-fee
+// card used to cancel the whole paid booking via the "failed" branch below).
+const TRAVEL_FEE_PARTICIPATING_STATUSES = new Set([
+  "succeeded",
+  "refunded",
+  "partially_refunded",
+  "disputed",
+]);
+
+export function deriveBookingPaymentStatusFromScheduleStatuses(entries: PaymentScheduleEntry[]) {
+  const statuses = entries
+    .filter((entry) => {
+      if (normalizePaymentStateValue(entry?.paymentType) !== "travel_fee") return true;
+      return TRAVEL_FEE_PARTICIPATING_STATUSES.has(toCanonicalPaymentStatus(entry?.status));
+    })
+    .map((entry) => toCanonicalPaymentStatus(entry?.status))
+    .filter(Boolean);
   if (statuses.length === 0) return "pending";
 
   if (statuses.includes("disputed")) return "disputed";
@@ -142,6 +164,199 @@ export function estimateStripeProcessingFeeCents(amountCents: number) {
   const amount = Math.max(0, Math.round(amountCents));
   if (amount <= 0) return 0;
   return Math.max(0, Math.round(amount * STRIPE_FEE_ESTIMATE_PERCENT) + STRIPE_FEE_ESTIMATE_FIXED_CENTS);
+}
+
+// ─── Refund-job helpers (pure orchestration, Stripe/DB injected) ─────────────
+
+/**
+ * Stripe rejects a refund on an already-fully-refunded charge with
+ * `charge_already_refunded`. For our jobs that is crash recovery, not failure:
+ * the refund landed on a previous attempt but the DB write didn't.
+ */
+export function isStripeChargeAlreadyRefundedError(err: unknown): boolean {
+  const candidate = err as { code?: unknown; raw?: { code?: unknown } } | null;
+  const code = candidate?.code ?? candidate?.raw?.code;
+  return code === "charge_already_refunded";
+}
+
+/**
+ * Stripe returns `resource_missing` when the referenced object (e.g. a charge
+ * id) does not exist. Unlike a network blip this is deterministic — retrying
+ * the same lookup can never succeed, so callers should park the row in a
+ * terminal blocked state instead of re-selecting it every tick forever.
+ */
+export function isStripeResourceMissingError(err: unknown): boolean {
+  const candidate = err as { code?: unknown; raw?: { code?: unknown } } | null;
+  const code = candidate?.code ?? candidate?.raw?.code;
+  return code === "resource_missing";
+}
+
+// ─── Payout transfer retry policy ─────────────────────────────────────────────
+
+/** Failed payout transfers are auto-retried up to this many attempts. */
+export const MAX_PAYOUT_TRANSFER_RETRIES = 10;
+
+/**
+ * Blocked reason after a failed transfer attempt, given the retry count AFTER
+ * this failure was counted. 'transfer_failed' rows are re-selected by the
+ * auto-payout worker; 'transfer_failed_permanent' rows are admin-only.
+ *
+ * Must stay in sync with the SQL CASE in processSinglePayoutCandidate's catch
+ * block (increment and reason are written there in one atomic UPDATE).
+ */
+export function payoutTransferFailureBlockedReason(
+  retryCountAfterFailure: number
+): "transfer_failed" | "transfer_failed_permanent" {
+  return retryCountAfterFailure >= MAX_PAYOUT_TRANSFER_RETRIES
+    ? "transfer_failed_permanent"
+    : "transfer_failed";
+}
+
+/**
+ * Pure mirror of the auto-payout worker's candidate predicate (the WHERE clause
+ * in runAutoPayoutTickWithResult). A payment is auto-processable when nothing
+ * has been transferred yet and it is either awaiting eligibility or blocked by
+ * a retryable transfer failure. Must stay in sync with that query.
+ */
+export function isAutoPayoutCandidate(row: {
+  paymentType: string | null | undefined;
+  stripeTransferId: string | null | undefined;
+  payoutStatus: string | null | undefined;
+  payoutBlockedReason: string | null | undefined;
+}): boolean {
+  const paymentType = normalizePaymentStateValue(row.paymentType);
+  if (paymentType !== "booking" && paymentType !== "travel_fee") return false;
+  if (asTrimmedString(row.stripeTransferId)) return false;
+  const payoutStatus = normalizePaymentStateValue(row.payoutStatus);
+  if (payoutStatus === "not_ready" || payoutStatus === "eligible") return true;
+  return (
+    payoutStatus === "blocked" &&
+    asTrimmedString(row.payoutBlockedReason) === "transfer_failed"
+  );
+}
+
+export function computeRemainingRefundableCents(
+  amountCents: unknown,
+  alreadyRefundedCents: unknown
+): number {
+  const amount = typeof amountCents === "number" && Number.isFinite(amountCents) ? amountCents : 0;
+  const refunded =
+    typeof alreadyRefundedCents === "number" && Number.isFinite(alreadyRefundedCents)
+      ? alreadyRefundedCents
+      : 0;
+  return Math.max(0, Math.round(amount) - Math.max(0, Math.round(refunded)));
+}
+
+export type RefundExecutor = (params: {
+  paymentIntentId: string;
+  amount?: number;
+  reason?: string;
+  idempotencyKey?: string;
+}) => Promise<unknown>;
+
+export type BookingRefundAttemptRow = {
+  id: string;
+  amount: number;
+  refundAmount: number | null;
+  stripePaymentIntentId: string | null;
+};
+
+export type BookingRefundAttemptResult =
+  | {
+      ok: true;
+      totalRefundedCents: number;
+      refundedRows: Array<{ id: string; refundedCents: number; alreadyRefunded: boolean }>;
+    }
+  | { ok: false; failedPaymentId: string; error: unknown };
+
+/**
+ * Attempts every outstanding refund for a booking, stopping at the first hard
+ * failure. Nothing is persisted here — the caller must only mark payments
+ * refunded (and cancel the booking) when `ok` is true, so a Stripe outage
+ * leaves the booking untouched and the next tick retries under the same
+ * idempotency keys. `charge_already_refunded` counts as success (the refund
+ * landed on a prior crashed run).
+ */
+export async function attemptBookingRefundsWithFn(params: {
+  bookingId: string;
+  rows: BookingRefundAttemptRow[];
+  idempotencyPrefix: string;
+  reason?: string;
+  refundFn: RefundExecutor;
+}): Promise<BookingRefundAttemptResult> {
+  const refundedRows: Array<{ id: string; refundedCents: number; alreadyRefunded: boolean }> = [];
+  let totalRefundedCents = 0;
+
+  for (const row of params.rows) {
+    const refundable = computeRemainingRefundableCents(row.amount, row.refundAmount);
+    if (refundable <= 0 || !row.stripePaymentIntentId) {
+      refundedRows.push({ id: row.id, refundedCents: 0, alreadyRefunded: false });
+      continue;
+    }
+    try {
+      await params.refundFn({
+        paymentIntentId: row.stripePaymentIntentId,
+        amount: refundable,
+        reason: params.reason,
+        idempotencyKey: `${params.idempotencyPrefix}:${params.bookingId}:${row.id}`,
+      });
+      refundedRows.push({ id: row.id, refundedCents: refundable, alreadyRefunded: false });
+      totalRefundedCents += refundable;
+    } catch (err) {
+      if (isStripeChargeAlreadyRefundedError(err)) {
+        refundedRows.push({ id: row.id, refundedCents: refundable, alreadyRefunded: true });
+        totalRefundedCents += refundable;
+        continue;
+      }
+      return { ok: false, failedPaymentId: row.id, error: err };
+    }
+  }
+
+  return { ok: true, totalRefundedCents, refundedRows };
+}
+
+export type DepositRefundAttemptResult =
+  | { action: "refunded"; amountCents: number; alreadyRefunded?: boolean }
+  | { action: "skipped_zero_remaining" }
+  | { action: "skipped_no_payment_intent" }
+  | { action: "failed"; error: unknown };
+
+/**
+ * Refunds only the REMAINING portion of a security deposit. The deposit shares
+ * its PaymentIntent with the booking payment, so an amount-less refund would
+ * return the vendor's service money too — the explicit amount is mandatory.
+ */
+export async function attemptDepositRefundWithFn(params: {
+  paymentId: string;
+  stripePaymentIntentId: string | null;
+  depositCents: number;
+  alreadyRefundedCents: number | null | undefined;
+  refundFn: RefundExecutor;
+}): Promise<DepositRefundAttemptResult> {
+  const remaining = computeRemainingRefundableCents(params.depositCents, params.alreadyRefundedCents);
+  if (remaining <= 0) return { action: "skipped_zero_remaining" };
+  if (!params.stripePaymentIntentId) return { action: "skipped_no_payment_intent" };
+
+  try {
+    await params.refundFn({
+      paymentIntentId: params.stripePaymentIntentId,
+      amount: remaining,
+      reason: "requested_by_customer",
+      // Amount-free key on purpose: if the remaining amount changes between
+      // retries, Stripe fails loudly on the key mismatch instead of issuing a
+      // second refund.
+      idempotencyKey: `auto-deposit-refund:${params.paymentId}`,
+    });
+    return { action: "refunded", amountCents: remaining };
+  } catch (error) {
+    if (isStripeChargeAlreadyRefundedError(error)) {
+      // Crash recovery: the refund landed on a previous attempt but the DB
+      // write didn't. Treat as refunded so the caller persists the terminal
+      // state instead of re-selecting this row every tick forever.
+      return { action: "refunded", amountCents: remaining, alreadyRefunded: true };
+    }
+    return { action: "failed", error };
+  }
 }
 
 // ─── Text normalizers ─────────────────────────────────────────────────────────

@@ -1,6 +1,6 @@
 import { Package, Plus, ShoppingBag } from "lucide-react";
-import { Card } from "@/components/ui/card";
-import { Button } from "@/components/ui/button";
+import { buttonVariants } from "@/components/ui/button";
+import { cn } from "@/lib/utils";
 import type { ListingType } from "./wizardTypes";
 
 interface ListingTypeOption {
@@ -92,13 +92,11 @@ export function ListingTypeSelector({ onSelect }: ListingTypeSelectorProps) {
                   ))}
                 </ul>
 
-                <Button
-                  type="button"
-                  className="mt-auto w-full"
-                  onClick={() => onSelect(option.type)}
-                >
+                {/* Styled as a button but rendered as a span — the whole card is
+                    already a <button>, and nesting real buttons is invalid DOM. */}
+                <span className={cn(buttonVariants(), "mt-auto w-full")}>
                   Choose {option.label}
-                </Button>
+                </span>
               </button>
             );
           })}

@@ -12,6 +12,7 @@ import { setTokenGetter } from "@/lib/authToken";
 import { setGlobal401Callback } from "@/lib/queryClient";
 import { installRuntimeFetchBaseUrl } from "@/lib/runtimeUrls";
 import { initMetaPixel } from "@/lib/metaPixel";
+import { initPostHog, phCapture, phIdentify, phReset } from "@/lib/posthog";
 import "./lib/i18n"; // initialise i18next before any component renders
 
 if (typeof window !== "undefined") {
@@ -20,6 +21,8 @@ if (typeof window !== "undefined") {
   // Define window.fbq and initialise the Meta Pixel before render. The first
   // PageView (and subsequent ones) are fired by useTrackPageView.
   initMetaPixel();
+  // Same deal for PostHog: $pageview is fired by useTrackPageView.
+  initPostHog();
 }
 
 const INSECURE_PREVIEW_AUTH_MESSAGE =
@@ -96,8 +99,32 @@ class ErrorBoundary extends Component<{ children: ReactNode }, { hasError: boole
   }
 }
 function AuthTokenBridge() {
-  const { getAccessTokenSilently, logout, isAuthenticated } = useAuth0();
+  const { getAccessTokenSilently, logout, isAuthenticated, user, error: auth0Error } = useAuth0();
   const [needsLogout, setNeedsLogout] = React.useState(false);
+  const wasAuthenticatedRef = React.useRef(false);
+
+  // PostHog: stitch the anonymous pre-login session to the account on login,
+  // and drop the identity on logout so a shared device doesn't cross-pollute.
+  React.useEffect(() => {
+    if (isAuthenticated && user?.sub) {
+      wasAuthenticatedRef.current = true;
+      phIdentify(user.sub, { email: user.email ?? null });
+    } else if (!isAuthenticated && wasAuthenticatedRef.current) {
+      wasAuthenticatedRef.current = false;
+      phReset();
+    }
+  }, [isAuthenticated, user?.sub, user?.email]);
+
+  // Auth0 redirect-callback failures (e.g. the user hit an error on Universal
+  // Login and bounced back with ?error=...). These are otherwise invisible —
+  // the visitor "just left" — which is exactly the drop-off we want to see.
+  React.useEffect(() => {
+    if (!auth0Error) return;
+    phCapture("auth_error", {
+      error: (auth0Error as any)?.error ?? auth0Error.name ?? "unknown",
+      description: auth0Error.message || null,
+    });
+  }, [auth0Error]);
 
   // When authenticated, register a callback so any 401 from the server triggers
   // a logout. This catches stale sessions synced across devices (iCloud / Google

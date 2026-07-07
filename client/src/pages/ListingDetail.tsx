@@ -19,8 +19,35 @@ import { useTranslation } from "react-i18next";
 import { useLanguage } from "@/context/LanguageContext";
 import { TimeInput } from "@/components/ui/TimeInput";
 import { trackEvent } from "@/lib/analytics";
+import { Card, CardContent } from "@/components/ui/card";
+import { Button } from "@/components/ui/button";
 
 type RouteParams = { id: string };
+
+// Styled fallback for listings that fail to load or no longer exist (e.g. a
+// zero-photo listing the server 404s), instead of bare error text.
+function ListingUnavailableState({ message }: { message: string }) {
+ const { t } = useTranslation();
+ const [, setLocation] = useLocation();
+ return (
+ <div className="no-global-scale min-h-[60vh] w-full flex items-center justify-center bg-background px-4">
+ <Card className="w-full max-w-md">
+ <CardContent className="pt-8 pb-8 text-center">
+ <div className="mx-auto mb-5 flex h-12 w-12 items-center justify-center rounded-full bg-muted">
+ <XCircle className="h-6 w-6 text-muted-foreground" />
+ </div>
+ <h1 className="font-serif text-2xl font-semibold text-foreground">{message}</h1>
+ <Button
+ className="mt-6"
+ onClick={() => setLocation("/")} // MARKETPLACE_HIDDEN: restore "/browse" when going live
+ >
+ {t("customerEvents.browseVendors")}
+ </Button>
+ </CardContent>
+ </Card>
+ </div>
+ );
+}
 
 // --- Small helpers ---
 function isNonEmptyString(v: unknown): v is string {
@@ -508,8 +535,8 @@ export default function ListingDetailPage() {
 
  if (!listingId) return <div className="no-global-scale p-6">{t("listing.missingListingId")}</div>;
  if (isLoading) return <div className="no-global-scale p-6">Loading…</div>;
- if (error) return <div className="no-global-scale p-6">{t("listing.errorLoading")}</div>;
- if (!data) return <div className="no-global-scale p-6">{t("listing.notFound")}</div>;
+ if (error) return <ListingUnavailableState message={t("listing.errorLoading")} />;
+ if (!data) return <ListingUnavailableState message={t("listing.notFound")} />;
 
  const photos = Array.isArray(data.photos) ? data.photos : [];
  const hasPhotos = photos.length > 0;
@@ -1102,7 +1129,7 @@ export default function ListingDetailPage() {
  onClick={() => document.getElementById("reservation-card")?.scrollIntoView({ behavior: "smooth" })}
  className="rounded-lg bg-rose-600 px-5 py-2.5 text-sm font-semibold text-white"
  >
- Book Now
+ {t("listing.bookNow")}
  </button>
  </div>
  )}

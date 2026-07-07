@@ -294,6 +294,31 @@ function CustomerMarketplaceGuard({ children }: { children: React.ReactNode }) {
   return <>{children}</>;
 }
 
+// Requires an Auth0 session before rendering its children (e.g. checkout).
+// Logged-out visitors are sent to Auth0 login and returned to the same URL
+// afterwards (main.tsx onRedirectCallback honors appState.returnTo).
+function RequireAuthGuard({ children }: { children: React.ReactNode }) {
+  const { isAuthenticated, isLoading, loginWithRedirect } = useAuth0();
+
+  useEffect(() => {
+    if (isLoading || isAuthenticated) return;
+    const returnTo = `${window.location.pathname}${window.location.search}${window.location.hash}`;
+    void loginWithRedirect({
+      appState: { returnTo },
+      authorizationParams: { prompt: "login" },
+    });
+  }, [isLoading, isAuthenticated, loginWithRedirect]);
+
+  if (isLoading || !isAuthenticated) {
+    return (
+      <div className="min-h-screen bg-background flex items-center justify-center">
+        <p className="text-sm text-muted-foreground">Loading…</p>
+      </div>
+    );
+  }
+  return <>{children}</>;
+}
+
 function Router() {
   return (
     <>
@@ -313,7 +338,7 @@ function Router() {
         <Route path="/browse" component={() => <CustomerMarketplaceGuard><BrowseVendors /></CustomerMarketplaceGuard>} />
         <Route path="/listing/:id" component={ListingDetail} />
         <Route path="/booking/:bookingId" component={() => <VendorOnlyGuard><CustomerBookingDetail /></VendorOnlyGuard>} />
-        <Route path="/checkout/:listingId" component={() => <VendorOnlyGuard><Checkout /></VendorOnlyGuard>} />
+        <Route path="/checkout/:listingId" component={() => <RequireAuthGuard><VendorOnlyGuard><Checkout /></VendorOnlyGuard></RequireAuthGuard>} />
         <Route path="/shop/:vendorId" component={VendorHub} />
         <Route path="/vendor/hub/:vendorId" component={VendorHub} />
         {/* Vendor */}

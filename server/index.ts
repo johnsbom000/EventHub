@@ -58,6 +58,9 @@ app.use(
               "blob:",
               // Meta Pixel loader (fbevents.js)
               "https://connect.facebook.net",
+              // PostHog lazy-loaded chunks (session recorder, remote config);
+              // wildcard covers both US and EU cloud asset/ingest hosts
+              "https://*.i.posthog.com",
             ].filter(Boolean),
             styleSrc: [
               "'self'",
@@ -100,6 +103,8 @@ app.use(
               // Meta Pixel — loader source and event delivery endpoints
               "https://connect.facebook.net",
               "https://www.facebook.com",
+              // PostHog event ingestion + session replay uploads
+              "https://*.i.posthog.com",
             ].filter(Boolean),
             frameSrc: [
               // Stripe hosted payment UIs (3D Secure, Connect onboarding)

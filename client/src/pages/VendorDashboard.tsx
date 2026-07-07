@@ -1350,9 +1350,9 @@ export default function VendorDashboard() {
  <Lock className="h-3.5 w-3.5 text-[#4a6a7d]" />
  </div>
  <span className="inline-flex w-fit items-center gap-1 rounded-full bg-[#4a6a7d] px-3 py-1 text-sm font-medium text-[#f5f0e8] group-hover:bg-[#3f5c6d]">
- <Sparkles className="h-3.5 w-3.5" /> Unlock with Pro
+ <Sparkles className="h-3.5 w-3.5" /> {t("vendorDashboard.unlockWithPro")}
  </span>
- <p className="mt-1.5 text-xs text-muted-foreground">Profile views, monthly trends &amp; recent activity</p>
+ <p className="mt-1.5 text-xs text-muted-foreground">{t("vendorDashboard.analyticsUpsellDesc")}</p>
  </button>
  ) : (
  <div className="px-5 py-4">
@@ -1411,10 +1411,10 @@ export default function VendorDashboard() {
  <div className="mt-6 flex flex-wrap items-center gap-3 rounded-lg border border-[#4a6a7d]/30 bg-[#4a6a7d]/8 p-4">
  <Lock className="h-4 w-4 shrink-0 text-[#4a6a7d]" />
  <p className="flex-1 text-sm text-[#2a3a42]">
- Google Calendar sync is a Pro feature. Upgrade to automatically sync your bookings.
+ {t("vendorDashboard.googleSyncProFeature")}
  </p>
  <Button onClick={() => upgrade.open()} size="sm" className="bg-[#4a6a7d] hover:bg-[#3f5c6d] text-[#f5f0e8]">
- <Sparkles className="mr-1 h-3.5 w-3.5" /> Upgrade to Pro
+ <Sparkles className="mr-1 h-3.5 w-3.5" /> {t("vendorDashboard.upgradeToPro")}
  </Button>
  </div>
  ) : !isGoogleConnected ? (
