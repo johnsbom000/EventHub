@@ -797,6 +797,11 @@ export async function runSecurityDepositRefundJob(): Promise<number> {
       JOIN bookings b ON b.id = p.booking_id
       WHERE p.payment_type = 'security_deposit'
         AND p.status = 'succeeded'
+        -- A deposit that was transferred to the VENDOR (dispute withhold/award)
+        -- must never be auto-refunded to the customer on top — that would pay
+        -- the same money out twice. Belt-and-braces with the dispute settlement
+        -- also stamping bookings.security_deposit_refunded_at.
+        AND p.stripe_transfer_id IS NULL
         -- Rows stamped unprocessable (no PaymentIntent to refund against) are
         -- terminal — without this they'd occupy the LIMIT 50 window forever.
         AND (p.payout_blocked_reason IS DISTINCT FROM 'deposit_refund_unprocessable')
