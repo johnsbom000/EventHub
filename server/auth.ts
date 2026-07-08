@@ -400,7 +400,10 @@ export async function requireAdminAuth(req: Request, res: Response, next: NextFu
       try {
         const [inserted] = await db
           .insert(users)
-          .values({ name: displayName, email: auth0Full.email!, role: "admin", auth0Sub: auth0Full.sub || null })
+          // `email` is the trimmed, lowercased allowlist value — never insert
+          // the raw-cased Auth0 email (users.email is unique on lower(email),
+          // migration 0148, and all lookups compare lowercased).
+          .values({ name: displayName, email, role: "admin", auth0Sub: auth0Full.sub || null })
           .onConflictDoNothing()
           .returning({ id: users.id, email: users.email, role: users.role });
         user = inserted ?? undefined;

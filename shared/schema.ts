@@ -99,6 +99,9 @@ export const users = pgTable(
   {
     id: varchar("id").primaryKey().default(sql`gen_random_uuid()`),
     name: text("name").notNull(),
+    // Uniqueness in the DB is case-insensitive: users_email_ci_unique on
+    // lower(email) replaced the plain unique constraint (migration 0148).
+    // Always lowercase+trim before insert.
     email: text("email").notNull().unique(),
     role: userRoleEnum("role").notNull().default("customer"),
     auth0Sub: text("auth0_sub"),
@@ -546,7 +549,7 @@ export const bookings = pgTable("bookings", {
   instantBookSnapshot: boolean("instant_book_snapshot"),
   totalAmount: integer("total_amount").notNull(), // in cents
   platformFee: integer("platform_fee").notNull(), // vendor fee portion in cents
-  vendorPayout: integer("vendor_payout").notNull(), // totalAmount - platformFee
+  vendorPayout: integer("vendor_payout").notNull(), // totalAmount - securityDepositCents (the deposit is refundable, not payout; platform fee is deducted later at transfer time)
   depositAmount: integer("deposit_amount").notNull(), // down payment
   depositPaidAt: timestamp("deposit_paid_at"), // track when deposit was paid for 72hr refund policy
   finalPaymentStrategy: text("final_payment_strategy"), // 'immediately', '2_weeks_prior', 'day_of_event'
@@ -1530,24 +1533,38 @@ export const foundingEmailInvites = pgTable("founding_email_invites", {
 export type FoundingEmailInvite = typeof foundingEmailInvites.$inferSelect;
 
 // Vendor Inquiries — tracks pre-booking inquiry channels (one per vendor+customer pair)
-export const vendorInquiries = pgTable("vendor_inquiries", {
-  id: varchar("id", { length: 36 }).primaryKey(),
-  vendorAccountId: varchar("vendor_account_id", { length: 255 })
-    .notNull()
-    .references(() => vendorAccounts.id),
-  customerId: varchar("customer_id", { length: 255 })
-    .notNull()
-    .references(() => users.id, { onDelete: "cascade" }),
-  streamChannelId: varchar("stream_channel_id", { length: 255 }).notNull(),
-  initialListingId: varchar("initial_listing_id", { length: 255 }).references(() => vendorListings.id),
-  bookingId: varchar("booking_id", { length: 255 }).references(() => bookings.id),
-  status: varchar("status", { length: 20 }).notNull().default("active"),
-  // Cooldown timestamps for the "new message" email per inquiry channel (mirrors bookings).
-  vendorMsgEmailLastSentAt: timestamp("vendor_msg_email_last_sent_at"),
-  customerMsgEmailLastSentAt: timestamp("customer_msg_email_last_sent_at"),
-  createdAt: timestamp("created_at").notNull().defaultNow(),
-  updatedAt: timestamp("updated_at").notNull().defaultNow(),
-});
+export const vendorInquiries = pgTable(
+  "vendor_inquiries",
+  {
+    id: varchar("id", { length: 36 }).primaryKey(),
+    vendorAccountId: varchar("vendor_account_id", { length: 255 })
+      .notNull()
+      .references(() => vendorAccounts.id),
+    customerId: varchar("customer_id", { length: 255 })
+      .notNull()
+      .references(() => users.id, { onDelete: "cascade" }),
+    streamChannelId: varchar("stream_channel_id", { length: 255 }).notNull(),
+    // ON DELETE SET NULL in the database (migration 0144).
+    initialListingId: varchar("initial_listing_id", { length: 255 }).references(
+      () => vendorListings.id,
+      { onDelete: "set null" }
+    ),
+    bookingId: varchar("booking_id", { length: 255 }).references(() => bookings.id),
+    status: varchar("status", { length: 20 }).notNull().default("active"), // 'active' | 'converted' | 'closed'
+    // Cooldown timestamps for the "new message" email per inquiry channel (mirrors bookings).
+    vendorMsgEmailLastSentAt: timestamp("vendor_msg_email_last_sent_at"),
+    customerMsgEmailLastSentAt: timestamp("customer_msg_email_last_sent_at"),
+    createdAt: timestamp("created_at").notNull().defaultNow(),
+    updatedAt: timestamp("updated_at").notNull().defaultNow(),
+  },
+  (table) => ({
+    // At most ONE active inquiry per (vendor, customer) pair; converted/closed
+    // rows are exempt so a customer can re-inquire after booking (migration 0144).
+    vendorCustomerActiveUniqueIdx: uniqueIndex("vendor_inquiries_vendor_customer_active_unique_idx")
+      .on(table.vendorAccountId, table.customerId)
+      .where(sql`${table.status} = 'active'`),
+  })
+);
 
 export type VendorInquiry = typeof vendorInquiries.$inferSelect;
 export type InsertVendorInquiry = typeof vendorInquiries.$inferInsert;
