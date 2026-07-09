@@ -54,6 +54,7 @@ export async function runReviewPromptJob(options?: {
     where b.review_prompt_sent = false
       and b.status not in ('cancelled', 'failed', 'expired')
       and b.event_date <= ${cutoffDate}
+    order by b.event_date desc
     limit ${limit}
   `);
 
@@ -77,6 +78,12 @@ export async function runReviewPromptJob(options?: {
   for (const row of eligible) {
     try {
       if (!row.customerEmail) {
+        // No email means nothing can ever be sent — mark terminal so this row
+        // leaves the LIMIT window instead of being refetched forever and
+        // starving newer bookings.
+        await db.execute(drizzleSql`
+          update bookings set review_prompt_sent = true where id = ${row.bookingId}
+        `);
         skippedCount++;
         continue;
       }
