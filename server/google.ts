@@ -11,6 +11,7 @@ import {
 } from "@shared/schema";
 
 import { db } from "./db";
+import { captureJobError } from "./lib/jobAlerts";
 import { decryptToken, encryptToken } from "./lib/tokenEncryption";
 import {
   addDaysToIsoDate,
@@ -1268,11 +1269,11 @@ function generateChannelToken(): string {
 export async function createGoogleCalendarWatchChannel(
   vendorAccountId: string,
   calendarId: string
-): Promise<void> {
+): Promise<boolean> {
   const webhookBaseUrl = process.env.GOOGLE_WEBHOOK_BASE_URL || process.env.BASE_URL || "";
   if (!webhookBaseUrl) {
     logger.warn("[google] GOOGLE_WEBHOOK_BASE_URL not set — skipping watch channel creation");
-    return;
+    return false;
   }
 
   const channelId = crypto.randomUUID();
@@ -1297,7 +1298,7 @@ export async function createGoogleCalendarWatchChannel(
   if (!response.ok) {
     const errorText = await response.text().catch(() => "");
     logger.error(`[google] Failed to create watch channel for vendor ${vendorAccountId}: ${errorText}`);
-    return; // Non-fatal — calendar still works without webhooks
+    return false; // Non-fatal — calendar still works without webhooks
   }
 
   const payload = (await response.json()) as {
@@ -1331,6 +1332,8 @@ export async function createGoogleCalendarWatchChannel(
         updatedAt: new Date(),
       },
     });
+
+  return true; // Google accepted the channel AND the row upsert succeeded
 }
 
 /**
@@ -1375,6 +1378,37 @@ export async function stopGoogleCalendarWatchChannel(
   await db
     .delete(googleCalendarWatchChannels)
     .where(eq(googleCalendarWatchChannels.id, channel.id));
+}
+
+/**
+ * Stops a Google Calendar watch channel by its channel/resource id WITHOUT
+ * touching the database. Used by the renewal path, which upserts a fresh row
+ * (replacing the old one on the `(vendorAccountId, calendarId)` unique key)
+ * BEFORE stopping the now-superseded old channel at Google — so deleting a DB
+ * row here would wipe the just-created replacement. Best-effort: never throws.
+ */
+export async function stopGoogleCalendarWatchChannelById(
+  vendorAccountId: string,
+  channelId: string,
+  resourceId: string | null
+): Promise<void> {
+  if (!resourceId) return; // Google's stop endpoint requires a resourceId
+  try {
+    const response = await performGoogleApiRequestForVendorAccount(vendorAccountId, GOOGLE_CHANNEL_STOP_URL, {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({
+        id: channelId,
+        resourceId,
+      }),
+    });
+    if (!response.ok) {
+      const text = await response.text().catch(() => "");
+      logger.warn(`[google] Old watch channel stop returned ${response.status} for vendor ${vendorAccountId}: ${text}`);
+    }
+  } catch (err) {
+    logger.warn({ err, vendorAccountId }, "[google] Old watch channel stop request failed");
+  }
 }
 
 /**
@@ -1452,8 +1486,17 @@ export async function disconnectGoogleCalendarForVendor(
 
 /**
  * Renews all watch channels expiring within the next 3 days.
- * Called by the renewal cron job (runs daily).
+ * Called by the renewal cron job.
  * Returns a summary of renewed / failed channels.
+ *
+ * Renewal is create-then-stop, NOT stop-then-create: the previous
+ * stop-then-create ordering destroyed the channel row on any transient create
+ * failure (the stop deleted the row, the create returned silently, and the loop
+ * still counted it as renewed) — leaving the vendor's push sync permanently
+ * dead. Here the old channel id/resourceId are captured first, the replacement
+ * is created (its upsert atomically replaces the row on the unique key), and the
+ * old Google channel is stopped only once creation is confirmed. A create
+ * failure leaves the existing row untouched so the next tick retries.
  */
 export async function renewExpiringGoogleCalendarWatchChannels(): Promise<{
   renewed: number;
@@ -1470,13 +1513,39 @@ export async function renewExpiringGoogleCalendarWatchChannels(): Promise<{
   let failed = 0;
 
   for (const channel of expiringChannels) {
+    // Capture the old channel identifiers before the upsert overwrites them.
+    const oldChannelId = channel.channelId;
+    const oldResourceId = channel.resourceId;
     try {
-      await stopGoogleCalendarWatchChannel(channel.vendorAccountId, channel.calendarId);
-      await createGoogleCalendarWatchChannel(channel.vendorAccountId, channel.calendarId);
+      const created = await createGoogleCalendarWatchChannel(
+        channel.vendorAccountId,
+        channel.calendarId
+      );
+      if (!created) {
+        // Row is untouched — the channel will be retried on the next tick.
+        failed++;
+        captureJobError("watch_channel_renewal", new Error("watch channel create failed"), {
+          stage: "renew_create",
+          vendorAccountId: channel.vendorAccountId,
+          calendarId: channel.calendarId,
+        });
+        continue;
+      }
+      // Replacement row is in place; stop the superseded Google channel without
+      // touching the DB (the upsert already replaced the row).
+      await stopGoogleCalendarWatchChannelById(
+        channel.vendorAccountId,
+        oldChannelId,
+        oldResourceId
+      );
       renewed++;
     } catch (err) {
-      logger.error({ err, vendorAccountId: channel.vendorAccountId }, "[google] Failed to renew watch channel");
       failed++;
+      captureJobError("watch_channel_renewal", err, {
+        stage: "renew_channel",
+        vendorAccountId: channel.vendorAccountId,
+        calendarId: channel.calendarId,
+      });
     }
   }
 

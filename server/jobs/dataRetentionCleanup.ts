@@ -18,10 +18,12 @@ function extractRowCount(result: any): number {
 
 // Append-only tables and the predicate identifying rows past the retention
 // window. `notifications` uses its own expires_at column (90-day default);
-// the analytics logs use a fixed day-window on their timestamp column.
-// All four tables have an `id` primary key, so the batched delete-by-id
-// subquery pattern works uniformly. Predicates are hardcoded constants — no
-// user input — so raw SQL is safe here.
+// the analytics logs use a fixed day-window on their timestamp column;
+// `google_webhook_notifications` is a webhook-dedup log whose usefulness only
+// spans near-real-time redelivery, so 30 days is far more than enough.
+// All tables have an `id` primary key, so the batched delete-by-id subquery
+// pattern works uniformly. Predicates are hardcoded constants — no user input
+// — so raw SQL is safe here.
 const TARGETS: Array<{ table: string; predicate: string }> = [
   { table: "notifications", predicate: "expires_at < now()" },
   {
@@ -35,6 +37,10 @@ const TARGETS: Array<{ table: string; predicate: string }> = [
   {
     table: "event_log",
     predicate: `created_at < now() - make_interval(days => ${ANALYTICS_RETENTION_DAYS})`,
+  },
+  {
+    table: "google_webhook_notifications",
+    predicate: "processed_at < now() - make_interval(days => 30)",
   },
 ];
 
