@@ -76,10 +76,10 @@ Requires a `.env` file with Neon DB URL, Auth0, Stripe, Mapbox, and S3 credentia
 
 - **Migration numbering collisions**: several migration numbers were used twice in the same batch (0030, 0032, 0035, 0042, 0048, 0082). Always `ls migrations/` before picking the next number.
 - **react-leaflet was removed** (commit 51dced9) because it caused Railway build failures — do not re-add it. Use Mapbox GL JS directly.
-- **Double-booking prevention** is enforced at the DB level (migration 0094 indexes). Don't bypass booking conflict checks in the server.
+- **Double-booking prevention is application-level, not DB-level**: an advisory lock + in-transaction recount in the single booking-insert path. Migration 0094 added performance indexes only — it does NOT enforce conflicts. Don't bypass or add booking-insert paths around the server's conflict checks.
 - **Security deposit refund trigger** (post-dispute-window auto-refund) has schema in place (migration 0068) but the background job trigger has NOT been built yet.
 - **Google tokens are encrypted** at rest (migration 0093) — don't log or expose them.
 - **Vendor slugs are unique** (migration 0088 + unique constraint). Slug generation must handle collisions gracefully.
 - **Stripe Connect** uses the separate charges & transfers model (not direct charges). Payout eligibility logic lives in `server/payoutEligibility.ts`.
 - **Founding/Marquee vendor programs** are live (migrations 0089, 0090). Fee tiers differ from standard vendors — check before any payment flow changes.
-- The build script in `package.json` explicitly lists every migration file — add new ones to the `esbuild` array or they won't ship to production.
+- The build script in `package.json` bundles migrations via a glob (`esbuild migrations/[0-9]*.ts`) — new migration files are picked up automatically; no build-script edit is needed.

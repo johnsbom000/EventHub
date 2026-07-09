@@ -1,5 +1,5 @@
 import { db } from "../db";
-import { eq, and, or, isNull, inArray, sql as drizzleSql } from "drizzle-orm";
+import { eq, and, or, isNull, isNotNull, inArray, sql as drizzleSql } from "drizzle-orm";
 import { bookings, payments, users, vendorAccounts, disputeCases } from "@shared/schema";
 import { logger } from "../lib/logger";
 import { appUrl } from "../lib/routeHelpers";
@@ -865,7 +865,13 @@ export async function ensurePaymentRecordForIntentInTx(
     // Two concurrent appliers (e.g. duplicate webhook deliveries racing the
     // sync reconcile) can both miss the lookup and insert. Losing quietly and
     // adopting the winner's row below beats 500ing the whole webhook tx.
-    .onConflictDoNothing()
+    // Target pinned to the (PI, payment_type) partial unique index so only
+    // the expected duplicate-applier race is swallowed — any other unique
+    // violation surfaces instead of silently dropping the row.
+    .onConflictDoNothing({
+      target: [payments.stripePaymentIntentId, payments.paymentType],
+      where: isNotNull(payments.stripePaymentIntentId),
+    })
     .returning({
       id: payments.id,
       bookingId: payments.bookingId,
@@ -1303,7 +1309,12 @@ export async function initializeBookingPayment(input: {
     status: "pending",
     payoutStatus: "not_ready",
     payoutEligibleAt,
-  }).onConflictDoNothing(); // Safe if called twice before confirmation
+  }).onConflictDoNothing({
+    // Safe if called twice before confirmation. Pinned to the (PI, payment_type)
+    // partial unique index so other unique violations surface loudly.
+    target: [payments.stripePaymentIntentId, payments.paymentType],
+    where: isNotNull(payments.stripePaymentIntentId),
+  });
 
   // Insert the security deposit row (same PaymentIntent, tracked separately for refunds).
   if (securityDepositCents > 0) {
@@ -1322,7 +1333,13 @@ export async function initializeBookingPayment(input: {
       status: "pending",
       payoutStatus: "blocked",
       payoutBlockedReason: "security_deposit",
-    }).onConflictDoNothing();
+    }).onConflictDoNothing({
+      // Same PI as the booking row above — only the (PI, payment_type)
+      // composite may conflict here. A stray single-column PI unique index
+      // (see migration 0143) would otherwise silently eat this deposit row.
+      target: [payments.stripePaymentIntentId, payments.paymentType],
+      where: isNotNull(payments.stripePaymentIntentId),
+    });
   }
 
   return { booking, clientSecret: paymentIntent.client_secret, paymentIntentId: paymentIntent.id };

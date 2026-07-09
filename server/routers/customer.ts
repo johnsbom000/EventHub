@@ -738,20 +738,28 @@ export function registerCustomerRoutes(app: Express): void {
         return res.status(403).json({ error: "This vendor has not enabled pre-booking contact" });
       }
 
-      // Check for an existing inquiry row (idempotent)
+      // Check for an existing inquiry row for this (vendor, customer) pair —
+      // ANY status, active first, then newest. A pair whose inquiry converted
+      // to a booking (or was closed) is reactivated instead of re-inserted:
+      // uniqueness is a partial index on active rows only (migration 0144),
+      // and the Stream channel id is deterministic per pair, so the old row's
+      // channel is the one to reuse.
       const [existing] = await db
         .select()
         .from(vendorInquiries)
         .where(
           and(
             eq(vendorInquiries.vendorAccountId, vendorAccountId),
-            eq(vendorInquiries.customerId, customerAuth.id),
-            eq(vendorInquiries.status, "active")
+            eq(vendorInquiries.customerId, customerAuth.id)
           )
+        )
+        .orderBy(
+          drizzleSql`case when ${vendorInquiries.status} = 'active' then 0 else 1 end`,
+          desc(vendorInquiries.updatedAt)
         )
         .limit(1);
 
-      if (existing) {
+      if (existing?.status === "active") {
         return res.json({ channelId: existing.streamChannelId });
       }
 
@@ -773,15 +781,45 @@ export function registerCustomerRoutes(app: Express): void {
         initialListingId: listingId ?? null,
       });
 
+      if (existing) {
+        // Re-inquiry after conversion/close: reactivate the existing row.
+        await db
+          .update(vendorInquiries)
+          .set({ status: "active", updatedAt: new Date() })
+          .where(eq(vendorInquiries.id, existing.id));
+        return res.json({ channelId: existing.streamChannelId });
+      }
+
       const { nanoid } = await import("nanoid");
-      await db.insert(vendorInquiries).values({
-        id: nanoid(),
-        vendorAccountId,
-        customerId: customerAuth.id,
-        streamChannelId: channelId,
-        initialListingId: listingId ?? null,
-        status: "active",
-      });
+      try {
+        await db.insert(vendorInquiries).values({
+          id: nanoid(),
+          vendorAccountId,
+          customerId: customerAuth.id,
+          streamChannelId: channelId,
+          initialListingId: listingId ?? null,
+          status: "active",
+        });
+      } catch (insertError: any) {
+        // Concurrent init for the same pair lost the race on the active-only
+        // partial unique index — adopt the winner's row.
+        if (insertError?.code !== "23505") throw insertError;
+        const [winner] = await db
+          .select({ streamChannelId: vendorInquiries.streamChannelId })
+          .from(vendorInquiries)
+          .where(
+            and(
+              eq(vendorInquiries.vendorAccountId, vendorAccountId),
+              eq(vendorInquiries.customerId, customerAuth.id),
+              eq(vendorInquiries.status, "active")
+            )
+          )
+          .limit(1);
+        if (winner) {
+          return res.json({ channelId: winner.streamChannelId });
+        }
+        throw insertError;
+      }
 
       return res.json({ channelId });
     } catch (error: any) {

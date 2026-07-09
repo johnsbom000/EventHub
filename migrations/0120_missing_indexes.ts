@@ -36,11 +36,14 @@ export async function up() {
     drop index if exists idx_payments_stripe_payment_intent;
   `);
 
-  await db.execute(sql`
-    create unique index if not exists idx_payments_stripe_payment_intent_unique
-      on payments (stripe_payment_intent_id)
-      where stripe_payment_intent_id is not null;
-  `);
+  // NOTE: this migration originally created a single-column UNIQUE index on
+  // payments.stripe_payment_intent_id here. That was wrong — one PaymentIntent
+  // legitimately maps to multiple payment rows (booking + security_deposit),
+  // and the unique index made onConflictDoNothing() silently swallow deposit
+  // rows on fresh databases. The block was removed (see migration 0143, which
+  // also drops the index on any database that already built it). Uniqueness is
+  // the composite idx_payments_pi_type_unique on (stripe_payment_intent_id,
+  // payment_type).
 
   await db.execute(sql`
     create index if not exists idx_payments_booking_id
@@ -91,10 +94,6 @@ export async function down() {
 
   await db.execute(sql`
     drop index if exists idx_payments_booking_id;
-  `);
-
-  await db.execute(sql`
-    drop index if exists idx_payments_stripe_payment_intent_unique;
   `);
 
   await db.execute(sql`
