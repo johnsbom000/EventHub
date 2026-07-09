@@ -74,7 +74,10 @@ function toCanonicalPaymentStatus(value: unknown): string {
 
 function isActiveDisputeCase(status: unknown): boolean {
   const normalized = normalizePaymentStateValue(status);
-  return normalized === "open" || normalized === "pending_review";
+  // 'resolving' (M11) is a transient claim state held while a settlement's
+  // Stripe calls are in flight — payouts must stay blocked until it lands on
+  // 'resolved', so it counts as active alongside 'open'/'pending_review'.
+  return normalized === "open" || normalized === "pending_review" || normalized === "resolving";
 }
 
 // A Stripe dispute-status value that must block a payout recompute. Alongside

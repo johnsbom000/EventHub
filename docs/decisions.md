@@ -16,6 +16,15 @@ Template for new entries:
 
 ---
 
+## [2026-07-09] Tolerate text-backed dispute case status in Wave 5 migration
+- Context: Wave 5 migration 0149 was written to add `resolving` to a `dispute_case_status` enum, but migration 0078 originally created `dispute_cases.status` as `text`, and the approved dev Neon database still has that text-backed shape.
+- Decision: Make migration 0149 conditional: add `resolving` when the enum exists, otherwise no-op only when `dispute_cases.status` is confirmed to be text-backed.
+- Why: Text-backed status columns can already store the transient `resolving` value, while enum-backed databases still need the new value before the Wave 5 code can write it.
+- Impact: The migration remains idempotent and deploy-safe across both known schema shapes without broad schema conversion work during the MVP booking-flow audit fix.
+- Revisit trigger: If dispute case status constraints are standardized later, convert the text-backed column to the canonical enum or add an explicit check constraint in a dedicated schema-hardening migration.
+
+---
+
 ## [2026-06-16] Airbnb-style bounded listing photo collage
 - Context: Listing previews briefly used a natural-ratio masonry, but with no height cap the images rendered enormous and dominated the page above the fold.
 - Decision: Render previews as an Airbnb-style collage — one large hero photo on the left plus a 2x2 grid of the next four photos on the right — bounded to a fixed banner height (300/360/460px across breakpoints), with `object-cover` tiles and a "Show all photos" button overlaying the full gallery.
