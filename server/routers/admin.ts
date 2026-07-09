@@ -57,7 +57,6 @@ import {
   type LockedPaymentPayoutContext,
   loadPaymentPayoutContextForUpdateInTx,
   refreshPaymentPayoutStateInTx,
-  processSinglePayoutCandidate,
   ensurePaymentRecordForIntentInTx,
   initializeBookingPayment,
 } from "../services/paymentService";
@@ -326,6 +325,30 @@ import {
 } from "../lib/rateLimiters";
 
 
+/**
+ * Resolves the vendor's Stripe Connect account id for a dispute settlement
+ * transfer. Prefers the immutable per-payment snapshot
+ * (payments.stripe_connected_account_id — survives vendor soft-deletes that
+ * null the live column), falling back to the vendor account's live
+ * stripe_connect_id. NOTE: vendor_accounts has NO stripe_connected_account_id
+ * column — querying it 500s the whole endpoint.
+ */
+async function resolveVendorConnectedAccountId(
+  bookingId: string,
+  paymentSnapshotAccountId: string | null | undefined
+): Promise<string | null> {
+  const snapshot = asTrimmedString(paymentSnapshotAccountId);
+  if (snapshot) return snapshot;
+  const rows: any = await db.execute(drizzleSql`
+    SELECT va.stripe_connect_id AS "connectedAccountId"
+    FROM bookings b
+    JOIN vendor_accounts va ON va.id = b.vendor_account_id
+    WHERE b.id = ${bookingId}
+    LIMIT 1
+  `);
+  return asTrimmedString((rows.rows?.[0] as any)?.connectedAccountId) || null;
+}
+
 export function registerAdminRoutes(app: Express): void {
 
   // Admin identity check — used by the frontend to verify admin access before rendering
@@ -559,6 +582,7 @@ export function registerAdminRoutes(app: Express): void {
           id: payments.id,
           stripePaymentIntentId: payments.stripePaymentIntentId,
           stripeChargeId: payments.stripeChargeId,
+          stripeConnectedAccountId: payments.stripeConnectedAccountId,
           amount: payments.amount,
           refundAmount: payments.refundAmount,
           status: payments.status,
@@ -592,15 +616,9 @@ export function registerAdminRoutes(app: Express): void {
         const travelRefundToCustomer = heldRemaining - travelAward;
 
         // Vendor connected account is required to pay an award.
-        const vendorAcctRows: any = await db.execute(drizzleSql`
-          SELECT va.stripe_connected_account_id AS "connectedAccountId"
-          FROM bookings b
-          JOIN vendor_accounts va ON va.id = b.vendor_account_id
-          WHERE b.id = ${resolvedBookingId}
-          LIMIT 1
-        `);
-        const connectedAccountId = asTrimmedString(
-          (vendorAcctRows.rows?.[0] as any)?.connectedAccountId
+        const connectedAccountId = await resolveVendorConnectedAccountId(
+          resolvedBookingId,
+          heldTravel.stripeConnectedAccountId
         );
         if (travelAward > 0 && !connectedAccountId) {
           return res.status(400).json({
@@ -615,8 +633,10 @@ export function registerAdminRoutes(app: Express): void {
           travelRefundToCustomer > 0
             ? await refundBookingPayment({
                 paymentIntentId: heldTravel.stripePaymentIntentId,
-                amount:
-                  travelRefundToCustomer < heldTravel.amount ? travelRefundToCustomer : undefined,
+                // ALWAYS explicit: an amount-less refund returns the entire
+                // remaining charge on the shared PaymentIntent, not just the
+                // travel portion.
+                amount: travelRefundToCustomer,
                 reason: "requested_by_customer",
                 idempotencyKey: `admin-dispute-travel-refund:${caseId}:${heldTravel.id}`,
               })
@@ -627,7 +647,8 @@ export function registerAdminRoutes(app: Express): void {
         if (travelAward > 0) {
           travelTransfer = await transferToVendor({
             amount: travelAward,
-            vendorStripeAccountId: connectedAccountId,
+            // Non-null: the 400 guard above rejects travelAward > 0 without an account.
+            vendorStripeAccountId: connectedAccountId!,
             description: `Travel cost recovery for booking ${resolvedBookingId}`,
             sourceTransaction: asTrimmedString(heldTravel.stripeChargeId) || undefined,
             transferGroup: `booking_${resolvedBookingId}`,
@@ -744,7 +765,10 @@ export function registerAdminRoutes(app: Express): void {
             id: payments.id,
             bookingId: payments.bookingId,
             stripePaymentIntentId: payments.stripePaymentIntentId,
+            stripeChargeId: payments.stripeChargeId,
+            stripeConnectedAccountId: payments.stripeConnectedAccountId,
             amount: payments.amount,
+            refundAmount: payments.refundAmount,
             status: payments.status,
           })
           .from(payments)
@@ -770,7 +794,9 @@ export function registerAdminRoutes(app: Express): void {
           .select({
             id: payments.id,
             stripePaymentIntentId: payments.stripePaymentIntentId,
+            stripeChargeId: payments.stripeChargeId,
             amount: payments.amount,
+            refundAmount: payments.refundAmount,
             status: payments.status,
             vendorNetPayoutAmount: payments.vendorNetPayoutAmount,
           })
@@ -807,13 +833,35 @@ export function registerAdminRoutes(app: Express): void {
         const withheld = depositAmt - depositRefundCents; // withheld from deposit → paid to vendor
         const bookingRefundCents = Math.max(0, requestedRefund - depositAmt);
 
-        const { refundBookingPayment } = await import("../stripe");
+        // A withheld award is paid to the vendor via a DIRECT authorized transfer
+        // (transferToVendor), NOT the automated payout pipeline: the pipeline's
+        // eligibility refresh recomputes the payout from vendorNetPayoutAmount,
+        // which is 0/NULL on deposit rows, so it silently cancels the award.
+        // Resolve the vendor's connected account BEFORE moving any money so a
+        // missing account fails the whole request with nothing half-settled.
+        const withholdConnectedAccountId =
+          withheld > 0
+            ? await resolveVendorConnectedAccountId(
+                resolvedBookingId,
+                depositPayment.stripeConnectedAccountId
+              )
+            : null;
+        if (withheld > 0 && !withholdConnectedAccountId) {
+          return res.status(400).json({
+            error: "Vendor has no connected Stripe account; cannot pay the withheld amount",
+          });
+        }
 
-        // Refund deposit portion.
+        const { refundBookingPayment, transferToVendor } = await import("../stripe");
+
+        // Refund deposit portion. ALWAYS pass an explicit amount: the deposit
+        // shares its PaymentIntent with the booking payment, so an amount-less
+        // "full" refund returns the entire remaining charge including the
+        // vendor's service payment.
         const depositRefund = depositRefundCents > 0
           ? await refundBookingPayment({
               paymentIntentId: depositPayment.stripePaymentIntentId,
-              amount: depositRefundCents < depositAmt ? depositRefundCents : undefined,
+              amount: depositRefundCents,
               reason: "requested_by_customer",
               idempotencyKey: `admin-dispute-refund:${caseId}:${depositPayment.id}`,
             })
@@ -823,11 +871,55 @@ export function registerAdminRoutes(app: Express): void {
         const bookingRefund = bookingRefundCents > 0 && bookingPayment
           ? await refundBookingPayment({
               paymentIntentId: bookingPayment.stripePaymentIntentId,
-              amount: bookingRefundCents < (bookingPayment.amount ?? 0) ? bookingRefundCents : undefined,
+              amount: bookingRefundCents,
               reason: "requested_by_customer",
               idempotencyKey: `admin-dispute-refund-booking:${caseId}:${bookingPayment.id}`,
             })
           : null;
+
+        // Pay the withheld damages to the vendor. Guard against a prior
+        // settlement first: a second dispute case on the same booking would mint
+        // a fresh idempotency key, so the key alone cannot prevent a double
+        // transfer — re-read the row and skip if it was already paid out.
+        let depositTransfer: any = null;
+        let depositAlreadyPaidOut = false;
+        if (withheld > 0) {
+          const freshDepositRows = await db
+            .select({
+              stripeTransferId: payments.stripeTransferId,
+              payoutStatus: payments.payoutStatus,
+            })
+            .from(payments)
+            .where(eq(payments.id, depositPayment.id))
+            .limit(1);
+          const freshDeposit = freshDepositRows[0];
+          depositAlreadyPaidOut =
+            Boolean(asTrimmedString(freshDeposit?.stripeTransferId)) ||
+            freshDeposit?.payoutStatus === "paid";
+
+          if (!depositAlreadyPaidOut) {
+            depositTransfer = await transferToVendor({
+              amount: withheld,
+              // Non-null: the 400 guard above rejects withheld > 0 without an account.
+              vendorStripeAccountId: withholdConnectedAccountId!,
+              description: `Dispute damage withhold for booking ${resolvedBookingId}`,
+              sourceTransaction:
+                asTrimmedString(depositPayment.stripeChargeId) ||
+                asTrimmedString(bookingPayment?.stripeChargeId) ||
+                undefined,
+              transferGroup: `booking_${resolvedBookingId}`,
+              metadata: {
+                bookingId: resolvedBookingId,
+                paymentId: depositPayment.id,
+                kind: "dispute_deposit_withhold",
+              },
+              // Key by case+payment (NOT amount) so a retry with a different
+              // withhold can never produce a second transfer — the first
+              // settlement wins.
+              idempotencyKey: `admin-dispute-deposit-payout:${caseId}:${depositPayment.id}`,
+            });
+          }
+        }
 
         const resolutionNote = (() => {
           if (payload.adminNotes) return payload.adminNotes;
@@ -840,20 +932,49 @@ export function registerAdminRoutes(app: Express): void {
           return "Full deposit refund approved";
         })();
 
+        const priorDepositRefund =
+          typeof depositPayment.refundAmount === "number" ? depositPayment.refundAmount : 0;
+        const priorBookingRefund =
+          typeof bookingPayment?.refundAmount === "number" ? bookingPayment.refundAmount : 0;
+
         await db.transaction(async (tx) => {
-          // Deposit payment: refunded portion goes to customer; withheld portion queued for vendor payout.
+          // Deposit payment: refunded portion goes to customer; withheld portion
+          // was transferred directly to the vendor above.
           await tx
             .update(payments)
             .set({
-              status: withheld > 0 ? "partially_refunded" : "refunded",
-              refundAmount: depositRefundCents,
-              refundReason: "admin_dispute_refund",
-              refundedAt: now,
-              // Withheld portion → make eligible for vendor payout via payout worker.
-              payoutStatus: withheld > 0 ? "eligible" : "cancelled",
-              payoutEligibleAt: withheld > 0 ? now : null,
-              payoutBlockedReason: withheld > 0 ? null : "dispute_refund_approved",
-              payoutAdjustedAmount: withheld > 0 ? withheld : 0,
+              status:
+                withheld > 0
+                  ? depositRefundCents > 0
+                    ? "partially_refunded"
+                    : "succeeded"
+                  : "refunded",
+              ...(depositRefundCents > 0
+                ? {
+                    // Accumulate — an overwrite would erase any refund already
+                    // recorded on the row (e.g. a partial refund from another flow).
+                    refundAmount: priorDepositRefund + depositRefundCents,
+                    refundReason: "admin_dispute_refund",
+                    refundedAt: now,
+                  }
+                : {}),
+              ...(withheld > 0
+                ? depositAlreadyPaidOut
+                  ? {} // keep the earlier settlement's transfer/payout fields intact
+                  : {
+                      payoutStatus: "paid",
+                      payoutEligibleAt: now,
+                      payoutBlockedReason: null,
+                      payoutAdjustedAmount: withheld,
+                      paidOutAt: now,
+                      stripeTransferId: depositTransfer?.id ?? null,
+                    }
+                : {
+                    payoutStatus: "cancelled",
+                    payoutEligibleAt: null,
+                    payoutBlockedReason: "dispute_refund_approved",
+                    payoutAdjustedAmount: 0,
+                  }),
             })
             .where(eq(payments.id, depositPayment.id));
 
@@ -863,7 +984,7 @@ export function registerAdminRoutes(app: Express): void {
               .update(payments)
               .set({
                 status: "refunded",
-                refundAmount: bookingRefundCents,
+                refundAmount: priorBookingRefund + bookingRefundCents,
                 refundReason: "admin_dispute_refund",
                 refundedAt: now,
                 payoutStatus: "cancelled",
@@ -898,15 +1019,6 @@ export function registerAdminRoutes(app: Express): void {
             VALUES (${activeCaseId}, ${resolvedBookingId}, 'admin', 'admin_note', ${resolutionNote}, '{}', ${now}, ${now})
           `);
         });
-
-        // If withheld > 0, trigger vendor payout for the withheld portion immediately.
-        if (withheld > 0) {
-          processSinglePayoutCandidate({
-            paymentId: depositPayment.id,
-            bookingId: resolvedBookingId,
-            dryRun: false,
-          }).catch(() => {});
-        }
 
         // Fire-and-forget outcome emails
         const serverUrlRefund = appUrl();
@@ -944,24 +1056,111 @@ export function registerAdminRoutes(app: Express): void {
           decision: "refund",
           depositRefund,
           bookingRefund,
+          withheldAmountCents: withheld,
+          depositTransfer,
           resolvedAt: now,
         });
       }
 
+      // ── decision === 'payout': vendor keeps the deposit ──
+      // Pay the deposit via a DIRECT authorized transfer (transferToVendor),
+      // mirroring the travel-award path. The automated payout pipeline
+      // (processSinglePayoutCandidate) recomputes eligibility from
+      // vendorNetPayoutAmount, which is 0/NULL on deposit rows — routing the
+      // award through it silently cancelled the payout and the vendor never
+      // received the money.
+      const depositRows = await db
+        .select({
+          id: payments.id,
+          bookingId: payments.bookingId,
+          stripePaymentIntentId: payments.stripePaymentIntentId,
+          stripeChargeId: payments.stripeChargeId,
+          stripeConnectedAccountId: payments.stripeConnectedAccountId,
+          amount: payments.amount,
+          refundAmount: payments.refundAmount,
+          status: payments.status,
+          payoutStatus: payments.payoutStatus,
+          stripeTransferId: payments.stripeTransferId,
+        })
+        .from(payments)
+        .where(
+          and(
+            eq(payments.bookingId, resolvedBookingId),
+            eq(payments.paymentType, "security_deposit")
+          )
+        )
+        .orderBy(desc(payments.createdAt))
+        .limit(1);
+      const deposit = depositRows[0] ?? null;
+
+      // Award = whatever of the deposit hasn't already been refunded to the
+      // customer. Skip the transfer (but still resolve the case) when there is
+      // nothing left to move or a prior settlement already paid it — a second
+      // dispute case would mint a fresh idempotency key, so the key alone
+      // cannot prevent a double transfer.
+      const depositAward = deposit ? Math.max(0, (deposit.amount ?? 0) - (deposit.refundAmount ?? 0)) : 0;
+      const depositPaidOutAlready =
+        Boolean(asTrimmedString(deposit?.stripeTransferId)) || deposit?.payoutStatus === "paid";
+      const depositTransferable =
+        !!deposit &&
+        !depositPaidOutAlready &&
+        depositAward > 0 &&
+        (isPaymentSucceededStatus(deposit.status) ||
+          isPaymentRefundedOrPartiallyRefundedStatus(deposit.status));
+
+      let payoutTransfer: any = null;
+      if (depositTransferable && deposit) {
+        const payoutConnectedAccountId = await resolveVendorConnectedAccountId(
+          resolvedBookingId,
+          deposit.stripeConnectedAccountId
+        );
+        if (!payoutConnectedAccountId) {
+          return res.status(400).json({
+            error: "Vendor has no connected Stripe account; cannot pay out the deposit",
+          });
+        }
+        const { transferToVendor } = await import("../stripe");
+        payoutTransfer = await transferToVendor({
+          amount: depositAward,
+          vendorStripeAccountId: payoutConnectedAccountId,
+          description: `Dispute deposit payout for booking ${resolvedBookingId}`,
+          sourceTransaction: asTrimmedString(deposit.stripeChargeId) || undefined,
+          transferGroup: `booking_${resolvedBookingId}`,
+          metadata: {
+            bookingId: resolvedBookingId,
+            paymentId: deposit.id,
+            kind: "dispute_deposit_award",
+          },
+          // Key by case+payment (NOT amount) so a retry with a changed award can
+          // never produce a second transfer — the first settlement wins.
+          idempotencyKey: `admin-dispute-deposit-payout:${caseId}:${deposit.id}`,
+        });
+      }
+
       await db.transaction(async (tx) => {
-        await tx
-          .update(payments)
-          .set({
-            payoutStatus: "eligible",
-            payoutEligibleAt: now,
-            payoutBlockedReason: null,
-          })
-          .where(
-            and(
-              eq(payments.bookingId, resolvedBookingId),
-              eq(payments.paymentType, "security_deposit")
-            )
-          );
+        if (deposit && payoutTransfer) {
+          await tx
+            .update(payments)
+            .set({
+              payoutStatus: "paid",
+              payoutEligibleAt: now,
+              payoutBlockedReason: null,
+              payoutAdjustedAmount: depositAward,
+              paidOutAt: now,
+              stripeTransferId: payoutTransfer.id,
+            })
+            .where(eq(payments.id, deposit.id));
+        }
+
+        if (deposit) {
+          // Stamp the booking so the hourly deposit auto-refund job can never
+          // re-select this row and refund the customer the deposit the vendor
+          // was just paid (double payout).
+          await tx
+            .update(bookings)
+            .set({ securityDepositRefundedAt: now, updatedAt: now })
+            .where(eq(bookings.id, resolvedBookingId));
+        }
 
         await tx.execute(drizzleSql`
           UPDATE dispute_cases
@@ -980,27 +1179,23 @@ export function registerAdminRoutes(app: Express): void {
         }
       });
 
-      const depositRows = await db
-        .select({
-          id: payments.id,
-          bookingId: payments.bookingId,
-        })
-        .from(payments)
-        .where(
-          and(
-            eq(payments.bookingId, resolvedBookingId),
-            eq(payments.paymentType, "security_deposit")
-          )
-        )
-        .orderBy(desc(payments.createdAt))
-        .limit(1);
-      const deposit = depositRows[0];
+      // Same shape the payout pipeline used to return here, so any caller
+      // reading the response keeps working.
       const payoutResult = deposit
-        ? await processSinglePayoutCandidate({
+        ? {
             paymentId: deposit.id,
             bookingId: deposit.bookingId,
-            dryRun: false,
-          })
+            outcome: payoutTransfer ? "paid" : "skipped",
+            reason: payoutTransfer
+              ? null
+              : depositPaidOutAlready
+                ? "already_transferred"
+                : depositAward <= 0
+                  ? "deposit_fully_refunded"
+                  : "deposit_not_transferable",
+            payoutAmount: payoutTransfer ? depositAward : 0,
+            transferId: payoutTransfer?.id ?? (asTrimmedString(deposit.stripeTransferId) || null),
+          }
         : null;
 
       // Fire-and-forget outcome emails
