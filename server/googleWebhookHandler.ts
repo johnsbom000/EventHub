@@ -388,13 +388,12 @@ export async function processGoogleWebhookForChannel(
     }
   }
 
-  // Persist the new sync token so the next webhook only fetches deltas
-  if (nextSyncToken) {
-    await updateWatchChannelSyncToken(channelId, nextSyncToken);
-  }
-
-  // Process each event
-  await Promise.allSettled(
+  // Process each event BEFORE advancing the sync token. If any event handler
+  // rejects, we must NOT persist the new token — leaving the old token in place
+  // means the next notification refetches these events and retries them. The
+  // handlers are idempotent (date update is convergent, vacation create is
+  // mapping-guarded, deletes no-op when absent), so a redelivery is safe.
+  const results = await Promise.allSettled(
     events.map(async (event) => {
       const deleted = isDeletedEvent(event);
 
@@ -431,6 +430,28 @@ export async function processGoogleWebhookForChannel(
       // No action needed here; they surface in the vendor dashboard
     })
   );
+
+  let rejections = 0;
+  results.forEach((result, index) => {
+    if (result.status === "rejected") {
+      rejections++;
+      captureJobError("google_calendar_webhook", result.reason, {
+        stage: "process_event",
+        vendorAccountId,
+        channelId,
+        eventId: events[index]?.id,
+      });
+    }
+  });
+
+  // Persist the new sync token ONLY when every event processed cleanly, so the
+  // next webhook only fetches deltas. If anything failed, hold the old token so
+  // the failed events are refetched and retried on the next notification. The
+  // expired-token fallback above already covers a token that goes stale while
+  // held back.
+  if (nextSyncToken && rejections === 0) {
+    await updateWatchChannelSyncToken(channelId, nextSyncToken);
+  }
 }
 
 /**

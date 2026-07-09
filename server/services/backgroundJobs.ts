@@ -26,6 +26,7 @@ import {
   sendEventDayReminderEmail,
   sendSuspensionLiftedEmail,
   sendPendingRequestReminderEmail,
+  type EmailResult,
 } from "../email";
 import { deleteStreamBookingChannel, isChatExpiredForEventDate, isStreamChatConfigured } from "../streamChat";
 import { syncBookingToGoogleCalendarSafely, runGoogleBookingSyncVerificationForVendorAccount } from "./googleSyncService";
@@ -1280,7 +1281,13 @@ export function startGoogleVerificationWorker() {
 }
 
 export function startWatchChannelRenewalWorker() {
+  // 60-min cadence is ample for a 3-day renewal window; the 15s→2min initial
+  // delay and the worker lock together prevent deploy-overlap races where two
+  // instances renew the same channel concurrently.
+  const INTERVAL_MS = 60 * 60 * 1000;
   const run = async () => {
+    const lockToken = await tryAcquireWorkerLock("watch_channel_renewal", 90 * 60 * 1000);
+    if (!lockToken) return;
     try {
       const result = await renewExpiringGoogleCalendarWatchChannels();
       if (result.renewed > 0 || result.failed > 0) {
@@ -1288,19 +1295,27 @@ export function startWatchChannelRenewalWorker() {
       }
     } catch (error: any) {
       captureJobError("watch_channel_renewal", error, { stage: "job" });
+    } finally {
+      await releaseWorkerLock("watch_channel_renewal", lockToken);
     }
   };
   const startTimer = setTimeout(() => {
     void run();
-    const t = setInterval(() => void run(), 60 * 1000);
+    const t = setInterval(() => void run(), INTERVAL_MS);
     t.unref?.();
-  }, 15 * 1000);
+  }, 2 * 60 * 1000);
   startTimer.unref?.();
 }
 
 export function startEventDayReminderWorker() {
   const INTERVAL_MS = 4 * 60 * 60 * 1000;
   const run = async () => {
+    // Worker lock (TTL ≈ 2× interval) stops deploy-overlap double-runs. This
+    // worker uses F5 mark-after-success (below) rather than a claim-before-send
+    // CAS — the two reminder emails per booking share one sent flag, so a claim
+    // that flipped the flag before sending would drop BOTH on a single failure.
+    const lockToken = await tryAcquireWorkerLock("event_day_reminder", 8 * 60 * 60 * 1000);
+    if (!lockToken) return;
     try {
       const serverUrl = appUrl();
       const windowStart = new Date(Date.now() + 20 * 60 * 60 * 1000);
@@ -1355,9 +1370,24 @@ export function startEventDayReminderWorker() {
               eventLocation: row.eventLocation ?? undefined, role: "vendor", serverUrl,
             }));
           }
-          await Promise.allSettled(tasks);
-          await db.update(bookings).set({ eventDayReminderSent: true }).where(eq(bookings.id, row.bookingId));
-          sent++;
+          const results = await Promise.allSettled(tasks);
+          // F5: only mark sent when every attempted email actually went out.
+          // Senders resolve { sent:false } (config/HTTP failure) instead of
+          // throwing, so inspect the resolved value — not just fulfillment.
+          // A row with no recipients at all is terminal (nothing to send) so it
+          // doesn't get refetched forever.
+          const allSucceeded =
+            results.length > 0 &&
+            results.every((r) => r.status === "fulfilled" && (r.value as EmailResult)?.sent === true);
+          if (results.length === 0 || allSucceeded) {
+            await db.update(bookings).set({ eventDayReminderSent: true }).where(eq(bookings.id, row.bookingId));
+            if (results.length > 0) sent++;
+          } else {
+            logger.warn(
+              "[event day reminder] booking %s: not all emails sent — leaving unmarked for retry",
+              row.bookingId
+            );
+          }
         } catch (rowError: any) {
           captureJobError("event_day_reminder", rowError, { stage: "send_row", bookingId: row.bookingId });
         }
@@ -1365,6 +1395,8 @@ export function startEventDayReminderWorker() {
       if (sent > 0) logger.info("[event day reminder] sent %d reminder(s)", sent);
     } catch (error: any) {
       captureJobError("event_day_reminder", error, { stage: "job" });
+    } finally {
+      await releaseWorkerLock("event_day_reminder", lockToken);
     }
   };
   const startTimer = setTimeout(() => {
@@ -1378,6 +1410,8 @@ export function startEventDayReminderWorker() {
 export function startSuspensionLiftedWorker() {
   const INTERVAL_MS = 24 * 60 * 60 * 1000;
   const run = async () => {
+    const lockToken = await tryAcquireWorkerLock("suspension_lifted", 48 * 60 * 60 * 1000);
+    if (!lockToken) return;
     try {
       const serverUrl = appUrl();
       const now = new Date();
@@ -1398,12 +1432,21 @@ export function startSuspensionLiftedWorker() {
       let sent = 0;
       for (const row of expired) {
         try {
+          // Claim before sending: atomically flip the flag; only the instance
+          // that wins the CAS sends. A crash between claim and send drops this
+          // one notification rather than risking a duplicate (accepted L13
+          // trade-off — mirrors the payout-email pattern).
+          const claim: any = await db.execute(drizzleSql`
+            update vendor_suspensions set lift_email_sent = true
+            where id = ${row.suspensionId} and lift_email_sent = false
+            returning id
+          `);
+          if (extractRows(claim).length === 0) continue; // another instance/tick claimed it
           await sendSuspensionLiftedEmail(row.vendorEmail, {
             recipientName: row.businessName || "Vendor",
             businessName: row.businessName || "Your Business",
             serverUrl,
           });
-          await db.execute(drizzleSql`update vendor_suspensions set lift_email_sent = true where id = ${row.suspensionId}`);
           sent++;
         } catch (rowError: any) {
           captureJobError("suspension_lifted", rowError, { stage: "send_row", suspensionId: row.suspensionId });
@@ -1412,6 +1455,8 @@ export function startSuspensionLiftedWorker() {
       if (sent > 0) logger.info("[suspension lifted] sent %d notification(s)", sent);
     } catch (error: any) {
       captureJobError("suspension_lifted", error, { stage: "job" });
+    } finally {
+      await releaseWorkerLock("suspension_lifted", lockToken);
     }
   };
   const startTimer = setTimeout(() => {
@@ -1425,6 +1470,8 @@ export function startSuspensionLiftedWorker() {
 export function startPendingRequestReminderWorker() {
   const INTERVAL_MS = 10 * 60 * 1000;
   const run = async () => {
+    const lockToken = await tryAcquireWorkerLock("pending_request_reminder", 20 * 60 * 1000);
+    if (!lockToken) return;
     try {
       const serverUrl = appUrl();
       const now = new Date();
@@ -1473,27 +1520,48 @@ export function startPendingRequestReminderWorker() {
           const createdHourStr = new Intl.DateTimeFormat("en-US", { timeZone: tz, hour: "numeric", hour12: false }).format(createdAt);
           const createdHour = parseInt(createdHourStr, 10);
           const hoursSinceCreation = (now.getTime() - createdAt.getTime()) / (60 * 60 * 1000);
-          const isAfterMidnightOfCreation = now.toDateString() !== createdAt.toDateString();
+          // Compare calendar dates in the VENDOR's timezone — the hour checks
+          // below are all vendor-TZ, so a server-TZ toDateString() comparison
+          // (the previous bug) could flip a day boundary hours early/late for
+          // far-east/west vendors and mis-gate the 9am reminder.
+          const vendorDateFmt = new Intl.DateTimeFormat("en-CA", {
+            timeZone: tz, year: "numeric", month: "2-digit", day: "2-digit",
+          });
+          const isAfterMidnightOfCreation = vendorDateFmt.format(now) !== vendorDateFmt.format(createdAt);
 
           let cadenceSent: "6pm" | "9am" | "24h" | null = null;
           let columnToSet: Partial<typeof bookings.$inferInsert> = {};
+          let claimColumn:
+            | typeof bookings.pendingReminder24hSent
+            | typeof bookings.pendingReminder9amSent
+            | typeof bookings.pendingReminder6pmSent
+            | null = null;
 
           if (!row.sent24h && hoursSinceCreation >= 24) {
-            cadenceSent = "24h"; columnToSet = { pendingReminder24hSent: true };
+            cadenceSent = "24h"; columnToSet = { pendingReminder24hSent: true }; claimColumn = bookings.pendingReminder24hSent;
           } else if (!row.sent9am && isAfterMidnightOfCreation && vendorHour >= 9 && vendorHour < 11) {
-            cadenceSent = "9am"; columnToSet = { pendingReminder9amSent: true };
+            cadenceSent = "9am"; columnToSet = { pendingReminder9amSent: true }; claimColumn = bookings.pendingReminder9amSent;
           } else if (!row.sent6pm && vendorHour >= 18 && vendorHour < 20 && createdHour < 18) {
-            cadenceSent = "6pm"; columnToSet = { pendingReminder6pmSent: true };
+            cadenceSent = "6pm"; columnToSet = { pendingReminder6pmSent: true }; claimColumn = bookings.pendingReminder6pmSent;
           }
 
-          if (!cadenceSent) continue;
+          if (!cadenceSent || !claimColumn) continue;
+
+          // Claim before sending: flip this cadence's flag atomically; only the
+          // instance that wins the CAS sends. A crash between claim and send
+          // drops this one reminder rather than risking a duplicate (L13).
+          const claimed = await db
+            .update(bookings)
+            .set(columnToSet as any)
+            .where(and(eq(bookings.id, row.bookingId), eq(claimColumn, false)))
+            .returning({ id: bookings.id });
+          if (claimed.length === 0) continue; // another instance/tick claimed it
 
           await sendPendingRequestReminderEmail(row.vendorEmail, {
             recipientName: row.vendorName || "Vendor", customerName: row.customerName || "Customer",
             listingTitle: row.listingTitle || "Service", eventDate: row.eventDate,
             totalAmountCents: row.totalCents, cadence: cadenceSent, serverUrl,
           });
-          await db.update(bookings).set(columnToSet as any).where(eq(bookings.id, row.bookingId));
           sent++;
         } catch (rowError: any) {
           captureJobError("pending_request_reminder", rowError, { stage: "send_row", bookingId: row.bookingId });
@@ -1502,6 +1570,8 @@ export function startPendingRequestReminderWorker() {
       if (sent > 0) logger.info("[pending reminder] sent %d reminder(s)", sent);
     } catch (error: any) {
       captureJobError("pending_request_reminder", error, { stage: "job" });
+    } finally {
+      await releaseWorkerLock("pending_request_reminder", lockToken);
     }
   };
   const startTimer = setTimeout(() => {
