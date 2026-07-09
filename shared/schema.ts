@@ -1377,6 +1377,11 @@ export const disputeCaseStatusEnum = pgEnum("dispute_case_status", [
   "open",
   "pending_review",
   "resolved",
+  // 'resolving' — a transient claim state (M11): a settlement handler CAS'es a
+  // case to 'resolving' before any Stripe call so concurrent opposite
+  // resolutions can't double-settle. Treated as an active dispute by payout
+  // eligibility. Set back to 'open' on Stripe failure, or 'resolved' on success.
+  "resolving",
 ]);
 
 export const disputeFilingFiledByEnum = pgEnum("dispute_filing_filed_by", [

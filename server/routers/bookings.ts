@@ -603,18 +603,39 @@ export function registerBookingRoutes(app: Express): void {
 
       const now = new Date();
 
-      if (!payment) {
-        // No main payment collected yet — just cancel the booking.
-        await db
-          .update(bookings)
-          .set({
-            status: "cancelled",
-            cancellationReason: reason ? `customer: ${reason}` : "customer_cancel",
-            cancelledAt: now,
-            updatedAt: now,
-          })
-          .where(eq(bookings.id, bookingId));
+      // H3.3 — claim the booking BEFORE any Stripe refund. The cancellable-state
+      // check above validated the status we read, but the payment reconcile just
+      // above makes Stripe calls that widen the race window (a vendor could
+      // accept, or the auto-cancel job could fire, in between). CAS to
+      // 'cancelled' guarded on the prior status so a concurrent transition loses
+      // cleanly (0 rows → 409) rather than a refund coexisting with a still-live
+      // booking. This claim is now the status authority: the no-payment branch
+      // and the persistence tx below no longer own the status write.
+      //
+      // Accepted trade-off (per plan H3.3): if a Stripe refund fails AFTER this
+      // claim, the booking stays cancelled with the refund pending (the 502 tells
+      // the customer support will retry) — strictly safer than the old race where
+      // a refund could land on a booking that stayed confirmed. This is the
+      // OPPOSITE of the vendor-cancel path (F9), which reverts on failure: a
+      // vendor decline is fully retryable, whereas a customer's cancel intent
+      // should stick.
+      const cancelClaimRows: any = await db.execute(drizzleSql`
+        update bookings
+        set status = 'cancelled',
+            cancellation_reason = ${reason ? `customer: ${reason}` : "customer_cancel"},
+            cancelled_at = ${now},
+            updated_at = ${now}
+        where id = ${bookingId}
+          and status in ('pending', 'confirmed')
+        returning id
+      `);
+      if (extractRows(cancelClaimRows).length === 0) {
+        return res.status(409).json({ error: "Booking status changed — refresh and try again" });
+      }
 
+      if (!payment) {
+        // No main payment collected yet — the claim above already cancelled the
+        // booking, so just fire the side effects.
         void sendCancellationEmailsAsync({ booking, refundCents: 0, serverUrl: appUrl() });
         void syncBookingToGoogleCalendarSafely(bookingId, "/api/bookings/:bookingId/cancel google-sync");
         await sendBookingSystemMessage({

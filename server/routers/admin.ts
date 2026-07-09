@@ -568,6 +568,33 @@ export function registerAdminRoutes(app: Express): void {
 
       const now = new Date();
 
+      // ── M11: claim the case before any settlement ──────────────────────────
+      // Two admins (or a double-click) can each pass the resolved-check above
+      // and both fire Stripe settlements for the same case — a double-settle
+      // that can transfer/refund the money twice. CAS the case into a transient
+      // 'resolving' state first; the loser matches 0 rows and 409s. 'resolving'
+      // counts as an active dispute in payoutEligibility, so the automated
+      // payout pipeline stays blocked while a settlement is mid-flight.
+      const claimResult = await db.execute(drizzleSql`
+        UPDATE dispute_cases
+        SET status = 'resolving', updated_at = ${now}
+        WHERE id = ${activeCaseId} AND status IN ('open', 'pending_review')
+        RETURNING id
+      `);
+      if (claimResult.rows.length === 0) {
+        return res.status(409).json({ error: "This dispute is already being resolved" });
+      }
+
+      // From here the case is claimed. Every settlement path below ends its
+      // final transaction with a guarded UPDATE ... SET status='resolved' WHERE
+      // status='resolving' and then sets `disputeClaimSettled = true`. Any other
+      // exit — a validation 4xx, a Stripe error, or a thrown exception — must
+      // release the claim back to 'open' so the case stays actionable. The
+      // finally below does that idempotently: it only fires while the case is
+      // still 'resolving', so a completed resolve (now 'resolved') is a no-op.
+      let disputeClaimSettled = false;
+      try {
+
       // ── Travel-fee dispute settlement (held travel fee on a cancelled booking) ──
       // On a customer cancellation the travel/delivery fee is held (not refunded)
       // so the vendor can recover real travel costs incurred. Admin awards the
@@ -712,13 +739,14 @@ export function registerAdminRoutes(app: Express): void {
                 withheld_amount_cents = ${travelAward > 0 ? travelAward : null},
                 resolved_at = ${now},
                 updated_at = ${now}
-            WHERE id = ${activeCaseId}
+            WHERE id = ${activeCaseId} AND status = 'resolving'
           `);
           await tx.execute(drizzleSql`
             INSERT INTO dispute_filings (case_id, booking_id, filed_by, dispute_type, description, attachment_urls, created_at, updated_at)
             VALUES (${activeCaseId}, ${resolvedBookingId}, 'admin', 'admin_note', ${resolutionNote}, '{}', ${now}, ${now})
           `);
         });
+        disputeClaimSettled = true;
 
         // Fire-and-forget outcome emails
         const serverUrlTravel = appUrl();
@@ -1015,13 +1043,14 @@ export function registerAdminRoutes(app: Express): void {
                 withheld_amount_cents = ${withheld > 0 ? withheld : null},
                 resolved_at = ${now},
                 updated_at = ${now}
-            WHERE id = ${activeCaseId}
+            WHERE id = ${activeCaseId} AND status = 'resolving'
           `);
           await tx.execute(drizzleSql`
             INSERT INTO dispute_filings (case_id, booking_id, filed_by, dispute_type, description, attachment_urls, created_at, updated_at)
             VALUES (${activeCaseId}, ${resolvedBookingId}, 'admin', 'admin_note', ${resolutionNote}, '{}', ${now}, ${now})
           `);
         });
+        disputeClaimSettled = true;
 
         // Fire-and-forget outcome emails
         const serverUrlRefund = appUrl();
@@ -1172,7 +1201,7 @@ export function registerAdminRoutes(app: Express): void {
               withheld_amount_cents = ${null},
               resolved_at = ${now},
               updated_at = ${now}
-          WHERE id = ${activeCaseId}
+          WHERE id = ${activeCaseId} AND status = 'resolving'
         `);
         if (payload.adminNotes) {
           await tx.execute(drizzleSql`
@@ -1181,6 +1210,7 @@ export function registerAdminRoutes(app: Express): void {
           `);
         }
       });
+      disputeClaimSettled = true;
 
       // Same shape the payout pipeline used to return here, so any caller
       // reading the response keeps working.
@@ -1236,6 +1266,26 @@ export function registerAdminRoutes(app: Express): void {
         payoutResult,
         resolvedAt: now,
       });
+      } finally {
+        // Release the M11 claim on any non-resolved exit (validation 4xx, Stripe
+        // error, thrown exception). Guarded so it no-ops after a completed
+        // settlement (case is 'resolved', not 'resolving'). Best-effort: a
+        // failure here only leaves the case in 'resolving', which the stale-claim
+        // recovery / an admin retry can still clear.
+        if (!disputeClaimSettled) {
+          await db
+            .execute(drizzleSql`
+              UPDATE dispute_cases
+              SET status = 'open', updated_at = now()
+              WHERE id = ${activeCaseId} AND status = 'resolving'
+            `)
+            .catch((releaseErr: any) => {
+              logger.error(
+                `[admin/disputes/resolve] failed to release 'resolving' claim for case ${activeCaseId}: ${releaseErr?.message ?? releaseErr}`
+              );
+            });
+        }
+      }
     } catch (error: any) {
       if (error?.name === "ZodError") {
         return res.status(400).json({ error: "Validation failed", details: error.errors });
