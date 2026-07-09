@@ -15,6 +15,16 @@ import {
   findOverlappingEventHubBookingsForListing,
   findOverlappingGoogleCalendarEventForListing,
 } from "./googleSyncService";
+import {
+  resolvePackageConflictTarget,
+  sumReservedUnits,
+  exceedsCapacity,
+} from "../lib/bookingConflict";
+
+// Pure conflict/capacity helpers live in a db-free module (server/lib/bookingConflict)
+// so they stay unit testable; re-exported here since callers already import them
+// from this service.
+export { resolvePackageConflictTarget, sumReservedUnits, exceedsCapacity };
 
 export async function deactivateActiveListingsViolatingPublishGate(accountId?: string): Promise<number> {
   // package_item rows are managed by their parent container's publish/unpublish lifecycle.
@@ -124,6 +134,9 @@ export async function checkListingAvailabilityForBookingRequest(params: {
   vendorGoogleCalendarId?: string | null;
   vendorTimeZone?: string | null;
   listingId: string;
+  // Dependent-package pool mode (M9): count bookings across the whole shared-capacity
+  // set (container + package_item children). Falls back to [listingId] when omitted.
+  listingIds?: string[];
   listingTitle: string | null;
   bookingStartAt: Date;
   bookingEndAt: Date;
@@ -133,18 +146,16 @@ export async function checkListingAvailabilityForBookingRequest(params: {
 }) {
   const overlappingEventHubBookings = await findOverlappingEventHubBookingsForListing({
     listingId: params.listingId,
+    listingIds: params.listingIds,
     bookingStartAt: params.bookingStartAt,
     bookingEndAt: params.bookingEndAt,
     excludeBookingId: params.excludeBookingId ?? null,
   });
 
-  const totalReservedUnits = overlappingEventHubBookings.reduce((sum, row) => {
-    const quantity = parseIntegerValue(row.quantity);
-    return sum + (quantity && quantity > 0 ? quantity : 1);
-  }, 0);
+  const totalReservedUnits = sumReservedUnits(overlappingEventHubBookings);
   const requestedQuantity = Math.max(1, Math.floor(params.requestedQuantity || 1));
   const listingCapacity = Math.max(1, Math.floor(params.listingAvailableQuantity || 1));
-  const capacityExceeded = totalReservedUnits + requestedQuantity > listingCapacity;
+  const capacityExceeded = exceedsCapacity(totalReservedUnits, requestedQuantity, listingCapacity);
   const eventHubConflict = capacityExceeded
     ? {
         id: overlappingEventHubBookings[0]?.id ?? null,

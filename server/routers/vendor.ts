@@ -188,6 +188,7 @@ import { calculateRefund } from "../lib/calculateRefund";
 import {
   CancellationPolicy,
   policyFromListingWizard,
+  resolveListingPolicyColumns,
 } from "../lib/cancellationPolicyPresets";
 import { checkContent, blockReasonSummary } from "../../shared/circumvention-detection";
 import { translateListingAsync, getListingTranslation, ensureListingTranslation, resolveRequestLanguage } from "../translationService";
@@ -300,6 +301,7 @@ import {
   isListingPubliclyCompliant,
   mirrorListingQuantityIntoListingData,
   buildCanonicalListingColumns,
+  normalizeTravelFeeType,
   type BookingChatContext,
   hasPaymentAccessForChat,
   normalizeBookingChatContext,
@@ -861,6 +863,28 @@ export function registerVendorRoutes(app: Express): void {
         });
       }
 
+      // Refuse to delete while the vendor has live obligations. Soft-deleting an
+      // account with pending/confirmed bookings would strand paid customers whose
+      // event still depends on this vendor. They must cancel or complete first.
+      const [liveBookingCountRow] = await db
+        .select({ count: count() })
+        .from(bookings)
+        .where(
+          and(
+            eq(bookings.vendorAccountId, vendorAuth.id),
+            inArray(bookings.status, ["pending", "confirmed"])
+          )
+        );
+      const liveBookingCount = Number(liveBookingCountRow?.count || 0);
+      if (liveBookingCount > 0) {
+        return res.status(409).json({
+          error:
+            "You still have active bookings (pending or confirmed). Cancel or complete them before deleting your account.",
+          code: "vendor_has_live_bookings",
+          liveBookings: liveBookingCount,
+        });
+      }
+
       // Stop all Google Calendar watch channels before account data is wiped (non-fatal)
       try {
         await stopAllGoogleCalendarWatchChannelsForVendor(vendorAuth.id);
@@ -877,10 +901,22 @@ export function registerVendorRoutes(app: Express): void {
         .where(
           and(
             eq(vendorListings.accountId, vendorAuth.id),
-            or(eq(vendorListings.status, "active"), eq(vendorListings.status, "draft"))
+            inArray(vendorListings.status, ["active", "draft", "pending"])
           )
         )
         .returning({ id: vendorListings.id });
+
+      // Close any still-active pre-booking inquiry channels so they stop surfacing
+      // to customers (and to satisfy the active-only partial unique on inquiries).
+      await db
+        .update(vendorInquiries)
+        .set({ status: "closed", updatedAt: now })
+        .where(
+          and(
+            eq(vendorInquiries.vendorAccountId, vendorAuth.id),
+            eq(vendorInquiries.status, "active")
+          )
+        );
 
       const deactivatedProfiles = await db
         .update(vendorProfiles)
@@ -2882,7 +2918,9 @@ export function registerVendorRoutes(app: Express): void {
           dimensionHeight: typeof dimensionHeight === "number" && dimensionHeight > 0 ? dimensionHeight : null,
           travelOffered: travelOffered === true,
           travelFeeEnabled: travelOffered === true && travelFeeEnabled === true,
-          travelFeeType: typeof travelFeeType === "string" ? travelFeeType : null,
+          // Normalize to one of the three allowed types (or null); an arbitrary
+          // string here would be persisted verbatim and break downstream fee logic.
+          travelFeeType: travelOffered === true ? normalizeTravelFeeType(travelFeeType) : null,
           travelFeeAmountCents: typeof travelFeeAmountCents === "number" && travelFeeAmountCents >= 0 ? Math.floor(travelFeeAmountCents) : null,
           deliveryOffered: deliveryOffered === true,
           pickupOffered: deliveryOffered === true,
@@ -2894,8 +2932,9 @@ export function registerVendorRoutes(app: Express): void {
           takedownOffered: takedownOffered === true,
           takedownFeeEnabled: takedownOffered === true && takedownFeeEnabled === true,
           takedownFeeAmountCents: typeof takedownFeeAmountCents === "number" && takedownFeeAmountCents >= 0 ? Math.floor(takedownFeeAmountCents) : null,
-          cancellationPolicy: typeof cancellationPolicyOverride?.policy === "string" ? cancellationPolicyOverride.policy : "cancel_anytime",
-          cancellationPolicyDays: typeof cancellationPolicyOverride?.hours === "number" ? cancellationPolicyOverride.hours : null,
+          // Validate the policy against the allowed preset set + clamp the window,
+          // instead of trusting whatever string the client sent.
+          ...resolveListingPolicyColumns(cancellationPolicyOverride?.policy, cancellationPolicyOverride?.hours),
         })
         .returning();
 
@@ -2965,7 +3004,9 @@ export function registerVendorRoutes(app: Express): void {
       updatePayload.dimensionHeight = typeof dimensionHeight === "number" && dimensionHeight > 0 ? dimensionHeight : null;
       updatePayload.travelOffered = travelOffered === true;
       updatePayload.travelFeeEnabled = travelOffered === true && travelFeeEnabled === true;
-      if (typeof travelFeeType === "string") updatePayload.travelFeeType = travelFeeType;
+      // Normalize the travel-fee type to an allowed value (or null) rather than
+      // persisting an arbitrary client string.
+      if (travelFeeType !== undefined) updatePayload.travelFeeType = normalizeTravelFeeType(travelFeeType);
       updatePayload.travelFeeAmountCents = typeof travelFeeAmountCents === "number" && travelFeeAmountCents >= 0 ? Math.floor(travelFeeAmountCents) : null;
       updatePayload.deliveryOffered = deliveryOffered === true;
       updatePayload.pickupOffered = deliveryOffered === true;
@@ -2978,8 +3019,14 @@ export function registerVendorRoutes(app: Express): void {
       updatePayload.takedownFeeEnabled = takedownOffered === true && takedownFeeEnabled === true;
       updatePayload.takedownFeeAmountCents = typeof takedownFeeAmountCents === "number" && takedownFeeAmountCents >= 0 ? Math.floor(takedownFeeAmountCents) : null;
       if (cancellationPolicyOverride !== undefined) {
-        updatePayload.cancellationPolicy = typeof cancellationPolicyOverride?.policy === "string" ? cancellationPolicyOverride.policy : "cancel_anytime";
-        updatePayload.cancellationPolicyDays = typeof cancellationPolicyOverride?.hours === "number" ? cancellationPolicyOverride.hours : null;
+        // Validate against the allowed preset set + clamp the window instead of
+        // persisting whatever policy string the client sent.
+        const resolved = resolveListingPolicyColumns(
+          cancellationPolicyOverride?.policy,
+          cancellationPolicyOverride?.hours
+        );
+        updatePayload.cancellationPolicy = resolved.cancellationPolicy;
+        updatePayload.cancellationPolicyDays = resolved.cancellationPolicyDays;
       }
 
       const [updated] = await db
