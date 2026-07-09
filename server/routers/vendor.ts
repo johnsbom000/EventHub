@@ -4641,6 +4641,13 @@ export function registerVendorRoutes(app: Express): void {
       const vendorCancelReasonStored = nextStatus === "cancelled"
         ? (vendorCancellationReason ? `vendor: ${vendorCancellationReason}` : "vendor_cancel")
         : null;
+      // H3.1 — compare-and-swap on the current status. The transition was
+      // validated against `currentStatus` read earlier; guarding the UPDATE with
+      // `and b.status = ${currentStatus}` makes the write lose cleanly (0 rows)
+      // if a concurrent actor (customer cancel, auto-cancel job, another vendor
+      // session) moved the booking in the meantime — instead of silently
+      // stomping their transition. For a cancel this also claims the booking
+      // BEFORE any refund runs, so a racing customer-cancel can't double-refund.
       const updatedResult: any = await db.execute(drizzleSql`
         update bookings b
         set status = ${nextStatus},
@@ -4650,6 +4657,7 @@ export function registerVendorRoutes(app: Express): void {
             cancelled_at = case when ${nextStatus} = 'cancelled' then ${now} else b.cancelled_at end,
             cancellation_reason = case when ${nextStatus} = 'cancelled' then ${vendorCancelReasonStored} else b.cancellation_reason end
         where b.id = ${bookingId}
+          and b.status = ${currentStatus}
           and (
             b.vendor_account_id = ${vendorAccountId}
             or (
@@ -4668,7 +4676,10 @@ export function registerVendorRoutes(app: Express): void {
 
       const updated = updatedRows[0];
       if (!updated?.id) {
-        return res.status(500).json({ error: "Failed to update booking status" });
+        // 0 rows: the status changed under us (the ownership was already
+        // verified against `current` above, so a lost CAS means a concurrent
+        // transition). Nothing was written and no refund has run yet.
+        return res.status(409).json({ error: "Booking status changed — refresh and try again" });
       }
 
       // When a vendor cancels (pending decline or confirmed cancellation), issue full
@@ -4803,8 +4814,31 @@ export function registerVendorRoutes(app: Express): void {
               { bookingId, err: refundErr?.message },
               "[vendor cancel] Stripe refund failed"
             );
+            // F9 — a cancel is only durable once refunds succeed. Release the
+            // cancel claim so the booking returns to its prior state and the
+            // vendor's retry re-runs the WHOLE flow from a clean slate. The
+            // per-payment idempotency keys (and the succeeded/partially_refunded
+            // query filter) make that retry safe: rows already refunded above
+            // are skipped, so no double refund. Guarded on status='cancelled' so
+            // we only undo OUR claim.
+            try {
+              await db.execute(drizzleSql`
+                update bookings
+                set status = ${currentStatus},
+                    cancelled_at = null,
+                    cancellation_reason = null,
+                    updated_at = ${new Date()}
+                where id = ${bookingId}
+                  and status = 'cancelled'
+              `);
+            } catch (revertErr: any) {
+              logger.error(
+                { bookingId, err: revertErr?.message },
+                "[vendor cancel] failed to release cancel claim after refund failure"
+              );
+            }
             return res.status(502).json({
-              error: "Booking cancelled but refund processing failed. Please contact support.",
+              error: "Refund processing failed — the booking was not cancelled. Please try again or contact support.",
             });
           }
         }

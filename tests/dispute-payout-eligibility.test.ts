@@ -74,6 +74,35 @@ function run() {
   assert.equal(blockedByStripeDispute.payoutStatus, "blocked");
   assert.equal(blockedByStripeDispute.payoutBlockedReason, "active_dispute");
 
+  // ── M11 — 'resolving' claim state counts as an active dispute ───────────────
+  // While a settlement handler holds the case in 'resolving' (its Stripe calls
+  // in flight), the not-yet-transferred payout must stay blocked exactly like
+  // an 'open' case.
+  const blockedByResolvingCase = computePayoutEligibility(
+    { ...baseInput, disputeCaseStatus: "resolving" },
+    now
+  );
+  assert.equal(blockedByResolvingCase.eligible, false);
+  assert.equal(blockedByResolvingCase.payoutStatus, "blocked");
+  assert.equal(blockedByResolvingCase.payoutBlockedReason, "customer_dispute_open");
+
+  // ...and on the already-transferred branch it routes to manual recovery too.
+  const transferredResolvingCase = computePayoutEligibility(
+    {
+      ...baseInput,
+      paidOutAt: new Date("2026-03-19T12:00:00.000Z"),
+      stripeTransferId: "tr_123",
+      disputeCaseStatus: "resolving",
+    },
+    now
+  );
+  assert.equal(transferredResolvingCase.eligible, false);
+  assert.equal(transferredResolvingCase.payoutStatus, "blocked");
+  assert.equal(
+    transferredResolvingCase.payoutBlockedReason,
+    "dispute_after_payout_manual_recovery"
+  );
+
   // ── 1g — warning_* Stripe statuses block, except warning_closed ─────────────
   for (const warn of ["warning_needs_response", "warning_under_review"]) {
     const blocked = computePayoutEligibility({ ...baseInput, disputeStatus: warn }, now);
