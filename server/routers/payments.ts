@@ -1,6 +1,7 @@
 import type { Express } from "express";
 import { createServer, type Server } from "http";
 import { logger } from "../lib/logger";
+import { captureJobError } from "../lib/jobAlerts";
 import {
   safeGoogleErrorMessage,
   logRouteError,
@@ -474,6 +475,10 @@ export function registerPaymentRoutes(app: Express): void {
   // handler below is retained for defensiveness.
 
   app.post("/api/stripe/webhook", async (req, res) => {
+    // Hoisted so the outer catch can tag the Sentry event with which Stripe
+    // event was being processed when it blew up.
+    let eventId: string | null = null;
+    let eventType: string | null = null;
     try {
       await ensureStripeWebhookTable();
 
@@ -497,6 +502,8 @@ export function registerPaymentRoutes(app: Express): void {
       } catch {
         return res.status(400).json({ error: "Invalid Stripe signature" });
       }
+      eventId = asTrimmedString(event?.id);
+      eventType = asTrimmedString(event?.type);
 
       if (process.env.NODE_ENV === "production" && !event.livemode) {
         return res.status(400).json({ error: "Test-mode events rejected in production" });
@@ -527,7 +534,6 @@ export function registerPaymentRoutes(app: Express): void {
         }
       }
 
-      const eventType = asTrimmedString(event?.type);
       if (
         eventType === "payment_intent.succeeded" ||
         eventType === "payment_intent.payment_failed"
@@ -808,10 +814,13 @@ export function registerPaymentRoutes(app: Express): void {
             const { listRefundsForCharge } = await import("../stripe");
             chargeRefunds = await listRefundsForCharge(chargeId);
           } catch (refundListErr: any) {
-            logger.error(
-              { chargeId, err: refundListErr?.message || refundListErr },
-              "[charge.refunded] failed to list refunds — falling back to cumulative amount_refunded"
-            );
+            captureJobError("stripe_webhook", refundListErr, {
+              stage: "charge_refunded_list_refunds",
+              eventId,
+              eventType,
+              chargeId,
+              note: "falling back to cumulative amount_refunded",
+            });
             chargeRefunds = [];
           }
         }
@@ -1162,7 +1171,12 @@ export function registerPaymentRoutes(app: Express): void {
         .where(eq(stripeWebhookEvents.eventId, event.id));
 
       return res.json({ received: true });
-    } catch {
+    } catch (err) {
+      // F3: this outer catch previously swallowed every webhook-processing
+      // failure with no log and returned 500 — invisible to Sentry (its Express
+      // handler never fires on a caught error). Surface it so the failure is
+      // alertable; still return 500 so Stripe retries (processed_at stays null).
+      captureJobError("stripe_webhook", err, { eventId, eventType });
       return res.status(500).json({ error: "Webhook processing failed" });
     }
   });

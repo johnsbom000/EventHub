@@ -91,6 +91,9 @@ import {
   deactivateActiveListingsViolatingPublishGate,
   checkListingAvailabilityForBookingRequest,
   sendCancellationEmailsAsync,
+  resolvePackageConflictTarget,
+  sumReservedUnits,
+  exceedsCapacity,
 } from "../services/bookingService";
 import { registerGoogleRoutes } from "../routers/google";
 import { registerBoardRoutes } from "../routers/boards";
@@ -1048,36 +1051,26 @@ export function registerBookingRoutes(app: Express): void {
           : null;
 
       if (idempotencyKey) {
-        const existingRows: any = await db.execute(drizzleSql`
-          select
-            b.id as "bookingId"
-          from bookings b
-          where b.customer_id = ${customerAuth.id}
-            and exists (
-              select 1
-              from booking_items bi
-              where bi.booking_id = b.id
-                and coalesce(bi.item_data->>'idempotencyKey', '') = ${idempotencyKey}
+        // Fast path: a durable bookings.idempotency_key column (migration 0150)
+        // now backs the key. The authoritative guard is the in-transaction
+        // advisory lock + re-check + 23505 catch below; this is only an early-out.
+        const [existingBooking] = await db
+          .select()
+          .from(bookings)
+          .where(
+            and(
+              eq(bookings.customerId, customerAuth.id),
+              eq(bookings.idempotencyKey, idempotencyKey)
             )
-          order by b.created_at desc
-          limit 1
-        `);
-        const existingBookingId = asTrimmedString(
-          extractRows<{ bookingId?: string | null }>(existingRows)[0]?.bookingId
-        );
-        if (existingBookingId) {
-          const [existingBooking] = await db
-            .select()
-            .from(bookings)
-            .where(eq(bookings.id, existingBookingId))
-            .limit(1);
-          if (existingBooking?.id) {
-            return res.json({
-              ...existingBooking,
-              payoutReleaseMode: PAYOUT_RELEASE_MODE,
-              idempotencyReused: true,
-            });
-          }
+          )
+          .orderBy(desc(bookings.createdAt))
+          .limit(1);
+        if (existingBooking?.id) {
+          return res.json({
+            ...existingBooking,
+            payoutReleaseMode: PAYOUT_RELEASE_MODE,
+            idempotencyReused: true,
+          });
         }
       }
 
@@ -1313,31 +1306,12 @@ export function registerBookingRoutes(app: Express): void {
         });
       }
 
-      // Block if requested date falls inside a vacation block
-      const eventDateStr = String(data.eventDate || "").trim().slice(0, 10);
-      if (eventDateStr) {
-        const vacationConflict = await db
-          .select({ id: vendorVacationBlocks.id, startDate: vendorVacationBlocks.startDate, endDate: vendorVacationBlocks.endDate })
-          .from(vendorVacationBlocks)
-          .where(
-            and(
-              eq(vendorVacationBlocks.vendorId, vendorAccount.id),
-              lte(vendorVacationBlocks.startDate, eventDateStr),
-              gte(vendorVacationBlocks.endDate, eventDateStr)
-            )
-          )
-          .limit(1);
-
-        if (vacationConflict.length > 0) {
-          const block = vacationConflict[0];
-          return res.status(409).json({
-            error: `This vendor is unavailable from ${block.startDate} to ${block.endDate}. Please choose a different date.`,
-            code: "vacation_block_conflict",
-            conflictStart: block.startDate,
-            conflictEnd: block.endDate,
-          });
-        }
-      }
+      // Vacation-block enforcement moved INSIDE the booking transaction (after the
+      // vendor advisory lock) so a block created concurrently with an in-flight
+      // booking cannot slip through the check-then-insert window. The booking's
+      // full [start, end] date range is compared against block ranges there.
+      const bookingStartDateStr = String(data.eventDate || "").trim().slice(0, 10);
+      const bookingEndDateStr = String(data.eventEndDate || data.eventDate || "").trim().slice(0, 10);
 
       // ── Service radius enforcement ────────────────────────────────────────────
       // Geographic configuration (service center, radius, travelOffered) lives on
@@ -1502,10 +1476,30 @@ export function registerBookingRoutes(app: Express): void {
       // individual package_item's values. For 'independent' mode each variant has its
       // own separate capacity and we check against the package_item as usual.
       const isDependentPackage = containerRow?.packageAvailabilityMode === "dependent";
-      const conflictCheckListingId = isDependentPackage ? containerRow!.id : listingRow?.id ?? "";
-      const conflictCheckQuantity = isDependentPackage
-        ? Math.max(1, Math.floor(containerRow!.quantity || 1))
-        : listingAvailableQuantity;
+      const { conflictCheckListingId, conflictCheckQuantity } = resolvePackageConflictTarget({
+        isDependentPackage,
+        containerId: containerRow?.id ?? null,
+        containerQuantity: containerRow?.quantity ?? null,
+        listingId: listingRow?.id ?? null,
+        listingAvailableQuantity,
+      });
+      // For dependent packages the capacity pool is the container plus all of its
+      // package_item children. Bookings store the package_item id, so counting
+      // only the container id would miss every sibling booking (C3/M9). Resolve the
+      // full pool id set once for the pre-check; the in-tx recheck re-derives it
+      // under the container advisory lock.
+      let conflictCheckListingIds: string[] | undefined;
+      if (isDependentPackage) {
+        const poolRows: any = await db.execute(drizzleSql`
+          select id from vendor_listings
+          where id = ${conflictCheckListingId}
+             or parent_listing_id = ${conflictCheckListingId}
+        `);
+        const resolved = extractRows<{ id?: string | null }>(poolRows)
+          .map((r) => asTrimmedString(r.id))
+          .filter((id): id is string => id.length > 0);
+        conflictCheckListingIds = resolved.length > 0 ? resolved : [conflictCheckListingId];
+      }
       const availabilityCheck = !isAlaCarte && listingRow
         ? await checkListingAvailabilityForBookingRequest({
             vendorAccountId: vendorAccount.id,
@@ -1513,6 +1507,7 @@ export function registerBookingRoutes(app: Express): void {
             vendorGoogleCalendarId: vendorAccount.googleCalendarId,
             vendorTimeZone: canonicalBookingTimeRange.vendorTimeZone,
             listingId: conflictCheckListingId,
+            listingIds: conflictCheckListingIds,
             listingTitle: itemTitle,
             bookingStartAt: canonicalBookingTimeRange.bookingStartAt,
             bookingEndAt: canonicalBookingTimeRange.bookingEndAt,
@@ -1710,14 +1705,111 @@ export function registerBookingRoutes(app: Express): void {
           : null;
 
       stage = "insert-booking";
-      const bookingInsertResult = await db.transaction(async (tx) => {
+      let bookingInsertResult: any;
+      try {
+      bookingInsertResult = await db.transaction(async (tx) => {
         let effectiveStatus: "pending" | "confirmed" = idealBookingStatus;
         let pendingReason: string | null = null;
 
-        if (listingRow) {
-          await tx.execute(drizzleSql`select pg_advisory_xact_lock(1, hashtext(${listingRow.id}))`);
+        const hasTimeRange =
+          canonicalBookingTimeRange.bookingStartAt != null &&
+          canonicalBookingTimeRange.bookingEndAt != null;
 
+        // ── Advisory locks, acquired in a FIXED global order to prevent deadlocks:
+        //      ns3 idempotency → ns4 vendor → ns1 listing → ns2 addons.
+        //    All are xact-scoped, so they release automatically at commit/rollback.
+
+        // ns3 — idempotency claim (M1/M7). Serialize same-key requests, then re-check
+        // under the lock so a duplicate returns the existing winner rather than
+        // racing to a second insert. The pre-SELECT above is only a fast path.
+        if (idempotencyKey) {
+          await tx.execute(
+            drizzleSql`select pg_advisory_xact_lock(3, hashtext(${customerAuth.id + ":" + idempotencyKey}))`
+          );
+          const [claimed] = await tx
+            .select()
+            .from(bookings)
+            .where(
+              and(
+                eq(bookings.customerId, customerAuth.id),
+                eq(bookings.idempotencyKey, idempotencyKey)
+              )
+            )
+            .orderBy(desc(bookings.createdAt))
+            .limit(1);
+          if (claimed?.id) {
+            return { idempotencyReused: true as const, existingBooking: claimed };
+          }
+        }
+
+        // ns4 — vendor lock (M9-data/M8-concurrency). Serializes the vendor-level
+        // overlap check across ALL of this vendor's listings so two bookings for
+        // different listings cannot both pass the "vendor already busy" test.
+        await tx.execute(drizzleSql`select pg_advisory_xact_lock(4, hashtext(${vendorAccount.id}))`);
+
+        // ns1 — listing lock. For dependent packages lock the CONTAINER id so every
+        // package_item variant serializes against the shared pool (C3/M9); for all
+        // other listings lock the listing itself.
+        if (listingRow) {
+          await tx.execute(drizzleSql`select pg_advisory_xact_lock(1, hashtext(${conflictCheckListingId}))`);
+        }
+
+        // ns2 — addon locks (sorted for consistent acquisition order).
+        const sortedAddonIds =
+          isAlaCarte && resolvedAddonRows.length > 0 && hasTimeRange
+            ? [...resolvedAddonRows.map((a) => a.id)].sort()
+            : [];
+        for (const addonId of sortedAddonIds) {
+          await tx.execute(drizzleSql`select pg_advisory_xact_lock(2, hashtext(${addonId}))`);
+        }
+
+        // ── Conflict checks (all relevant locks now held) ──────────────────────
+
+        // Vacation block (M2): compare the booking's full [start, end] date range
+        // against the vendor's block ranges, inside the tx and under the vendor lock
+        // so a block created concurrently is either seen here or ordered after us.
+        if (bookingStartDateStr) {
+          const [vacationConflict] = await tx
+            .select({
+              id: vendorVacationBlocks.id,
+              startDate: vendorVacationBlocks.startDate,
+              endDate: vendorVacationBlocks.endDate,
+            })
+            .from(vendorVacationBlocks)
+            .where(
+              and(
+                eq(vendorVacationBlocks.vendorId, vendorAccount.id),
+                lte(vendorVacationBlocks.startDate, bookingEndDateStr),
+                gte(vendorVacationBlocks.endDate, bookingStartDateStr)
+              )
+            )
+            .limit(1);
+          if (vacationConflict) {
+            fail(
+              409,
+              `This vendor is unavailable from ${vacationConflict.startDate} to ${vacationConflict.endDate}. Please choose a different date.`,
+              {
+                code: "vacation_block_conflict",
+                conflictStart: vacationConflict.startDate,
+                conflictEnd: vacationConflict.endDate,
+              }
+            );
+          }
+        }
+
+        // Listing overlap recheck. For dependent packages, count the whole container
+        // pool (container + its package_item children) against the container's
+        // capacity (conflictCheckQuantity) — bookings store the package_item id, so a
+        // container-only count would miss every sibling booking (C3/M9). For every
+        // other listing the pool degenerates to the single listing id and the
+        // capacity is listingAvailableQuantity (== conflictCheckQuantity).
+        if (listingRow) {
           const overlapRows: any = await tx.execute(drizzleSql`
+            with pool as (
+              select id from vendor_listings
+              where id = ${conflictCheckListingId}
+                 or (${isDependentPackage}::boolean and parent_listing_id = ${conflictCheckListingId})
+            )
             select
               b.id,
               coalesce(b.booked_quantity, booking_item_totals.quantity, 1) as "quantity"
@@ -1726,17 +1818,17 @@ export function registerBookingRoutes(app: Express): void {
               select sum(coalesce(bi.quantity, 1))::int as quantity
               from booking_items bi
               where bi.booking_id = b.id
-                and bi.listing_id = ${listingRow.id}
+                and bi.listing_id in (select id from pool)
             ) booking_item_totals on true
             where (
-              b.listing_id = ${listingRow.id}
+              b.listing_id in (select id from pool)
               or (
                 b.listing_id is null
                 and exists (
                   select 1
                   from booking_items bi
                   where bi.booking_id = b.id
-                    and bi.listing_id = ${listingRow.id}
+                    and bi.listing_id in (select id from pool)
                 )
               )
             )
@@ -1749,34 +1841,21 @@ export function registerBookingRoutes(app: Express): void {
           `);
 
           const overlappingRows = extractRows<{ id?: string | null; quantity?: number | null }>(overlapRows);
-          const totalReservedUnits = overlappingRows.reduce((sum, row) => {
-            const quantity = parseIntegerValue(row.quantity);
-            return sum + (quantity && quantity > 0 ? quantity : 1);
-          }, 0);
-          if (totalReservedUnits + requestedQuantity > listingAvailableQuantity) {
+          const totalReservedUnits = sumReservedUnits(overlappingRows);
+          if (exceedsCapacity(totalReservedUnits, requestedQuantity, conflictCheckQuantity)) {
             fail(409, "Not enough listing quantity is available for the requested time range.", {
               code: "listing_time_conflict",
               source: "eventhub",
               conflictBookingId: overlappingRows[0]?.id ?? null,
               reservedUnits: totalReservedUnits,
               requestedQuantity,
-              availableQuantity: listingAvailableQuantity,
+              availableQuantity: conflictCheckQuantity,
             });
           }
         }
 
-        // Gap 2: a-la-carte add-on quantity enforcement with advisory locking.
-        // Sort IDs before locking to guarantee consistent acquisition order and prevent deadlocks.
-        if (
-          isAlaCarte &&
-          resolvedAddonRows.length > 0 &&
-          canonicalBookingTimeRange.bookingStartAt != null &&
-          canonicalBookingTimeRange.bookingEndAt != null
-        ) {
-          const sortedAddonIds = [...resolvedAddonRows.map((a) => a.id)].sort();
-          for (const addonId of sortedAddonIds) {
-            await tx.execute(drizzleSql`select pg_advisory_xact_lock(2, hashtext(${addonId}))`);
-          }
+        // Gap 2: a-la-carte add-on quantity enforcement (addon locks held above).
+        if (sortedAddonIds.length > 0) {
           for (const addon of resolvedAddonRows) {
             const addonReservedResult: any = await tx.execute(drizzleSql`
               select coalesce(sum(coalesce(bi.quantity, 1)), 0)::int as reserved
@@ -1804,11 +1883,9 @@ export function registerBookingRoutes(app: Express): void {
 
         // Gap 1: vendor-level conflict check — if the vendor already has any active
         // booking (across any listing) overlapping this time window, downgrade to
-        // pending so the vendor can review before confirming, regardless of instant-book setting.
-        if (
-          canonicalBookingTimeRange.bookingStartAt != null &&
-          canonicalBookingTimeRange.bookingEndAt != null
-        ) {
+        // pending so the vendor can review before confirming, regardless of instant-book
+        // setting. Runs under the ns4 vendor lock so it serializes across listings.
+        if (hasTimeRange) {
           const vendorConflictResult: any = await tx.execute(drizzleSql`
             select id from bookings
             where vendor_account_id = ${vendorAccount.id}
@@ -1930,6 +2007,7 @@ export function registerBookingRoutes(app: Express): void {
             cancellationPolicySnapshot: bookingCancellationPolicySnapshot as any,
             appliedDiscountId: appliedDiscountId ?? undefined,
             discountAmountCents: discountAmountCents > 0 ? discountAmountCents : undefined,
+            idempotencyKey: idempotencyKey ?? undefined,
             createdAt: new Date(),
             updatedAt: new Date(),
           })
@@ -2092,6 +2170,48 @@ export function registerBookingRoutes(app: Express): void {
           pendingReason,
         };
       });
+      } catch (txErr: any) {
+        // DB-level idempotency backstop: if a concurrent request won the race and
+        // committed the same (customer_id, idempotency_key) first, our insert hits
+        // the partial unique index (migration 0150). Adopt the winner instead of
+        // surfacing a 500. Any other error propagates unchanged.
+        const isIdempotencyClash =
+          idempotencyKey &&
+          (txErr?.code === "23505" ||
+            /bookings_customer_idempotency_key_unique_idx/i.test(
+              String(txErr?.constraint ?? txErr?.detail ?? txErr?.message ?? "")
+            ));
+        if (isIdempotencyClash) {
+          const [winner] = await db
+            .select()
+            .from(bookings)
+            .where(
+              and(
+                eq(bookings.customerId, customerAuth.id),
+                eq(bookings.idempotencyKey, idempotencyKey!)
+              )
+            )
+            .orderBy(desc(bookings.createdAt))
+            .limit(1);
+          if (winner?.id) {
+            return res.json({
+              ...winner,
+              payoutReleaseMode: PAYOUT_RELEASE_MODE,
+              idempotencyReused: true,
+            });
+          }
+        }
+        throw txErr;
+      }
+
+      // Idempotency fast-in-tx re-check found an existing booking under the lock.
+      if (bookingInsertResult?.idempotencyReused) {
+        return res.json({
+          ...bookingInsertResult.existingBooking,
+          payoutReleaseMode: PAYOUT_RELEASE_MODE,
+          idempotencyReused: true,
+        });
+      }
 
       const booking = bookingInsertResult.booking;
       if (!booking?.id) {

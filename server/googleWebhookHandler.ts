@@ -19,7 +19,7 @@
  * re-syncing that change back to Google.
  */
 
-import { logger } from "./lib/logger";
+import { captureJobError } from "./lib/jobAlerts";
 import { and, eq } from "drizzle-orm";
 
 import {
@@ -135,7 +135,7 @@ async function handleSyncPing(
       await updateWatchChannelSyncToken(channelId, nextSyncToken);
     }
   } catch (err) {
-    logger.error({ err, vendorAccountId }, "[webhook] Failed to fetch initial sync token");
+    captureJobError("google_calendar_webhook", err, { stage: "sync_ping_token", vendorAccountId });
   }
 }
 
@@ -200,7 +200,10 @@ async function handleBookingEventChange(
     message: `A booking's dates were changed in Google Calendar. Price is unchanged. Review it in your bookings dashboard.`,
     link: `/vendor/dashboard`,
   }).catch((err) =>
-    logger.error(`[webhook] Failed to create booking_updated notification for vendor ${vendorAccountId}:`, err)
+    captureJobError("google_calendar_webhook", err, {
+      stage: "notify_booking_updated",
+      vendorAccountId,
+    })
   );
 }
 
@@ -226,7 +229,10 @@ async function handleBookingEventDeletion(
     message: `A booking event was deleted from your Google Calendar. If you want to cancel this booking, please do so in EventHub so availability updates correctly for customers.`,
     link: `/vendor/dashboard`,
   }).catch((err) =>
-    logger.error(`[webhook] Failed to create booking_deleted notification for vendor ${vendorAccountId}:`, err)
+    captureJobError("google_calendar_webhook", err, {
+      stage: "notify_booking_deleted",
+      vendorAccountId,
+    })
   );
 }
 
@@ -473,7 +479,10 @@ export async function handleGoogleCalendarWebhook(req: {
   // Initial "sync" ping — just grab the sync token
   if (state === "sync") {
     await handleSyncPing(channel.vendorAccountId, channel.channelId).catch((err) =>
-      logger.error("[webhook] handleSyncPing error:", err)
+      captureJobError("google_calendar_webhook", err, {
+        stage: "sync_ping",
+        vendorAccountId: channel.vendorAccountId,
+      })
     );
     return { status: "ok" };
   }
@@ -484,10 +493,11 @@ export async function handleGoogleCalendarWebhook(req: {
     channel.channelId,
     channel.calendarId
   ).catch((err) => {
-    logger.error(
-      `[webhook] processGoogleWebhookForChannel failed for vendor ${channel.vendorAccountId}:`,
-      err
-    );
+    captureJobError("google_calendar_webhook", err, {
+      stage: "process_channel",
+      vendorAccountId: channel.vendorAccountId,
+      channelId: channel.channelId,
+    });
     // Notify vendor of sync error
     createVendorNotification({
       vendorAccountId: channel.vendorAccountId,
