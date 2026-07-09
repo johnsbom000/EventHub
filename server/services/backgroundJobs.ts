@@ -2,6 +2,7 @@ import { db } from "../db";
 import { eq, and, or, inArray, isNull, isNotNull, lt, sql as drizzleSql } from "drizzle-orm";
 import { bookings, payments, vendorAccounts, users, vendorSuspensions, vendorProfiles } from "@shared/schema";
 import { logger } from "../lib/logger";
+import { captureJobError } from "../lib/jobAlerts";
 import { appUrl } from "../lib/routeHelpers";
 import {
   asTrimmedString,
@@ -92,6 +93,18 @@ export async function ensureStripeWebhookTable() {
       await db.execute(drizzleSql`
         create index if not exists idx_stripe_webhook_events_processed_at
         on stripe_webhook_events (processed_at desc)
+      `);
+      // F8: mirror migration 0041 so envs whose table was born via this lazy
+      // DDL path also get expires_at (+ its index). Without this, the retention
+      // cleanup job (stripeWebhookCleanup) errors on every run and the table
+      // grows unbounded. Idempotent — prod already has 0041; this heals fresh/dev.
+      await db.execute(drizzleSql`
+        alter table stripe_webhook_events
+        add column if not exists expires_at timestamp not null default (now() + interval '90 days')
+      `);
+      await db.execute(drizzleSql`
+        create index if not exists idx_stripe_webhook_events_expires_at
+        on stripe_webhook_events (expires_at)
       `);
     })().catch((error) => {
       stripeWebhookTableReadyPromise = null;
@@ -238,10 +251,11 @@ export async function expireStalePendingBookings() {
       // Stripe lookup failed — fail safe toward NOT expiring a possibly-paid
       // booking. It'll be re-evaluated on the next cycle.
       skippedInFlight += 1;
-      logger.warn(
-        `[booking expiry] Stripe lookup failed for booking ${bookingId} (pi=${candidate.paymentIntentId}); skipping this cycle:`,
-        err?.message || err
-      );
+      captureJobError("booking_expiry", err, {
+        stage: "stripe_pi_lookup",
+        bookingId,
+        paymentIntentId: candidate.paymentIntentId,
+      });
     }
   }
 
@@ -377,11 +391,12 @@ export async function cancelUnansweredBookingRequests(): Promise<number> {
       });
 
       if (!refundOutcome.ok) {
-        const stripeErr: any = refundOutcome.error;
-        logger.error(
-          `[vendor-no-response] Stripe refund failed for payment ${refundOutcome.failedPaymentId} (booking ${row.id}) — leaving booking pending for retry:`,
-          stripeErr?.message || stripeErr
-        );
+        captureJobError("vendor_no_response", refundOutcome.error, {
+          stage: "stripe_refund",
+          bookingId: row.id,
+          failedPaymentId: refundOutcome.failedPaymentId,
+          note: "leaving booking pending for retry",
+        });
         continue;
       }
 
@@ -423,8 +438,12 @@ export async function cancelUnansweredBookingRequests(): Promise<number> {
       });
 
       if (!casWon) {
-        logger.error(
-          `[vendor-no-response] booking ${row.id} changed status between refund and cancel — refunds were issued (${totalRefundedCents} cents) but booking was NOT cancelled; needs manual review`
+        captureJobError(
+          "vendor_no_response",
+          new Error(
+            `booking ${row.id} changed status between refund and cancel — refunds were issued (${totalRefundedCents} cents) but booking was NOT cancelled; needs manual review`
+          ),
+          { stage: "cas_conflict", bookingId: row.id, totalRefundedCents }
         );
         continue;
       }
@@ -476,7 +495,7 @@ export async function cancelUnansweredBookingRequests(): Promise<number> {
 
       cancelled++;
     } catch (err: any) {
-      logger.warn(`[vendor-no-response] failed to cancel booking ${row.id}:`, err?.message || err);
+      captureJobError("vendor_no_response", err, { stage: "cancel_booking", bookingId: row.id });
     }
   }
 
@@ -599,14 +618,15 @@ export async function recoverStalePayoutClaims(): Promise<number> {
         recovered += 1;
       } catch (rowErr: any) {
         // A Stripe blip on one row must not strand the rest — retry next tick.
-        logger.warn(
-          `[payout] stale-claim recovery failed for payment ${claim.paymentId}:`,
-          rowErr?.message || rowErr
-        );
+        captureJobError("stale_payout_claim_recovery", rowErr, {
+          stage: "recover_row",
+          paymentId: claim.paymentId,
+          bookingId: claim.bookingId,
+        });
       }
     }
   } catch (err: any) {
-    logger.warn("[payout] stale-claim recovery scan failed:", err?.message || err);
+    captureJobError("stale_payout_claim_recovery", err, { stage: "scan" });
   }
   return recovered;
 }
@@ -673,7 +693,7 @@ export async function runAutoPayoutTickWithResult(): Promise<boolean> {
     }
     return false;
   } catch (error) {
-    logger.error({ err: error }, "auto payout tick failed");
+    captureJobError("auto_payout", error, { stage: "tick" });
     return true;
   } finally {
     autoPayoutTickInFlight = false;
@@ -759,11 +779,10 @@ export async function runStripeConnectReconcileJob(): Promise<number> {
         if (await reconcileVendorStripeOnboarding(row.stripeConnectId)) flipped += 1;
       } catch (err: any) {
         // One bad account must not halt the batch.
-        logger.warn(
-          "[stripe-connect-reconcile] check failed for %s: %s",
-          row.stripeConnectId,
-          err?.message || err
-        );
+        captureJobError("stripe_connect_reconcile", err, {
+          stage: "reconcile_account",
+          stripeConnectId: row.stripeConnectId,
+        });
       }
     }
     if (flipped > 0) {
@@ -773,6 +792,9 @@ export async function runStripeConnectReconcileJob(): Promise<number> {
       );
     }
     return flipped;
+  } catch (err: any) {
+    captureJobError("stripe_connect_reconcile", err, { stage: "job" });
+    return 0;
   } finally {
     await releaseWorkerLock("stripe_connect_reconcile", lockToken);
   }
@@ -877,13 +899,11 @@ export async function runSecurityDepositRefundJob(): Promise<number> {
       }
 
       if (outcome.action === "failed") {
-        const rowErr: any = outcome.error;
-        logger.warn(
-          "[security-deposit-refund] failed for payment=%s booking=%s: %s",
-          row.payment_id,
-          row.booking_id,
-          rowErr?.message || rowErr
-        );
+        captureJobError("security_deposit_refund", outcome.error, {
+          stage: "stripe_refund",
+          paymentId: row.payment_id,
+          bookingId: row.booking_id,
+        });
         continue;
       }
 
@@ -916,12 +936,11 @@ export async function runSecurityDepositRefundJob(): Promise<number> {
           outcome.amountCents
         );
       } catch (rowErr: any) {
-        logger.warn(
-          "[security-deposit-refund] persist failed for payment=%s booking=%s: %s",
-          row.payment_id,
-          row.booking_id,
-          rowErr?.message || rowErr
-        );
+        captureJobError("security_deposit_refund", rowErr, {
+          stage: "persist_refund",
+          paymentId: row.payment_id,
+          bookingId: row.booking_id,
+        });
       }
     }
 
@@ -930,7 +949,7 @@ export async function runSecurityDepositRefundJob(): Promise<number> {
     }
     return refunded;
   } catch (err: any) {
-    logger.warn("[security-deposit-refund] job failed: %s", err?.message || err);
+    captureJobError("security_deposit_refund", err, { stage: "job" });
     return 0;
   } finally {
     await releaseWorkerLock("security_deposit_refund", lockToken);
@@ -1059,12 +1078,11 @@ export async function runTravelFeeRefundJob(): Promise<number> {
           remainingCents
         );
       } catch (rowErr: any) {
-        logger.warn(
-          "[travel-fee-refund] failed for payment=%s booking=%s: %s",
-          row.payment_id,
-          row.booking_id,
-          rowErr?.message || rowErr
-        );
+        captureJobError("travel_fee_refund", rowErr, {
+          stage: "refund_row",
+          paymentId: row.payment_id,
+          bookingId: row.booking_id,
+        });
       }
     }
 
@@ -1073,7 +1091,7 @@ export async function runTravelFeeRefundJob(): Promise<number> {
     }
     return refunded;
   } catch (err: any) {
-    logger.warn("[travel-fee-refund] job failed: %s", err?.message || err);
+    captureJobError("travel_fee_refund", err, { stage: "job" });
     return 0;
   } finally {
     await releaseWorkerLock("travel_fee_refund", lockToken);
@@ -1107,7 +1125,7 @@ export async function runBookingCompletionJob(): Promise<number> {
     }
     return rowCount;
   } catch (err: any) {
-    logger.warn("[booking-completion] job failed: %s", err?.message || err);
+    captureJobError("booking_auto_complete", err, { stage: "job" });
     return 0;
   } finally {
     await releaseWorkerLock("booking_auto_complete", lockToken);
@@ -1144,7 +1162,7 @@ export function startReviewPromptWorker() {
   const INTERVAL_MS = 24 * 60 * 60 * 1000;
   const serverUrl = appUrl();
   const run = () => runReviewPromptJob({ serverUrl, logger: { log: logger.info.bind(logger), warn: logger.warn.bind(logger) } }).catch((err: any) => {
-    logger.warn("[review-prompt] worker error: %s", err?.message || err);
+    captureJobError("review_prompt", err, { stage: "worker" });
   });
   const startTimer = setTimeout(() => {
     void run();
@@ -1157,7 +1175,7 @@ export function startReviewPromptWorker() {
 export function startStripeWebhookCleanupWorker() {
   const INTERVAL_MS = 24 * 60 * 60 * 1000;
   const run = () => runStripeWebhookCleanupJob({ logger: { log: logger.info.bind(logger), warn: logger.warn.bind(logger) } }).catch((err: any) => {
-    logger.warn("[stripe-webhook-cleanup] worker error: %s", err?.message || err);
+    captureJobError("stripe_webhook_cleanup", err, { stage: "worker" });
   });
   const startTimer = setTimeout(() => {
     void run();
@@ -1170,7 +1188,7 @@ export function startStripeWebhookCleanupWorker() {
 export function startDataRetentionCleanupWorker() {
   const INTERVAL_MS = 24 * 60 * 60 * 1000;
   const run = () => runDataRetentionCleanupJob({ logger: { log: logger.info.bind(logger), warn: logger.warn.bind(logger) } }).catch((err: any) => {
-    logger.warn("[data-retention] worker error: %s", err?.message || err);
+    captureJobError("data_retention", err, { stage: "worker" });
   });
   const startTimer = setTimeout(() => {
     void run();
@@ -1194,7 +1212,7 @@ export function startBookingExpiryWorker() {
       if (noResponseCount > 0) logger.info(`[booking expiry] auto-cancelled ${noResponseCount} unanswered booking request(s) after ${BOOKING_VENDOR_RESPONSE_EXPIRY_DAYS} days`);
       backoffMs = 5 * 60 * 1000;
     } catch (error: any) {
-      logger.warn("[booking expiry] cleanup failed:", error?.message || error);
+      captureJobError("booking_expiry", error, { stage: "tick" });
       backoffMs = Math.min(backoffMs * 2, MAX_BACKOFF_MS);
     } finally {
       await releaseWorkerLock("booking_expiry", lockToken);
@@ -1215,7 +1233,7 @@ export function startChatCleanupWorker() {
     try {
       await cleanupExpiredStreamChannels();
     } catch (error: any) {
-      logger.warn("Expired chat cleanup failed:", error?.message || error);
+      captureJobError("chat_cleanup", error, { stage: "job" });
     }
   };
   void run();
@@ -1246,11 +1264,14 @@ export function startGoogleVerificationWorker() {
               summary.googleCalendarReadStatus);
           }
         } catch (error: any) {
-          logger.warn("[google verification] vendor=%s failed: %s", asTrimmedString(account.id) || "unknown", error?.message || error);
+          captureJobError("google_sync_verification", error, {
+            stage: "verify_vendor",
+            vendorAccountId: asTrimmedString(account.id) || "unknown",
+          });
         }
       }
     } catch (error: any) {
-      logger.warn("[google verification] recurring run failed:", error?.message || error);
+      captureJobError("google_sync_verification", error, { stage: "run" });
     }
   };
 
@@ -1266,7 +1287,7 @@ export function startWatchChannelRenewalWorker() {
         logger.info("[watch channel renewal] renewed=%d failed=%d", result.renewed, result.failed);
       }
     } catch (error: any) {
-      logger.warn("[watch channel renewal] job failed:", error?.message || error);
+      captureJobError("watch_channel_renewal", error, { stage: "job" });
     }
   };
   const startTimer = setTimeout(() => {
@@ -1338,12 +1359,12 @@ export function startEventDayReminderWorker() {
           await db.update(bookings).set({ eventDayReminderSent: true }).where(eq(bookings.id, row.bookingId));
           sent++;
         } catch (rowError: any) {
-          logger.warn("[event day reminder] failed for booking %s: %s", row.bookingId, rowError?.message || rowError);
+          captureJobError("event_day_reminder", rowError, { stage: "send_row", bookingId: row.bookingId });
         }
       }
       if (sent > 0) logger.info("[event day reminder] sent %d reminder(s)", sent);
     } catch (error: any) {
-      logger.warn("[event day reminder] job failed:", error?.message || error);
+      captureJobError("event_day_reminder", error, { stage: "job" });
     }
   };
   const startTimer = setTimeout(() => {
@@ -1385,12 +1406,12 @@ export function startSuspensionLiftedWorker() {
           await db.execute(drizzleSql`update vendor_suspensions set lift_email_sent = true where id = ${row.suspensionId}`);
           sent++;
         } catch (rowError: any) {
-          logger.warn("[suspension lifted] failed for %s: %s", row.suspensionId, rowError?.message || rowError);
+          captureJobError("suspension_lifted", rowError, { stage: "send_row", suspensionId: row.suspensionId });
         }
       }
       if (sent > 0) logger.info("[suspension lifted] sent %d notification(s)", sent);
     } catch (error: any) {
-      logger.warn("[suspension lifted] job failed:", error?.message || error);
+      captureJobError("suspension_lifted", error, { stage: "job" });
     }
   };
   const startTimer = setTimeout(() => {
@@ -1475,12 +1496,12 @@ export function startPendingRequestReminderWorker() {
           await db.update(bookings).set(columnToSet as any).where(eq(bookings.id, row.bookingId));
           sent++;
         } catch (rowError: any) {
-          logger.warn("[pending reminder] failed for booking %s: %s", row.bookingId, rowError?.message || rowError);
+          captureJobError("pending_request_reminder", rowError, { stage: "send_row", bookingId: row.bookingId });
         }
       }
       if (sent > 0) logger.info("[pending reminder] sent %d reminder(s)", sent);
     } catch (error: any) {
-      logger.warn("[pending reminder] job failed:", error?.message || error);
+      captureJobError("pending_request_reminder", error, { stage: "job" });
     }
   };
   const startTimer = setTimeout(() => {
