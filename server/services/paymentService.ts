@@ -1,5 +1,5 @@
 import { db } from "../db";
-import { eq, and, or, isNull, isNotNull, inArray, sql as drizzleSql } from "drizzle-orm";
+import { eq, and, ne, or, isNull, isNotNull, inArray, sql as drizzleSql } from "drizzle-orm";
 import { bookings, payments, users, vendorAccounts, disputeCases } from "@shared/schema";
 import { logger } from "../lib/logger";
 import { appUrl } from "../lib/routeHelpers";
@@ -14,6 +14,7 @@ import {
   estimateStripeProcessingFeeCents,
   deriveBookingPaymentStatusFromScheduleStatuses,
   MAX_PAYOUT_TRANSFER_RETRIES,
+  resolvePaymentInitAction,
 } from "../lib/routeUtils";
 import {
   VENDOR_FEE_RATE,
@@ -973,6 +974,20 @@ export async function applyPaymentIntentSuccessInTx(
   });
   if (!payment?.id || !payment.bookingId) return { bookingId: null, alreadyProcessed: false };
 
+  // M5/M6: exactly-once gate. ensurePaymentRecordForIntentInTx read the row
+  // WITHOUT a row lock, so concurrent confirmation paths (Stripe webhook, the
+  // synchronous post-checkout reconcile, the expiry guard, or duplicate webhook
+  // deliveries) could each observe a pre-succeeded status and each fire the
+  // one-time side effects. Take a row lock and re-read the status under it so
+  // the appliers serialize: exactly one sees the pre-succeeded status
+  // (alreadyProcessed:false) and the rest observe 'succeeded' and return
+  // alreadyProcessed:true.
+  const lockedStatusRows: any = await tx.execute(
+    drizzleSql`select status from payments where id = ${payment.id} for update`
+  );
+  const lockedStatus =
+    extractRows<{ status: string | null }>(lockedStatusRows)[0]?.status ?? payment.status;
+
   // Idempotency: already applied by another confirmation path — skip re-applying
   // and signal callers not to re-fire one-time side effects. One exception: if
   // this delivery carries Stripe's REAL settled fee (balance_transaction.fee)
@@ -981,7 +996,7 @@ export async function applyPaymentIntentSuccessInTx(
   // nothing has been transferred yet. Callers only pass actualStripeFeeAmount
   // non-null when it came from a real balance-transaction fetch, never an
   // estimate, so this overwrite is always estimate→actual.
-  if (isPaymentSucceededStatus(payment.status)) {
+  if (isPaymentSucceededStatus(lockedStatus)) {
     const incomingActualFee = parseIntegerValue(actualStripeFeeAmount);
     const storedActualFee = parseIntegerValue(payment.actualStripeFeeAmount);
     const notYetPaidOut =
@@ -1077,7 +1092,10 @@ export async function applyPaymentIntentSuccessInTx(
       payoutAdjustedAmount: payoutEligibility.adjustedPayoutAmount,
       disputeStatus: null,
     })
-    .where(eq(payments.id, payment.id));
+    // Belt-and-braces with the row lock above: never overwrite an already
+    // 'succeeded' row (guards any future caller that reaches this UPDATE
+    // without the lock).
+    .where(and(eq(payments.id, payment.id), ne(payments.status, "succeeded")));
 
   // Mark the security deposit row (same PaymentIntent, separate row) as
   // succeeded so the auto-refund job and cancellation logic can find it.
@@ -1247,24 +1265,11 @@ export async function initializeBookingPayment(input: {
 
   const { stripeClient, createBookingPaymentIntent } = await import("../stripe");
 
-  // Check if a pending PaymentIntent already exists for this booking (idempotent resume).
-  const [existingPayment] = await db
-    .select({ stripePaymentIntentId: payments.stripePaymentIntentId, status: payments.status })
-    .from(payments)
-    .where(and(eq(payments.bookingId, bookingId), eq(payments.paymentType, "booking")))
-    .limit(1);
-
-  if (existingPayment?.stripePaymentIntentId) {
-    const existingIntent = await stripeClient.paymentIntents.retrieve(existingPayment.stripePaymentIntentId);
-    if (existingIntent.status === "succeeded") throw new Error("This payment has already been completed");
-    if (existingIntent.client_secret && existingIntent.status !== "canceled") {
-      return { booking, clientSecret: existingIntent.client_secret, paymentIntentId: existingIntent.id };
-    }
-  }
-
-  // Security deposit is included in the single upfront PaymentIntent.
-  // The deposit amount is tracked in a separate payments row so it can be
-  // partially refunded independently of the service payment.
+  // Security deposit is included in the single upfront PaymentIntent. The deposit
+  // amount is tracked in a separate payments row so it can be partially refunded
+  // independently of the service payment. These amounts depend only on the
+  // booking, so they are computed up front — BOTH the create-PI path and the
+  // resume path below need them to ensure the rows.
   const securityDepositCents = Math.max(0, parseIntegerValue(booking.securityDepositCents) ?? 0);
   const totalAmountCents = parseIntegerValue(booking.totalAmount) ?? 0;
   // Service-only total = full booking charge minus the security deposit portion.
@@ -1274,83 +1279,127 @@ export async function initializeBookingPayment(input: {
   const vendorGrossAmount = parseIntegerValue(booking.subtotalAmountCents) ?? Math.max(0, serviceOnlyTotal - platformFeeAmount);
   const vendorNetPayoutAmount = parseIntegerValue(booking.vendorPayout) ?? Math.max(0, serviceOnlyTotal - platformFeeAmount);
   const stripeProcessingFeeEstimate = estimateStripeProcessingFeeCents(totalAmountCents);
-
-  const paymentIntent = await createBookingPaymentIntent({
-    amount: totalAmountCents, // full charge including security deposit
-    platformFeeAmount,
-    vendorNetPayoutAmount,
-    vendorGrossAmount,
-    stripeProcessingFeeEstimate,
-    vendorAbsorbsStripeFees: VENDOR_ABSORBS_STRIPE_FEES,
-    vendorStripeAccountId: vendorAccount.stripeConnectId,
-    vendorAccountId: booking.vendorAccountId,
-    listingId: booking.listingId ?? undefined,
-    eventStartAt: booking.bookingStartAt,
-    eventEndAt: booking.bookingEndAt,
-    totalAmount: totalAmountCents,
-    description: `Booking ${booking.id}`,
-    bookingId: booking.id,
-    paymentType: "booking",
-    idempotencyKey: `booking-payment:${booking.id}`,
-  });
-
   const payoutEligibleAt =
     booking.bookingEndAt instanceof Date
       ? new Date(booking.bookingEndAt.getTime() + DISPUTE_WINDOW_HOURS * 60 * 60 * 1000)
       : null;
 
-  // Insert the service payment row (used for payout tracking and booking status).
-  await db.insert(payments).values({
-    bookingId: booking.id,
-    customerId: booking.customerId,
-    vendorAccountId: booking.vendorAccountId,
-    stripePaymentIntentId: paymentIntent.id,
-    amount: serviceOnlyTotal,
-    totalAmount: serviceOnlyTotal,
-    platformFeeAmount,
-    vendorGrossAmount,
-    vendorNetPayoutAmount,
-    stripeProcessingFeeEstimate,
-    // Snapshot the fee policy at booking time so a later platform-default flip
-    // never retroactively changes payouts for bookings already made.
-    vendorAbsorbsStripeFees: VENDOR_ABSORBS_STRIPE_FEES,
-    stripeConnectedAccountId: vendorAccount.stripeConnectId,
-    paymentType: "booking",
-    status: "pending",
-    payoutStatus: "not_ready",
-    payoutEligibleAt,
-  }).onConflictDoNothing({
-    // Safe if called twice before confirmation. Pinned to the (PI, payment_type)
-    // partial unique index so other unique violations surface loudly.
-    target: [payments.stripePaymentIntentId, payments.paymentType],
-    where: isNotNull(payments.stripePaymentIntentId),
-  });
+  // Check if a PaymentIntent already exists for this booking (idempotent resume).
+  const [existingPayment] = await db
+    .select({ stripePaymentIntentId: payments.stripePaymentIntentId, status: payments.status })
+    .from(payments)
+    .where(and(eq(payments.bookingId, bookingId), eq(payments.paymentType, "booking")))
+    .limit(1);
 
-  // Insert the security deposit row (same PaymentIntent, tracked separately for refunds).
-  if (securityDepositCents > 0) {
-    await db.insert(payments).values({
+  // Resolve the PaymentIntent to use. F8: whether we resume an existing PI or
+  // create a fresh one, we ALWAYS fall through to the row-ensure block below.
+  // The old code early-returned as soon as it found a reusable PI, so it never
+  // reached the security_deposit insert — a deposit row missing on resume (e.g.
+  // the first init crashed after the booking row but before the deposit row, or
+  // the deposit row was manually removed) was stranded forever, and the deposit
+  // was never marked succeeded / refundable.
+  let paymentIntentId = "";
+  let clientSecret: string | null = null;
+  let needCreate = true;
+  const existingPiId = asTrimmedString(existingPayment?.stripePaymentIntentId);
+  if (existingPiId) {
+    const existingIntent = await stripeClient.paymentIntents.retrieve(existingPiId);
+    const action = resolvePaymentInitAction(existingIntent.status);
+    if (action === "already_completed") throw new Error("This payment has already been completed");
+    if (action === "reuse" && existingIntent.client_secret) {
+      paymentIntentId = existingIntent.id;
+      clientSecret = existingIntent.client_secret;
+      needCreate = false;
+    }
+  }
+
+  if (needCreate) {
+    const paymentIntent = await createBookingPaymentIntent({
+      amount: totalAmountCents, // full charge including security deposit
+      platformFeeAmount,
+      vendorNetPayoutAmount,
+      vendorGrossAmount,
+      stripeProcessingFeeEstimate,
+      vendorAbsorbsStripeFees: VENDOR_ABSORBS_STRIPE_FEES,
+      vendorStripeAccountId: vendorAccount.stripeConnectId,
+      vendorAccountId: booking.vendorAccountId,
+      listingId: booking.listingId ?? undefined,
+      eventStartAt: booking.bookingStartAt,
+      eventEndAt: booking.bookingEndAt,
+      totalAmount: totalAmountCents,
+      description: `Booking ${booking.id}`,
+      bookingId: booking.id,
+      paymentType: "booking",
+      idempotencyKey: `booking-payment:${booking.id}`,
+    });
+    paymentIntentId = paymentIntent.id;
+    clientSecret = paymentIntent.client_secret ?? null;
+  }
+
+  // Ensure BOTH the service row and (when present) the security-deposit row
+  // exist for this PaymentIntent, on BOTH the resume and create paths. A
+  // per-booking advisory xact lock serializes concurrent initializes so two
+  // callers can't race to create duplicate rows; the composite
+  // (payment_intent_id, payment_type) partial unique index
+  // (idx_payments_pi_type_unique, migration 0143) is the DB-level backstop, so
+  // onConflictDoNothing is a genuine no-op-on-exists here — it used to be a
+  // no-op-ALWAYS before that index was the enforced uniqueness.
+  await db.transaction(async (tx) => {
+    await tx.execute(drizzleSql`select pg_advisory_xact_lock(3, hashtext(${bookingId}))`);
+
+    // Service payment row (used for payout tracking and booking status).
+    await tx.insert(payments).values({
       bookingId: booking.id,
       customerId: booking.customerId,
       vendorAccountId: booking.vendorAccountId,
-      stripePaymentIntentId: paymentIntent.id,
-      amount: securityDepositCents,
-      totalAmount: securityDepositCents,
-      platformFeeAmount: 0,
-      vendorGrossAmount: 0,
-      vendorNetPayoutAmount: 0,
+      stripePaymentIntentId: paymentIntentId,
+      amount: serviceOnlyTotal,
+      totalAmount: serviceOnlyTotal,
+      platformFeeAmount,
+      vendorGrossAmount,
+      vendorNetPayoutAmount,
+      stripeProcessingFeeEstimate,
+      // Snapshot the fee policy at booking time so a later platform-default flip
+      // never retroactively changes payouts for bookings already made.
+      vendorAbsorbsStripeFees: VENDOR_ABSORBS_STRIPE_FEES,
       stripeConnectedAccountId: vendorAccount.stripeConnectId,
-      paymentType: "security_deposit",
+      paymentType: "booking",
       status: "pending",
-      payoutStatus: "blocked",
-      payoutBlockedReason: "security_deposit",
+      payoutStatus: "not_ready",
+      payoutEligibleAt,
     }).onConflictDoNothing({
-      // Same PI as the booking row above — only the (PI, payment_type)
-      // composite may conflict here. A stray single-column PI unique index
-      // (see migration 0143) would otherwise silently eat this deposit row.
+      // Pinned to the (PI, payment_type) partial unique index so other unique
+      // violations surface loudly.
       target: [payments.stripePaymentIntentId, payments.paymentType],
       where: isNotNull(payments.stripePaymentIntentId),
     });
-  }
 
-  return { booking, clientSecret: paymentIntent.client_secret, paymentIntentId: paymentIntent.id };
+    // Security deposit row (same PaymentIntent, tracked separately for refunds).
+    if (securityDepositCents > 0) {
+      await tx.insert(payments).values({
+        bookingId: booking.id,
+        customerId: booking.customerId,
+        vendorAccountId: booking.vendorAccountId,
+        stripePaymentIntentId: paymentIntentId,
+        amount: securityDepositCents,
+        totalAmount: securityDepositCents,
+        platformFeeAmount: 0,
+        vendorGrossAmount: 0,
+        vendorNetPayoutAmount: 0,
+        stripeConnectedAccountId: vendorAccount.stripeConnectId,
+        paymentType: "security_deposit",
+        status: "pending",
+        payoutStatus: "blocked",
+        payoutBlockedReason: "security_deposit",
+      }).onConflictDoNothing({
+        // Same PI as the booking row above — only the (PI, payment_type)
+        // composite may conflict here. A stray single-column PI unique index
+        // (see migration 0143) would otherwise silently eat this deposit row.
+        target: [payments.stripePaymentIntentId, payments.paymentType],
+        where: isNotNull(payments.stripePaymentIntentId),
+      });
+    }
+  });
+
+  return { booking, clientSecret, paymentIntentId };
 }

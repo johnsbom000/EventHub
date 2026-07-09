@@ -21,6 +21,7 @@
     "test:refund-apportionment": "node --import tsx ./tests/refund-apportionment.test.ts",
     "test:payout-retry": "node --import tsx ./tests/payout-retry-eligibility.test.ts",
     "test:booking-conflict": "node --import tsx ./tests/booking-conflict-integrity.test.ts",
+    "test:payment-init-side-effects": "node --import tsx ./tests/payment-init-side-effects.test.ts",
     "migrate": "tsx --env-file .env server/scripts/validate_migrations.ts && tsx --env-file .env server/migrate.ts",
     "validate:migrations": "tsx --env-file .env server/scripts/validate_migrations.ts",
     "start": "NODE_ENV=production node dist/index.js",

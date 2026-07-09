@@ -639,7 +639,7 @@ export function registerPaymentRoutes(app: Express): void {
           // genuine transition to succeeded, so a later webhook re-delivery or a
           // racing synchronous reconcile can't double-send.
           if (succeededResult?.bookingId && !succeededResult.alreadyProcessed) {
-            firePaymentSucceededSideEffects({
+            void firePaymentSucceededSideEffects({
               paymentIntentId,
               bookingId: succeededResult.bookingId,
               paymentType: fallbackPaymentType,
