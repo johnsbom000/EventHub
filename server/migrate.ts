@@ -71,9 +71,49 @@ function getMigrationFiles(): string[] {
     .map((file) => path.join(migrationsDir, file));
 }
 
+const MAX_CONNECT_ATTEMPTS = 8;
+const BASE_BACKOFF_MS = 500;
+const MAX_BACKOFF_MS = 5000;
+
+// The migrate step runs before the app boots (Railway startCommand:
+// `node dist/migrate.js && npm start`), so any failure here aborts the whole
+// deploy. The Neon serverless (WebSocket) endpoint intermittently refuses a
+// single connection attempt; the runner used to make exactly one and exit(1)
+// on a miss, failing the deploy even though a retry moments later succeeds.
+// Retry the initial connection with capped exponential backoff. Only the
+// connection is retried — once the DB answers, a failing migration is still
+// fatal (migrations must not be blindly re-run).
+async function waitForDatabase(): Promise<void> {
+  let lastError: unknown;
+  for (let attempt = 1; attempt <= MAX_CONNECT_ATTEMPTS; attempt++) {
+    try {
+      await pool.query("select 1");
+      if (attempt > 1) {
+        logger.info(`[migrate] Database reachable after ${attempt} attempt(s).`);
+      }
+      return;
+    } catch (error: any) {
+      lastError = error;
+      logger.warn(
+        `[migrate] DB connection attempt ${attempt}/${MAX_CONNECT_ATTEMPTS} failed: ${error?.message ?? error}`
+      );
+      if (attempt < MAX_CONNECT_ATTEMPTS) {
+        const backoff = Math.min(BASE_BACKOFF_MS * 2 ** (attempt - 1), MAX_BACKOFF_MS);
+        await new Promise((resolve) => setTimeout(resolve, backoff));
+      }
+    }
+  }
+  throw new Error(
+    `Could not connect to the database after ${MAX_CONNECT_ATTEMPTS} attempts: ${
+      (lastError as any)?.message ?? lastError
+    }`
+  );
+}
+
 async function run(): Promise<void> {
   logger.info("[migrate] Starting migration runner…");
 
+  await waitForDatabase();
   await ensureHistoryTable();
   const applied = await getAppliedMigrations();
 
@@ -104,8 +144,9 @@ async function run(): Promise<void> {
       await recordMigration(name);
       logger.info(`[migrate] ✓ ${name}`);
     } catch (error: any) {
-      logger.error(`[migrate] ✗ ${name} FAILED:`, error?.message ?? error);
-      logger.error(error?.stack);
+      // Interpolate the detail into the message: pino drops a second arg that
+      // isn't a format value, which previously logged the failure with no cause.
+      logger.error(`[migrate] ✗ ${name} FAILED: ${error?.stack ?? error?.message ?? error}`);
       await pool.end();
       process.exit(1);
     }
@@ -115,7 +156,10 @@ async function run(): Promise<void> {
   await pool.end();
 }
 
-run().catch((error) => {
-  logger.error("[migrate] Fatal error:", error);
+run().catch((error: any) => {
+  // Interpolate into the message string — pino's second argument is treated as
+  // a format value and silently dropped, so the previous form logged
+  // "[migrate] Fatal error:" with no detail, hiding the actual cause on deploy.
+  logger.error(`[migrate] Fatal error: ${error?.stack ?? error?.message ?? error}`);
   process.exit(1);
 });
