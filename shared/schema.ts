@@ -774,6 +774,10 @@ export const payments = pgTable("payments", {
   refundedAt: timestamp("refunded_at"),
   paidAt: timestamp("paid_at"),
   payoutEmailSent: boolean("payout_email_sent").notNull().default(false),
+  // F10 exactly-once guard: true once the one-time payment-success side
+  // effects (receipt/notification/chat) have settled; the
+  // payment_effects_sweep re-fires succeeded booking payments still false.
+  successEffectsSent: boolean("success_effects_sent").notNull().default(false),
   createdAt: timestamp("created_at").defaultNow().notNull(),
 });
 
