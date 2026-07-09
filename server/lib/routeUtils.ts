@@ -212,6 +212,29 @@ export function payoutTransferFailureBlockedReason(
     : "transfer_failed";
 }
 
+export type PaymentInitAction = "reuse" | "recreate" | "already_completed";
+
+/**
+ * Decides what to do with an existing booking PaymentIntent when a customer
+ * resumes checkout, based purely on the PI's Stripe status:
+ *  - 'succeeded'          -> already_completed (caller throws; nothing to pay)
+ *  - 'canceled' / unknown -> recreate (the old PI is dead; make a fresh one)
+ *  - anything else        -> reuse (still payable; hand back the same secret)
+ *
+ * Extracted as a pure function (F8) so initializeBookingPayment always falls
+ * through to the row-ensure block instead of early-returning on a reusable PI
+ * and skipping the security_deposit insert — and so the branch table is
+ * unit-testable without Stripe or a DB.
+ */
+export function resolvePaymentInitAction(
+  existingIntentStatus: string | null | undefined
+): PaymentInitAction {
+  const status = asTrimmedString(existingIntentStatus).toLowerCase();
+  if (status === "succeeded") return "already_completed";
+  if (!status || status === "canceled") return "recreate";
+  return "reuse";
+}
+
 /**
  * Pure mirror of the auto-payout worker's candidate predicate (the WHERE clause
  * in runAutoPayoutTickWithResult). A payment is auto-processable when nothing

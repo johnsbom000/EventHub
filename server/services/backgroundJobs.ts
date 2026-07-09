@@ -33,7 +33,7 @@ import { syncBookingToGoogleCalendarSafely, runGoogleBookingSyncVerificationForV
 import { renewExpiringGoogleCalendarWatchChannels } from "../google";
 import { processSinglePayoutCandidate } from "./paymentService";
 import { checkAccountOnboardingStatus, findExistingTransferForPayment } from "../stripe";
-import { reconcilePaymentIntent } from "./paymentReconcile";
+import { reconcilePaymentIntent, firePaymentSucceededSideEffects } from "./paymentReconcile";
 import { runReviewPromptJob } from "../jobs/reviewPromptJob";
 import { runStripeWebhookCleanupJob } from "../jobs/stripeWebhookCleanup";
 import { runDataRetentionCleanupJob } from "../jobs/dataRetentionCleanup";
@@ -1622,6 +1622,83 @@ export function startStripeConnectReconcileWorker() {
   startTimer.unref?.();
 }
 
+export async function runPaymentEffectsSweepJob(): Promise<number> {
+  const lockToken = await tryAcquireWorkerLock("payment_effects_sweep", 30 * 60 * 1000);
+  if (!lockToken) {
+    logger.info("[payment-effects-sweep] lock held by another instance — skipping");
+    return 0;
+  }
+  try {
+    // F10 recovery: booking payments that succeeded but whose one-time side
+    // effects (receipt/notification/chat) never got their success_effects_sent
+    // flag flipped — i.e. the process died after the DB commit but before the
+    // fire-and-forget sends settled. Re-fire them. Bounded to the last 7 days so
+    // a permanently-wedged row can't be retried forever; the migration 0151
+    // backfill marked all pre-existing succeeded rows sent so this never touches
+    // historical payments.
+    const pending: any = await db.execute(drizzleSql`
+      SELECT
+        p.stripe_payment_intent_id AS stripe_pi_id,
+        p.booking_id               AS booking_id
+      FROM payments p
+      WHERE p.payment_type = 'booking'
+        AND p.status = 'succeeded'
+        AND p.success_effects_sent = false
+        AND p.paid_at IS NOT NULL
+        AND p.paid_at > now() - interval '7 days'
+      ORDER BY p.paid_at ASC
+      LIMIT 25
+    `);
+
+    const rows = extractRows<{ stripe_pi_id: string | null; booking_id: string | null }>(pending);
+    if (rows.length === 0) return 0;
+
+    logger.info("[payment-effects-sweep] %d succeeded payment(s) missing side effects", rows.length);
+    let fired = 0;
+
+    for (const row of rows) {
+      if (!row.stripe_pi_id || !row.booking_id) continue;
+      try {
+        // firePaymentSucceededSideEffects flips success_effects_sent = true after
+        // the sends settle, so a row that succeeds here drops out of the next
+        // sweep. A row that fails leaves the flag false and is retried next tick.
+        await firePaymentSucceededSideEffects({
+          paymentIntentId: row.stripe_pi_id,
+          bookingId: row.booking_id,
+          paymentType: "booking",
+        });
+        fired++;
+      } catch (rowErr: any) {
+        captureJobError("payment_effects_sweep", rowErr, {
+          stage: "fire_row",
+          paymentIntentId: row.stripe_pi_id,
+          bookingId: row.booking_id,
+        });
+      }
+    }
+
+    if (fired > 0) {
+      logger.info("[payment-effects-sweep] re-fired side effects for %d payment(s)", fired);
+    }
+    return fired;
+  } catch (err: any) {
+    captureJobError("payment_effects_sweep", err, { stage: "job" });
+    return 0;
+  } finally {
+    await releaseWorkerLock("payment_effects_sweep", lockToken);
+  }
+}
+
+export function startPaymentEffectsSweepWorker() {
+  const INTERVAL_MS = 15 * 60 * 1000;
+  const startTimer = setTimeout(() => {
+    void runPaymentEffectsSweepJob();
+    const t = setInterval(() => void runPaymentEffectsSweepJob(), INTERVAL_MS);
+    t.unref?.();
+  }, 6 * 60 * 1000);
+  startTimer.unref?.();
+}
+
 export function startAllBackgroundWorkers() {
   startBookingExpiryWorker();
   startChatCleanupWorker();
@@ -1636,6 +1713,7 @@ export function startAllBackgroundWorkers() {
   startBookingCompletionWorker();
   startAutoPayoutWorker();
   startStripeConnectReconcileWorker();
+  startPaymentEffectsSweepWorker();
   startStripeWebhookCleanupWorker();
   startDataRetentionCleanupWorker();
 }
