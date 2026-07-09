@@ -249,9 +249,10 @@ export function computeRemainingRefundableCents(
 
 export type RefundExecutor = (params: {
   paymentIntentId: string;
-  amount?: number;
+  amount: number;
   reason?: string;
   idempotencyKey?: string;
+  metadata?: Record<string, string>;
 }) => Promise<unknown>;
 
 export type BookingRefundAttemptRow = {
@@ -259,6 +260,8 @@ export type BookingRefundAttemptRow = {
   amount: number;
   refundAmount: number | null;
   stripePaymentIntentId: string | null;
+  /** Optional — tagged onto the refund as `metadata.portion` for attribution. */
+  paymentType?: string | null;
 };
 
 export type BookingRefundAttemptResult =
@@ -299,6 +302,12 @@ export async function attemptBookingRefundsWithFn(params: {
         amount: refundable,
         reason: params.reason,
         idempotencyKey: `${params.idempotencyPrefix}:${params.bookingId}:${row.id}`,
+        // Attribution: lets the charge.refunded webhook split this charge's
+        // refunds back onto the exact payment row (see refundApportionment.ts).
+        metadata: {
+          paymentRowId: row.id,
+          ...(row.paymentType ? { portion: row.paymentType } : {}),
+        },
       });
       refundedRows.push({ id: row.id, refundedCents: refundable, alreadyRefunded: false });
       totalRefundedCents += refundable;
@@ -346,6 +355,8 @@ export async function attemptDepositRefundWithFn(params: {
       // retries, Stripe fails loudly on the key mismatch instead of issuing a
       // second refund.
       idempotencyKey: `auto-deposit-refund:${params.paymentId}`,
+      // Attribution: this refund belongs to the deposit row on the shared PI.
+      metadata: { paymentRowId: params.paymentId, portion: "security_deposit" },
     });
     return { action: "refunded", amountCents: remaining };
   } catch (error) {

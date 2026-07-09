@@ -33,6 +33,19 @@ assert.equal(insideWindow.grossRefundCents, 0);
 const partialAmount = calculate("cancel_anytime", null, "2026-06-13", 5_525);
 assert.equal(partialAmount.grossRefundCents, 5_525);
 
+// ── C7 retained-portion math: retained = amount − grossRefundCents ───────────
+// The retained portion is what the vendor is paid when a customer cancels
+// AFTER the policy window closes (0% refund → full amount retained). Pin the
+// math the booking cancel handler uses to size the retained payout.
+const retained = (amount: number, grossRefundCents: number) => Math.max(0, amount - grossRefundCents);
+
+// Post-window (no refund) → the whole booking amount is retained for the vendor.
+assert.equal(retained(10_000, insideWindow.grossRefundCents), 10_000);
+// Within-window (full refund) → nothing retained (hard cancel).
+assert.equal(retained(10_000, outsideWindow.grossRefundCents), 0);
+// no_cancellations after the fact retains everything.
+assert.equal(retained(10_000, calculate("no_cancellations", null, "2026-07-01").grossRefundCents), 10_000);
+
 // ── resolveListingPolicyColumns: wizard payload → persisted columns ──────────
 assert.deepEqual(resolveListingPolicyColumns("cancel_within_hours", 48), {
   cancellationPolicy: "cancel_within_hours",

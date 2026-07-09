@@ -1023,6 +1023,7 @@ export async function runTravelFeeRefundJob(): Promise<number> {
             amount: remainingCents,
             reason: "requested_by_customer",
             idempotencyKey: `auto-travel-refund:${row.payment_id}`,
+            metadata: { paymentRowId: row.payment_id, portion: "travel_fee" },
           });
         } catch (refundErr) {
           // Crash recovery: the refund landed on a previous attempt but the DB
