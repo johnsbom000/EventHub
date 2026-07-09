@@ -607,10 +607,11 @@ export function registerBookingRoutes(app: Express): void {
       // check above validated the status we read, but the payment reconcile just
       // above makes Stripe calls that widen the race window (a vendor could
       // accept, or the auto-cancel job could fire, in between). CAS to
-      // 'cancelled' guarded on the prior status so a concurrent transition loses
-      // cleanly (0 rows → 409) rather than a refund coexisting with a still-live
-      // booking. This claim is now the status authority: the no-payment branch
-      // and the persistence tx below no longer own the status write.
+      // 'cancelled' guarded on the exact prior status so a concurrent transition
+      // loses cleanly (0 rows → 409) rather than a refund coexisting with a
+      // still-live booking. This claim is now the status authority: the
+      // no-payment branch and the persistence tx below no longer own the status
+      // write.
       //
       // Accepted trade-off (per plan H3.3): if a Stripe refund fails AFTER this
       // claim, the booking stays cancelled with the refund pending (the 502 tells
@@ -619,6 +620,7 @@ export function registerBookingRoutes(app: Express): void {
       // OPPOSITE of the vendor-cancel path (F9), which reverts on failure: a
       // vendor decline is fully retryable, whereas a customer's cancel intent
       // should stick.
+      const cancellableStatus = booking.status;
       const cancelClaimRows: any = await db.execute(drizzleSql`
         update bookings
         set status = 'cancelled',
@@ -626,7 +628,7 @@ export function registerBookingRoutes(app: Express): void {
             cancelled_at = ${now},
             updated_at = ${now}
         where id = ${bookingId}
-          and status in ('pending', 'confirmed')
+          and status = ${cancellableStatus}
         returning id
       `);
       if (extractRows(cancelClaimRows).length === 0) {
