@@ -178,6 +178,7 @@ import {
   sendTravelFeeRespondedEmail,
 } from "../email";
 import { calculateRefund } from "../lib/calculateRefund";
+import { apportionChargeRefunds } from "../lib/refundApportionment";
 import {
   CancellationPolicy,
   policyFromListingWizard,
@@ -658,6 +659,7 @@ export function registerPaymentRoutes(app: Express): void {
               .select({
                 id: payments.id,
                 bookingId: payments.bookingId,
+                paymentType: payments.paymentType,
                 status: payments.status,
                 payoutStatus: payments.payoutStatus,
                 payoutBlockedReason: payments.payoutBlockedReason,
@@ -688,6 +690,7 @@ export function registerPaymentRoutes(app: Express): void {
               id: bookings.id,
               status: bookings.status,
               bookingEndAt: bookings.bookingEndAt,
+              cancellationReason: bookings.cancellationReason,
             })
             .from(bookings)
             .where(eq(bookings.id, payment.bookingId))
@@ -758,6 +761,8 @@ export function registerPaymentRoutes(app: Express): void {
             stripeChargeId: payment.stripeChargeId ?? chargeId,
             stripeTransferId: payment.stripeTransferId,
             vendorAbsorbsStripeFees: payment.vendorAbsorbsStripeFees ?? false,
+            paymentType: payment.paymentType,
+            bookingCancellationReason: bookingRow.cancellationReason,
           }, now);
 
           await tx
@@ -788,82 +793,223 @@ export function registerPaymentRoutes(app: Express): void {
         const paymentIntentId =
           typeof charge?.payment_intent === "string" ? charge.payment_intent.trim() : "";
         const chargeId = typeof charge?.id === "string" ? charge.id.trim() : "";
-        if (paymentIntentId) {
-          const amountRefunded = parseIntegerValue(charge?.amount_refunded) ?? 0;
-          await db.transaction(async (tx) => {
-            const payment = await ensurePaymentRecordForIntentInTx(tx, {
-              paymentIntentId,
-            });
-            if (!payment?.id || !payment.bookingId) return;
 
-            const totalAmount = Math.max(
-              0,
-              parseIntegerValue(payment.totalAmount) ??
-                parseIntegerValue(payment.amount) ??
-                0
+        // Booking payments and security deposits share ONE PaymentIntent/charge,
+        // so a charge refund can belong to more than one payment row. Attribute
+        // each refund back to the row that issued it (via metadata.paymentRowId),
+        // rather than writing the charge's cumulative total onto a single row.
+        //
+        // Fetch the authoritative refund list from Stripe — the event payload's
+        // `charge.refunds` is absent on current API versions, and only the
+        // per-refund metadata tags make attribution possible.
+        let chargeRefunds: Array<{ amount?: number | null; metadata?: Record<string, string> | null }> = [];
+        if (chargeId) {
+          try {
+            const { listRefundsForCharge } = await import("../stripe");
+            chargeRefunds = await listRefundsForCharge(chargeId);
+          } catch (refundListErr: any) {
+            logger.error(
+              { chargeId, err: refundListErr?.message || refundListErr },
+              "[charge.refunded] failed to list refunds — falling back to cumulative amount_refunded"
             );
-            const fullRefund = amountRefunded >= totalAmount && totalAmount > 0;
-            const nextStatus = fullRefund ? "refunded" : "partially_refunded";
-            const now = new Date();
+            chargeRefunds = [];
+          }
+        }
+        const cumulativeAmountRefunded = parseIntegerValue(charge?.amount_refunded) ?? 0;
 
+        if (paymentIntentId || chargeId) {
+          await db.transaction(async (tx) => {
+            // Make sure the row exists before we load the full set for the PI.
+            if (paymentIntentId) {
+              await ensurePaymentRecordForIntentInTx(tx, { paymentIntentId });
+            }
+
+            // Load EVERY payment row sharing this PaymentIntent (covers booking +
+            // deposit); fall back to charge match when the PI is unknown.
+            const allRows = await tx
+              .select({
+                id: payments.id,
+                bookingId: payments.bookingId,
+                paymentType: payments.paymentType,
+                status: payments.status,
+                amount: payments.amount,
+                totalAmount: payments.totalAmount,
+                refundAmount: payments.refundAmount,
+                refundReason: payments.refundReason,
+                disputeStatus: payments.disputeStatus,
+                payoutStatus: payments.payoutStatus,
+                payoutBlockedReason: payments.payoutBlockedReason,
+                payoutEligibleAt: payments.payoutEligibleAt,
+                payoutAdjustedAmount: payments.payoutAdjustedAmount,
+                paidOutAt: payments.paidOutAt,
+                vendorNetPayoutAmount: payments.vendorNetPayoutAmount,
+                actualStripeFeeAmount: payments.actualStripeFeeAmount,
+                vendorAbsorbsStripeFees: payments.vendorAbsorbsStripeFees,
+                stripeConnectedAccountId: payments.stripeConnectedAccountId,
+                stripeChargeId: payments.stripeChargeId,
+                stripeTransferId: payments.stripeTransferId,
+              })
+              .from(payments)
+              .where(
+                paymentIntentId
+                  ? eq(payments.stripePaymentIntentId, paymentIntentId)
+                  : eq(payments.stripeChargeId, chargeId)
+              );
+            if (allRows.length === 0) return;
+
+            const bookingId = allRows.find((r: any) => r.bookingId)?.bookingId;
+            if (!bookingId) return;
+
+            const now = new Date();
             const [bookingRow] = await tx
               .select({
                 id: bookings.id,
                 status: bookings.status,
                 bookingEndAt: bookings.bookingEndAt,
+                cancellationReason: bookings.cancellationReason,
               })
               .from(bookings)
-              .where(eq(bookings.id, payment.bookingId))
+              .where(eq(bookings.id, bookingId))
               .limit(1);
             if (!bookingRow?.id) return;
-            const disputeCaseStatus = await getDisputeCaseStatusInTx(tx, payment.bookingId);
+            const disputeCaseStatus = await getDisputeCaseStatusInTx(tx, bookingId);
 
-            const payoutEligibility = computePayoutEligibility({
-              bookingStatus: bookingRow.status,
-              paymentStatus: nextStatus,
-              payoutStatus: payment.payoutStatus,
-              payoutBlockedReason:
-                asTrimmedString(payment.stripeTransferId) && !fullRefund
-                  ? "refund_after_payout_manual_recovery"
-                  : null,
-              disputeStatus: payment.disputeStatus,
-              disputeCaseStatus,
-              paidOutAt: payment.paidOutAt,
-              payoutEligibleAt: payment.payoutEligibleAt,
-              bookingEndAt: bookingRow.bookingEndAt,
-              totalAmount,
-              refundedAmount: amountRefunded,
-              vendorNetPayoutAmount: payment.vendorNetPayoutAmount,
-              actualStripeFeeAmount: payment.actualStripeFeeAmount,
-              stripeConnectedAccountId: payment.stripeConnectedAccountId,
-              stripeChargeId: payment.stripeChargeId ?? chargeId,
-              stripeTransferId: payment.stripeTransferId,
-              vendorAbsorbsStripeFees: payment.vendorAbsorbsStripeFees ?? false,
-            }, now);
-
-            await tx
-              .update(payments)
-              .set({
-                status: nextStatus as any,
-                stripeChargeId: (payment.stripeChargeId ?? chargeId) || null,
-                refundAmount: amountRefunded > 0 ? amountRefunded : parseIntegerValue(payment.amount),
-                refundReason: "stripe_charge_refunded",
-                refundedAt: now,
-                payoutStatus: payoutEligibility.payoutStatus,
-                payoutEligibleAt: payoutEligibility.payoutEligibleAt,
-                payoutBlockedReason: payoutEligibility.payoutBlockedReason,
-                payoutAdjustedAmount: payoutEligibility.adjustedPayoutAmount,
-              })
-              .where(eq(payments.id, payment.id));
-
-            const nextBookingPaymentStatus = await recomputeBookingPaymentStatusInTx(
-              tx,
-              payment.bookingId
+            // Attribute the charge's refunds to each payment row. If Stripe's
+            // refund list came back empty (API error) but the charge reports a
+            // cumulative refund, synthesize one untagged refund so the
+            // deposit-first fallback still allocates it.
+            const refundsForApportionment =
+              chargeRefunds.length > 0
+                ? chargeRefunds
+                : cumulativeAmountRefunded > 0
+                  ? [{ amount: cumulativeAmountRefunded, metadata: null }]
+                  : [];
+            const attributed = apportionChargeRefunds(
+              refundsForApportionment,
+              allRows.map((r: any) => ({
+                id: r.id,
+                paymentType: r.paymentType,
+                amount: parseIntegerValue(r.amount) ?? 0,
+                refundAmount: parseIntegerValue(r.refundAmount) ?? 0,
+              }))
             );
+
+            for (const row of allRows as any[]) {
+              const portion = attributed.get(row.id) ?? 0;
+              // Nothing attributed to this row (e.g. a deposit-only refund leaves
+              // the booking row's portion at 0) — leave it untouched.
+              if (portion <= 0) continue;
+
+              const rowAmount = parseIntegerValue(row.amount) ?? 0;
+              const rowTotal = Math.max(0, parseIntegerValue(row.totalAmount) ?? rowAmount);
+              const rowCeiling = rowTotal > 0 ? rowTotal : rowAmount;
+              const rowFullyRefunded = rowCeiling > 0 && portion >= rowCeiling;
+              const nextRowStatus = rowFullyRefunded ? "refunded" : "partially_refunded";
+              const nextRefundReason = asTrimmedString(row.refundReason) || "stripe_charge_refunded";
+
+              if (row.paymentType === "booking") {
+                // Booking row: recompute payout eligibility from ITS OWN portion.
+                const payoutEligibility = computePayoutEligibility(
+                  {
+                    bookingStatus: bookingRow.status,
+                    paymentStatus: nextRowStatus,
+                    payoutStatus: row.payoutStatus,
+                    // Manual-recovery flag only when the money already moved
+                    // (transferred row) AND the booking portion is a PARTIAL
+                    // refund; a full refund routes to the cancel path below.
+                    payoutBlockedReason:
+                      asTrimmedString(row.stripeTransferId) && !rowFullyRefunded
+                        ? "refund_after_payout_manual_recovery"
+                        : null,
+                    disputeStatus: row.disputeStatus,
+                    disputeCaseStatus,
+                    paidOutAt: row.paidOutAt,
+                    payoutEligibleAt: row.payoutEligibleAt,
+                    bookingEndAt: bookingRow.bookingEndAt,
+                    totalAmount: rowCeiling,
+                    refundedAmount: portion,
+                    vendorNetPayoutAmount: row.vendorNetPayoutAmount,
+                    actualStripeFeeAmount: row.actualStripeFeeAmount,
+                    stripeConnectedAccountId: row.stripeConnectedAccountId,
+                    stripeChargeId: row.stripeChargeId ?? chargeId,
+                    stripeTransferId: row.stripeTransferId,
+                    vendorAbsorbsStripeFees: row.vendorAbsorbsStripeFees ?? false,
+                    paymentType: row.paymentType,
+                    bookingCancellationReason: bookingRow.cancellationReason,
+                  },
+                  now
+                );
+
+                await tx
+                  .update(payments)
+                  .set({
+                    status: nextRowStatus as any,
+                    stripeChargeId: (row.stripeChargeId ?? chargeId) || null,
+                    refundAmount: portion,
+                    refundReason: nextRefundReason,
+                    refundedAt: now,
+                    payoutStatus: payoutEligibility.payoutStatus,
+                    payoutEligibleAt: payoutEligibility.payoutEligibleAt,
+                    payoutBlockedReason: payoutEligibility.payoutBlockedReason,
+                    payoutAdjustedAmount: payoutEligibility.adjustedPayoutAmount,
+                  })
+                  .where(eq(payments.id, row.id));
+              } else {
+                // Deposit / travel rows: record the refund but do NOT run them
+                // through the booking payout pipeline. Never disturb a deposit
+                // row already settled by a dispute award (paid / transferred /
+                // cancelled) — those payout fields are terminal (C4 awards).
+                const rowPayoutStatus = asTrimmedString(row.payoutStatus).toLowerCase();
+                const settledTerminal =
+                  row.paymentType === "security_deposit" &&
+                  (rowPayoutStatus === "paid" ||
+                    rowPayoutStatus === "cancelled" ||
+                    asTrimmedString(row.stripeTransferId).length > 0);
+
+                await tx
+                  .update(payments)
+                  .set({
+                    status: nextRowStatus as any,
+                    stripeChargeId: (row.stripeChargeId ?? chargeId) || null,
+                    refundAmount: portion,
+                    refundReason: nextRefundReason,
+                    refundedAt: now,
+                    ...(settledTerminal
+                      ? {}
+                      : {
+                          payoutStatus: "cancelled",
+                          payoutEligibleAt: null,
+                          payoutBlockedReason: "refunded",
+                          payoutAdjustedAmount: 0,
+                        }),
+                  })
+                  .where(eq(payments.id, row.id));
+              }
+            }
+
+            // Booking-level status + the full-refund → cancel-booking decision is
+            // keyed on the BOOKING row's own portion, not the charge cumulative
+            // (a deposit-only refund must never cancel the booking).
+            const bookingPortionRow = (allRows as any[]).find((r) => r.paymentType === "booking");
+            const bookingPortion = bookingPortionRow
+              ? attributed.get(bookingPortionRow.id) ?? 0
+              : 0;
+            const bookingRowCeiling = bookingPortionRow
+              ? Math.max(
+                  0,
+                  parseIntegerValue(bookingPortionRow.totalAmount) ??
+                    parseIntegerValue(bookingPortionRow.amount) ??
+                    0
+                )
+              : 0;
+            const bookingFullyRefunded =
+              !!bookingPortionRow && bookingRowCeiling > 0 && bookingPortion >= bookingRowCeiling;
+
+            const nextBookingPaymentStatus = await recomputeBookingPaymentStatusInTx(tx, bookingId);
             if (
-              fullRefund &&
+              bookingFullyRefunded &&
               nextBookingPaymentStatus === "refunded" &&
-              !asTrimmedString(payment.stripeTransferId)
+              !asTrimmedString(bookingPortionRow?.stripeTransferId)
             ) {
               await tx.execute(drizzleSql`
                 update bookings
@@ -875,7 +1021,7 @@ export function registerPaymentRoutes(app: Express): void {
                   cancellation_reason = coalesce(nullif(trim(cancellation_reason), ''), 'payment_refunded'),
                   cancelled_at = coalesce(cancelled_at, ${now}),
                   updated_at = ${now}
-                where id = ${payment.bookingId}
+                where id = ${bookingId}
               `);
             } else {
               await tx
@@ -884,7 +1030,7 @@ export function registerPaymentRoutes(app: Express): void {
                   paymentStatus: nextBookingPaymentStatus as any,
                   updatedAt: now,
                 })
-                .where(eq(bookings.id, payment.bookingId));
+                .where(eq(bookings.id, bookingId));
             }
           });
         }

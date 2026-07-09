@@ -443,26 +443,54 @@ export async function createSecurityDepositPaymentIntent(params: {
 
 /**
  * Issues a refund for a completed booking payment.
- * Pass `amount` for a partial refund; omit for a full refund.
+ *
+ * `amount` is REQUIRED and must be a positive integer. Booking payments and
+ * security deposits share a single PaymentIntent, so an amount-less "full"
+ * refund returns the ENTIRE remaining charge — including money that belongs to
+ * a different payment row. Every caller computes the exact remaining amount for
+ * the row it is refunding and passes it here.
+ *
+ * `metadata` is written onto the Stripe refund so the `charge.refunded` webhook
+ * can attribute each refund back to the exact payment row that issued it (see
+ * `server/lib/refundApportionment.ts`). Always pass `{ paymentRowId }`.
  */
 export async function refundBookingPayment(params: {
   paymentIntentId: string;
-  amount?: number;       // optional — omit for full refund
+  amount: number;
   reason?: string;
   idempotencyKey?: string;
+  metadata?: Record<string, string>;
 }): Promise<Stripe.Refund> {
-  const { paymentIntentId, amount, reason, idempotencyKey } = params;
+  const { paymentIntentId, amount, reason, idempotencyKey, metadata } = params;
+
+  if (!Number.isInteger(amount) || amount <= 0) {
+    throw new Error(
+      `refundBookingPayment requires a positive integer amount (received ${amount})`
+    );
+  }
 
   const refund = await stripeClient.refunds.create(
     {
       payment_intent: paymentIntentId,
       amount,
       reason: reason as any,
+      ...(metadata ? { metadata } : {}),
     },
     idempotencyKey ? { idempotencyKey } : undefined
   );
 
   return refund;
+}
+
+/**
+ * Returns every refund recorded against a Stripe charge (up to 100). Used by
+ * the `charge.refunded` webhook to re-derive per-row attribution from the
+ * authoritative refund list rather than the (often absent) `charge.refunds`
+ * field on the event payload.
+ */
+export async function listRefundsForCharge(chargeId: string): Promise<Stripe.Refund[]> {
+  const refunds = await stripeClient.refunds.list({ charge: chargeId, limit: 100 });
+  return refunds.data ?? [];
 }
 
 // ---------------------------------------------------------------------------
@@ -690,6 +718,12 @@ export async function transferToVendor(params: {
     metadata,
     idempotencyKey,
   } = params;
+
+  if (!Number.isInteger(amount) || amount <= 0) {
+    throw new Error(
+      `transferToVendor requires a positive integer amount (received ${amount})`
+    );
+  }
 
   const transfer = await stripeClient.transfers.create(
     {

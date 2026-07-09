@@ -18,6 +18,7 @@
     "test:payment-status": "node --import tsx ./tests/booking-payment-status-derivation.test.ts",
     "test:vendor-no-response": "node --import tsx ./tests/vendor-no-response-refund.test.ts",
     "test:deposit-refund": "node --import tsx ./tests/deposit-refund-split.test.ts",
+    "test:refund-apportionment": "node --import tsx ./tests/refund-apportionment.test.ts",
     "test:payout-retry": "node --import tsx ./tests/payout-retry-eligibility.test.ts",
     "migrate": "tsx --env-file .env server/scripts/validate_migrations.ts && tsx --env-file .env server/migrate.ts",
     "validate:migrations": "tsx --env-file .env server/scripts/validate_migrations.ts",

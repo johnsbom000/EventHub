@@ -4724,6 +4724,7 @@ export function registerVendorRoutes(app: Express): void {
                   amount: refundable,
                   reason: "duplicate",
                   idempotencyKey: `vendor-cancel-booking:${bookingId}:${vcMainPayment.id}`,
+                  metadata: { paymentRowId: vcMainPayment.id, portion: "booking" },
                 });
               }
               await db
@@ -4751,6 +4752,7 @@ export function registerVendorRoutes(app: Express): void {
                   amount: refundable,
                   reason: "duplicate",
                   idempotencyKey: `vendor-cancel-travelfee:${bookingId}:${tfp.id}`,
+                  metadata: { paymentRowId: tfp.id, portion: "travel_fee" },
                 });
               }
               await db
@@ -4777,6 +4779,7 @@ export function registerVendorRoutes(app: Express): void {
                   amount: refundable,
                   reason: "duplicate",
                   idempotencyKey: `vendor-cancel-deposit:${bookingId}:${vcDepositPayment.id}`,
+                  metadata: { paymentRowId: vcDepositPayment.id, portion: "security_deposit" },
                 });
               }
               await db
