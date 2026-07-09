@@ -18,6 +18,12 @@ export type PayoutEligibilityInput = {
   stripeChargeId: unknown;
   stripeTransferId: unknown;
   vendorAbsorbsStripeFees: boolean;
+  // C7 — retained-payout support. Optional so any existing caller that omits
+  // them behaves exactly as before (the retained-cancel bypass simply never
+  // triggers). Only a customer cancellation of a booking-type payment can hold
+  // the vendor's retained portion; every other cancel path stays a hard cancel.
+  paymentType?: unknown;
+  bookingCancellationReason?: unknown;
 };
 
 export type PayoutEligibilityResult = {
@@ -69,6 +75,16 @@ function toCanonicalPaymentStatus(value: unknown): string {
 function isActiveDisputeCase(status: unknown): boolean {
   const normalized = normalizePaymentStateValue(status);
   return normalized === "open" || normalized === "pending_review";
+}
+
+// A Stripe dispute-status value that must block a payout recompute. Alongside
+// the classic needs_response / under_review, any `warning_*` state (early-fraud
+// warning / inquiry — a dispute brewing) blocks too, EXCEPT `warning_closed`,
+// which is the resolved/cleared terminal state.
+function isBlockingDisputeStatus(normalizedStatus: string): boolean {
+  if (normalizedStatus === "needs_response" || normalizedStatus === "under_review") return true;
+  if (normalizedStatus.startsWith("warning_") && normalizedStatus !== "warning_closed") return true;
+  return false;
 }
 
 export function toDateOrNull(value: unknown): Date | null {
@@ -123,6 +139,8 @@ export function computePayoutEligibility(input: PayoutEligibilityInput, now = ne
   const adjustedPayoutAmount = deriveAdjustedVendorPayoutAmount(input);
   const alreadyTransferred = Boolean(paidOutAt || asTrimmedString(input.stripeTransferId));
   const disputeCaseStatus = normalizePaymentStateValue(input.disputeCaseStatus);
+  const paymentType = normalizePaymentStateValue(input.paymentType);
+  const bookingCancellationReason = normalizePaymentStateValue(input.bookingCancellationReason);
 
   const computedEligibleAt =
     explicitEligibleAt ??
@@ -131,8 +149,7 @@ export function computePayoutEligibility(input: PayoutEligibilityInput, now = ne
   if (alreadyTransferred) {
     if (
       paymentStatus === "disputed" ||
-      disputeStatus === "needs_response" ||
-      disputeStatus === "under_review" ||
+      isBlockingDisputeStatus(disputeStatus) ||
       isActiveDisputeCase(disputeCaseStatus)
     ) {
       return {
@@ -161,7 +178,26 @@ export function computePayoutEligibility(input: PayoutEligibilityInput, now = ne
     };
   }
 
-  if (bookingStatus === "cancelled" || bookingStatus === "failed" || bookingStatus === "expired") {
+  // C7 — retained payout on a post-window CUSTOMER cancellation. When a customer
+  // cancels after the refund window closes, the policy retains the booking
+  // amount for the vendor (binary window: 100% refund before, 0% after). The
+  // booking row is deliberately kept out of the hard-cancel below so it can flow
+  // through the normal hold → eligible → payout pipeline. Guarded tightly:
+  //  - paymentType must be 'booking' (held travel fees on a cancelled booking
+  //    must still auto-refund, never pay the vendor);
+  //  - the cancellation reason must be customer-initiated ('customer…'). Only
+  //    customer cancels write that prefix — vendor cancel / no-response / expiry
+  //    / webhook full-refund / payment-failed never match.
+  const isRetainedCustomerCancel =
+    bookingStatus === "cancelled" &&
+    paymentType === "booking" &&
+    bookingCancellationReason.startsWith("customer");
+
+  if (
+    (bookingStatus === "cancelled" && !isRetainedCustomerCancel) ||
+    bookingStatus === "failed" ||
+    bookingStatus === "expired"
+  ) {
     return {
       eligible: false,
       payoutStatus: "cancelled",
@@ -201,7 +237,7 @@ export function computePayoutEligibility(input: PayoutEligibilityInput, now = ne
     };
   }
 
-  if (paymentStatus === "disputed" || disputeStatus === "needs_response" || disputeStatus === "under_review") {
+  if (paymentStatus === "disputed" || isBlockingDisputeStatus(disputeStatus)) {
     return {
       eligible: false,
       payoutStatus: "blocked",

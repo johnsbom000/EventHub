@@ -639,6 +639,7 @@ export function registerAdminRoutes(app: Express): void {
                 amount: travelRefundToCustomer,
                 reason: "requested_by_customer",
                 idempotencyKey: `admin-dispute-travel-refund:${caseId}:${heldTravel.id}`,
+                metadata: { paymentRowId: heldTravel.id, portion: "travel_fee" },
               })
             : null;
 
@@ -864,6 +865,7 @@ export function registerAdminRoutes(app: Express): void {
               amount: depositRefundCents,
               reason: "requested_by_customer",
               idempotencyKey: `admin-dispute-refund:${caseId}:${depositPayment.id}`,
+              metadata: { paymentRowId: depositPayment.id, portion: "security_deposit" },
             })
           : null;
 
@@ -874,6 +876,7 @@ export function registerAdminRoutes(app: Express): void {
               amount: bookingRefundCents,
               reason: "requested_by_customer",
               idempotencyKey: `admin-dispute-refund-booking:${caseId}:${bookingPayment.id}`,
+              metadata: { paymentRowId: bookingPayment.id, portion: "booking" },
             })
           : null;
 

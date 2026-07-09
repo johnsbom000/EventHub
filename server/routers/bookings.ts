@@ -714,6 +714,7 @@ export function registerBookingRoutes(app: Express): void {
             amount: bookingRefundCents,
             reason: "requested_by_customer",
             idempotencyKey: `customer-cancel:${bookingId}:${payment.id}:${bookingRefundCents}`,
+            metadata: { paymentRowId: payment.id, portion: "booking" },
           });
         }
 
@@ -727,6 +728,7 @@ export function registerBookingRoutes(app: Express): void {
             amount: depositRefundCents,
             reason: "requested_by_customer",
             idempotencyKey: `customer-cancel-deposit:${bookingId}:${depositPayment!.id}`,
+            metadata: { paymentRowId: depositPayment!.id, portion: "security_deposit" },
           });
         }
       } catch (stripeErr: any) {
@@ -751,6 +753,30 @@ export function registerBookingRoutes(app: Express): void {
               ? "refunded"
               : "partially_refunded";
 
+        // C7 — retained portion of a post-window customer cancellation is paid to
+        // the vendor (binary policy: 100% refund before the window closes, 0%
+        // after → the retained booking amount is owed to the vendor). Instead of
+        // hard-cancelling the payout, put the booking row into the normal hold
+        // pipeline: not_ready until cancelledAt + 72h, then the auto-payout worker
+        // transfers it. computePayoutEligibility recomputes the exact amount
+        // (vendorNet − refunded) on refresh — payoutAdjustedAmount here is the
+        // initial retained figure. retained = 0 keeps today's hard cancel.
+        const retainedCents = Math.max(0, payment.amount - refundCalc.grossRefundCents);
+        const retainedPayoutFields =
+          retainedCents > 0
+            ? {
+                payoutStatus: "not_ready" as const,
+                payoutEligibleAt: new Date(now.getTime() + DISPUTE_WINDOW_HOURS * 60 * 60 * 1000),
+                payoutBlockedReason: "customer_cancellation_retained",
+                payoutAdjustedAmount: retainedCents,
+              }
+            : {
+                payoutStatus: "cancelled" as const,
+                payoutEligibleAt: null,
+                payoutBlockedReason: "customer_cancellation",
+                payoutAdjustedAmount: 0,
+              };
+
         await tx
           .update(payments)
           .set({
@@ -762,10 +788,7 @@ export function registerBookingRoutes(app: Express): void {
                   refundedAt: now,
                 }
               : {}),
-            payoutStatus: "cancelled",
-            payoutEligibleAt: null,
-            payoutBlockedReason: "customer_cancellation",
-            payoutAdjustedAmount: 0,
+            ...retainedPayoutFields,
           })
           .where(eq(payments.id, payment.id));
 
@@ -786,13 +809,18 @@ export function registerBookingRoutes(app: Express): void {
             .where(eq(payments.id, tfp.id));
         }
 
-        // Update security deposit payment if refunded now
+        // Update security deposit payment if refunded now. Accumulate onto any
+        // prior refund (a blind overwrite would erase an earlier partial refund
+        // recorded on the row); depositRefundCents is already the remaining
+        // refundable portion (safeRefundCents clamps by prior refunds).
         if (refundDepositNow && depositRefundCents > 0) {
+          const priorDepositRefund =
+            typeof depositPayment!.refundAmount === "number" ? depositPayment!.refundAmount : 0;
           await tx
             .update(payments)
             .set({
               status: "refunded" as any,
-              refundAmount: depositRefundCents,
+              refundAmount: priorDepositRefund + depositRefundCents,
               refundReason: reason ? `customer_cancel: ${reason}` : "customer_cancel",
               refundedAt: now,
             })

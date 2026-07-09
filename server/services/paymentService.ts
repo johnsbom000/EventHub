@@ -138,6 +138,8 @@ export type LockedPaymentPayoutContext = {
   stripeTransferId: string | null;
   payoutAdjustedAmount: number | null;
   vendorAbsorbsStripeFees: boolean | null;
+  paymentType: string | null;
+  bookingCancellationReason: string | null;
 };
 
 export async function loadPaymentPayoutContextForUpdateInTx(
@@ -166,7 +168,9 @@ export async function loadPaymentPayoutContextForUpdateInTx(
       p.stripe_charge_id as "stripeChargeId",
       p.stripe_transfer_id as "stripeTransferId",
       p.payout_adjusted_amount as "payoutAdjustedAmount",
-      p.vendor_absorbs_stripe_fees as "vendorAbsorbsStripeFees"
+      p.vendor_absorbs_stripe_fees as "vendorAbsorbsStripeFees",
+      p.payment_type as "paymentType",
+      b.cancellation_reason as "bookingCancellationReason"
     from payments p
     inner join bookings b on b.id = p.booking_id
     left join dispute_cases dc on dc.booking_id = b.id
@@ -223,6 +227,8 @@ export async function refreshPaymentPayoutStateInTx(
       stripeChargeId: paymentContext.stripeChargeId,
       stripeTransferId: paymentContext.stripeTransferId,
       vendorAbsorbsStripeFees: paymentContext.vendorAbsorbsStripeFees ?? false,
+      paymentType: paymentContext.paymentType,
+      bookingCancellationReason: paymentContext.bookingCancellationReason,
     },
     now
   );
@@ -507,6 +513,8 @@ export async function processSinglePayoutCandidate(params: {
           stripeChargeId: locked.stripeChargeId,
           stripeTransferId: locked.stripeTransferId,
           vendorAbsorbsStripeFees: locked.vendorAbsorbsStripeFees ?? false,
+          paymentType: locked.paymentType,
+          bookingCancellationReason: locked.bookingCancellationReason,
         },
         nowLocked
       );
@@ -1029,6 +1037,8 @@ export async function applyPaymentIntentSuccessInTx(
     stripeChargeId: payment.stripeChargeId ?? latestChargeId,
     stripeTransferId: payment.stripeTransferId,
     vendorAbsorbsStripeFees: payment.vendorAbsorbsStripeFees ?? false,
+    paymentType: payment.paymentType,
+    bookingCancellationReason: bookingRow.cancellationReason,
   }, now);
 
   await tx
