@@ -480,7 +480,9 @@ export function registerBoardRoutes(app: Express): void {
         .innerJoin(vendorListings, eq(vendorListings.id, boardSavedListings.listingId))
         .where(and(
           eq(boardSavedListings.boardId, boardId),
-          ne(vendorListings.status, "deleted")
+          // Only show live listings — a soft-deleted vendor's listings are set to
+          // 'inactive', so filtering to 'active' hides them from saved boards too.
+          eq(vendorListings.status, "active")
         ))
         .orderBy(desc(boardSavedListings.savedAt));
 
