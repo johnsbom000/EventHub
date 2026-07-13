@@ -83,11 +83,11 @@ export async function resolveChargeFee(
  * fire-and-forget. Callers MUST gate this on a genuine status transition
  * (alreadyProcessed === false) so it never double-sends.
  */
-export function firePaymentSucceededSideEffects(args: {
+export async function firePaymentSucceededSideEffects(args: {
   paymentIntentId: string;
   bookingId: string | null;
   paymentType: string | null;
-}): void {
+}): Promise<void> {
   const { paymentIntentId, bookingId, paymentType } = args;
   const isBookingPayment = paymentType === "booking" && Boolean(bookingId);
 
@@ -98,9 +98,11 @@ export function firePaymentSucceededSideEffects(args: {
     });
   }
 
+  const tasks: Promise<unknown>[] = [];
+
   // Notify vendor of payment received (booking payments only).
   if (isBookingPayment && bookingId) {
-    void (async () => {
+    tasks.push((async () => {
       try {
         const paymentRows: any = await db.execute(drizzleSql`
           select
@@ -127,11 +129,11 @@ export function firePaymentSucceededSideEffects(args: {
           read: false,
         });
       } catch {}
-    })();
+    })());
   }
 
   // Payment receipt to customer + booking confirmed to vendor.
-  void (async () => {
+  tasks.push((async () => {
     try {
       const serverUrl = appUrl();
       const receiptRows: any = await db.execute(drizzleSql`
@@ -237,12 +239,12 @@ export function firePaymentSucceededSideEffects(args: {
     } catch (emailError: any) {
       logger.warn("[payment email] failed:", emailError?.message || emailError);
     }
-  })();
+  })());
 
   // Eagerly create the Stream Chat channel so the vendor can message the
   // customer immediately after payment.
   if (isStreamChatConfigured() && bookingId) {
-    void (async () => {
+    tasks.push((async () => {
       try {
         const chatCtx = await getBookingChatContextById(bookingId);
         if (chatCtx?.customerId && chatCtx?.vendorAccountId && chatCtx?.eventDate) {
@@ -261,7 +263,28 @@ export function firePaymentSucceededSideEffects(args: {
       } catch (streamErr: any) {
         logger.warn("[stream-chat] Failed to eagerly create booking channel:", streamErr?.message);
       }
-    })();
+    })());
+  }
+
+  // Wait for all side-effect sends to settle, then record success so the
+  // sweep (payment_effects_sweep) does not re-fire them. Set AFTER settling
+  // for at-least-once semantics: a process crash before this update leaves the
+  // flag false and the sweep re-sends (one possible duplicate receipt),
+  // preferred over silently losing the receipt/notification/chat entirely.
+  // Only booking rows carry the flag and are swept.
+  await Promise.allSettled(tasks);
+
+  if (isBookingPayment && bookingId) {
+    try {
+      await db.execute(drizzleSql`
+        update payments
+        set success_effects_sent = true
+        where stripe_payment_intent_id = ${paymentIntentId}
+          and payment_type = 'booking'
+      `);
+    } catch (flagErr: any) {
+      logger.warn("[payment effects] failed to set success_effects_sent:", flagErr?.message || flagErr);
+    }
   }
 }
 
@@ -300,7 +323,7 @@ export async function reconcilePaymentIntent(
   );
 
   if (result.bookingId && !result.alreadyProcessed) {
-    firePaymentSucceededSideEffects({
+    void firePaymentSucceededSideEffects({
       paymentIntentId,
       bookingId: result.bookingId,
       paymentType: fallbacks.fallbackPaymentType,

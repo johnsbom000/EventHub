@@ -2,6 +2,7 @@ import { db } from "../db";
 import { eq, and, or, inArray, isNull, isNotNull, lt, sql as drizzleSql } from "drizzle-orm";
 import { bookings, payments, vendorAccounts, users, vendorSuspensions, vendorProfiles } from "@shared/schema";
 import { logger } from "../lib/logger";
+import { captureJobError } from "../lib/jobAlerts";
 import { appUrl } from "../lib/routeHelpers";
 import {
   asTrimmedString,
@@ -25,13 +26,14 @@ import {
   sendEventDayReminderEmail,
   sendSuspensionLiftedEmail,
   sendPendingRequestReminderEmail,
+  type EmailResult,
 } from "../email";
 import { deleteStreamBookingChannel, isChatExpiredForEventDate, isStreamChatConfigured } from "../streamChat";
 import { syncBookingToGoogleCalendarSafely, runGoogleBookingSyncVerificationForVendorAccount } from "./googleSyncService";
 import { renewExpiringGoogleCalendarWatchChannels } from "../google";
 import { processSinglePayoutCandidate } from "./paymentService";
 import { checkAccountOnboardingStatus, findExistingTransferForPayment } from "../stripe";
-import { reconcilePaymentIntent } from "./paymentReconcile";
+import { reconcilePaymentIntent, firePaymentSucceededSideEffects } from "./paymentReconcile";
 import { runReviewPromptJob } from "../jobs/reviewPromptJob";
 import { runStripeWebhookCleanupJob } from "../jobs/stripeWebhookCleanup";
 import { runDataRetentionCleanupJob } from "../jobs/dataRetentionCleanup";
@@ -92,6 +94,18 @@ export async function ensureStripeWebhookTable() {
       await db.execute(drizzleSql`
         create index if not exists idx_stripe_webhook_events_processed_at
         on stripe_webhook_events (processed_at desc)
+      `);
+      // F8: mirror migration 0041 so envs whose table was born via this lazy
+      // DDL path also get expires_at (+ its index). Without this, the retention
+      // cleanup job (stripeWebhookCleanup) errors on every run and the table
+      // grows unbounded. Idempotent — prod already has 0041; this heals fresh/dev.
+      await db.execute(drizzleSql`
+        alter table stripe_webhook_events
+        add column if not exists expires_at timestamp not null default (now() + interval '90 days')
+      `);
+      await db.execute(drizzleSql`
+        create index if not exists idx_stripe_webhook_events_expires_at
+        on stripe_webhook_events (expires_at)
       `);
     })().catch((error) => {
       stripeWebhookTableReadyPromise = null;
@@ -238,10 +252,11 @@ export async function expireStalePendingBookings() {
       // Stripe lookup failed — fail safe toward NOT expiring a possibly-paid
       // booking. It'll be re-evaluated on the next cycle.
       skippedInFlight += 1;
-      logger.warn(
-        `[booking expiry] Stripe lookup failed for booking ${bookingId} (pi=${candidate.paymentIntentId}); skipping this cycle:`,
-        err?.message || err
-      );
+      captureJobError("booking_expiry", err, {
+        stage: "stripe_pi_lookup",
+        bookingId,
+        paymentIntentId: candidate.paymentIntentId,
+      });
     }
   }
 
@@ -377,11 +392,12 @@ export async function cancelUnansweredBookingRequests(): Promise<number> {
       });
 
       if (!refundOutcome.ok) {
-        const stripeErr: any = refundOutcome.error;
-        logger.error(
-          `[vendor-no-response] Stripe refund failed for payment ${refundOutcome.failedPaymentId} (booking ${row.id}) — leaving booking pending for retry:`,
-          stripeErr?.message || stripeErr
-        );
+        captureJobError("vendor_no_response", refundOutcome.error, {
+          stage: "stripe_refund",
+          bookingId: row.id,
+          failedPaymentId: refundOutcome.failedPaymentId,
+          note: "leaving booking pending for retry",
+        });
         continue;
       }
 
@@ -423,8 +439,12 @@ export async function cancelUnansweredBookingRequests(): Promise<number> {
       });
 
       if (!casWon) {
-        logger.error(
-          `[vendor-no-response] booking ${row.id} changed status between refund and cancel — refunds were issued (${totalRefundedCents} cents) but booking was NOT cancelled; needs manual review`
+        captureJobError(
+          "vendor_no_response",
+          new Error(
+            `booking ${row.id} changed status between refund and cancel — refunds were issued (${totalRefundedCents} cents) but booking was NOT cancelled; needs manual review`
+          ),
+          { stage: "cas_conflict", bookingId: row.id, totalRefundedCents }
         );
         continue;
       }
@@ -476,7 +496,7 @@ export async function cancelUnansweredBookingRequests(): Promise<number> {
 
       cancelled++;
     } catch (err: any) {
-      logger.warn(`[vendor-no-response] failed to cancel booking ${row.id}:`, err?.message || err);
+      captureJobError("vendor_no_response", err, { stage: "cancel_booking", bookingId: row.id });
     }
   }
 
@@ -599,14 +619,15 @@ export async function recoverStalePayoutClaims(): Promise<number> {
         recovered += 1;
       } catch (rowErr: any) {
         // A Stripe blip on one row must not strand the rest — retry next tick.
-        logger.warn(
-          `[payout] stale-claim recovery failed for payment ${claim.paymentId}:`,
-          rowErr?.message || rowErr
-        );
+        captureJobError("stale_payout_claim_recovery", rowErr, {
+          stage: "recover_row",
+          paymentId: claim.paymentId,
+          bookingId: claim.bookingId,
+        });
       }
     }
   } catch (err: any) {
-    logger.warn("[payout] stale-claim recovery scan failed:", err?.message || err);
+    captureJobError("stale_payout_claim_recovery", err, { stage: "scan" });
   }
   return recovered;
 }
@@ -673,7 +694,7 @@ export async function runAutoPayoutTickWithResult(): Promise<boolean> {
     }
     return false;
   } catch (error) {
-    logger.error({ err: error }, "auto payout tick failed");
+    captureJobError("auto_payout", error, { stage: "tick" });
     return true;
   } finally {
     autoPayoutTickInFlight = false;
@@ -759,11 +780,10 @@ export async function runStripeConnectReconcileJob(): Promise<number> {
         if (await reconcileVendorStripeOnboarding(row.stripeConnectId)) flipped += 1;
       } catch (err: any) {
         // One bad account must not halt the batch.
-        logger.warn(
-          "[stripe-connect-reconcile] check failed for %s: %s",
-          row.stripeConnectId,
-          err?.message || err
-        );
+        captureJobError("stripe_connect_reconcile", err, {
+          stage: "reconcile_account",
+          stripeConnectId: row.stripeConnectId,
+        });
       }
     }
     if (flipped > 0) {
@@ -773,6 +793,9 @@ export async function runStripeConnectReconcileJob(): Promise<number> {
       );
     }
     return flipped;
+  } catch (err: any) {
+    captureJobError("stripe_connect_reconcile", err, { stage: "job" });
+    return 0;
   } finally {
     await releaseWorkerLock("stripe_connect_reconcile", lockToken);
   }
@@ -877,13 +900,11 @@ export async function runSecurityDepositRefundJob(): Promise<number> {
       }
 
       if (outcome.action === "failed") {
-        const rowErr: any = outcome.error;
-        logger.warn(
-          "[security-deposit-refund] failed for payment=%s booking=%s: %s",
-          row.payment_id,
-          row.booking_id,
-          rowErr?.message || rowErr
-        );
+        captureJobError("security_deposit_refund", outcome.error, {
+          stage: "stripe_refund",
+          paymentId: row.payment_id,
+          bookingId: row.booking_id,
+        });
         continue;
       }
 
@@ -916,12 +937,11 @@ export async function runSecurityDepositRefundJob(): Promise<number> {
           outcome.amountCents
         );
       } catch (rowErr: any) {
-        logger.warn(
-          "[security-deposit-refund] persist failed for payment=%s booking=%s: %s",
-          row.payment_id,
-          row.booking_id,
-          rowErr?.message || rowErr
-        );
+        captureJobError("security_deposit_refund", rowErr, {
+          stage: "persist_refund",
+          paymentId: row.payment_id,
+          bookingId: row.booking_id,
+        });
       }
     }
 
@@ -930,7 +950,7 @@ export async function runSecurityDepositRefundJob(): Promise<number> {
     }
     return refunded;
   } catch (err: any) {
-    logger.warn("[security-deposit-refund] job failed: %s", err?.message || err);
+    captureJobError("security_deposit_refund", err, { stage: "job" });
     return 0;
   } finally {
     await releaseWorkerLock("security_deposit_refund", lockToken);
@@ -1059,12 +1079,11 @@ export async function runTravelFeeRefundJob(): Promise<number> {
           remainingCents
         );
       } catch (rowErr: any) {
-        logger.warn(
-          "[travel-fee-refund] failed for payment=%s booking=%s: %s",
-          row.payment_id,
-          row.booking_id,
-          rowErr?.message || rowErr
-        );
+        captureJobError("travel_fee_refund", rowErr, {
+          stage: "refund_row",
+          paymentId: row.payment_id,
+          bookingId: row.booking_id,
+        });
       }
     }
 
@@ -1073,7 +1092,7 @@ export async function runTravelFeeRefundJob(): Promise<number> {
     }
     return refunded;
   } catch (err: any) {
-    logger.warn("[travel-fee-refund] job failed: %s", err?.message || err);
+    captureJobError("travel_fee_refund", err, { stage: "job" });
     return 0;
   } finally {
     await releaseWorkerLock("travel_fee_refund", lockToken);
@@ -1107,7 +1126,7 @@ export async function runBookingCompletionJob(): Promise<number> {
     }
     return rowCount;
   } catch (err: any) {
-    logger.warn("[booking-completion] job failed: %s", err?.message || err);
+    captureJobError("booking_auto_complete", err, { stage: "job" });
     return 0;
   } finally {
     await releaseWorkerLock("booking_auto_complete", lockToken);
@@ -1144,7 +1163,7 @@ export function startReviewPromptWorker() {
   const INTERVAL_MS = 24 * 60 * 60 * 1000;
   const serverUrl = appUrl();
   const run = () => runReviewPromptJob({ serverUrl, logger: { log: logger.info.bind(logger), warn: logger.warn.bind(logger) } }).catch((err: any) => {
-    logger.warn("[review-prompt] worker error: %s", err?.message || err);
+    captureJobError("review_prompt", err, { stage: "worker" });
   });
   const startTimer = setTimeout(() => {
     void run();
@@ -1157,7 +1176,7 @@ export function startReviewPromptWorker() {
 export function startStripeWebhookCleanupWorker() {
   const INTERVAL_MS = 24 * 60 * 60 * 1000;
   const run = () => runStripeWebhookCleanupJob({ logger: { log: logger.info.bind(logger), warn: logger.warn.bind(logger) } }).catch((err: any) => {
-    logger.warn("[stripe-webhook-cleanup] worker error: %s", err?.message || err);
+    captureJobError("stripe_webhook_cleanup", err, { stage: "worker" });
   });
   const startTimer = setTimeout(() => {
     void run();
@@ -1170,7 +1189,7 @@ export function startStripeWebhookCleanupWorker() {
 export function startDataRetentionCleanupWorker() {
   const INTERVAL_MS = 24 * 60 * 60 * 1000;
   const run = () => runDataRetentionCleanupJob({ logger: { log: logger.info.bind(logger), warn: logger.warn.bind(logger) } }).catch((err: any) => {
-    logger.warn("[data-retention] worker error: %s", err?.message || err);
+    captureJobError("data_retention", err, { stage: "worker" });
   });
   const startTimer = setTimeout(() => {
     void run();
@@ -1194,7 +1213,7 @@ export function startBookingExpiryWorker() {
       if (noResponseCount > 0) logger.info(`[booking expiry] auto-cancelled ${noResponseCount} unanswered booking request(s) after ${BOOKING_VENDOR_RESPONSE_EXPIRY_DAYS} days`);
       backoffMs = 5 * 60 * 1000;
     } catch (error: any) {
-      logger.warn("[booking expiry] cleanup failed:", error?.message || error);
+      captureJobError("booking_expiry", error, { stage: "tick" });
       backoffMs = Math.min(backoffMs * 2, MAX_BACKOFF_MS);
     } finally {
       await releaseWorkerLock("booking_expiry", lockToken);
@@ -1215,7 +1234,7 @@ export function startChatCleanupWorker() {
     try {
       await cleanupExpiredStreamChannels();
     } catch (error: any) {
-      logger.warn("Expired chat cleanup failed:", error?.message || error);
+      captureJobError("chat_cleanup", error, { stage: "job" });
     }
   };
   void run();
@@ -1246,11 +1265,14 @@ export function startGoogleVerificationWorker() {
               summary.googleCalendarReadStatus);
           }
         } catch (error: any) {
-          logger.warn("[google verification] vendor=%s failed: %s", asTrimmedString(account.id) || "unknown", error?.message || error);
+          captureJobError("google_sync_verification", error, {
+            stage: "verify_vendor",
+            vendorAccountId: asTrimmedString(account.id) || "unknown",
+          });
         }
       }
     } catch (error: any) {
-      logger.warn("[google verification] recurring run failed:", error?.message || error);
+      captureJobError("google_sync_verification", error, { stage: "run" });
     }
   };
 
@@ -1259,27 +1281,41 @@ export function startGoogleVerificationWorker() {
 }
 
 export function startWatchChannelRenewalWorker() {
+  // 60-min cadence is ample for a 3-day renewal window; the 15s→2min initial
+  // delay and the worker lock together prevent deploy-overlap races where two
+  // instances renew the same channel concurrently.
+  const INTERVAL_MS = 60 * 60 * 1000;
   const run = async () => {
+    const lockToken = await tryAcquireWorkerLock("watch_channel_renewal", 90 * 60 * 1000);
+    if (!lockToken) return;
     try {
       const result = await renewExpiringGoogleCalendarWatchChannels();
       if (result.renewed > 0 || result.failed > 0) {
         logger.info("[watch channel renewal] renewed=%d failed=%d", result.renewed, result.failed);
       }
     } catch (error: any) {
-      logger.warn("[watch channel renewal] job failed:", error?.message || error);
+      captureJobError("watch_channel_renewal", error, { stage: "job" });
+    } finally {
+      await releaseWorkerLock("watch_channel_renewal", lockToken);
     }
   };
   const startTimer = setTimeout(() => {
     void run();
-    const t = setInterval(() => void run(), 60 * 1000);
+    const t = setInterval(() => void run(), INTERVAL_MS);
     t.unref?.();
-  }, 15 * 1000);
+  }, 2 * 60 * 1000);
   startTimer.unref?.();
 }
 
 export function startEventDayReminderWorker() {
   const INTERVAL_MS = 4 * 60 * 60 * 1000;
   const run = async () => {
+    // Worker lock (TTL ≈ 2× interval) stops deploy-overlap double-runs. This
+    // worker uses F5 mark-after-success (below) rather than a claim-before-send
+    // CAS — the two reminder emails per booking share one sent flag, so a claim
+    // that flipped the flag before sending would drop BOTH on a single failure.
+    const lockToken = await tryAcquireWorkerLock("event_day_reminder", 8 * 60 * 60 * 1000);
+    if (!lockToken) return;
     try {
       const serverUrl = appUrl();
       const windowStart = new Date(Date.now() + 20 * 60 * 60 * 1000);
@@ -1334,16 +1370,33 @@ export function startEventDayReminderWorker() {
               eventLocation: row.eventLocation ?? undefined, role: "vendor", serverUrl,
             }));
           }
-          await Promise.allSettled(tasks);
-          await db.update(bookings).set({ eventDayReminderSent: true }).where(eq(bookings.id, row.bookingId));
-          sent++;
+          const results = await Promise.allSettled(tasks);
+          // F5: only mark sent when every attempted email actually went out.
+          // Senders resolve { sent:false } (config/HTTP failure) instead of
+          // throwing, so inspect the resolved value — not just fulfillment.
+          // A row with no recipients at all is terminal (nothing to send) so it
+          // doesn't get refetched forever.
+          const allSucceeded =
+            results.length > 0 &&
+            results.every((r) => r.status === "fulfilled" && (r.value as EmailResult)?.sent === true);
+          if (results.length === 0 || allSucceeded) {
+            await db.update(bookings).set({ eventDayReminderSent: true }).where(eq(bookings.id, row.bookingId));
+            if (results.length > 0) sent++;
+          } else {
+            logger.warn(
+              "[event day reminder] booking %s: not all emails sent — leaving unmarked for retry",
+              row.bookingId
+            );
+          }
         } catch (rowError: any) {
-          logger.warn("[event day reminder] failed for booking %s: %s", row.bookingId, rowError?.message || rowError);
+          captureJobError("event_day_reminder", rowError, { stage: "send_row", bookingId: row.bookingId });
         }
       }
       if (sent > 0) logger.info("[event day reminder] sent %d reminder(s)", sent);
     } catch (error: any) {
-      logger.warn("[event day reminder] job failed:", error?.message || error);
+      captureJobError("event_day_reminder", error, { stage: "job" });
+    } finally {
+      await releaseWorkerLock("event_day_reminder", lockToken);
     }
   };
   const startTimer = setTimeout(() => {
@@ -1357,6 +1410,8 @@ export function startEventDayReminderWorker() {
 export function startSuspensionLiftedWorker() {
   const INTERVAL_MS = 24 * 60 * 60 * 1000;
   const run = async () => {
+    const lockToken = await tryAcquireWorkerLock("suspension_lifted", 48 * 60 * 60 * 1000);
+    if (!lockToken) return;
     try {
       const serverUrl = appUrl();
       const now = new Date();
@@ -1377,20 +1432,31 @@ export function startSuspensionLiftedWorker() {
       let sent = 0;
       for (const row of expired) {
         try {
+          // Claim before sending: atomically flip the flag; only the instance
+          // that wins the CAS sends. A crash between claim and send drops this
+          // one notification rather than risking a duplicate (accepted L13
+          // trade-off — mirrors the payout-email pattern).
+          const claim: any = await db.execute(drizzleSql`
+            update vendor_suspensions set lift_email_sent = true
+            where id = ${row.suspensionId} and lift_email_sent = false
+            returning id
+          `);
+          if (extractRows(claim).length === 0) continue; // another instance/tick claimed it
           await sendSuspensionLiftedEmail(row.vendorEmail, {
             recipientName: row.businessName || "Vendor",
             businessName: row.businessName || "Your Business",
             serverUrl,
           });
-          await db.execute(drizzleSql`update vendor_suspensions set lift_email_sent = true where id = ${row.suspensionId}`);
           sent++;
         } catch (rowError: any) {
-          logger.warn("[suspension lifted] failed for %s: %s", row.suspensionId, rowError?.message || rowError);
+          captureJobError("suspension_lifted", rowError, { stage: "send_row", suspensionId: row.suspensionId });
         }
       }
       if (sent > 0) logger.info("[suspension lifted] sent %d notification(s)", sent);
     } catch (error: any) {
-      logger.warn("[suspension lifted] job failed:", error?.message || error);
+      captureJobError("suspension_lifted", error, { stage: "job" });
+    } finally {
+      await releaseWorkerLock("suspension_lifted", lockToken);
     }
   };
   const startTimer = setTimeout(() => {
@@ -1404,6 +1470,8 @@ export function startSuspensionLiftedWorker() {
 export function startPendingRequestReminderWorker() {
   const INTERVAL_MS = 10 * 60 * 1000;
   const run = async () => {
+    const lockToken = await tryAcquireWorkerLock("pending_request_reminder", 20 * 60 * 1000);
+    if (!lockToken) return;
     try {
       const serverUrl = appUrl();
       const now = new Date();
@@ -1452,35 +1520,58 @@ export function startPendingRequestReminderWorker() {
           const createdHourStr = new Intl.DateTimeFormat("en-US", { timeZone: tz, hour: "numeric", hour12: false }).format(createdAt);
           const createdHour = parseInt(createdHourStr, 10);
           const hoursSinceCreation = (now.getTime() - createdAt.getTime()) / (60 * 60 * 1000);
-          const isAfterMidnightOfCreation = now.toDateString() !== createdAt.toDateString();
+          // Compare calendar dates in the VENDOR's timezone — the hour checks
+          // below are all vendor-TZ, so a server-TZ toDateString() comparison
+          // (the previous bug) could flip a day boundary hours early/late for
+          // far-east/west vendors and mis-gate the 9am reminder.
+          const vendorDateFmt = new Intl.DateTimeFormat("en-CA", {
+            timeZone: tz, year: "numeric", month: "2-digit", day: "2-digit",
+          });
+          const isAfterMidnightOfCreation = vendorDateFmt.format(now) !== vendorDateFmt.format(createdAt);
 
           let cadenceSent: "6pm" | "9am" | "24h" | null = null;
           let columnToSet: Partial<typeof bookings.$inferInsert> = {};
+          let claimColumn:
+            | typeof bookings.pendingReminder24hSent
+            | typeof bookings.pendingReminder9amSent
+            | typeof bookings.pendingReminder6pmSent
+            | null = null;
 
           if (!row.sent24h && hoursSinceCreation >= 24) {
-            cadenceSent = "24h"; columnToSet = { pendingReminder24hSent: true };
+            cadenceSent = "24h"; columnToSet = { pendingReminder24hSent: true }; claimColumn = bookings.pendingReminder24hSent;
           } else if (!row.sent9am && isAfterMidnightOfCreation && vendorHour >= 9 && vendorHour < 11) {
-            cadenceSent = "9am"; columnToSet = { pendingReminder9amSent: true };
+            cadenceSent = "9am"; columnToSet = { pendingReminder9amSent: true }; claimColumn = bookings.pendingReminder9amSent;
           } else if (!row.sent6pm && vendorHour >= 18 && vendorHour < 20 && createdHour < 18) {
-            cadenceSent = "6pm"; columnToSet = { pendingReminder6pmSent: true };
+            cadenceSent = "6pm"; columnToSet = { pendingReminder6pmSent: true }; claimColumn = bookings.pendingReminder6pmSent;
           }
 
-          if (!cadenceSent) continue;
+          if (!cadenceSent || !claimColumn) continue;
+
+          // Claim before sending: flip this cadence's flag atomically; only the
+          // instance that wins the CAS sends. A crash between claim and send
+          // drops this one reminder rather than risking a duplicate (L13).
+          const claimed = await db
+            .update(bookings)
+            .set(columnToSet as any)
+            .where(and(eq(bookings.id, row.bookingId), eq(claimColumn, false)))
+            .returning({ id: bookings.id });
+          if (claimed.length === 0) continue; // another instance/tick claimed it
 
           await sendPendingRequestReminderEmail(row.vendorEmail, {
             recipientName: row.vendorName || "Vendor", customerName: row.customerName || "Customer",
             listingTitle: row.listingTitle || "Service", eventDate: row.eventDate,
             totalAmountCents: row.totalCents, cadence: cadenceSent, serverUrl,
           });
-          await db.update(bookings).set(columnToSet as any).where(eq(bookings.id, row.bookingId));
           sent++;
         } catch (rowError: any) {
-          logger.warn("[pending reminder] failed for booking %s: %s", row.bookingId, rowError?.message || rowError);
+          captureJobError("pending_request_reminder", rowError, { stage: "send_row", bookingId: row.bookingId });
         }
       }
       if (sent > 0) logger.info("[pending reminder] sent %d reminder(s)", sent);
     } catch (error: any) {
-      logger.warn("[pending reminder] job failed:", error?.message || error);
+      captureJobError("pending_request_reminder", error, { stage: "job" });
+    } finally {
+      await releaseWorkerLock("pending_request_reminder", lockToken);
     }
   };
   const startTimer = setTimeout(() => {
@@ -1531,6 +1622,83 @@ export function startStripeConnectReconcileWorker() {
   startTimer.unref?.();
 }
 
+export async function runPaymentEffectsSweepJob(): Promise<number> {
+  const lockToken = await tryAcquireWorkerLock("payment_effects_sweep", 30 * 60 * 1000);
+  if (!lockToken) {
+    logger.info("[payment-effects-sweep] lock held by another instance — skipping");
+    return 0;
+  }
+  try {
+    // F10 recovery: booking payments that succeeded but whose one-time side
+    // effects (receipt/notification/chat) never got their success_effects_sent
+    // flag flipped — i.e. the process died after the DB commit but before the
+    // fire-and-forget sends settled. Re-fire them. Bounded to the last 7 days so
+    // a permanently-wedged row can't be retried forever; the migration 0151
+    // backfill marked all pre-existing succeeded rows sent so this never touches
+    // historical payments.
+    const pending: any = await db.execute(drizzleSql`
+      SELECT
+        p.stripe_payment_intent_id AS stripe_pi_id,
+        p.booking_id               AS booking_id
+      FROM payments p
+      WHERE p.payment_type = 'booking'
+        AND p.status = 'succeeded'
+        AND p.success_effects_sent = false
+        AND p.paid_at IS NOT NULL
+        AND p.paid_at > now() - interval '7 days'
+      ORDER BY p.paid_at ASC
+      LIMIT 25
+    `);
+
+    const rows = extractRows<{ stripe_pi_id: string | null; booking_id: string | null }>(pending);
+    if (rows.length === 0) return 0;
+
+    logger.info("[payment-effects-sweep] %d succeeded payment(s) missing side effects", rows.length);
+    let fired = 0;
+
+    for (const row of rows) {
+      if (!row.stripe_pi_id || !row.booking_id) continue;
+      try {
+        // firePaymentSucceededSideEffects flips success_effects_sent = true after
+        // the sends settle, so a row that succeeds here drops out of the next
+        // sweep. A row that fails leaves the flag false and is retried next tick.
+        await firePaymentSucceededSideEffects({
+          paymentIntentId: row.stripe_pi_id,
+          bookingId: row.booking_id,
+          paymentType: "booking",
+        });
+        fired++;
+      } catch (rowErr: any) {
+        captureJobError("payment_effects_sweep", rowErr, {
+          stage: "fire_row",
+          paymentIntentId: row.stripe_pi_id,
+          bookingId: row.booking_id,
+        });
+      }
+    }
+
+    if (fired > 0) {
+      logger.info("[payment-effects-sweep] re-fired side effects for %d payment(s)", fired);
+    }
+    return fired;
+  } catch (err: any) {
+    captureJobError("payment_effects_sweep", err, { stage: "job" });
+    return 0;
+  } finally {
+    await releaseWorkerLock("payment_effects_sweep", lockToken);
+  }
+}
+
+export function startPaymentEffectsSweepWorker() {
+  const INTERVAL_MS = 15 * 60 * 1000;
+  const startTimer = setTimeout(() => {
+    void runPaymentEffectsSweepJob();
+    const t = setInterval(() => void runPaymentEffectsSweepJob(), INTERVAL_MS);
+    t.unref?.();
+  }, 6 * 60 * 1000);
+  startTimer.unref?.();
+}
+
 export function startAllBackgroundWorkers() {
   startBookingExpiryWorker();
   startChatCleanupWorker();
@@ -1545,6 +1713,7 @@ export function startAllBackgroundWorkers() {
   startBookingCompletionWorker();
   startAutoPayoutWorker();
   startStripeConnectReconcileWorker();
+  startPaymentEffectsSweepWorker();
   startStripeWebhookCleanupWorker();
   startDataRetentionCleanupWorker();
 }

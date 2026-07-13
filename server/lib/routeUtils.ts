@@ -212,6 +212,29 @@ export function payoutTransferFailureBlockedReason(
     : "transfer_failed";
 }
 
+export type PaymentInitAction = "reuse" | "recreate" | "already_completed";
+
+/**
+ * Decides what to do with an existing booking PaymentIntent when a customer
+ * resumes checkout, based purely on the PI's Stripe status:
+ *  - 'succeeded'          -> already_completed (caller throws; nothing to pay)
+ *  - 'canceled' / unknown -> recreate (the old PI is dead; make a fresh one)
+ *  - anything else        -> reuse (still payable; hand back the same secret)
+ *
+ * Extracted as a pure function (F8) so initializeBookingPayment always falls
+ * through to the row-ensure block instead of early-returning on a reusable PI
+ * and skipping the security_deposit insert — and so the branch table is
+ * unit-testable without Stripe or a DB.
+ */
+export function resolvePaymentInitAction(
+  existingIntentStatus: string | null | undefined
+): PaymentInitAction {
+  const status = asTrimmedString(existingIntentStatus).toLowerCase();
+  if (status === "succeeded") return "already_completed";
+  if (!status || status === "canceled") return "recreate";
+  return "reuse";
+}
+
 /**
  * Pure mirror of the auto-payout worker's candidate predicate (the WHERE clause
  * in runAutoPayoutTickWithResult). A payment is auto-processable when nothing
@@ -701,6 +724,17 @@ export function hasValidListingPrice(listingDataRaw: unknown, canonicalPriceCent
   return cents != null && cents > 0;
 }
 
+/**
+ * Normalize a raw travel-fee-type input to the only three persisted values.
+ * Anything else (junk strings, wrong casing, non-strings) resolves to null.
+ * Shared by the main listing-column builder and the package_item routes so
+ * both paths validate identically. DB CHECK backstop lives in migration 0146.
+ */
+export function normalizeTravelFeeType(value: unknown): "flat" | "per_mile" | "per_hour" | null {
+  const v = asTrimmedString(value).toLowerCase();
+  return v === "flat" || v === "per_mile" || v === "per_hour" ? v : null;
+}
+
 export function getListingPricingUnit(listingData: any, canonicalPricingUnit?: unknown): "per_day" | "per_hour" {
   const canonicalUnit = asTrimmedString(canonicalPricingUnit).toLowerCase();
   if (canonicalUnit === "per_hour" || canonicalUnit === "per_day") return canonicalUnit;
@@ -1045,11 +1079,8 @@ export function mirrorListingQuantityIntoListingData(input: {
 
   listingData.travelOffered = parseBooleanInput(canonical.travelOffered) ?? false;
   listingData.travelFeeEnabled = parseBooleanInput(canonical.travelFeeEnabled) ?? false;
-  const travelFeeType = asTrimmedString(canonical.travelFeeType).toLowerCase();
-  listingData.travelFeeType =
-    listingData.travelFeeEnabled && (travelFeeType === "flat" || travelFeeType === "per_mile" || travelFeeType === "per_hour")
-      ? travelFeeType
-      : null;
+  const travelFeeType = normalizeTravelFeeType(canonical.travelFeeType);
+  listingData.travelFeeType = listingData.travelFeeEnabled ? travelFeeType : null;
   const travelFeeAmountCents = parseIntegerValue(canonical.travelFeeAmountCents);
   listingData.travelFeeAmountCents =
     listingData.travelFeeEnabled && travelFeeAmountCents != null && travelFeeAmountCents > 0

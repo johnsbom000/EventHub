@@ -584,9 +584,17 @@ export const bookings = pgTable("bookings", {
   inquiryChannelId: varchar("inquiry_channel_id", { length: 255 }),
   vendorDismissedAt: timestamp("vendor_dismissed_at"),
   customerDismissedAt: timestamp("customer_dismissed_at"),
+  // Client-supplied idempotency key. A partial unique index on
+  // (customer_id, idempotency_key) WHERE idempotency_key IS NOT NULL (migration
+  // 0150) makes duplicate booking-create requests DB-safe, not just JS-safe.
+  idempotencyKey: text("idempotency_key"),
   createdAt: timestamp("created_at").defaultNow().notNull(),
   updatedAt: timestamp("updated_at").defaultNow().notNull(),
-});
+}, (table) => ({
+  customerIdempotencyKeyUniqueIdx: uniqueIndex("bookings_customer_idempotency_key_unique_idx")
+    .on(table.customerId, table.idempotencyKey)
+    .where(sql`${table.idempotencyKey} is not null`),
+}));
 
 export const insertBookingSchema = createInsertSchema(bookings).omit({
   id: true,
@@ -766,6 +774,10 @@ export const payments = pgTable("payments", {
   refundedAt: timestamp("refunded_at"),
   paidAt: timestamp("paid_at"),
   payoutEmailSent: boolean("payout_email_sent").notNull().default(false),
+  // F10 exactly-once guard: true once the one-time payment-success side
+  // effects (receipt/notification/chat) have settled; the
+  // payment_effects_sweep re-fires succeeded booking payments still false.
+  successEffectsSent: boolean("success_effects_sent").notNull().default(false),
   createdAt: timestamp("created_at").defaultNow().notNull(),
 });
 

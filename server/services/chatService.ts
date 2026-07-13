@@ -177,6 +177,7 @@ export async function listCustomerInquiryChannels(customerId: string): Promise<I
     left join users u on u.id = vi.customer_id
     where vi.customer_id = ${customerId}
       and vi.status = 'active'
+      and va.deleted_at is null
     order by vi.created_at desc
   `);
   return extractRows<InquiryChannel>(rows);
@@ -198,6 +199,7 @@ export async function listVendorInquiryChannels(vendorAccountId: string): Promis
     left join users u on u.id = vi.customer_id
     where vi.vendor_account_id = ${vendorAccountId}
       and vi.status = 'active'
+      and va.deleted_at is null
     order by vi.created_at desc
   `);
   return extractRows<InquiryChannel>(rows);

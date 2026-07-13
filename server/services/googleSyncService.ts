@@ -6,7 +6,7 @@ import {
   googleCalendarEventMappings,
   bookings,
 } from "@shared/schema";
-import { logRouteError } from "../lib/routeHelpers";
+import { logRouteError, toPgTextArray } from "../lib/routeHelpers";
 import {
   GoogleCalendarConnectionError,
   syncEventHubBookingToGoogleCalendar,
@@ -391,11 +391,33 @@ export function getComparableGoogleEventRange(input: {
 }
 
 export async function findOverlappingEventHubBookingsForListing(params: {
-  listingId: string;
+  // Single-listing mode (the common case). Ignored when listingIds is given.
+  listingId?: string;
+  // Pool mode (dependent-package containers, M9): match any booking against ANY
+  // listing in the set — the container id plus its package_item children — so the
+  // shared-capacity pool is counted as one. Bookings store the package_item id, so
+  // a container-only query (single-id mode) would never see child bookings.
+  listingIds?: string[];
   bookingStartAt: Date;
   bookingEndAt: Date;
   excludeBookingId?: string | null;
 }) {
+  const listingIds =
+    params.listingIds && params.listingIds.length > 0
+      ? params.listingIds
+      : params.listingId
+        ? [params.listingId]
+        : [];
+  if (listingIds.length === 0) {
+    return [] as Array<{
+      id?: string;
+      status?: string | null;
+      bookingStartAt?: Date | null;
+      bookingEndAt?: Date | null;
+      quantity?: number | null;
+    }>;
+  }
+  const idArray = drizzleSql`${toPgTextArray(listingIds)}::text[]`;
   // Legacy compatibility remains only for rows missing canonical bookings.listing_id.
   const rows: any = await db.execute(drizzleSql`
     select
@@ -409,17 +431,17 @@ export async function findOverlappingEventHubBookingsForListing(params: {
       select sum(coalesce(bi.quantity, 1))::int as quantity
       from booking_items bi
       where bi.booking_id = b.id
-        and bi.listing_id = ${params.listingId}
+        and bi.listing_id = any(${idArray})
     ) booking_item_totals on true
     where (
-      b.listing_id = ${params.listingId}
+      b.listing_id = any(${idArray})
       or (
         b.listing_id is null
         and exists (
           select 1
           from booking_items bi
           where bi.booking_id = b.id
-            and bi.listing_id = ${params.listingId}
+            and bi.listing_id = any(${idArray})
         )
       )
     )
