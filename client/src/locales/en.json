@@ -1387,5 +1387,561 @@
       "signupFailedTitle": "Sign up failed",
       "signupFailedFallback": "Something went wrong. Please try again."
     }
-  }
+  },
+    "customerExp": {
+      "eyebrow": "The customer experience",
+      "title": "A booking experience customers actually <accent>trust</accent>.",
+      "subtitle": "From your storefront to checkout, it all happens on one page — clear pricing, live availability, and self-serve booking. Here's exactly what your customers see.",
+      "transparency": {
+        "title": "Total transparency",
+        "body": "Prices, availability, and deposits live right on the page. Customers see exactly what they'll pay before they book — no hidden fees, no back-and-forth."
+      },
+      "independence": {
+        "title": "They book on their own",
+        "body": "Customers browse, pick a date, and check out themselves, around the clock. You don't have to be online to land the booking."
+      },
+      "ease": {
+        "title": "Effortlessly simple",
+        "body": "A clean, guided flow from storefront to confirmation. Fewer steps means fewer drop-offs and more completed bookings."
+      }
+    },
+    "plans": {
+      "eyebrow": "Free vs Pro",
+      "title": "Start free. Upgrade only if you want more.",
+      "subtitle": "Everything you need to get booked is free — no time limit, no credit card. Pro is an optional upgrade for vendors who want to grow faster.",
+      "free": {
+        "badge": "Free forever",
+        "title": "Free",
+        "tagline": "Everything you need to start getting booked.",
+        "f1": "Your own storefront and shareable booking link",
+        "f2": "Take bookings and manage your calendar",
+        "f3": "Message customers in-app",
+        "f4": "Secure payouts through Stripe",
+        "f5": "Automatic booking confirmations and reminders",
+        "cta": "Create your free account"
+      },
+      "pro": {
+        "badge": "Optional upgrade",
+        "title": "Pro",
+        "tagline": "For vendors ready to grow faster.",
+        "plus": "Everything in Free, plus",
+        "f1": "Unlimited active listings",
+        "f2": "AI reply assistant for messages",
+        "f3": "Discounts & promo codes",
+        "f4": "Reputation management",
+        "f5": "Advanced analytics & booking trends",
+        "f6": "Google Calendar sync",
+        "cta": "Get started with Pro"
+      }
+    },
+    "landingFreeA": {
+      "bar": {
+        "text": "Set up in minutes. No learning curve. Upgrade to Pro anytime."
+      },
+      "benefits": {
+        "eyebrow": "Simple from day one",
+        "item1Body": "Answer a few questions and your storefront builds itself — live before your coffee's cold.",
+        "item1Title": "Guided setup",
+        "item2Body": "Quantities, rental windows, deposits, and delivery are handled out of the box. No spreadsheets.",
+        "item2Title": "Rental logic already built in",
+        "item3Body": "Customers pick their dates, you get the notification, and the calendar blocks automatically.",
+        "item3Title": "Bookings run themselves",
+        "item4Body": "Availability updates the second someone books, across every listing.",
+        "item4Title": "Never double-book",
+        "title": "Everything just works, right out of the box."
+      },
+      "closing": {
+        "cta": "Create your free account",
+        "logIn": "Log in",
+        "subtitle": "Sign up, follow the wizard, and you're taking bookings today. No setup headaches.",
+        "title": "Getting set up is <accent>easy</accent>.",
+        "trustLine": "Free to join · No credit card required"
+      },
+      "footer": {
+        "company": "Company",
+        "contact": "Contact",
+        "copyright": "© {{year}} EventHub. All rights reserved.",
+        "description": "EventHub is the easiest way to run your event business — set up in minutes, take bookings, and get paid, no tech skills needed.",
+        "privacy": "Privacy Policy",
+        "privacyShort": "Privacy",
+        "terms": "Terms of Service",
+        "termsShort": "Terms"
+      },
+      "header": {
+        "getStarted": "Create free account",
+        "logIn": "Log in"
+      },
+      "hero": {
+        "ctaVendor": "Start free",
+        "eyebrow": "For event vendors",
+        "logIn": "Log in",
+        "subtitle": "No manual, no tech skills, no setup call. A guided wizard gets your storefront live in minutes — free to start.",
+        "title": "Get booked, the <accent>easy</accent> way.",
+        "trustLine": "Free to start · 2-min setup · All in one place"
+      },
+      "payments": {
+        "body": "Stripe runs every payment and payout for you. There's nothing to set up and nothing to chase.",
+        "bullet1": "Automatic payouts, zero setup",
+        "bullet2": "Your balance and history at a glance",
+        "bullet3": "Money lands after every completed booking",
+        "eyebrow": "Getting paid is simple",
+        "title": "Payouts that handle themselves."
+      },
+      "payoutsMock": {
+        "availableBalance": "Available balance",
+        "item1": "Backyard bouncy castle",
+        "item2": "Wedding arch rental",
+        "item3": "Weekend DJ set",
+        "securedByStripe": "Secured by Stripe",
+        "title": "Payouts"
+      },
+      "proStrip": {
+        "link": "start free today",
+        "text": "Want more tools? Pro is one click when you're ready —"
+      },
+      "sampleTag": "Sample",
+      "signup": {
+        "alreadyHaveAccount": "Already have an account?",
+        "continueEmail": "Continue with email",
+        "continueGoogle": "Continue with Google",
+        "dialogDescription": "Sign up and our wizard gets your storefront live in minutes. Free to start.",
+        "dialogTitle": "Create your free vendor account",
+        "logIn": "Log in",
+        "or": "or",
+        "subtitle": "Sign up in seconds and let the wizard do the rest — free to join.",
+        "termsAgreement": "By continuing you agree to our <terms>Terms</terms> and <privacy>Privacy Policy</privacy>.",
+        "title": "Create your free account"
+      },
+      "steps": {
+        "eyebrow": "Up and running fast",
+        "step1Body": "One tap with Google or email. Free, no credit card.",
+        "step1Title": "Sign up in seconds",
+        "step2Body": "The wizard walks you through photos and pricing. Hit publish.",
+        "step2Title": "Follow the wizard",
+        "step3Body": "Accept requests and let Stripe pay you automatically.",
+        "step3Title": "Get booked and paid",
+        "title": "Three easy steps to your first booking."
+      },
+      "toast": {
+        "signupFailedFallback": "Something went wrong. Please try again.",
+        "signupFailedTitle": "Sign-up failed"
+      }
+    },
+    "landingFreeB": {
+      "bar": {
+        "cta": "Start free",
+        "text": "Turn your side gig into a real business. Free to start, upgrade to Pro as you grow."
+      },
+      "closing": {
+        "cta": "Create your free account",
+        "logIn": "Log in",
+        "subtitle": "Set up a real storefront, take real bookings, and start getting paid like a pro — free to start, no credit card required.",
+        "title": "Ready to go pro?",
+        "trustLine": "Free to start · No credit card required"
+      },
+      "footer": {
+        "company": "Company",
+        "contact": "Contact",
+        "copyright": "© {{year}} EventHub. All rights reserved.",
+        "description": "EventHub is where event vendors turn a side hustle into a real business — a professional storefront, a real booking system, and secure payouts.",
+        "privacy": "Privacy Policy",
+        "privacyShort": "Privacy",
+        "terms": "Terms of Service",
+        "termsShort": "Terms"
+      },
+      "goLive": {
+        "eyebrow": "It's quick",
+        "step1Body": "Sign up with Google or email — no card, no commitment.",
+        "step1Title": "Claim your storefront",
+        "step2Body": "Add photos, set your prices, and show clients you mean business.",
+        "step2Title": "Build a listing that looks pro",
+        "step3Body": "Take real booking requests and get paid securely through Stripe.",
+        "step3Title": "Get booked like a real business",
+        "subtitle": "Three steps from weekend gig to real business.",
+        "title": "Go pro in minutes"
+      },
+      "header": {
+        "getStarted": "Create free account",
+        "logIn": "Log in"
+      },
+      "hero": {
+        "ctaVendor": "Build your storefront",
+        "eyebrow": "For event vendors",
+        "logIn": "Log in",
+        "reassure1": "Professional storefront",
+        "reassure2": "Free to start",
+        "reassure3": "2-min setup",
+        "subtitle": "It's time for a storefront that makes you look like the business you're becoming — professional, taken seriously, and free to start.",
+        "title": "Where side hustles <accent>grow up</accent>",
+        "trustLine": "Free to start · No credit card required"
+      },
+      "payments": {
+        "availableBalance": "Available balance",
+        "body": "Every booking runs through Stripe, so you get paid like a real business — protected payments and reliable payouts, straight to your bank.",
+        "bullet1": "Get paid reliably after every booking",
+        "bullet2": "Payouts sent straight to your bank",
+        "bullet3": "Bank-level security on every transaction",
+        "chipSecure": "Secure payouts",
+        "chipStripe": "Powered by Stripe",
+        "eyebrow": "Payments",
+        "item1": "Backyard Party — Ramos",
+        "item2": "Corporate Event — Lin",
+        "item3": "Wedding — Alvarez",
+        "mockTitle": "Payouts",
+        "securedByStripe": "Secured by Stripe",
+        "title": "Get paid like a pro"
+      },
+      "pro": {
+        "link": "Get started free",
+        "text": "Start free. When you're ready to grow, upgrade to Pro for more — never required."
+      },
+      "sampleTag": "Sample",
+      "signup": {
+        "alreadyHaveAccount": "Already have an account?",
+        "continueEmail": "Continue with email",
+        "continueGoogle": "Continue with Google",
+        "dialogDescription": "Sign up with Google or email to build a real storefront for free.",
+        "dialogTitle": "Create your free vendor account",
+        "logIn": "Log in",
+        "or": "or",
+        "subtitle": "Build a professional storefront and start getting booked — free to start.",
+        "termsAgreement": "By continuing, you agree to our <terms>Terms</terms> and <privacy>Privacy Policy</privacy>.",
+        "title": "Create your free account"
+      },
+      "toast": {
+        "signupFailedFallback": "Something went wrong. Please try again.",
+        "signupFailedTitle": "Couldn't start sign up"
+      },
+      "whatYouGet": {
+        "card1Body": "Your own branded booking page. Send one link instead of a camera roll of screenshots.",
+        "card1Title": "A storefront that looks legit",
+        "card2Body": "Professional systems for availability, logistics, communication, and payment — even when it's just you running it.",
+        "card2Title": "Look bigger than you are",
+        "card3Body": "Add listings, inventory, and automation when you're ready. The platform scales with you.",
+        "card3Title": "Grows as you do",
+        "card4Body": "0% commission on the bookings you bring in. What you earn stays yours.",
+        "card4Title": "Keep 100% of what you book",
+        "eyebrow": "Everything included, free",
+        "subtitle": "No trial, no catch. This is your business toolkit the moment you sign up.",
+        "title": "Everything you need to go pro"
+      }
+    },
+    "landingFreeC": {
+      "bar": {
+        "badge": "Free forever plan",
+        "cta": "Create free account",
+        "text": "Listings, bookings, payouts, and more from one dashboard — no credit card required."
+      },
+      "benefits": {
+        "bookings": {
+          "body": "Every booking blocks your availability automatically. Double-bookings can't happen.",
+          "title": "Calendar always in sync"
+        },
+        "listing": {
+          "body": "Listings, calendar, messages, and payments in one place. No more app-juggling.",
+          "title": "Everything in one view"
+        },
+        "messaging": {
+          "body": "Customers get professional email updates throughout their booking, and you answer questions in-app, right next to it.",
+          "title": "Updates handled for you"
+        },
+        "payments": {
+          "body": "Deposits, balances, and payouts run through one system. No chasing invoices.",
+          "title": "Get paid where you book"
+        }
+      },
+      "closing": {
+        "cta": "Create your free account",
+        "logIn": "Log in",
+        "subtitle": "Bring your listings, bookings, calendar, and payouts under one roof. Free to start.",
+        "title": "Your whole business, <accent>one place</accent>.",
+        "trustLine": "Free to join · No credit card required"
+      },
+      "footer": {
+        "company": "Company",
+        "contact": "Contact",
+        "copyright": "© {{year}} EventHub. All rights reserved.",
+        "description": "EventHub brings listings, bookings, messages, calendar, and payouts into one place for event vendors — starting free.",
+        "privacy": "Privacy Policy",
+        "privacyShort": "Privacy",
+        "terms": "Terms of Service",
+        "termsShort": "Terms"
+      },
+      "goLive": {
+        "eyebrow": "Go live",
+        "step1Body": "Sign up with Google or email in seconds. No credit card, no commitment.",
+        "step1Title": "Create your free account",
+        "step2Body": "Add photos, set your price, and publish. Your storefront becomes home base.",
+        "step2Title": "Set up your storefront",
+        "step3Body": "Bookings, messages, and Stripe payouts all flow into one dashboard — automatically.",
+        "step3Title": "Run it all from one place",
+        "title": "Three steps to one dashboard"
+      },
+      "header": {
+        "createFree": "Create free account",
+        "logIn": "Log in"
+      },
+      "hero": {
+        "ctaPrimary": "See it in action",
+        "eyebrow": "For event vendors",
+        "logIn": "Log in",
+        "subtitle": "Listings, bookings, calendar, messages, and payouts in a single dashboard — stop stitching six apps together. Free to start, no credit card required.",
+        "title": "Run your whole event business from <accent>one place</accent>.",
+        "trustLine": "One dashboard · Free to start · Built for rentals"
+      },
+      "payments": {
+        "body": "Every booking is processed through Stripe and tracked in the same dashboard as the rest of your business — so payouts, records, and schedules never live in a separate app.",
+        "bullet1": "Automatic payouts straight to your bank account",
+        "bullet2": "Secure card processing powered by Stripe",
+        "bullet3": "Bookings and payouts tracked side by side",
+        "eyebrow": "Payouts, in the dashboard",
+        "title": "Your money, tracked where you work"
+      },
+      "payouts": {
+        "availableBalance": "Available balance",
+        "item1": "Backyard party rental",
+        "item2": "Wedding arch package",
+        "item3": "Weekend DJ set",
+        "securedByStripe": "Secured by Stripe",
+        "title": "Payouts"
+      },
+      "proStrip": {
+        "link": "See what Pro adds",
+        "text": "Running everything in one place already? EventHub Pro adds more when you're ready."
+      },
+      "sampleTag": "Sample",
+      "signup": {
+        "alreadyHaveAccount": "Already have an account?",
+        "continueEmail": "Continue with email",
+        "continueGoogle": "Continue with Google",
+        "dialogDescription": "Sign up with Google or email to run your listings, bookings, and payouts in one place on EventHub.",
+        "dialogTitle": "Create your free vendor account",
+        "logIn": "Log in",
+        "or": "or",
+        "subtitle": "Bring your listings, bookings, and payouts into one dashboard — free.",
+        "termsAgreement": "By continuing, you agree to our <terms>Terms</terms> and <privacy>Privacy Policy</privacy>.",
+        "title": "Create your free account"
+      },
+      "toast": {
+        "signupFailedFallback": "Something went wrong. Please try again.",
+        "signupFailedTitle": "Sign-up failed"
+      },
+      "whatYouGet": {
+        "eyebrow": "One dashboard, free",
+        "subtitle": "Multi-day windows, unit quantities, delivery, and deposits are native — not bolted onto a generic CRM.",
+        "title": "Everything your event business needs, in one place"
+      }
+    },
+    "landingFreeD": {
+      "bar": {
+        "badge": "Free forever plan",
+        "cta": "Create free account",
+        "text": "Get one booking link and stop answering the same DM ten times — no credit card required."
+      },
+      "benefits": {
+        "bookings": {
+          "body": "Your page takes bookings around the clock — even when you're off the clock.",
+          "title": "Bookings while you sleep"
+        },
+        "listing": {
+          "body": "Drop your storefront link anywhere and customers book without waiting on you.",
+          "title": "One link does the selling"
+        },
+        "messaging": {
+          "body": "Prices, dates, and deposits live on the page, so you stop repeating yourself. Automatic confirmations quiet the 'is this still available?' pings.",
+          "title": "Answer once, not fifty times"
+        },
+        "payments": {
+          "body": "Customers pay through Stripe and payouts land in your bank automatically. No 'send me your Venmo.'",
+          "title": "Get paid without the chase"
+        }
+      },
+      "closing": {
+        "cta": "Create your free account",
+        "logIn": "Log in",
+        "subtitle": "Set up your storefront, drop the link in your bio, and let customers book themselves.",
+        "title": "One link beats a hundred <accent>DMs</accent>.",
+        "trustLine": "Free to join · No credit card required"
+      },
+      "footer": {
+        "company": "Company",
+        "contact": "Contact",
+        "copyright": "© {{year}} EventHub. All rights reserved.",
+        "description": "EventHub gives event vendors one booking link so customers can see options, check dates, and book — instead of living in your DMs.",
+        "privacy": "Privacy Policy",
+        "privacyShort": "Privacy",
+        "terms": "Terms of Service",
+        "termsShort": "Terms"
+      },
+      "goLive": {
+        "eyebrow": "Go live",
+        "step1Body": "Sign up with Google or email in seconds. No credit card, no commitment.",
+        "step1Title": "Create your free account",
+        "step2Body": "Add photos, set your prices, and set your availability. Your storefront link goes live right away.",
+        "step2Title": "Build your storefront",
+        "step3Body": "Put the link in your bio and your replies. Customers see your options and book themselves.",
+        "step3Title": "Share the link, get booked",
+        "title": "Three steps out of your inbox"
+      },
+      "header": {
+        "createFree": "Create free account",
+        "logIn": "Log in"
+      },
+      "hero": {
+        "ctaPrimary": "Get your link",
+        "eyebrow": "For event vendors",
+        "subtitle": "Share one link. Customers see your offers and availability and book on their own — no more midnight price-copy-pasting. Free to start, no credit card required.",
+        "logIn": "Log in",
+        "title": "Stop running your business from your <accent>DMs</accent>.",
+        "trustLine": "One booking link · Books 24/7 · Free to start"
+      },
+      "payments": {
+        "body": "When a customer books through your link, payment runs on Stripe and payouts land in your bank on schedule. No invoicing, no chasing, no 'did you get my payment?'",
+        "bullet1": "Automatic payouts straight to your bank account",
+        "bullet2": "Secure card processing powered by Stripe",
+        "bullet3": "Clear records of every booking and payout",
+        "eyebrow": "Get paid without the chase",
+        "title": "Your money, on time and off DM"
+      },
+      "payouts": {
+        "availableBalance": "Available balance",
+        "item1": "Backyard party rental",
+        "item2": "Wedding arch package",
+        "item3": "Weekend DJ set",
+        "securedByStripe": "Secured by Stripe",
+        "title": "Payouts"
+      },
+      "proStrip": {
+        "link": "See what Pro adds",
+        "text": "Booking more than your inbox can handle? EventHub Pro unlocks more when you are."
+      },
+      "sampleTag": "Sample",
+      "signup": {
+        "alreadyHaveAccount": "Already have an account?",
+        "continueEmail": "Continue with email",
+        "continueGoogle": "Continue with Google",
+        "dialogDescription": "Sign up with Google or email to set up your storefront link and let customers book themselves.",
+        "dialogTitle": "Create your free vendor account",
+        "logIn": "Log in",
+        "or": "or",
+        "subtitle": "Get your booking link and stop answering the same DM twice — free.",
+        "termsAgreement": "By continuing, you agree to our <terms>Terms</terms> and <privacy>Privacy Policy</privacy>.",
+        "title": "Create your free account"
+      },
+      "toast": {
+        "signupFailedFallback": "Something went wrong. Please try again.",
+        "signupFailedTitle": "Sign-up failed"
+      },
+      "whatYouGet": {
+        "eyebrow": "What you get, free",
+        "subtitle": "Planning an event is stressful enough — transparency is what customers want, and your page gives it to them.",
+        "title": "One link that ends the DM back-and-forth"
+      }
+    },
+    "landingFreeE": {
+      "bar": {
+        "badge": "Free forever plan",
+        "cta": "Create free account",
+        "text": "Let AI draft your replies and build your listing — start free, no credit card required."
+      },
+      "benefits": {
+        "bookings": {
+          "body": "AI drafts, you decide. Every message and listing waits for your yes.",
+          "title": "Nothing sends on its own"
+        },
+        "listing": {
+          "body": "Describe your item and AI turns it into a polished listing draft. You approve the final wording.",
+          "title": "Listings written faster"
+        },
+        "messaging": {
+          "body": "AI writes a first pass at your customer replies. You tweak it into your voice and hit send.",
+          "title": "Reply drafts, ready to edit"
+        },
+        "payments": {
+          "body": "Booking, calendar, and payments run on their own — no AI required.",
+          "title": "The rest just works"
+        }
+      },
+      "closing": {
+        "cta": "Create your free account",
+        "logIn": "Log in",
+        "subtitle": "Join EventHub, let AI handle the busywork, and get back to the events you love.",
+        "title": "Put <accent>AI</accent> to work — free.",
+        "trustLine": "Free to join · No credit card required"
+      },
+      "footer": {
+        "company": "Company",
+        "contact": "Contact",
+        "copyright": "© {{year}} EventHub. All rights reserved.",
+        "description": "EventHub gives event vendors AI that drafts replies, helps write listings, and handles the busywork — starting free.",
+        "privacy": "Privacy Policy",
+        "privacyShort": "Privacy",
+        "terms": "Terms of Service",
+        "termsShort": "Terms"
+      },
+      "goLive": {
+        "eyebrow": "Go live",
+        "step1Body": "Sign up with Google or email in seconds. No credit card, no commitment.",
+        "step1Title": "Create your free account",
+        "step2Body": "Let AI help you write the description and pricing. Add photos, review, and publish.",
+        "step2Title": "Build your listing with AI",
+        "step3Body": "AI drafts replies to customer questions. You send, get booked, and receive secure payouts through Stripe.",
+        "step3Title": "Reply, book & get paid",
+        "title": "Three steps to let AI do the busywork"
+      },
+      "header": {
+        "createFree": "Create free account",
+        "logIn": "Log in"
+      },
+      "hero": {
+        "ctaPrimary": "Try it free",
+        "eyebrow": "AI for event vendors",
+        "logIn": "Log in",
+        "subtitle": "AI drafts your customer replies and helps write your listings. You review and approve everything before it goes out. Free to start — no credit card required.",
+        "title": "Let <accent>AI</accent> handle the busywork of your event business.",
+        "trustLine": "You approve everything · Free to start · Built for rentals"
+      },
+      "payments": {
+        "body": "Every booking is processed through Stripe, so payments are secure and payouts land in your bank on schedule — no invoicing, no chasing.",
+        "bullet1": "Automatic payouts straight to your bank account",
+        "bullet2": "Secure card processing powered by Stripe",
+        "bullet3": "Clear records of every booking and payout",
+        "eyebrow": "Get paid securely",
+        "title": "Your money, protected and on time"
+      },
+      "payouts": {
+        "availableBalance": "Available balance",
+        "item1": "Backyard party rental",
+        "item2": "Wedding arch package",
+        "item3": "Weekend DJ set",
+        "securedByStripe": "Secured by Stripe",
+        "title": "Payouts"
+      },
+      "proStrip": {
+        "link": "See what Pro adds",
+        "text": "Want more from AI? EventHub Pro unlocks smarter tools as you grow."
+      },
+      "sampleTag": "Sample",
+      "signup": {
+        "alreadyHaveAccount": "Already have an account?",
+        "continueEmail": "Continue with email",
+        "continueGoogle": "Continue with Google",
+        "dialogDescription": "Sign up with Google or email to put AI to work for your event business on EventHub.",
+        "dialogTitle": "Create your free vendor account",
+        "logIn": "Log in",
+        "or": "or",
+        "subtitle": "Let AI draft your replies and help write your listing — free.",
+        "termsAgreement": "By continuing, you agree to our <terms>Terms</terms> and <privacy>Privacy Policy</privacy>.",
+        "title": "Create your free account"
+      },
+      "toast": {
+        "signupFailedFallback": "Something went wrong. Please try again.",
+        "signupFailedTitle": "Sign-up failed"
+      },
+      "whatYouGet": {
+        "eyebrow": "What you get, free",
+        "subtitle": "Start with the free plan and keep it as long as you like — AI included, no card on file.",
+        "title": "Smart tools that save you hours"
+      }
+    }
 }

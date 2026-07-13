@@ -5,6 +5,8 @@ import { useToast } from "@/hooks/use-toast";
 import { Dialog, DialogContent, DialogTitle, DialogDescription } from "@/components/ui/dialog";
 import BrandWordmark from "@/components/BrandWordmark";
 import AuthModal from "@/components/AuthModal";
+import { trackBoth } from "@/lib/tracking";
+import { initEngagement } from "@/lib/engagement";
 
 type AuthTab = "login" | "signup";
 type SignupRole = "vendor" | "customer";
@@ -466,139 +468,6 @@ function SignupDialog({
 }
 
 /* ---------------------------------------------------------------------------
-   Pro free-trial promo modal (auto-opens after a delay on the landing page)
---------------------------------------------------------------------------- */
-
-const PRO_TRIAL_FEATURE_KEYS = [
-  "unlimitedListings",
-  "aiReplies",
-  "discounts",
-  "reputation",
-  "analytics",
-  "calendarSync",
-] as const;
-
-// Mirrors the labels in components/UpgradeModal.tsx so the promo and the
-// in-dashboard upgrade path advertise the same prices.
-type BillingInterval = "monthly" | "annual";
-const PRO_MONTHLY_LABEL = "$29";
-const PRO_MONTHLY_STRUCK = "$39";
-const PRO_ANNUAL_LABEL = "$290";
-const PRO_ANNUAL_STRUCK = "$390";
-
-function ProTrialModal({
-  open,
-  onOpenChange,
-  onStart,
-}: {
-  open: boolean;
-  onOpenChange: (value: boolean) => void;
-  onStart: (interval: BillingInterval) => void;
-}) {
-  const { t } = useTranslation();
-  // Stripe Checkout locks the interval into the session, so the choice must be
-  // made here before redirecting. Default to monthly to match the headline.
-  const [interval, setInterval] = useState<BillingInterval>("monthly");
-  const isAnnual = interval === "annual";
-  return (
-    <Dialog open={open} onOpenChange={onOpenChange}>
-      <DialogContent
-        className="max-w-md overflow-hidden border-0 p-0 focus:outline-none focus-visible:outline-none"
-        data-testid="pro-trial-modal"
-        onOpenAutoFocus={(e) => e.preventDefault()}
-      >
-        {/* Screen-reader-only title/description — Radix requires both; the
-            visible banner heading carries inline styling so a plain hidden
-            copy satisfies the a11y contract without visual changes. */}
-        <DialogTitle className="sr-only">{t("landing.proModal.dialogTitle")}</DialogTitle>
-        <DialogDescription className="sr-only">{t("landing.proModal.dialogDescription")}</DialogDescription>
-        {/* Header banner */}
-        <div className="deal-outline bg-[#2a3a42] px-8 pb-8 pt-9 text-center text-[#f5f0e8]" style={{ ["--ring" as any]: "2px" }}>
-          <span className="inline-block rounded-full bg-[rgba(224,122,106,0.18)] px-3 py-1 font-sans text-[0.72rem] font-semibold uppercase tracking-[0.14em] text-[#e07a6a]">
-            {t("landing.proModal.limitedTime")}
-          </span>
-          <h2 className="mt-4 font-heading text-[2rem] font-light leading-[1.1]">
-            <Trans
-              i18nKey="landing.proModal.title"
-              components={{
-                pro: <span className="italic text-[#e07a6a]" />,
-                free: <span className="font-normal" />,
-              }}
-            />
-          </h2>
-          <p className="mx-auto mt-3 max-w-xs font-sans text-[0.98rem] leading-[1.55] text-[rgba(245,240,232,0.8)]">
-            {t("landing.proModal.body")}
-          </p>
-
-          {/* Monthly / annual toggle — the chosen interval is locked into the
-              Stripe Checkout session that opens after signup. */}
-          <div className="mt-5 inline-flex rounded-full border border-[rgba(245,240,232,0.25)] p-0.5 text-sm">
-            <button
-              type="button"
-              onClick={() => setInterval("monthly")}
-              className={`rounded-full px-4 py-1 font-sans font-semibold transition-colors ${!isAnnual ? "bg-[#e07a6a] text-white" : "text-[rgba(245,240,232,0.7)]"}`}
-              data-testid="pro-trial-interval-monthly"
-            >
-              {t("landing.proModal.monthly")}
-            </button>
-            <button
-              type="button"
-              onClick={() => setInterval("annual")}
-              className={`rounded-full px-4 py-1 font-sans font-semibold transition-colors ${isAnnual ? "bg-[#e07a6a] text-white" : "text-[rgba(245,240,232,0.7)]"}`}
-              data-testid="pro-trial-interval-annual"
-            >
-              {t("landing.proModal.annual")}
-            </button>
-          </div>
-
-          <div className="mt-4 flex items-baseline justify-center gap-2">
-            <span className="font-sans text-[0.98rem] text-[rgba(245,240,232,0.8)]">{t("landing.proModal.then")}</span>
-            <span className="font-sans text-[1.15rem] font-medium text-[rgba(245,240,232,0.45)] line-through">
-              {isAnnual ? PRO_ANNUAL_STRUCK : PRO_MONTHLY_STRUCK}
-            </span>
-            <span className="font-heading text-[2.2rem] font-normal leading-none text-[#e07a6a]">
-              {isAnnual ? PRO_ANNUAL_LABEL : PRO_MONTHLY_LABEL}
-            </span>
-            <span className="font-sans text-[0.98rem] text-[rgba(245,240,232,0.8)]">
-              {isAnnual ? t("landing.proModal.perYear") : t("landing.proModal.perMonth")}
-            </span>
-          </div>
-          <p className="mt-1 font-sans text-[0.8rem] text-[rgba(245,240,232,0.55)]">
-            {isAnnual ? t("landing.proModal.annualSavings") : t("landing.proModal.billedMonthly")}
-          </p>
-        </div>
-
-        {/* Body */}
-        <div className="px-8 pb-8 pt-6">
-          <ul className="space-y-2.5">
-            {PRO_TRIAL_FEATURE_KEYS.map((featureKey) => (
-              <li key={featureKey} className="flex items-center gap-2.5 font-sans text-[0.98rem] text-[#2a3a42]">
-                <span className="flex h-5 w-5 flex-none items-center justify-center rounded-full bg-[rgba(74,106,125,0.12)] text-[#4a6a7d]">
-                  ✓
-                </span>
-                {t(`landing.proModal.features.${featureKey}`)}
-              </li>
-            ))}
-          </ul>
-
-          <button
-            type="button"
-            onClick={() => onStart(interval)}
-            className="deal-fill mt-6 w-full rounded-[12px] border-0 px-6 py-3.5 font-sans text-[1.05rem] font-semibold text-[#f5f0e8] transition-opacity hover:opacity-95 focus:outline-none focus-visible:outline-none focus-visible:ring-0 focus-visible:ring-offset-0"
-            data-testid="pro-trial-modal-start"
-          >
-            {t("landing.proModal.cta")}
-          </button>
-          <p className="mt-3 text-center font-sans text-[0.85rem] text-[#9aacb4]">
-            {t("landing.proModal.cancelAnytime")}
-          </p>
-        </div>
-      </DialogContent>
-    </Dialog>
-  );
-}
-
-/* ---------------------------------------------------------------------------
    Page
 --------------------------------------------------------------------------- */
 
@@ -621,37 +490,26 @@ export default function TemporaryLanding() {
   const [signupRole, setSignupRole] = useState<SignupRole | null>(null);
   const [authModalOpen, setAuthModalOpen] = useState(false);
   const [authModalTab, setAuthModalTab] = useState<AuthTab>("login");
-  const [proTrialOpen, setProTrialOpen] = useState(false);
-  // Tracks whether the pending signup came from the "Try Pro" promo (so it should
-  // route into Stripe checkout after provisioning) and which interval was chosen.
-  const [proTrialFlow, setProTrialFlow] = useState(false);
-  const [proTrialInterval, setProTrialInterval] = useState<BillingInterval>("monthly");
   const { loginWithRedirect } = useAuth0();
   const { toast } = useToast();
 
-  // Auto-surface the "Try Pro for 30 days free" promo 5s after landing — once
-  // per browser session so returning/scrolling visitors aren't nagged.
-  useEffect(() => {
-    if (sessionStorage.getItem("eh:pro-trial-promo-seen")) return;
-    const timer = window.setTimeout(() => {
-      setProTrialOpen(true);
-      sessionStorage.setItem("eh:pro-trial-promo-seen", "1");
-    }, 5000);
-    return () => window.clearTimeout(timer);
-  }, []);
+  // Engagement detector: fires vendor_engaged once when the visitor scrolls 25%
+  // or dwells 30s. Returns cleanup so the listeners/timer are torn down on unmount.
+  useEffect(() => initEngagement(), []);
 
   // role = null opens the dialog on the "vendor or customer?" choice step;
   // a role pre-selects it and jumps straight to the sign-up methods.
-  // opts.proTrial marks the "Try Pro" cohort; every normal CTA omits it, which
-  // resets the flag so the pro-trial intent can't leak into an ordinary signup.
-  const openSignup = (
-    role: SignupRole | null = null,
-    opts: { proTrial?: boolean; interval?: BillingInterval } = {},
-  ) => {
+  const openSignup = (role: SignupRole | null = null) => {
     setSignupRole(role);
-    setProTrialFlow(Boolean(opts.proTrial));
-    setProTrialInterval(opts.interval ?? "monthly");
     setSignupOpen(true);
+  };
+
+  // Every above/below-the-fold signup CTA routes through here so the click is
+  // attributed (PostHog signup_cta_click + Meta Lead) with a per-button cta_id
+  // before the signup dialog opens.
+  const handleSignupCta = (ctaId: string, role: SignupRole | null = null) => {
+    trackBoth("signup_cta_click", { cta_id: ctaId }, { event: "Lead", standard: true });
+    openSignup(role);
   };
   const openLogin = () => {
     setAuthModalTab("login");
@@ -663,18 +521,6 @@ export default function TemporaryLanding() {
     // customer sign-ups go through /post-login, which routes them to /dashboard.
     if (role === "vendor") sessionStorage.setItem("eh:after-auth-intent", "vendor");
     else sessionStorage.removeItem("eh:after-auth-intent");
-
-    // "Try Pro" vendors also carry a pro-trial flag + chosen interval so that,
-    // once their vendor account is provisioned, VendorProvision redirects them
-    // into Stripe checkout instead of straight to the dashboard. Written only
-    // when actually proceeding to auth, and cleared for every other signup.
-    if (role === "vendor" && proTrialFlow) {
-      sessionStorage.setItem("eh:pro-trial-intent", "1");
-      sessionStorage.setItem("eh:pro-trial-interval", proTrialInterval);
-    } else {
-      sessionStorage.removeItem("eh:pro-trial-intent");
-      sessionStorage.removeItem("eh:pro-trial-interval");
-    }
 
     const authorizationParams: Record<string, string> = { screen_hint: "signup" };
     if (method === "google") {
@@ -713,7 +559,7 @@ export default function TemporaryLanding() {
             </span>
             <button
               type="button"
-              onClick={() => openSignup("vendor")}
+              onClick={() => handleSignupCta("sticky_bar", "vendor")}
               className="rounded-full bg-[#e07a6a] px-3.5 py-1 font-sans text-[0.85rem] font-semibold text-white transition-colors hover:bg-[#c96959]"
             >
               {t("landing.bar.cta")}
@@ -739,7 +585,7 @@ export default function TemporaryLanding() {
               </button>
               <button
                 type="button"
-                onClick={() => openSignup()}
+                onClick={() => handleSignupCta("header_get_started")}
                 className="rounded-[10px] bg-[#2a3a42] px-4 py-2 font-sans text-[0.98rem] font-semibold text-white transition-colors hover:bg-[#3a4f59]"
               >
                 {t("landing.header.getStarted")}
@@ -764,7 +610,7 @@ export default function TemporaryLanding() {
               {t("landing.hero.subtitle")}
             </p>
             <div className="mt-8 flex flex-wrap items-center gap-4">
-              <PrimaryButton onClick={() => openSignup("vendor")} className="!px-7 !py-3.5 !text-[1.1rem]">{t("landing.hero.ctaVendor")}</PrimaryButton>
+              <PrimaryButton onClick={() => handleSignupCta("hero_primary", "vendor")} className="!px-7 !py-3.5 !text-[1.1rem]">{t("landing.hero.ctaVendor")}</PrimaryButton>
               <GhostButton onClick={openLogin} className="!px-7 !py-3.5 !text-[1.1rem]">{t("landing.hero.logIn")}</GhostButton>
             </div>
             <p className="mt-5 font-sans text-[0.95rem] text-[#9aacb4]">{t("landing.hero.trustLine")}</p>
@@ -934,7 +780,7 @@ export default function TemporaryLanding() {
             <div className="mt-8 flex flex-wrap items-center gap-4">
               <button
                 type="button"
-                onClick={() => openSignup("vendor")}
+                onClick={() => handleSignupCta("closing_cta", "vendor")}
                 className="rounded-[12px] bg-[#e07a6a] px-8 py-4 font-sans text-[1.1rem] font-semibold text-white transition-colors hover:bg-[#c96959]"
               >
                 {t("landing.closing.cta")}
@@ -1022,15 +868,6 @@ export default function TemporaryLanding() {
         onOpenChange={setAuthModalOpen}
         defaultTab={authModalTab}
         returnTo="/post-login"
-      />
-
-      <ProTrialModal
-        open={proTrialOpen}
-        onOpenChange={setProTrialOpen}
-        onStart={(interval) => {
-          setProTrialOpen(false);
-          openSignup("vendor", { proTrial: true, interval });
-        }}
       />
     </div>
   );
