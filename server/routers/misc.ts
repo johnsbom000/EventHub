@@ -1820,11 +1820,34 @@ app.post(
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify(payload),
       });
+      const bodyText = await fbRes.text().catch(() => "");
       if (!fbRes.ok) {
-        const text = await fbRes.text().catch(() => "");
-        logger.warn(`[meta-capi] Graph API ${fbRes.status}: ${text.slice(0, 300)}`);
+        logger.warn(`[meta-capi] Graph API ${fbRes.status}: ${bodyText.slice(0, 300)}`);
         return res.json({ success: false });
       }
+      // TEMPORARY DIAGNOSTIC — a 200 only means the HTTP request was accepted, NOT
+      // that the event was recorded. Meta validates standard events (Lead,
+      // CompleteRegistration) against a schema and silently drops malformed ones
+      // while still returning 200. Log the response body so we can see whether the
+      // event was actually recorded (events_received) or dropped with a warning
+      // (messages). Also dump the custom_data / user_data key sets to prove no raw
+      // PII (e.g. email) is leaking into custom_data — email must only ever appear
+      // SHA-256-hashed inside user_data.em. Remove once diagnosed.
+      let parsed: any = null;
+      try {
+        parsed = JSON.parse(bodyText);
+      } catch {
+        // non-JSON body — log raw below
+      }
+      logger.info(
+        `[meta-capi][resp] event=${event_name} ` +
+          `events_received=${parsed?.events_received ?? "?"} ` +
+          `messages=${JSON.stringify(parsed?.messages ?? [])} ` +
+          `fbtrace_id=${parsed?.fbtrace_id ?? "?"} ` +
+          `custom_data_keys=${JSON.stringify(Object.keys((payload.data[0] as any).custom_data || {}))} ` +
+          `user_data_keys=${JSON.stringify(Object.keys(userData))}` +
+          (parsed ? "" : ` raw=${bodyText.slice(0, 300)}`),
+      );
       res.json({ success: true });
     } catch (error: any) {
       logRouteError("/api/meta-capi POST", error);
