@@ -1737,6 +1737,101 @@ app.post(
     }
   });
 
+  // ── Meta Conversions API (server-side pixel) ──────────────────────────────
+  // Forwards conversion events to Meta's Graph API. Almost all of our paid
+  // traffic arrives inside the Instagram/Facebook in-app webview, where the
+  // browser pixel is unreliable, so the server copy is what actually lands.
+  // The browser fires the SAME event with a shared event_id (see
+  // client/src/lib/tracking.ts); Meta dedupes the browser + server copies by
+  // (event_name, event_id) so conversions are never double-counted.
+  //
+  // Access token lives in META_CAPI_ACCESS_TOKEN (env only, never committed).
+  // When it's unset the endpoint no-ops quietly so the client never errors.
+  app.post("/api/meta-capi", trackRateLimiter, async (req, res) => {
+    try {
+      const accessToken = process.env.META_CAPI_ACCESS_TOKEN;
+      const pixelId = process.env.META_PIXEL_ID || "1047034731185783";
+      if (!accessToken) {
+        return res.json({ success: false, reason: "not_configured" });
+      }
+
+      const { event_name, event_id, event_source_url, email, custom_data } = req.body ?? {};
+      if (typeof event_name !== "string" || !event_name) {
+        return res.status(400).json({ error: "event_name required" });
+      }
+
+      // Parse _fbp / _fbc from the request cookies (no cookie-parser middleware).
+      // The browser sends them automatically on this same-origin request. A body
+      // override is allowed for webviews that strip cookies.
+      const cookieHeader = typeof req.headers.cookie === "string" ? req.headers.cookie : "";
+      const cookies: Record<string, string> = {};
+      for (const part of cookieHeader.split(";")) {
+        const idx = part.indexOf("=");
+        if (idx === -1) continue;
+        const key = part.slice(0, idx).trim();
+        if (key) cookies[key] = decodeURIComponent(part.slice(idx + 1).trim());
+      }
+      const fbp = typeof req.body?.fbp === "string" ? req.body.fbp : cookies["_fbp"];
+      const fbc = typeof req.body?.fbc === "string" ? req.body.fbc : cookies["_fbc"];
+
+      // TEMPORARY DIAGNOSTIC — remove after webview check. Records whether the
+      // _fbp / _fbc identifiers actually reach the server (esp. from the
+      // Instagram in-app webview, which may strip cookies). If these come back
+      // empty from the webview, we build the client-side fbp/fbc body override.
+      logger.info(
+        `[meta-capi][diag] event=${event_name} fbp=${fbp ? "present" : "EMPTY"} ` +
+          `fbc=${fbc ? "present" : "EMPTY"} ua=${(req.headers["user-agent"] || "").slice(0, 80)}`,
+      );
+
+      const sha256 = (v: string) =>
+        crypto.createHash("sha256").update(v.trim().toLowerCase()).digest("hex");
+
+      const userData: Record<string, unknown> = {
+        client_ip_address: req.ip,
+        client_user_agent: req.headers["user-agent"] || undefined,
+      };
+      if (fbp) userData.fbp = fbp;
+      if (fbc) userData.fbc = fbc;
+      // Hash email (SHA-256, lowercased/trimmed) when the caller has one.
+      if (typeof email === "string" && email.includes("@")) {
+        userData.em = [sha256(email)];
+      }
+
+      const payload = {
+        data: [
+          {
+            event_name,
+            event_time: Math.floor(Date.now() / 1000),
+            event_id: typeof event_id === "string" && event_id ? event_id : undefined,
+            event_source_url:
+              typeof event_source_url === "string" && event_source_url ? event_source_url : undefined,
+            action_source: "website",
+            user_data: userData,
+            custom_data: custom_data && typeof custom_data === "object" ? custom_data : {},
+          },
+        ],
+      };
+
+      const url = `https://graph.facebook.com/v21.0/${pixelId}/events?access_token=${encodeURIComponent(
+        accessToken,
+      )}`;
+      const fbRes = await fetch(url, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify(payload),
+      });
+      if (!fbRes.ok) {
+        const text = await fbRes.text().catch(() => "");
+        logger.warn(`[meta-capi] Graph API ${fbRes.status}: ${text.slice(0, 300)}`);
+        return res.json({ success: false });
+      }
+      res.json({ success: true });
+    } catch (error: any) {
+      logRouteError("/api/meta-capi POST", error);
+      res.json({ success: false });
+    }
+  });
+
   // ── Client-side event tracking ────────────────────────────────────────────
   // Receives structured analytics events from the frontend (vendor onboarding,
   // search interactions, vendor profile views, etc.). Fire-and-forget on the

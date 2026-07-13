@@ -29,6 +29,12 @@ export function initPostHog(): void {
     capture_pageview: false,
     capture_pageleave: true,
     persistence: "localStorage+cookie",
+    // Create a person profile for ANONYMOUS visitors too (default is
+    // "identified_only"). Paid Meta/IG traffic is anonymous — without this they
+    // get no person profile, so funnel insights and $initial_utm_* person
+    // properties silently come back empty. UTM/campaign params are captured
+    // automatically by posthog-js; "always" is what makes them stick to a person.
+    person_profiles: "always",
   });
 }
 
@@ -58,5 +64,34 @@ export function phReset(): void {
     posthog.reset();
   } catch {
     // Never throw
+  }
+}
+
+/**
+ * Read the current value of a (multivariate) feature flag. Returns the variant
+ * key string for a multivariate flag, a boolean for a simple flag, or undefined
+ * when PostHog is disabled or flags haven't loaded yet. Calling this records an
+ * experiment exposure ($feature_flag_called) for the flag.
+ */
+export function phFeatureFlag(key: string): string | boolean | undefined {
+  if (!initialized) return undefined;
+  try {
+    return posthog.getFeatureFlag(key);
+  } catch {
+    return undefined;
+  }
+}
+
+/**
+ * Subscribe to feature-flag readiness/changes. posthog-js loads flags
+ * asynchronously after init, so first-time visitors get a callback once the
+ * flags resolve. Returns an unsubscribe function (a no-op when disabled).
+ */
+export function phOnFeatureFlags(cb: () => void): () => void {
+  if (!initialized) return () => {};
+  try {
+    return posthog.onFeatureFlags(() => cb());
+  } catch {
+    return () => {};
   }
 }

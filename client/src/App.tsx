@@ -8,10 +8,19 @@ import { Toaster } from "@/components/ui/toaster";
 import { ScrollToTop } from "@/components/ScrollToTop";
 import { TooltipProvider } from "@/components/ui/tooltip";
 import { useTrackPageView } from "@/hooks/useTrackPageView";
+import { useLandingVariant, readLandingVariant } from "@/hooks/useLandingVariant";
+import { phCapture } from "@/lib/posthog";
+import { trackSignupCompletedOnce } from "@/lib/tracking";
 import EmailVerificationGate from "@/components/EmailVerificationGate";
 
 import Home from "@/pages/Home";
 import TemporaryLanding from "@/pages/TemporaryLanding";
+import TemporaryLandingFreeA from "@/pages/TemporaryLandingFreeA";
+import TemporaryLandingFreeB from "@/pages/TemporaryLandingFreeB";
+import TemporaryLandingFreeC from "@/pages/TemporaryLandingFreeC";
+import TemporaryLandingFreeD from "@/pages/TemporaryLandingFreeD";
+import TemporaryLandingFreeE from "@/pages/TemporaryLandingFreeE";
+import DemoPreview from "@/pages/landing/DemoPreview";
 import BrowseVendors from "@/pages/BrowseVendors";
 import CustomerDashboard from "@/pages/CustomerDashboard";
 
@@ -92,7 +101,7 @@ function VendorIntentRedirect() {
 // onRedirectCallback fires — avoiding the useState timing race in RootEntry.
 function PostLogin() {
   const [, setLocation] = useLocation();
-  const { isAuthenticated, isLoading: isAuthLoading } = useAuth0();
+  const { user, isAuthenticated, isLoading: isAuthLoading } = useAuth0();
   const hasRedirectedRef = useRef(false);
 
   // Provision the DB user row immediately on first login, in parallel with the
@@ -134,6 +143,19 @@ function PostLogin() {
     if (hasRedirectedRef.current) return;
     hasRedirectedRef.current = true;
 
+    // Conversion event for the landing A/B/n experiment. Tagged with the sticky
+    // variant so every arm is measurable. (Landing-page vendor signups return to
+    // /vendor/provision instead and fire vendor_provisioned there.)
+    const role = vendorDetection.status === "vendor" ? "vendor" : "customer";
+    // Fire to PostHog (signup_completed) AND the Meta Pixel (CompleteRegistration)
+    // so both funnels see the account-creation conversion. Once-per-session guard
+    // lives in the helper so this and the VendorProvision path can't double-count
+    // the same signup. `user.email` rides only to the server-side CAPI copy.
+    trackSignupCompletedOnce(
+      { role, variant: readLandingVariant() },
+      user?.email,
+    );
+
     if (vendorDetection.status === "vendor") {
       // First-time vendors (onboarding tour not yet completed) land on the
       // dashboard so the timezone modal + onboarding tour can fire. Established
@@ -160,6 +182,29 @@ function PostLogin() {
       <p className="text-sm text-muted-foreground">Loading your account...</p>
     </div>
   );
+}
+
+// Renders the landing page for the PostHog "landing-free-first-test" experiment.
+// Reading the flag here (via useLandingVariant) records the experiment exposure
+// for every public visitor to "/". Falls back to the control page until flags
+// resolve and for any variant value PostHog doesn't recognise (e.g. an arm at
+// 0%), so the split is controlled entirely from the dashboard.
+function LandingForVariant() {
+  const variant = useLandingVariant();
+  switch (variant) {
+    case "direction-a":
+      return <TemporaryLandingFreeA />;
+    case "direction-b":
+      return <TemporaryLandingFreeB />;
+    case "direction-c":
+      return <TemporaryLandingFreeC />;
+    case "direction-d":
+      return <TemporaryLandingFreeD />;
+    case "direction-e":
+      return <TemporaryLandingFreeE />;
+    default:
+      return <TemporaryLanding />;
+  }
 }
 
 function RootEntry() {
@@ -230,8 +275,8 @@ function RootEntry() {
   // Public visitors (and users still loading auth) see the vendor-acquisition
   // landing. Authenticated customers with a profile fall through to the
   // marketplace (Home) below.
-  if (isAuthLoading) return <TemporaryLanding />;
-  if (!isAuthenticated) return <TemporaryLanding />;
+  if (isAuthLoading) return <LandingForVariant />;
+  if (!isAuthenticated) return <LandingForVariant />;
   if (vendorIntent && vendorDetection.status === "loading") {
     return (
       <div className="min-h-screen bg-background flex items-center justify-center">
@@ -326,6 +371,7 @@ function Router() {
       <VendorIntentRedirect />
       <Switch>
         <Route path="/" component={RootEntry} />
+        {import.meta.env.DEV && <Route path="/demo/slideshows" component={DemoPreview} />}
         <Route path="/post-login" component={PostLogin} />
         {/* [vendor-only restrictions] unwrap VendorOnlyGuard from all routes below that have it */}
         {/* Marketplace is open to authenticated customers with a profile (not the public). */}

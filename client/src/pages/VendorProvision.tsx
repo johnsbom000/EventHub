@@ -4,6 +4,9 @@ import { useAuth0 } from "@auth0/auth0-react";
 import { useQuery, useQueryClient } from "@tanstack/react-query";
 import { getFreshAccessToken } from "@/lib/authToken";
 import { apiRequest, notifyEmailUnverified } from "@/lib/queryClient";
+import { phCapture } from "@/lib/posthog";
+import { trackSignupCompletedOnce } from "@/lib/tracking";
+import { readLandingVariant } from "@/hooks/useLandingVariant";
 import { useToast } from "@/hooks/use-toast";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
@@ -11,7 +14,7 @@ import { type VendorMeState } from "@/lib/vendorState";
 
 export default function VendorProvision() {
   const [, setLocation] = useLocation();
-  const { isAuthenticated, isLoading: isAuthLoading } = useAuth0();
+  const { user, isAuthenticated, isLoading: isAuthLoading } = useAuth0();
   const { toast } = useToast();
   const qc = useQueryClient();
 
@@ -104,6 +107,20 @@ export default function VendorProvision() {
         }
         throw new Error(err?.error || "Failed to create vendor account");
       }
+
+      // Primary conversion event for the landing A/B/n experiment: a brand-new
+      // vendor account was just created. Tagged with the sticky landing variant
+      // so PostHog can attribute the conversion back to the arm the visitor saw.
+      phCapture("vendor_provisioned", { variant: readLandingVariant() });
+      // The vendor account was just created — this is the ad campaign's primary
+      // conversion. Mirror it to PostHog (signup_completed) and the Meta Pixel
+      // (CompleteRegistration) so the funnel and Meta both register the signup.
+      // Once-per-session guard (in the helper) dedupes against the App.tsx
+      // post-login path; `user.email` rides only to the server-side CAPI copy.
+      trackSignupCompletedOnce(
+        { role: "vendor", variant: readLandingVariant() },
+        user?.email,
+      );
 
       // Read the "Try Pro" cohort flags BEFORE invalidating /api/vendor/me: that
       // refetch flips hasVendorAccount to true and fires the early-redirect
