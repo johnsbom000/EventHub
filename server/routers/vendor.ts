@@ -1095,6 +1095,39 @@ export function registerVendorRoutes(app: Express): void {
               .where(eq(vendorAccounts.id, existingAccount.id));
           }
         }
+
+        // Heal accounts orphaned by an earlier failed provision (e.g. the 42P10
+        // ON CONFLICT bug): if the account has no profile row, create the stub
+        // profile that provisioning should have created. Without this the retry
+        // reports success while PATCH /api/vendor/profile (timezone) still 404s.
+        const existingProfiles = await db
+          .select({ id: vendorProfiles.id })
+          .from(vendorProfiles)
+          .where(eq(vendorProfiles.accountId, existingAccount.id))
+          .limit(1);
+        if (existingProfiles.length === 0) {
+          const healProfileName = asTrimmedString(existingAccount.businessName) || "Your Business";
+          await db.transaction(async (tx) => {
+            const [healedProfile] = await tx
+              .insert(vendorProfiles)
+              .values({
+                accountId: existingAccount.id,
+                profileName: healProfileName,
+                experience: 0,
+                address: "",
+                city: "",
+                travelMode: "travel-to-guests",
+                serviceDescription: "",
+              })
+              .returning();
+            await tx
+              .update(vendorAccounts)
+              .set({ activeProfileId: healedProfile.id })
+              .where(eq(vendorAccounts.id, existingAccount.id));
+          });
+          logger.info(`[vendor-provision] Backfilled missing profile for orphaned account ${existingAccount.id}`);
+        }
+
         return res.status(200).json({
           vendorAccountId: existingAccount.id,
           businessName: existingAccount.businessName,
@@ -1124,65 +1157,71 @@ export function registerVendorRoutes(app: Express): void {
       }
 
       const shopSlug = await allocateUniqueVendorSlug(normalizedName);
-      const [created] = await db
-        .insert(vendorAccounts)
-        .values({
-          email,
-          auth0Sub,
-          userId: vendorResolution.resolvedUserId || undefined,
-          businessName: normalizedName,
-          shopSlug,
-          profileComplete: false,
-        })
-        .returning();
 
-      // Atomically create/update the users row so vendorOnlySignup is reliably set
-      // without depending on a separate client-side mark-vendor-only call.
-      const [upsertedUser] = await db
-        .insert(users)
-        .values({
-          name: normalizedName,
-          displayName: normalizedName,
-          email,
-          role: "customer",
-          auth0Sub: auth0Sub ?? null,
-          vendorOnlySignup: true,
-          lastLoginAt: new Date(),
-        })
-        .onConflictDoUpdate({
-          target: users.email,
-          set: { vendorOnlySignup: true, vendorIntentPending: false, updatedAt: new Date() },
-        })
-        .returning({ id: users.id });
+      // All provisioning writes run in ONE transaction so a failure can never
+      // leave a half-provisioned vendor (an orphan account with no profile row).
+      // Either the whole vendor — account + users link + stub profile — commits,
+      // or nothing does.
+      const created = await db.transaction(async (tx) => {
+        const [account] = await tx
+          .insert(vendorAccounts)
+          .values({
+            email,
+            auth0Sub,
+            userId: vendorResolution.resolvedUserId || undefined,
+            businessName: normalizedName,
+            shopSlug,
+            profileComplete: false,
+          })
+          .returning();
 
-      // Link the vendor account to the users row if not already linked.
-      if (upsertedUser?.id && !created.userId) {
-        await db
+        // Create/update the users row so vendorOnlySignup is reliably set without
+        // depending on a separate client-side mark-vendor-only call.
+        // NOTE: the ON CONFLICT arbiter is the lower(email) expression index
+        // (users_email_ci_unique). The plain unique on the email column was
+        // dropped in migration 0148, so `ON CONFLICT (email)` raises 42P10.
+        // Drizzle 0.39's onConflictDoUpdate target accepts only a column, not an
+        // expression, so this upsert is written as raw SQL against that index.
+        const upsertedUser: any = await tx.execute(drizzleSql`
+          insert into ${users} (name, display_name, email, role, auth0_sub, vendor_only_signup, last_login_at)
+          values (${normalizedName}, ${normalizedName}, ${email}, 'customer', ${auth0Sub ?? null}, true, now())
+          on conflict (lower(email)) do update set
+            vendor_only_signup = true,
+            vendor_intent_pending = false,
+            updated_at = now()
+          returning id
+        `);
+        const upsertedUserId: string | null = upsertedUser?.rows?.[0]?.id ?? null;
+
+        // Create a minimal vendor profile immediately so PATCH /api/vendor/profile
+        // (timezone, etc.) works from the moment the vendor enters their business
+        // name. Onboarding/complete updates this row with full details later.
+        const [newProfile] = await tx
+          .insert(vendorProfiles)
+          .values({
+            accountId: account.id,
+            profileName: normalizedName,
+            experience: 0,
+            address: "",
+            city: "",
+            travelMode: "travel-to-guests",
+            serviceDescription: "",
+          })
+          .returning();
+
+        // Link the account to the users row (if not already linked) and to its
+        // active profile, in one update.
+        const [linkedAccount] = await tx
           .update(vendorAccounts)
-          .set({ userId: upsertedUser.id })
-          .where(eq(vendorAccounts.id, created.id));
-      }
+          .set({
+            ...(upsertedUserId && !account.userId ? { userId: upsertedUserId } : {}),
+            activeProfileId: newProfile.id,
+          })
+          .where(eq(vendorAccounts.id, account.id))
+          .returning();
 
-      // Create a minimal vendor profile immediately so PATCH /api/vendor/profile
-      // (timezone, etc.) works from the moment the vendor enters their business name.
-      // Onboarding/complete will update this row with full profile details later.
-      const [newProfile] = await db
-        .insert(vendorProfiles)
-        .values({
-          accountId: created.id,
-          profileName: normalizedName,
-          experience: 0,
-          address: "",
-          city: "",
-          travelMode: "travel-to-guests",
-          serviceDescription: "",
-        })
-        .returning();
-
-      await db
-        .update(vendorAccounts)
-        .set({ activeProfileId: newProfile.id })
-        .where(eq(vendorAccounts.id, created.id));
+        return linkedAccount;
+      });
 
       logger.info(`[vendor-provision] Created stub account ${created.id}`);
 
