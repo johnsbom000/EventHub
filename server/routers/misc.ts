@@ -1774,15 +1774,6 @@ app.post(
       const fbp = typeof req.body?.fbp === "string" ? req.body.fbp : cookies["_fbp"];
       const fbc = typeof req.body?.fbc === "string" ? req.body.fbc : cookies["_fbc"];
 
-      // TEMPORARY DIAGNOSTIC — remove after webview check. Records whether the
-      // _fbp / _fbc identifiers actually reach the server (esp. from the
-      // Instagram in-app webview, which may strip cookies). If these come back
-      // empty from the webview, we build the client-side fbp/fbc body override.
-      logger.info(
-        `[meta-capi][diag] event=${event_name} fbp=${fbp ? "present" : "EMPTY"} ` +
-          `fbc=${fbc ? "present" : "EMPTY"} ua=${(req.headers["user-agent"] || "").slice(0, 80)}`,
-      );
-
       const sha256 = (v: string) =>
         crypto.createHash("sha256").update(v.trim().toLowerCase()).digest("hex");
 
@@ -1825,29 +1816,6 @@ app.post(
         logger.warn(`[meta-capi] Graph API ${fbRes.status}: ${bodyText.slice(0, 300)}`);
         return res.json({ success: false });
       }
-      // TEMPORARY DIAGNOSTIC — a 200 only means the HTTP request was accepted, NOT
-      // that the event was recorded. Meta validates standard events (Lead,
-      // CompleteRegistration) against a schema and silently drops malformed ones
-      // while still returning 200. Log the response body so we can see whether the
-      // event was actually recorded (events_received) or dropped with a warning
-      // (messages). Also dump the custom_data / user_data key sets to prove no raw
-      // PII (e.g. email) is leaking into custom_data — email must only ever appear
-      // SHA-256-hashed inside user_data.em. Remove once diagnosed.
-      let parsed: any = null;
-      try {
-        parsed = JSON.parse(bodyText);
-      } catch {
-        // non-JSON body — log raw below
-      }
-      logger.info(
-        `[meta-capi][resp] event=${event_name} ` +
-          `events_received=${parsed?.events_received ?? "?"} ` +
-          `messages=${JSON.stringify(parsed?.messages ?? [])} ` +
-          `fbtrace_id=${parsed?.fbtrace_id ?? "?"} ` +
-          `custom_data_keys=${JSON.stringify(Object.keys((payload.data[0] as any).custom_data || {}))} ` +
-          `user_data_keys=${JSON.stringify(Object.keys(userData))}` +
-          (parsed ? "" : ` raw=${bodyText.slice(0, 300)}`),
-      );
       res.json({ success: true });
     } catch (error: any) {
       logRouteError("/api/meta-capi POST", error);
