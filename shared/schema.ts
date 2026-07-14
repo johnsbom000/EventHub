@@ -101,8 +101,10 @@ export const users = pgTable(
     name: text("name").notNull(),
     // Uniqueness in the DB is case-insensitive: users_email_ci_unique on
     // lower(email) replaced the plain unique constraint (migration 0148).
-    // Always lowercase+trim before insert.
-    email: text("email").notNull().unique(),
+    // NOT a plain column unique — see emailCiUniqueIdx below. Any ON CONFLICT
+    // must target lower(email), never the bare column. Always lowercase+trim
+    // before insert.
+    email: text("email").notNull(),
     role: userRoleEnum("role").notNull().default("customer"),
     auth0Sub: text("auth0_sub"),
     displayName: text("display_name"),
@@ -118,6 +120,9 @@ export const users = pgTable(
     updatedAt: timestamp("updated_at").defaultNow().notNull(),
   },
   (table) => ({
+    // Matches the live DB (migration 0148): case-insensitive uniqueness on
+    // lower(email). This is the arbiter any users-email upsert must target.
+    emailCiUniqueIdx: uniqueIndex("users_email_ci_unique").on(sql`lower(${table.email})`),
     auth0SubUniqueIdx: uniqueIndex("users_auth0_sub_unique_idx")
       .on(table.auth0Sub)
       .where(sql`${table.auth0Sub} is not null and btrim(${table.auth0Sub}) <> ''`),
