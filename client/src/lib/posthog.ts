@@ -9,6 +9,12 @@
 // key), so call sites never need to guard.
 import posthog from "posthog-js";
 
+declare global {
+  interface Window {
+    posthog: typeof posthog;
+  }
+}
+
 const POSTHOG_KEY = String(import.meta.env.VITE_POSTHOG_KEY || "").trim();
 const POSTHOG_HOST = String(import.meta.env.VITE_POSTHOG_HOST || "https://us.i.posthog.com").trim();
 
@@ -36,6 +42,11 @@ export function initPostHog(): void {
     // automatically by posthog-js; "always" is what makes them stick to a person.
     person_profiles: "always",
   });
+  // Expose the instance on window (production included) so `posthog.reset()`,
+  // bucketing checks, etc. can be run from the browser console. PostHog's
+  // default <script>-snippet install also attaches posthog to window; the npm
+  // module we use instead does not, so this restores that parity.
+  window.posthog = posthog;
 }
 
 export function phCapture(name: string, properties: Record<string, unknown> = {}): void {
