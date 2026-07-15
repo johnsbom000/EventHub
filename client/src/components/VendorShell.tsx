@@ -15,12 +15,14 @@ import {
 import {
   ArrowLeft,
   Bell,
+  Bug,
   Calendar,
   Check,
   DollarSign,
   HelpCircle,
   Home,
   LayoutGrid,
+  Lightbulb,
   Loader2,
   LogOut,
   Menu,
@@ -50,6 +52,7 @@ import {
   DropdownMenuTrigger,
 } from "@/components/ui/dropdown-menu";
 import { LanguageSection } from "@/components/LanguageSection";
+import FeedbackModal from "@/components/FeedbackModal";
 import { Avatar, AvatarFallback } from "@/components/ui/avatar";
 import { useAuth0 } from "@auth0/auth0-react";
 import { useQuery, useQueryClient } from "@tanstack/react-query";
@@ -213,6 +216,8 @@ export default function VendorShell({ children, onOpenAccountSettings }: VendorS
   );
   const [showWarningBanner, setShowWarningBanner] = useState(false);
   const [mobileNavOpen, setMobileNavOpen] = useState(false);
+  const [feedbackModalOpen, setFeedbackModalOpen] = useState(false);
+  const [feedbackType, setFeedbackType] = useState<"feature_request" | "bug_report">("feature_request");
 
   // One-time onboarding tour — a guided walk that starts on the vendor's first
   // dashboard visit and navigates across the real vendor pages (dashboard →
@@ -513,6 +518,29 @@ export default function VendorShell({ children, onOpenAccountSettings }: VendorS
 
                 <DropdownMenuSeparator />
 
+                <DropdownMenuItem
+                  onClick={() => {
+                    setFeedbackType("feature_request");
+                    setFeedbackModalOpen(true);
+                  }}
+                  data-testid="menu-item-vendor-shell-request-feature"
+                >
+                  <Lightbulb className="mr-2 h-4 w-4" />
+                  <span>{t("nav.vendor.requestFeature")}</span>
+                </DropdownMenuItem>
+                <DropdownMenuItem
+                  onClick={() => {
+                    setFeedbackType("bug_report");
+                    setFeedbackModalOpen(true);
+                  }}
+                  data-testid="menu-item-vendor-shell-report-bug"
+                >
+                  <Bug className="mr-2 h-4 w-4" />
+                  <span>{t("nav.vendor.reportBug")}</span>
+                </DropdownMenuItem>
+
+                <DropdownMenuSeparator />
+
                 <DropdownMenuItem data-testid="menu-item-vendor-shell-help">
                   <HelpCircle className="mr-2 h-4 w-4" />
                   <span>{t("vendorShell.helpCenter")}</span>
@@ -622,6 +650,12 @@ export default function VendorShell({ children, onOpenAccountSettings }: VendorS
         open={showTimezoneModal && !tzModalDismissed}
         onClose={() => setTzModalDismissed(true)}
         accountId={vendorAccount?.id}
+      />
+
+      <FeedbackModal
+        open={feedbackModalOpen}
+        type={feedbackType}
+        onOpenChange={setFeedbackModalOpen}
       />
     </SidebarProvider>
   );
