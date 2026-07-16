@@ -53,6 +53,14 @@ function formatDate(value?: string | null): string | null {
   return d.toLocaleDateString("en-US", { month: "long", day: "numeric", year: "numeric" });
 }
 
+/** Whole days from now until `value` (negative if past). null if missing/invalid. */
+function daysUntil(value?: string | null): number | null {
+  if (!value) return null;
+  const d = new Date(value);
+  if (Number.isNaN(d.getTime())) return null;
+  return Math.ceil((d.getTime() - Date.now()) / (1000 * 60 * 60 * 24));
+}
+
 /**
  * Self-contained Billing & Plan panel — plan cards, status banner, upgrade
  * (Stripe Checkout) and manage (Stripe Billing Portal) actions. Rendered inline
@@ -80,6 +88,11 @@ export default function VendorBillingPanel() {
   const hasStripeSub = status === "active" || status === "trialing" || status === "past_due";
   const periodEnd = formatDate(me?.subscriptionCurrentPeriodEnd);
   const compEnd = formatDate(me?.compEndsAt);
+  // Only surface the "Subscribe" upsell to comp vendors in the final week of
+  // their complimentary Pro — before that, the grant is presented as a gift with
+  // no ask. `null` end date (missing) falls back to showing it, to be safe.
+  const compDaysLeft = daysUntil(me?.compEndsAt);
+  const showCompSubscribe = compDaysLeft === null || compDaysLeft <= 7;
 
   // After returning from Stripe Checkout (?checkout=success), the cached
   // /api/vendor/me is stale. Refetch it — which also updates the header Pro badge
@@ -177,35 +190,41 @@ export default function VendorBillingPanel() {
       return (
         <Banner tone="info" icon={<Sparkles className="h-5 w-5" />}>
           <p className="font-semibold">You have complimentary Pro{compEnd ? ` until ${compEnd}` : ""}</p>
-          <p className="mt-0.5 text-sm">Subscribe before it ends to keep unlimited listings, analytics, and calendar sync.</p>
-          <div className="mt-3 flex flex-wrap items-center gap-2">
-            <div className="inline-flex rounded-full border border-border p-0.5 text-sm">
-              <button
-                type="button"
-                onClick={() => setInterval("monthly")}
-                className={`rounded-full px-3 py-1 ${interval === "monthly" ? "bg-[#4a6a7d] text-[#f5f0e8]" : "text-muted-foreground"}`}
+          <p className="mt-0.5 text-sm">
+            {showCompSubscribe
+              ? "Subscribe before it ends to keep unlimited listings, analytics, and calendar sync."
+              : "Enjoy unlimited listings, analytics, and calendar sync — on us."}
+          </p>
+          {showCompSubscribe ? (
+            <div className="mt-3 flex flex-wrap items-center gap-2">
+              <div className="inline-flex rounded-full border border-border p-0.5 text-sm">
+                <button
+                  type="button"
+                  onClick={() => setInterval("monthly")}
+                  className={`rounded-full px-3 py-1 ${interval === "monthly" ? "bg-[#4a6a7d] text-[#f5f0e8]" : "text-muted-foreground"}`}
+                >
+                  Monthly
+                </button>
+                <button
+                  type="button"
+                  onClick={() => setInterval("annual")}
+                  className={`rounded-full px-3 py-1 ${interval === "annual" ? "bg-[#4a6a7d] text-[#f5f0e8]" : "text-muted-foreground"}`}
+                >
+                  Annual
+                </button>
+              </div>
+              <Button
+                size="sm"
+                className="bg-[#4a6a7d] hover:bg-[#3f5c6d] text-[#f5f0e8]"
+                onClick={() => startCheckout(interval)}
+                disabled={busy !== null}
               >
-                Monthly
-              </button>
-              <button
-                type="button"
-                onClick={() => setInterval("annual")}
-                className={`rounded-full px-3 py-1 ${interval === "annual" ? "bg-[#4a6a7d] text-[#f5f0e8]" : "text-muted-foreground"}`}
-              >
-                Annual
-              </button>
+                {busy === "checkout"
+                  ? <Loader2 className="h-4 w-4 animate-spin" />
+                  : `Subscribe (${interval === "monthly" ? `${PRO_MONTHLY_LABEL}/mo` : `${PRO_ANNUAL_LABEL}/yr`})`}
+              </Button>
             </div>
-            <Button
-              size="sm"
-              className="bg-[#4a6a7d] hover:bg-[#3f5c6d] text-[#f5f0e8]"
-              onClick={() => startCheckout(interval)}
-              disabled={busy !== null}
-            >
-              {busy === "checkout"
-                ? <Loader2 className="h-4 w-4 animate-spin" />
-                : `Subscribe (${interval === "monthly" ? `${PRO_MONTHLY_LABEL}/mo` : `${PRO_ANNUAL_LABEL}/yr`})`}
-            </Button>
-          </div>
+          ) : null}
         </Banner>
       );
     }

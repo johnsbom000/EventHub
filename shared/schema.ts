@@ -358,6 +358,19 @@ export const vendorAccounts = pgTable(
     // so the daily reminder job never double-sends. Reset to NULL on a new grant.
     compReminder7dSentAt: timestamp("comp_reminder_7d_sent_at", { withTimezone: true }),
     compReminder1dSentAt: timestamp("comp_reminder_1d_sent_at", { withTimezone: true }),
+    // Which flow granted the current comp (migration 0155): 'launch_2026' for the
+    // launch campaign, 'manual' for admin grants. The publish-stipulation
+    // enforcement job only ever targets 'launch_2026' — manual comps are exempt.
+    compSource: text("comp_source"),
+    // First time this vendor ever published (activated) a listing. Never cleared:
+    // once set, the launch-comp publish stipulation is permanently satisfied even
+    // if the listing is later unpublished or deleted.
+    firstListingPublishedAt: timestamp("first_listing_published_at", { withTimezone: true }),
+    // Publish-stipulation tracking (migration 0155): day-5 nudge email sent, and
+    // when the enforcement job revoked an unmet launch comp. Both reset on a new
+    // campaign grant.
+    compPublishNudgeSentAt: timestamp("comp_publish_nudge_sent_at", { withTimezone: true }),
+    compRevokedAt: timestamp("comp_revoked_at", { withTimezone: true }),
     // AI reply assistant (Pro-gated, metered — migration 0136). Feature toggle is
     // opt-in (default off); overage auto-billing is opt-out (default on). When the
     // included monthly allowance is exhausted: overage on → meter to Stripe, overage

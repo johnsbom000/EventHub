@@ -7,6 +7,27 @@ import { logger } from "../lib/logger";
 // constant so the provision handler and any admin tooling target the same row.
 export const LAUNCH_CAMPAIGN_KEY = "launch_2026";
 
+// Publish-stipulation policy (deadline + Stripe grace) lives in a pure module
+// so it can be unit-tested without a DB; re-exported here for consumers.
+export {
+  PUBLISH_DEADLINE_DAYS,
+  STRIPE_GRACE_DAYS,
+  getCompPublishDeadline,
+} from "../lib/compPublishPolicy";
+
+/**
+ * Return a claimed slot to the campaign pool (used when a comp is revoked for
+ * missing the publish stipulation). Guarded so the counter never goes negative.
+ */
+export async function releaseCampaignSlot(): Promise<void> {
+  await db
+    .update(compCampaigns)
+    .set({ slotsClaimed: sql`${compCampaigns.slotsClaimed} - 1` })
+    .where(
+      and(eq(compCampaigns.key, LAUNCH_CAMPAIGN_KEY), sql`${compCampaigns.slotsClaimed} > 0`)
+    );
+}
+
 /**
  * Atomically claim a slot in the active launch campaign and, if one was
  * available, grant the vendor complimentary ("comp") Pro for the campaign's
@@ -50,9 +71,14 @@ export async function tryGrantCampaignComp(
         subscriptionStatus: "comp",
         compEndsAt,
         subscriptionUpdatedAt: now,
+        // Campaign grants carry the publish stipulation; 'manual' grants don't.
+        compSource: LAUNCH_CAMPAIGN_KEY,
         // Fresh grant → fresh reminders (so the 7d/1d emails fire for this grant).
         compReminder7dSentAt: null,
         compReminder1dSentAt: null,
+        // Fresh grant → fresh publish-stipulation state.
+        compPublishNudgeSentAt: null,
+        compRevokedAt: null,
       })
       .where(eq(vendorAccounts.id, vendorAccountId));
 
@@ -63,13 +89,7 @@ export async function tryGrantCampaignComp(
   } catch (err: any) {
     // Release the claimed slot so a failed grant doesn't permanently consume it.
     if (claimedDays !== null) {
-      await db
-        .update(compCampaigns)
-        .set({ slotsClaimed: sql`${compCampaigns.slotsClaimed} - 1` })
-        .where(
-          and(eq(compCampaigns.key, LAUNCH_CAMPAIGN_KEY), sql`${compCampaigns.slotsClaimed} > 0`)
-        )
-        .catch(() => {});
+      await releaseCampaignSlot().catch(() => {});
     }
     logger.warn(`[comp-campaign] Failed to grant comp to vendor ${vendorAccountId}:`, err?.message || err);
     return { comped: false };

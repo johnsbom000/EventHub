@@ -2072,6 +2072,14 @@ export function registerAdminRoutes(app: Express): void {
           subscriptionStatus: "comp",
           compEndsAt,
           subscriptionUpdatedAt: new Date(),
+          // Manual grants are exempt from the launch-campaign publish stipulation
+          // (the enforcement job only targets comp_source='launch_2026').
+          compSource: "manual",
+          // Fresh grant → fresh pre-expiry reminders + publish-stipulation state.
+          compReminder7dSentAt: null,
+          compReminder1dSentAt: null,
+          compPublishNudgeSentAt: null,
+          compRevokedAt: null,
         })
         .where(and(eq(vendorAccounts.id, vendorId), isNull(vendorAccounts.deletedAt)))
         .returning({ id: vendorAccounts.id });
