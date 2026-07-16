@@ -2356,9 +2356,9 @@ export default function VendorListingEdit() {
                                 </div>
 
                                 {(draft.deliverySetup?.feeType ?? "flat") === "flat" ? (
-                                  <div className="md:col-start-2 space-y-2">
+                                  <div className="md:col-span-2 flex items-center justify-between gap-6">
                                     <Label>{t("vendorListingEdit.deliveryFeeAmount")}</Label>
-                                    <div className="relative">
+                                    <div className="relative w-40">
                                       <span className="pointer-events-none absolute left-3 top-1/2 -translate-y-1/2 text-muted-foreground">$</span>
                                       <Input
                                         value={toNumOrEmpty(draft.deliverySetup?.deliveryFeeAmount)}
@@ -2425,9 +2425,9 @@ export default function VendorListingEdit() {
                             </div>
 
                             {!!draft.deliverySetup?.setupFeeEnabled && (
-                              <div className="md:col-start-2 space-y-2">
+                              <div className="md:col-span-2 flex items-center justify-between gap-6">
                                 <Label>{t("vendorListingEdit.setupFeeAmount")}</Label>
-                                <div className="relative">
+                                <div className="relative w-40">
                                   <span className="pointer-events-none absolute left-3 top-1/2 -translate-y-1/2 text-muted-foreground">$</span>
                                   <Input
                                     value={toNumOrEmpty(draft.deliverySetup?.setupFeeAmount)}
@@ -2490,9 +2490,9 @@ export default function VendorListingEdit() {
                                 </div>
 
                                 {!!draft.deliverySetup?.takedownFeeEnabled && (
-                                  <div className="md:col-start-2 space-y-2">
+                                  <div className="md:col-span-2 flex items-center justify-between gap-6">
                                     <Label>{t("vendorListingEdit.takedownFeeAmount")}</Label>
-                                    <div className="relative">
+                                    <div className="relative w-40">
                                       <span className="pointer-events-none absolute left-3 top-1/2 -translate-y-1/2 text-muted-foreground">$</span>
                                       <Input
                                         value={toNumOrEmpty(draft.deliverySetup?.takedownFeeAmount)}

@@ -58,8 +58,8 @@ function UnifiedFeeConfig({
 }) {
   return (
     <div className="space-y-5">
-      <div className="flex flex-wrap items-center justify-between gap-3">
-        <div>
+      <div className="flex items-start justify-between gap-3">
+        <div className="min-w-0 flex-1">
           <Label className="text-base">Serve events outside your service radius?</Label>
           <p className="text-sm text-muted-foreground">
             Your service radius (set on the Service Area step) is the area you're willing to serve.
@@ -69,12 +69,14 @@ function UnifiedFeeConfig({
               : "Bookings outside it will be blocked."}
           </p>
         </div>
-        <ToggleGroup
-          value={draft.servesOutsideRadius}
-          onChange={(next) => setDraft((prev) => ({ ...prev, servesOutsideRadius: next }))}
-          trueLabel="Yes"
-          falseLabel="No"
-        />
+        <div className="shrink-0">
+          <ToggleGroup
+            value={draft.servesOutsideRadius}
+            onChange={(next) => setDraft((prev) => ({ ...prev, servesOutsideRadius: next }))}
+            trueLabel="Yes"
+            falseLabel="No"
+          />
+        </div>
       </div>
 
       <div className="flex flex-wrap items-center justify-between gap-3">
