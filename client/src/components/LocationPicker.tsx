@@ -103,6 +103,14 @@ export function LocationPicker({
         return;
       }
 
+      // The input syncs to the selected value's label; searching for it again
+      // would just reopen the dropdown over a completed selection.
+      if (value && debouncedQuery === formatDisplayLabel(value.label)) {
+        setSuggestions([]);
+        setIsOpen(false);
+        return;
+      }
+
       try {
         setIsLoading(true);
         const bias = biasRef.current;
@@ -125,7 +133,7 @@ export function LocationPicker({
     };
 
     void fetchSuggestions();
-  }, [debouncedQuery]);
+  }, [debouncedQuery, value?.id]);
 
   const handleSelect = (location: LocationResult) => {
     onChange(location);
@@ -244,19 +252,26 @@ export function LocationPicker({
       </div>
 
       {/* ✅ Suggestions Dropdown */}
-      {isOpen && suggestions.length > 0 && (
+      {isOpen && (suggestions.length > 0 || !isLoading) && (
         <div className="absolute z-50 mt-1 w-full rounded-[12px] border border-border bg-popover text-popover-foreground shadow-lg">
-          <ul className="max-h-60 overflow-auto py-1">
-            {suggestions.map((item) => (
-              <li
-                key={item.id}
-                className="cursor-pointer rounded-[10px] px-4 py-2 text-sm font-sans transition-colors hover:bg-accent hover:text-accent-foreground"
-                onClick={() => handleSelect(item)}
-              >
-                {formatDisplayLabel(item.label)}
-              </li>
-            ))}
-          </ul>
+          {suggestions.length > 0 ? (
+            <ul className="max-h-60 overflow-auto py-1">
+              {suggestions.map((item) => (
+                <li
+                  key={item.id}
+                  className="cursor-pointer rounded-[10px] px-4 py-2 text-sm font-sans transition-colors hover:bg-accent hover:text-accent-foreground"
+                  onClick={() => handleSelect(item)}
+                >
+                  {formatDisplayLabel(item.label)}
+                </li>
+              ))}
+            </ul>
+          ) : (
+            <p className="px-4 py-3 text-sm font-sans text-muted-foreground">
+              No matches found. Try just the street address and city, or check
+              for typos.
+            </p>
+          )}
         </div>
       )}
     </div>
