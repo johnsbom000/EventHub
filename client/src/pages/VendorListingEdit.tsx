@@ -23,6 +23,7 @@ import {
 } from "@/components/ui/select";
 
 import { getFreshAccessToken } from "@/lib/authToken";
+import { buildListingLogisticsPayload, isDeliveryCategory, isTravelCategory } from "@/lib/listingLogistics";
 import { POPULAR_FOR_OPTIONS } from "@/constants/eventTypes";
 import {
   DEFAULT_COVER_RATIO,
@@ -529,14 +530,19 @@ export default function VendorListingEdit() {
       // travel_fee_* columns, fall back to legacy delivery_fee_*. feeType is flat or
       // variable (legacy per_mile/per_hour → variable).
       deliverySetup: {
-        deliveryIncluded:
-          Boolean(
-            ld?.deliverySetup?.deliveryIncluded ??
-              ld?.deliveryIncluded ??
-              ld?.deliveryOffered ??
-              canonicalListing?.deliveryOffered ??
-              canonicalListing?.travelOffered
-          ),
+        // For Service listings the single "offered" toggle means travel, and the
+        // canonical travel_offered column is authoritative — the wizard stores an
+        // explicit deliveryIncluded:false in listingData for Services, which would
+        // short-circuit the delivery fallback chain and wipe travel on save.
+        deliveryIncluded: Boolean(
+          isTravelCategory(initialCategory)
+            ? canonicalListing?.travelOffered ?? ld?.travelOffered
+            : ld?.deliverySetup?.deliveryIncluded ??
+                ld?.deliveryIncluded ??
+                ld?.deliveryOffered ??
+                canonicalListing?.deliveryOffered ??
+                canonicalListing?.travelOffered
+        ),
         deliveryFeeEnabled:
           Boolean(
             canonicalListing?.travelFeeEnabled ??
@@ -1053,6 +1059,8 @@ export default function VendorListingEdit() {
   const description = String(draft?.listingDescription ?? "");
   const pricingRate = draft?.pricing?.rate;
   const hasCategory = LISTING_CATEGORY_OPTIONS.includes((draft?.category ?? "") as ListingCategory);
+  const showTravelSection = isTravelCategory(draft?.category);
+  const showDeliverySection = isDeliveryCategory(draft?.category);
   const hasTitle = title.trim() !== "";
   const hasDescription = description.trim() !== "";
 
@@ -1093,7 +1101,18 @@ export default function VendorListingEdit() {
       deliveryFeeEnabled && unifiedFeeType === "flat"
         ? parseMoneyStringToOptionalNumber(deliverySetupDraft?.deliveryFeeAmount)
         : null;
-    const servesOutsideRadius = Boolean((draft as any).servesOutsideRadius);
+    const unifiedFeeAmountDollars = parseMoneyStringToOptionalNumber(deliverySetupDraft?.deliveryFeeAmount);
+    // Shared with the create wizard: the category decides whether the single UI
+    // toggle means travel (Service) or delivery (Rental/Catering).
+    const logisticsPayload = buildListingLogisticsPayload({
+      category: draft.category,
+      servesOutsideRadius: Boolean((draft as any).servesOutsideRadius),
+      travelOffered: deliveryIncluded,
+      deliveryIncluded,
+      feeEnabled: Boolean(deliverySetupDraft?.deliveryFeeEnabled),
+      feeType: unifiedFeeType,
+      feeAmountCents: unifiedFeeAmountDollars != null ? Math.round(unifiedFeeAmountDollars * 100) : null,
+    });
 
     const setupIncluded = Boolean(deliverySetupDraft?.setupIncluded);
     const setupFeeEnabled = setupIncluded && Boolean(deliverySetupDraft?.setupFeeEnabled);
@@ -1144,20 +1163,9 @@ export default function VendorListingEdit() {
         coverPhotoName: safePhotoNames.length > 0 ? safePhotoNames[0] ?? null : null,
         cropsByName: safePhotoCropsByName,
       },
-      deliveryIncluded,
-      deliveryOffered: deliveryIncluded,
-      // Fee lives in the unified travel_fee_* columns now; keep delivery_fee_* off so
-      // it is not treated as a second fee source.
-      deliveryFeeEnabled: false,
-      deliveryFeeAmount: null,
-      deliveryFeeAmountCents: null,
-      // Unified travel/delivery fee (label depends on category downstream).
-      servesOutsideRadius,
-      travelOffered: deliveryIncluded,
-      travelFeeEnabled: deliveryFeeEnabled,
-      travelFeeType: deliveryFeeEnabled ? unifiedFeeType : null,
-      travelFeeAmount: deliveryFeeAmount,
-      travelFeeAmountCents: deliveryFeeAmount != null ? Math.round(deliveryFeeAmount * 100) : null,
+      // Unified travel/delivery fee — shared with the create wizard via
+      // buildListingLogisticsPayload so both writers persist identically.
+      ...logisticsPayload,
       setupIncluded,
       setupOffered: setupIncluded,
       setupFeeEnabled,
@@ -2194,7 +2202,9 @@ export default function VendorListingEdit() {
                   <Card className={creamSectionCardClass}>
                     <div className="space-y-6">
                       <div>
-                        <div className="text-xl font-semibold">{t("vendorListingEdit.deliverySetup")}</div>
+                        <div className="text-xl font-semibold">
+                          {t(showTravelSection ? "vendorListingEdit.travelSetup" : "vendorListingEdit.deliverySetup")}
+                        </div>
                       </div>
 
                       <div className="space-y-2">
@@ -2296,9 +2306,9 @@ export default function VendorListingEdit() {
                         </div>
                       )}
 
-                      {!isPackageContainer && <div className="border-t pt-6 space-y-6">
+                      {!isPackageContainer && (showTravelSection || showDeliverySection) && <div className="border-t pt-6 space-y-6">
                         <div className="flex items-center justify-between gap-6">
-                          <Label>{t("vendorListingEdit.doYouDeliver")}</Label>
+                          <Label>{t(showTravelSection ? "vendorListingEdit.doYouTravel" : "vendorListingEdit.doYouDeliver")}</Label>
                           <YesNoButtons
                             value={!!draft.deliverySetup?.deliveryIncluded}
                             onChange={(v) =>
@@ -2318,7 +2328,7 @@ export default function VendorListingEdit() {
                         {!!draft.deliverySetup?.deliveryIncluded && (
                           <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
                             <div className="md:col-span-2 flex items-center justify-between gap-6">
-                              <Label>{t("vendorListingEdit.isDeliveryFee")}</Label>
+                              <Label>{t(showTravelSection ? "vendorListingEdit.isTravelFee" : "vendorListingEdit.isDeliveryFee")}</Label>
                               <YesNoButtons
                                 value={!!draft.deliverySetup?.deliveryFeeEnabled}
                                 onChange={(v) =>
@@ -2357,7 +2367,7 @@ export default function VendorListingEdit() {
 
                                 {(draft.deliverySetup?.feeType ?? "flat") === "flat" ? (
                                   <div className="md:col-span-2 flex items-center justify-between gap-6">
-                                    <Label>{t("vendorListingEdit.deliveryFeeAmount")}</Label>
+                                    <Label>{t(showTravelSection ? "vendorListingEdit.travelFeeAmount" : "vendorListingEdit.deliveryFeeAmount")}</Label>
                                     <div className="relative w-40">
                                       <span className="pointer-events-none absolute left-3 top-1/2 -translate-y-1/2 text-muted-foreground">$</span>
                                       <Input
