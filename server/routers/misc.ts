@@ -468,86 +468,99 @@ app.post(
   });
 
   // Location search (used by LocationPicker autocomplete)
+  // Backed by the Mapbox Geocoding API. Nominatim (the previous backend) both
+  // prohibits autocomplete in its usage policy and fails to parse common US
+  // grid addresses like "8477 s 115 e, Sandy, Utah, 84070" (returns zero
+  // results), which hard-blocked vendor onboarding.
+  const mapboxGeocodingToken =
+    process.env.MAPBOX_PLACES_TOKEN ||
+    process.env.MAPBOX_ACCESS_TOKEN ||
+    process.env.VITE_MAPBOX_TOKEN ||
+    "";
+
   app.get("/api/locations/search", async (req, res) => {
     try {
       const q = String(req.query.q || "").trim();
       if (!q || q.length < 2) return res.json([]);
 
+      if (!mapboxGeocodingToken) {
+        throw new Error("No Mapbox token configured (MAPBOX_ACCESS_TOKEN)");
+      }
+
       const biasLat = parseFloat(String(req.query.bias_lat || ""));
       const biasLng = parseFloat(String(req.query.bias_lng || ""));
       const hasBias = Number.isFinite(biasLat) && Number.isFinite(biasLng);
 
-      // Nominatim (OpenStreetMap) — free, no API key required.
-      // Usage policy: max 1 req/s, valid User-Agent with contact info.
-      // viewbox biases results toward the user's region; bounded=0 keeps global fallback.
-      const viewboxParam = hasBias
-        ? `&viewbox=${biasLng - 2},${biasLat + 1.5},${biasLng + 2},${biasLat - 1.5}&bounded=0`
-        : "";
-      const url =
-        `https://nominatim.openstreetmap.org/search` +
-        `?q=${encodeURIComponent(q)}&format=json&addressdetails=1&limit=5${viewboxParam}`;
+      // "lat,lng" queries come from the "use my location" button and are
+      // reverse geocodes — Mapbox expects those as "{lng},{lat}" and only
+      // allows limit=1 unless a single type filter is given.
+      const coordMatch = q.match(/^(-?\d{1,2}(?:\.\d+)?)\s*,\s*(-?\d{1,3}(?:\.\d+)?)$/);
+      const isReverse =
+        !!coordMatch &&
+        Math.abs(parseFloat(coordMatch[1])) <= 90 &&
+        Math.abs(parseFloat(coordMatch[2])) <= 180;
 
+      const searchText = isReverse ? `${coordMatch![2]},${coordMatch![1]}` : q;
+      const params = isReverse
+        ? ""
+        : `&autocomplete=true&limit=5` +
+          (hasBias ? `&proximity=${biasLng},${biasLat}` : "");
+
+      const url =
+        `https://api.mapbox.com/geocoding/v5/mapbox.places/${encodeURIComponent(searchText)}.json` +
+        `?access_token=${mapboxGeocodingToken}&language=en${params}`;
+
+      // The token is URL-restricted to the production domain, so the proxy
+      // must present a matching Referer.
       const response = await fetch(url, {
-        headers: {
-          "User-Agent": "EventHub/1.0 (eventhubglobal@gmail.com)",
-          "Accept-Language": "en",
-        },
+        headers: { Referer: "https://eventhubglobal.com/" },
       });
 
       if (!response.ok) {
-        throw new Error(`Nominatim responded with status ${response.status}`);
+        throw new Error(`Mapbox responded with status ${response.status}`);
       }
 
-      const data: any[] = await response.json();
+      const data: any = await response.json();
 
-      const results = data.map((f) => {
-        const addr = f.address ?? {};
-        const houseNumber = (addr.house_number ?? "").trim();
-        // Nominatim puts the street name under different keys depending on the
-        // way type (footways, residential roads, etc.), so check all of them —
-        // otherwise venues/addresses come back with a blank street box even
-        // though city/state/zip parse fine.
-        const road = (
-          addr.road ??
-          addr.pedestrian ??
-          addr.footway ??
-          addr.path ??
-          addr.cycleway ??
-          addr.residential ??
-          addr.street ??
-          ""
-        ).trim();
-        // Named venues/POIs (parks, resorts, halls) often have no road at all.
-        // Fall back to the place name so the street box isn't left empty when
-        // the customer picks an event location by name.
-        const placeName = (
-          addr.amenity ??
-          addr.shop ??
-          addr.tourism ??
-          addr.leisure ??
-          addr.building ??
-          addr.office ??
-          ""
-        ).trim();
-        const street =
-          houseNumber && road
-            ? `${houseNumber} ${road}`
-            : road || houseNumber || placeName;
-        // Nominatim city may appear under several keys depending on place type.
-        const city =
-          addr.city ?? addr.town ?? addr.village ?? addr.municipality ?? addr.hamlet ?? "";
-        return {
-          id: `nominatim-${f.place_id}`,
-          label: f.display_name,
-          lat: parseFloat(f.lat),
-          lng: parseFloat(f.lon),
-          street: street || undefined,
-          city: city || undefined,
-          state: addr.state || undefined,
-          postalCode: addr.postcode || undefined,
-          country: addr.country_code?.toUpperCase() || undefined,
-        };
-      });
+      const results = (data?.features ?? [])
+        .map((f: any) => {
+          // Flatten the context array ("place.123" → place) for city/state/zip.
+          const ctx: Record<string, any> = {};
+          for (const c of f.context ?? []) {
+            const key = String(c.id || "").split(".")[0];
+            if (key && !ctx[key]) ctx[key] = c;
+          }
+
+          const placeType: string = f.place_type?.[0] ?? "";
+          // Addresses: "8477 South 115 East". POIs keep their street in
+          // properties.address and fall back to the venue name so the street
+          // box isn't left empty when someone picks a venue by name. Cities,
+          // regions, and other area results have no street.
+          const street =
+            placeType === "address"
+              ? [f.address, f.text].filter(Boolean).join(" ")
+              : placeType === "poi"
+                ? String(f.properties?.address || f.text || "").trim()
+                : "";
+          const city =
+            placeType === "place"
+              ? f.text
+              : ctx.place?.text || ctx.locality?.text || "";
+
+          return {
+            id: String(f.id || ""),
+            label: f.place_name,
+            lat: f.center?.[1],
+            lng: f.center?.[0],
+            street: street || undefined,
+            city: city || undefined,
+            state: ctx.region?.text || undefined,
+            postalCode: ctx.postcode?.text || undefined,
+            country: ctx.country?.short_code?.toUpperCase() || undefined,
+            placeType: placeType || undefined,
+          };
+        })
+        .filter((r: any) => Number.isFinite(r.lat) && Number.isFinite(r.lng));
 
       return res.json(results);
     } catch (err: any) {
