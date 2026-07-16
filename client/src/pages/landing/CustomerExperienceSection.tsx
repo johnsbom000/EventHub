@@ -31,9 +31,11 @@ export default function CustomerExperienceSection({ storefrontImages }: { storef
             <h2 className="mt-4 font-heading text-[clamp(2.1rem,4vw,3.1rem)] font-light leading-[1.08] text-[#2a3a42]">
               <Trans i18nKey="customerExp.title" components={{ accent: <em className="italic text-[#e07a6a]" /> }} />
             </h2>
-            <p className="mt-5 max-w-lg font-sans text-[1.08rem] leading-[1.6] text-[#4a6a7d]">
-              {t("customerExp.subtitle")}
-            </p>
+            {t("customerExp.subtitle") && (
+              <p className="mt-5 max-w-lg font-sans text-[1.08rem] leading-[1.6] text-[#4a6a7d]">
+                {t("customerExp.subtitle")}
+              </p>
+            )}
 
             <ul className="mt-9 space-y-6">
               {PILLARS.map(({ key, Icon }) => (

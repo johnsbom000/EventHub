@@ -1,0 +1,263 @@
+import { type ReactNode } from "react";
+import { ChevronRight, Star } from "lucide-react";
+import { useTranslation } from "react-i18next";
+import BrandWordmark from "@/components/BrandWordmark";
+
+/* ---------------------------------------------------------------------------
+   Shared presentational primitives for the free-first landing variants (A–E).
+   Kept here so every direction pulls from one styling source — coral accent
+   #e07a6a, slate #4a6a7d, ink #2a3a42, cream #f5f0e8.
+--------------------------------------------------------------------------- */
+
+export function Eyebrow({ children, className = "text-[#e07a6a]" }: { children: ReactNode; className?: string }) {
+  return (
+    <p className={`font-sans text-[0.75rem] font-semibold uppercase tracking-[0.22em] ${className}`}>{children}</p>
+  );
+}
+
+// Reusable 5-star row — no numeric rating, matching the prototype spec.
+export function Stars({ size = "h-4 w-4", className = "" }: { size?: string; className?: string }) {
+  return (
+    <span className={`inline-flex gap-0.5 ${className}`}>
+      {[0, 1, 2, 3, 4].map((i) => (
+        <Star key={i} className={`${size} text-[#d26f41]`} fill="#d26f41" strokeWidth={0} />
+      ))}
+    </span>
+  );
+}
+
+export function PrimaryButton({
+  onClick,
+  children,
+  className = "",
+}: {
+  onClick: () => void;
+  children: ReactNode;
+  className?: string;
+}) {
+  return (
+    <button
+      type="button"
+      onClick={onClick}
+      className={`inline-flex items-center justify-center gap-1.5 rounded-full bg-[#e07a6a] px-7 py-3.5 font-sans text-[1.05rem] font-semibold text-white transition-colors hover:bg-[#c96959] ${className}`}
+    >
+      {children}
+      <ChevronRight className="h-[1.05em] w-[1.05em]" />
+    </button>
+  );
+}
+
+export function GhostButton({
+  onClick,
+  children,
+  className = "",
+}: {
+  onClick: () => void;
+  children: ReactNode;
+  className?: string;
+}) {
+  return (
+    <button
+      type="button"
+      onClick={onClick}
+      className={`rounded-full px-6 py-3.5 font-sans text-[1.05rem] font-semibold transition-colors ${className}`}
+    >
+      {children}
+    </button>
+  );
+}
+
+// Slim announcement bar sitting above the header. theme controls the palette.
+export function Bar({ theme = "cream", children }: { theme?: "cream" | "blue" | "dark"; children: ReactNode }) {
+  const cls =
+    theme === "dark"
+      ? "bg-[#2a3a42] text-[rgba(245,240,232,0.9)]"
+      : theme === "blue"
+        ? "bg-[#f8fafb] text-[#4a6a7d]"
+        : "bg-[#f5f0e8] text-[#4a6a7d]";
+  return (
+    <div className={cls}>
+      <div className="mx-auto flex max-w-[1320px] items-center justify-center gap-2 px-5 py-2 text-center lg:px-10">
+        <span className="font-sans text-[0.9rem] leading-tight">{children}</span>
+      </div>
+    </div>
+  );
+}
+
+// Shared sticky header. `minimal` (variant D) hides the Log in link.
+export function Header({
+  onSignup,
+  onLogin,
+  cta,
+  minimal = false,
+}: {
+  onSignup: () => void;
+  onLogin: () => void;
+  cta: string;
+  minimal?: boolean;
+}) {
+  const { t } = useTranslation();
+  return (
+    <header className="border-b border-[rgba(74,106,125,0.1)] bg-white/95 backdrop-blur">
+      <div className="mx-auto flex max-w-[1320px] items-center justify-between px-5 py-3.5 lg:px-10">
+        <BrandWordmark
+          className="text-[1.9rem] leading-none lg:text-[2.2rem]"
+          eventClassName="text-[#e07a6a] font-normal"
+          hubClassName="text-[#4a6a7d] font-normal"
+        />
+        <div className="flex items-center gap-2">
+          {!minimal && (
+            <button
+              type="button"
+              onClick={onLogin}
+              className="rounded-full px-4 py-2 font-sans text-[0.98rem] font-semibold text-[#4a6a7d] transition-colors hover:text-[#2a3a42]"
+            >
+              {t("landingShared.logIn")}
+            </button>
+          )}
+          <button
+            type="button"
+            onClick={onSignup}
+            className="inline-flex items-center gap-1.5 rounded-full bg-[#e07a6a] px-5 py-2 font-sans text-[0.98rem] font-semibold text-white transition-colors hover:bg-[#c96959]"
+          >
+            {cta}
+            <ChevronRight className="h-[1.05em] w-[1.05em]" />
+          </button>
+        </div>
+      </div>
+    </header>
+  );
+}
+
+const SUPPORT_EMAIL = "support@eventhubglobal.com";
+const SUPPORT_PHONE = "801-410-0092";
+
+// Shared footer (slate) used by every free-first variant.
+export function Footer() {
+  const { t } = useTranslation();
+  return (
+    <footer className="bg-[#4a6a7d]">
+      <div className="mx-auto max-w-[1320px] px-5 py-14 lg:px-10">
+        <div className="grid grid-cols-1 gap-8 md:grid-cols-4">
+          <div className="col-span-1 md:col-span-2">
+            <BrandWordmark
+              className="mb-4 text-[2.4rem]"
+              eventClassName="text-[#f5f0e8] font-normal"
+              hubClassName="text-[#9dd4cc] font-normal"
+            />
+            <p className="max-w-md font-sans text-[1.02rem] leading-[1.6] text-[rgba(245,240,232,0.85)]">
+              {t("landingShared.footer.description")}
+            </p>
+          </div>
+          <div>
+            <h3 className="mb-4 font-sans text-[0.82rem] font-medium uppercase tracking-[0.1em] text-[#9dd4cc]">
+              {t("landingShared.footer.company")}
+            </h3>
+            <ul className="space-y-2.5">
+              <li>
+                <a href="/terms" className="font-sans text-[0.98rem] text-[rgba(245,240,232,0.85)] hover:text-white">
+                  {t("landingShared.footer.terms")}
+                </a>
+              </li>
+              <li>
+                <a href="/privacy" className="font-sans text-[0.98rem] text-[rgba(245,240,232,0.85)] hover:text-white">
+                  {t("landingShared.footer.privacy")}
+                </a>
+              </li>
+            </ul>
+          </div>
+          <div>
+            <h3 className="mb-4 font-sans text-[0.82rem] font-medium uppercase tracking-[0.1em] text-[#9dd4cc]">
+              {t("landingShared.footer.contact")}
+            </h3>
+            <ul className="space-y-2.5">
+              <li>
+                <a
+                  href={`mailto:${SUPPORT_EMAIL}`}
+                  className="font-sans text-[0.98rem] text-[rgba(245,240,232,0.85)] hover:text-white"
+                >
+                  {SUPPORT_EMAIL}
+                </a>
+              </li>
+              <li>
+                <a
+                  href={`tel:${SUPPORT_PHONE.replace(/[^0-9]/g, "")}`}
+                  className="font-sans text-[0.98rem] text-[rgba(245,240,232,0.85)] hover:text-white"
+                >
+                  {SUPPORT_PHONE}
+                </a>
+              </li>
+            </ul>
+          </div>
+        </div>
+        <div className="mt-10 flex flex-col items-center justify-between gap-3 border-t border-[rgba(245,240,232,0.16)] pt-8 sm:flex-row">
+          <p className="font-sans text-[0.87rem] text-[rgba(245,240,232,0.45)]">
+            {t("landingShared.footer.copyright", { year: new Date().getFullYear() })}
+          </p>
+          <div className="flex gap-6">
+            <a href="/terms" className="font-sans text-[0.87rem] text-[rgba(245,240,232,0.6)] hover:text-white">
+              {t("landingShared.footer.terms")}
+            </a>
+            <a href="/privacy" className="font-sans text-[0.87rem] text-[rgba(245,240,232,0.6)] hover:text-white">
+              {t("landingShared.footer.privacy")}
+            </a>
+          </div>
+        </div>
+      </div>
+    </footer>
+  );
+}
+
+// Shared closing band. theme = dark (slate) or cream.
+export function Closing({
+  onSignup,
+  onLogin,
+  theme = "dark",
+  title,
+  subtitle,
+}: {
+  onSignup: () => void;
+  onLogin: () => void;
+  theme?: "dark" | "cream";
+  title: ReactNode;
+  subtitle: ReactNode;
+}) {
+  const { t } = useTranslation();
+  const dark = theme === "dark";
+  return (
+    <section className={dark ? "bg-[#2a3a42]" : "bg-[#f5f0e8]"}>
+      <div className="mx-auto max-w-[1240px] px-5 py-24 text-center lg:px-10 lg:py-28">
+        <h2
+          className={`mx-auto max-w-3xl font-heading text-[2.6rem] font-light leading-[1.08] lg:text-[3.4rem] ${
+            dark ? "text-[#f5f0e8]" : "text-[#2a3a42]"
+          }`}
+        >
+          {title}
+        </h2>
+        {subtitle && (
+          <p
+            className={`mx-auto mt-5 max-w-xl font-sans text-[1.15rem] leading-[1.65] ${
+              dark ? "text-[rgba(245,240,232,0.8)]" : "text-[#4a6a7d]"
+            }`}
+          >
+            {subtitle}
+          </p>
+        )}
+        <div className="mt-10 flex flex-wrap items-center justify-center gap-3">
+          <PrimaryButton onClick={onSignup} className="!px-8 !py-4 !text-[1.1rem]">
+            {t("landingShared.closingCta")}
+          </PrimaryButton>
+          <GhostButton
+            onClick={onLogin}
+            className={dark ? "!py-4 text-[#f5f0e8] hover:text-white" : "!py-4 text-[#4a6a7d] hover:text-[#2a3a42]"}
+          >
+            {t("landingShared.logIn")}
+          </GhostButton>
+        </div>
+        <p className={`mt-6 font-sans text-[0.9rem] ${dark ? "text-[rgba(245,240,232,0.6)]" : "text-[#9aacb4]"}`}>
+          {t("landingShared.freeToJoin")}
+        </p>
+      </div>
+    </section>
+  );
+}
