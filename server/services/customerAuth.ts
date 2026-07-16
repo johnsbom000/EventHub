@@ -259,10 +259,13 @@ export async function resolveCustomerAuthFromRequest(
     }
   }
 
-  // If token email is missing, use a deterministic synthetic email from sub to keep customer flows functional.
+  // If token email is missing, use a deterministic synthetic email from sub to keep
+  // customer flows functional. Must be lowercased: the lookup below compares against
+  // lower(users.email), so a mixed-case sub would otherwise never match its own row
+  // and every request would retry the insert into the case-insensitive unique index.
   if (!email && sub) {
     const safeSub = sub.replace(/[^a-zA-Z0-9]/g, "_").slice(0, 48);
-    email = `auth0_${safeSub}@eventhub.local`;
+    email = `auth0_${safeSub}@eventhub.local`.toLowerCase();
   }
 
   if (!email) return null;
@@ -283,6 +286,8 @@ export async function resolveCustomerAuthFromRequest(
   if (!userRow && opts?.createIfMissing) {
     const generatedName = preferredName || toHumanNameFromEmail(email) || "Customer";
 
+    // onConflictDoNothing + re-select: two concurrent first requests for the same
+    // new user would otherwise race on users_email_ci_unique and 23505 the loser.
     [userRow] = await db
       .insert(users)
       .values({
@@ -292,7 +297,16 @@ export async function resolveCustomerAuthFromRequest(
         role: "customer",
         lastLoginAt: new Date(),
       })
+      .onConflictDoNothing()
       .returning();
+
+    if (!userRow) {
+      [userRow] = await db
+        .select()
+        .from(users)
+        .where(drizzleSql`lower(${users.email}) = ${email}`)
+        .limit(1);
+    }
 
     if (userRow?.id && sub) {
       try {

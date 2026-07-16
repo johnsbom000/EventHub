@@ -139,7 +139,7 @@ import {
   requireAdminAuth,
   resolveVendorAccountForAuth0Identity,
 } from "../auth";
-import { requireAuth0, verifyAuth0Token, sendVerificationEmailForUser } from "../auth0"; // ✅ Auth0 middleware
+import { requireAuth0, attachAuth0IfPresent, verifyAuth0Token, sendVerificationEmailForUser } from "../auth0"; // ✅ Auth0 middleware
 import { z } from "zod";
 import { db } from "../db";
 import { eq, and, or, ne, not, isNull, inArray, sql as drizzleSql, count, sum, gte, lte, desc, asc } from "drizzle-orm";
@@ -569,7 +569,7 @@ app.post(
     }
   });
 
-  app.patch("/api/user/language", mutationRateLimiter, async (req, res) => {
+  app.patch("/api/user/language", mutationRateLimiter, attachAuth0IfPresent, async (req, res) => {
     try {
       const supported = new Set(["en", "es", "pt"]);
       const { language } = req.body;
@@ -577,11 +577,11 @@ app.post(
         return res.status(400).json({ error: "Unsupported language. Allowed: en, es, pt" });
       }
 
-      // Try to resolve user from customer auth or vendor auth.
+      // Resolves both customers and vendors: vendor provision upserts a users row,
+      // so the email/sub lookup covers either account type.
       const customerAuth = await resolveCustomerAuthFromRequest(req, { createIfMissing: false }).catch(() => null);
-      const vendorAuth = (req as any).vendorAuth as { userId?: string } | undefined;
 
-      const userId = customerAuth?.id ?? vendorAuth?.userId;
+      const userId = customerAuth?.id;
       if (!userId) {
         // Unauthenticated — client should fall back to localStorage only.
         return res.json({ ok: true, persisted: false });
@@ -639,11 +639,10 @@ app.post(
     return Object.keys(merged).length > 0 ? merged : null;
   };
 
-  app.get("/api/users/me/location", async (req, res) => {
+  app.get("/api/users/me/location", attachAuth0IfPresent, async (req, res) => {
     try {
       const customerAuth = await resolveCustomerAuthFromRequest(req, { createIfMissing: false }).catch(() => null);
-      const vendorAuth = (req as any).vendorAuth as { userId?: string } | undefined;
-      const userId = customerAuth?.id ?? vendorAuth?.userId;
+      const userId = customerAuth?.id;
 
       if (!userId) {
         return res.json({ location: null });
@@ -663,11 +662,10 @@ app.post(
     }
   });
 
-  app.put("/api/users/me/location", mutationRateLimiter, async (req, res) => {
+  app.put("/api/users/me/location", mutationRateLimiter, attachAuth0IfPresent, async (req, res) => {
     try {
       const customerAuth = await resolveCustomerAuthFromRequest(req, { createIfMissing: false }).catch(() => null);
-      const vendorAuth = (req as any).vendorAuth as { userId?: string } | undefined;
-      const userId = customerAuth?.id ?? vendorAuth?.userId;
+      const userId = customerAuth?.id;
 
       if (!userId) {
         return res.json({ ok: true, persisted: false });

@@ -308,11 +308,20 @@ export async function isEmailVerifiedLive(sub: string): Promise<boolean> {
  * Attaches payload to (req as any).auth0
  * If email is missing from token payload, tries /userinfo (with timeout).
  */
-export async function requireAuth0(req: Request, res: Response, next: NextFunction) {
+type Auth0Resolution =
+  | { ok: true; auth0: Auth0Payload }
+  | { ok: false; status: 401 | 403; body: Record<string, unknown> };
+
+// Core token → verified-identity resolution shared by requireAuth0 (fail-closed)
+// and attachAuth0IfPresent (fail-open). The email-verified gate applies in BOTH
+// paths: an optional-auth route must never see an unverified identity, or an
+// attacker who registered an unverified account with a victim's email could act
+// as them wherever the route trusts req.auth0.
+async function resolveVerifiedAuth0(req: Request): Promise<Auth0Resolution> {
   try {
     const authHeader = req.headers.authorization || "";
     if (!authHeader.startsWith("Bearer ")) {
-      return res.status(401).json({ error: "Missing Authorization Bearer token" });
+      return { ok: false, status: 401, body: { error: "Missing Authorization Bearer token" } };
     }
 
     const token = authHeader.slice("Bearer ".length).trim();
@@ -366,46 +375,71 @@ export async function requireAuth0(req: Request, res: Response, next: NextFuncti
     // email_verified:true and are unaffected.
     if (auth0.email_verified !== true) {
       logger.warn({ sub: auth0.sub }, "[auth0] rejected unverified email");
-      return res.status(403).json(EMAIL_NOT_VERIFIED_RESPONSE);
+      return { ok: false, status: 403, body: EMAIL_NOT_VERIFIED_RESPONSE };
     }
 
-    // Attach to request for downstream middleware/routes
     logger.debug({ sub: auth0.sub }, "[auth0] token verified");
-    (req as any).auth0 = auth0;
-
-    // Update last_login_at (non-blocking)
-    // NOTE: This assumes users.auth0_sub and users.last_login_at exist.
-    // If not, this will warn but will NOT block auth.
-    void (async () => {
-      try {
-        if (!auth0.sub && !auth0.email) return;
-
-        // Prefer matching by auth0_sub when present; fall back to email
-        if (auth0.sub) {
-          await db.execute(
-            drizzleSql`
-              UPDATE users
-              SET last_login_at = NOW()
-              WHERE auth0_sub = ${auth0.sub}
-            `
-          );
-        } else if (auth0.email) {
-          await db.execute(
-            drizzleSql`
-              UPDATE users
-              SET last_login_at = NOW()
-              WHERE lower(email) = lower(${auth0.email})
-            `
-          );
-        }
-      } catch (e: any) {
-        logger.warn("AUTH0 last_login_at update failed:", e?.message || e);
-      }
-    })();
-
-    return next();
+    return { ok: true, auth0 };
   } catch (err: any) {
     logger.error("Auth0 token verify failed:", err?.name, err?.message);
-    return res.status(401).json({ error: "Invalid Auth0 token" });
+    return { ok: false, status: 401, body: { error: "Invalid Auth0 token" } };
   }
+}
+
+export async function requireAuth0(req: Request, res: Response, next: NextFunction) {
+  const resolution = await resolveVerifiedAuth0(req);
+  if (!resolution.ok) {
+    return res.status(resolution.status).json(resolution.body);
+  }
+  const auth0 = resolution.auth0;
+
+  // Attach to request for downstream middleware/routes
+  (req as any).auth0 = auth0;
+
+  // Update last_login_at (non-blocking)
+  // NOTE: This assumes users.auth0_sub and users.last_login_at exist.
+  // If not, this will warn but will NOT block auth.
+  void (async () => {
+    try {
+      if (!auth0.sub && !auth0.email) return;
+
+      // Prefer matching by auth0_sub when present; fall back to email
+      if (auth0.sub) {
+        await db.execute(
+          drizzleSql`
+            UPDATE users
+            SET last_login_at = NOW()
+            WHERE auth0_sub = ${auth0.sub}
+          `
+        );
+      } else if (auth0.email) {
+        await db.execute(
+          drizzleSql`
+            UPDATE users
+            SET last_login_at = NOW()
+            WHERE lower(email) = lower(${auth0.email})
+          `
+        );
+      }
+    } catch (e: any) {
+      logger.warn("AUTH0 last_login_at update failed:", e?.message || e);
+    }
+  })();
+
+  return next();
+}
+
+// Optional auth: attaches req.auth0 when a valid, email-verified Bearer token is
+// present; otherwise continues unauthenticated WITHOUT sending an error response.
+// For routes that work anonymously but persist per-user state when signed in
+// (e.g. language/location preferences).
+export async function attachAuth0IfPresent(req: Request, _res: Response, next: NextFunction) {
+  const authHeader = req.headers.authorization || "";
+  if (authHeader.startsWith("Bearer ")) {
+    const resolution = await resolveVerifiedAuth0(req);
+    if (resolution.ok) {
+      (req as any).auth0 = resolution.auth0;
+    }
+  }
+  return next();
 }

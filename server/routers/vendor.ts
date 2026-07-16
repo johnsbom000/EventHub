@@ -368,6 +368,100 @@ async function allocateUniqueVendorSlug(name: string, excludeId?: string): Promi
   }
 }
 
+// allocateUniqueVendorSlug is select-then-write, so two concurrent allocations of
+// the same name can both pick the same slug; the loser's write hits the unique
+// index. Retry the allocate+write pair so that race resolves instead of 500ing.
+async function withSlugAllocationRetry<T>(write: () => Promise<T>): Promise<T> {
+  for (let attempt = 0; ; attempt++) {
+    try {
+      return await write();
+    } catch (err: any) {
+      const isSlugConflict =
+        err?.code === "23505" && String(err?.constraint ?? err?.message ?? "").includes("shop_slug");
+      if (!isSlugConflict || attempt >= 2) throw err;
+    }
+  }
+}
+
+type ListingContentField = { value: string; contentType: string; label: string };
+
+function collectListingContentFields(
+  title: string | null | undefined,
+  description: string | null | undefined,
+): ListingContentField[] {
+  const fields: ListingContentField[] = [];
+  if (typeof description === "string" && description.trim()) {
+    fields.push({ value: description, contentType: "listing_description", label: "Listing description" });
+  }
+  if (typeof title === "string" && title.trim()) {
+    fields.push({ value: title, contentType: "listing_title", label: "Listing title" });
+  }
+  return fields;
+}
+
+// Hard-block circumvention moderation shared by listing create, update, and
+// publish (previously only update ran it, so direct API callers could create or
+// publish off-platform-contact content unchecked). Records the violation and
+// returns the 422 body when blocked; null when clean.
+async function runListingHardBlockCheck(params: {
+  fields: ListingContentField[];
+  vendorAccountId: string;
+  listingId: string | null;
+}): Promise<Record<string, unknown> | null> {
+  const serverUrl = appUrl();
+  for (const field of params.fields) {
+    const detection = checkContent(field.value);
+    if (!detection.hardBlocked) continue;
+    const result = await handleCircumventionViolation({
+      vendorAccountId: params.vendorAccountId,
+      contentType: field.contentType,
+      contentSnapshot: field.value,
+      matches: detection.matches,
+      reason: `${field.label} contained ${blockReasonSummary(detection.blockReasons)}`,
+      listingId: params.listingId,
+      serverUrl,
+    });
+    return {
+      error: "content_blocked",
+      field: field.label,
+      reason: `Your ${field.label.toLowerCase()} cannot include ${blockReasonSummary(detection.blockReasons)}. Please remove this information and try again.`,
+      blockReasons: detection.blockReasons,
+      matches: detection.matches,
+      phase: result.phase,
+      softAttemptNumber: result.phase === "soft" ? result.softAttemptNumber : null,
+      warningNumber: result.phase === "hard" ? result.warningNumber : null,
+      suspended: result.phase === "hard" ? result.suspended : false,
+      suspensionEndsAt: result.phase === "hard" ? result.endsAt : null,
+    };
+  }
+  return null;
+}
+
+// Fire-and-forget soft-flag inserts for admin review; returns whether any field
+// was flagged. Call with a persisted listing id so the flag links to the row.
+function insertListingSoftFlags(params: {
+  fields: ListingContentField[];
+  vendorAccountId: string;
+  listingId: string;
+}): boolean {
+  let softFlagged = false;
+  for (const field of params.fields) {
+    const detection = checkContent(field.value);
+    if (!detection.softFlagged) continue;
+    softFlagged = true;
+    db.insert(circumventionFlags).values({
+      flagType: "soft_flag",
+      contentType: field.contentType as any,
+      contentSnapshot: field.value.slice(0, 2000),
+      matches: detection.matches,
+      vendorAccountId: params.vendorAccountId,
+      listingId: params.listingId,
+      status: "pending",
+    }).catch((err: any) => logger.warn("[circumvention] soft flag insert failed:", err?.message));
+  }
+  return softFlagged;
+}
+
 export function registerVendorRoutes(app: Express): void {
   const vendorShopUploadsDir = path.join(process.cwd(), "server/uploads/vendor-shops");
 
@@ -696,12 +790,13 @@ export function registerVendorRoutes(app: Express): void {
         return res.status(409).json({ error: "A vendor with this business name already exists.", code: "business_name_taken" });
       }
 
-      const newSlug = await allocateUniqueVendorSlug(newBusinessName, vendorAuth.id);
-
-      await db
-        .update(vendorAccounts)
-        .set({ businessName: newBusinessName, shopSlug: newSlug })
-        .where(eq(vendorAccounts.id, vendorAuth.id));
+      await withSlugAllocationRetry(async () => {
+        const newSlug = await allocateUniqueVendorSlug(newBusinessName, vendorAuth.id);
+        return db
+          .update(vendorAccounts)
+          .set({ businessName: newBusinessName, shopSlug: newSlug })
+          .where(eq(vendorAccounts.id, vendorAuth.id));
+      });
 
       const accounts = await db
         .select()
@@ -712,31 +807,6 @@ export function registerVendorRoutes(app: Express): void {
       (req as any).vendorAccount = account;
       const profileContext = await resolveActiveVendorProfile(req);
       const profile = profileContext?.activeProfile;
-
-            // ---- Seed listing defaults from vendor profile (so new listings are valid-by-default) ----
-      const profileAddress = String((profile as any)?.address || "").trim();
-      const profileCity = String((profile as any)?.city || "").trim();
-      const profileState = String((profile as any)?.state || "").trim();
-      const profileZip = String((profile as any)?.zipCode || (profile as any)?.postalCode || "").trim();
-
-      const radius =
-        Number((profile as any)?.serviceRadius ?? 25) || 25;
-
-      // Build a geocode query (best-effort)
-      const geoQ = [profileAddress, profileCity, profileState, profileZip].filter(Boolean).join(", ").trim();
-
-      let seededLocation: any = null;
-      if (geoQ) {
-        try {
-          const geoRes = await fetch(`http://127.0.0.1:5001/api/locations/search?q=${encodeURIComponent(geoQ)}`);
-          if (geoRes.ok) {
-            const results: any[] = await geoRes.json();
-            if (results?.[0]) seededLocation = results[0];
-          }
-        } catch {
-          // ignore geocode failures; listing can be edited later
-        }
-      }
 
       res.json({
         id: account.id,
@@ -1377,15 +1447,19 @@ export function registerVendorRoutes(app: Express): void {
             return res.status(409).json({ error: "A vendor with this business name already exists.", code: "business_name_taken" });
           }
         }
-        const newSlug = nameIsChanging ? await allocateUniqueVendorSlug(normalizedProfileName, account.id) : undefined;
-        const [updated] = await db
-          .update(vendorAccounts)
-          .set({
-            businessName: currentBusinessName || normalizedProfileName,
-            ...(newSlug ? { shopSlug: newSlug } : {}),
-          })
-          .where(eq(vendorAccounts.id, account.id))
-          .returning();
+        const [updated] = await withSlugAllocationRetry(async () => {
+          const newSlug = nameIsChanging
+            ? await allocateUniqueVendorSlug(normalizedProfileName, account.id)
+            : undefined;
+          return db
+            .update(vendorAccounts)
+            .set({
+              businessName: currentBusinessName || normalizedProfileName,
+              ...(newSlug ? { shopSlug: newSlug } : {}),
+            })
+            .where(eq(vendorAccounts.id, account.id))
+            .returning();
+        });
 
         account = updated;
       }
@@ -2156,6 +2230,19 @@ export function registerVendorRoutes(app: Express): void {
         canonicalColumns.title ||
         (typeof normalizedListingData.title === "string" && normalizedListingData.title.trim()) ||
         (defaultTitleType ? `New ${defaultTitleType} listing` : null);
+
+      // Circumvention moderation on create (no listing row exists yet, so hard
+      // blocks are recorded without a listingId; soft flags attach after insert).
+      const moderationFields = collectListingContentFields(title, canonicalColumns.description ?? null);
+      const blockedBody = await runListingHardBlockCheck({
+        fields: moderationFields,
+        vendorAccountId: String(vendorAuth.id),
+        listingId: null,
+      });
+      if (blockedBody) {
+        return res.status(422).json(blockedBody);
+      }
+
       const [listing] = await db
         .insert(vendorListings)
         .values({
@@ -2168,6 +2255,12 @@ export function registerVendorRoutes(app: Express): void {
           listingData: mirroredListingData,
         })
         .returning();
+
+      insertListingSoftFlags({
+        fields: moderationFields,
+        vendorAccountId: String(vendorAuth.id),
+        listingId: listing.id,
+      });
 
       // Kick off async translation for all supported languages.
       translateListingAsync(listing.id, {
@@ -2339,7 +2432,6 @@ export function registerVendorRoutes(app: Express): void {
       // ── Circumvention detection ──────────────────────────────────────────────
       // If this listing was previously removed for violation, check it before saving.
       const isResubmission = existingListing.violationRemoval;
-      const listingFieldsToCheck: { value: string; contentType: string; label: string }[] = [];
 
       const descToCheck = typeof updatePayload.description === "string"
         ? updatePayload.description
@@ -2348,49 +2440,22 @@ export function registerVendorRoutes(app: Express): void {
           : null);
       const titleToCheck = typeof updatePayload.title === "string" ? updatePayload.title : null;
 
-      if (descToCheck) listingFieldsToCheck.push({ value: descToCheck, contentType: "listing_description", label: "Listing description" });
-      if (titleToCheck) listingFieldsToCheck.push({ value: titleToCheck, contentType: "listing_title", label: "Listing title" });
+      const listingFieldsToCheck = collectListingContentFields(titleToCheck, descToCheck);
 
-      const vendorAccountIdForListing = String(vendorAuth.id);
-      const serverUrlForListing = appUrl();
-
-      for (const field of listingFieldsToCheck) {
-        const detection = checkContent(field.value);
-        if (detection.hardBlocked) {
-          const result = await handleCircumventionViolation({
-            vendorAccountId: vendorAccountIdForListing,
-            contentType: field.contentType,
-            contentSnapshot: field.value,
-            matches: detection.matches,
-            reason: `${field.label} contained ${blockReasonSummary(detection.blockReasons)}`,
-            listingId: id,
-            serverUrl: serverUrlForListing,
-          });
-          return res.status(422).json({
-            error: "content_blocked",
-            field: field.label,
-            reason: `Your ${field.label.toLowerCase()} cannot include ${blockReasonSummary(detection.blockReasons)}. Please remove this information and try again.`,
-            blockReasons: detection.blockReasons,
-            matches: detection.matches,
-            phase: result.phase,
-            softAttemptNumber: result.phase === "soft" ? result.softAttemptNumber : null,
-            warningNumber: result.phase === "hard" ? result.warningNumber : null,
-            suspended: result.phase === "hard" ? result.suspended : false,
-            suspensionEndsAt: result.phase === "hard" ? result.endsAt : null,
-          });
-        }
-        if (detection.softFlagged) {
-          db.insert(circumventionFlags).values({
-            flagType: "soft_flag",
-            contentType: field.contentType as any,
-            contentSnapshot: field.value.slice(0, 2000),
-            matches: detection.matches,
-            vendorAccountId: vendorAccountIdForListing,
-            listingId: id,
-            status: "pending",
-          }).catch((err: any) => logger.warn("[circumvention] soft flag insert failed:", err?.message));
-        }
+      const blockedBody = await runListingHardBlockCheck({
+        fields: listingFieldsToCheck,
+        vendorAccountId: String(vendorAuth.id),
+        listingId: id,
+      });
+      if (blockedBody) {
+        return res.status(422).json(blockedBody);
       }
+
+      const softFlaggedListing = insertListingSoftFlags({
+        fields: listingFieldsToCheck,
+        vendorAccountId: String(vendorAuth.id),
+        listingId: id,
+      });
 
       // If this is a resubmission after violation removal, mark as awaiting admin re-review
       if (isResubmission) {
@@ -2412,7 +2477,6 @@ export function registerVendorRoutes(app: Express): void {
         whatsNotIncluded: updated.whatsNotIncluded,
       });
 
-      const softFlaggedListing = listingFieldsToCheck.some(f => checkContent(f.value).softFlagged);
       return res.json({ ...updated, softFlagged: softFlaggedListing, pendingReview: isResubmission });
     } catch (error: any) {
       logRouteError("/api/vendor/listings/:id", error);
@@ -2685,6 +2749,27 @@ export function registerVendorRoutes(app: Express): void {
           reasons,
         });
       }
+
+      // Circumvention moderation on the content that will actually go live.
+      // The PATCH path checks edits, but publish can re-persist canonical
+      // columns and accept an incoming title, so gate it here too.
+      const effectiveTitle =
+        typeof incomingTitle === "string" && incomingTitle.trim() ? incomingTitle.trim() : resolvedTitle;
+      const publishModerationFields = collectListingContentFields(effectiveTitle, resolvedDescription);
+      const publishBlockedBody = await runListingHardBlockCheck({
+        fields: publishModerationFields,
+        vendorAccountId: String(vendorAuth.id),
+        listingId: id,
+      });
+      if (publishBlockedBody) {
+        return res.status(422).json(publishBlockedBody);
+      }
+      insertListingSoftFlags({
+        fields: publishModerationFields,
+        vendorAccountId: String(vendorAuth.id),
+        listingId: id,
+      });
+
       const publishUpdatePayload: any = {
         status: "active",
         updatedAt: new Date(),
@@ -3087,26 +3172,38 @@ export function registerVendorRoutes(app: Express): void {
       if (pricingUnit === "per_hour" || pricingUnit === "per_day") updatePayload.pricingUnit = pricingUnit;
       if (typeof sortOrder === "number") updatePayload.sortOrder = sortOrder;
       if (typeof dimensionUnit === "string") updatePayload.dimensionUnit = dimensionUnit;
-      updatePayload.dimensionWidth = typeof dimensionWidth === "number" && dimensionWidth > 0 ? dimensionWidth : null;
-      updatePayload.dimensionLength = typeof dimensionLength === "number" && dimensionLength > 0 ? dimensionLength : null;
-      updatePayload.dimensionHeight = typeof dimensionHeight === "number" && dimensionHeight > 0 ? dimensionHeight : null;
+      if (dimensionWidth !== undefined) updatePayload.dimensionWidth = typeof dimensionWidth === "number" && dimensionWidth > 0 ? dimensionWidth : null;
+      if (dimensionLength !== undefined) updatePayload.dimensionLength = typeof dimensionLength === "number" && dimensionLength > 0 ? dimensionLength : null;
+      if (dimensionHeight !== undefined) updatePayload.dimensionHeight = typeof dimensionHeight === "number" && dimensionHeight > 0 ? dimensionHeight : null;
       if (servesOutsideRadius !== undefined) updatePayload.servesOutsideRadius = servesOutsideRadius === true;
-      updatePayload.travelOffered = travelOffered === true;
-      updatePayload.travelFeeEnabled = travelOffered === true && travelFeeEnabled === true;
+      // True PATCH semantics: each fee group is only rewritten when its anchor
+      // toggle is present in the body — an omitted group stays untouched instead
+      // of being silently reset to off/null. When the group IS present its fields
+      // are applied together so the on/off + amount invariants hold.
+      if (travelOffered !== undefined) {
+        updatePayload.travelOffered = travelOffered === true;
+        updatePayload.travelFeeEnabled = travelOffered === true && travelFeeEnabled === true;
+        updatePayload.travelFeeAmountCents = typeof travelFeeAmountCents === "number" && travelFeeAmountCents >= 0 ? Math.floor(travelFeeAmountCents) : null;
+      }
       // Normalize the travel-fee type to an allowed value (or null) rather than
       // persisting an arbitrary client string.
       if (travelFeeType !== undefined) updatePayload.travelFeeType = normalizeTravelFeeType(travelFeeType);
-      updatePayload.travelFeeAmountCents = typeof travelFeeAmountCents === "number" && travelFeeAmountCents >= 0 ? Math.floor(travelFeeAmountCents) : null;
-      updatePayload.deliveryOffered = deliveryOffered === true;
-      updatePayload.pickupOffered = deliveryOffered === true;
-      updatePayload.deliveryFeeEnabled = deliveryOffered === true && deliveryFeeEnabled === true;
-      updatePayload.deliveryFeeAmountCents = typeof deliveryFeeAmountCents === "number" && deliveryFeeAmountCents >= 0 ? Math.floor(deliveryFeeAmountCents) : null;
-      updatePayload.setupOffered = setupOffered === true;
-      updatePayload.setupFeeEnabled = setupOffered === true && setupFeeEnabled === true;
-      updatePayload.setupFeeAmountCents = typeof setupFeeAmountCents === "number" && setupFeeAmountCents >= 0 ? Math.floor(setupFeeAmountCents) : null;
-      updatePayload.takedownOffered = takedownOffered === true;
-      updatePayload.takedownFeeEnabled = takedownOffered === true && takedownFeeEnabled === true;
-      updatePayload.takedownFeeAmountCents = typeof takedownFeeAmountCents === "number" && takedownFeeAmountCents >= 0 ? Math.floor(takedownFeeAmountCents) : null;
+      if (deliveryOffered !== undefined) {
+        updatePayload.deliveryOffered = deliveryOffered === true;
+        updatePayload.pickupOffered = deliveryOffered === true;
+        updatePayload.deliveryFeeEnabled = deliveryOffered === true && deliveryFeeEnabled === true;
+        updatePayload.deliveryFeeAmountCents = typeof deliveryFeeAmountCents === "number" && deliveryFeeAmountCents >= 0 ? Math.floor(deliveryFeeAmountCents) : null;
+      }
+      if (setupOffered !== undefined) {
+        updatePayload.setupOffered = setupOffered === true;
+        updatePayload.setupFeeEnabled = setupOffered === true && setupFeeEnabled === true;
+        updatePayload.setupFeeAmountCents = typeof setupFeeAmountCents === "number" && setupFeeAmountCents >= 0 ? Math.floor(setupFeeAmountCents) : null;
+      }
+      if (takedownOffered !== undefined) {
+        updatePayload.takedownOffered = takedownOffered === true;
+        updatePayload.takedownFeeEnabled = takedownOffered === true && takedownFeeEnabled === true;
+        updatePayload.takedownFeeAmountCents = typeof takedownFeeAmountCents === "number" && takedownFeeAmountCents >= 0 ? Math.floor(takedownFeeAmountCents) : null;
+      }
       if (cancellationPolicyOverride !== undefined) {
         // Validate against the allowed preset set + clamp the window instead of
         // persisting whatever policy string the client sent.
