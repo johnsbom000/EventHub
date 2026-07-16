@@ -24,6 +24,7 @@ import { LocationPicker } from "@/components/LocationPicker";
 import { MapLocationPicker } from "@/components/MapLocationPicker";
 import type { LocationResult } from "@/types/location";
 import { resolveAssetUrl } from "@/lib/runtimeUrls";
+import { isEventOutsideServiceRadius } from "@/lib/serviceRadius";
 import { TimeInput } from "@/components/ui/TimeInput";
 
 type CheckoutRouteParams = { listingId: string };
@@ -583,7 +584,11 @@ function CheckoutContent({
         (typeof raw?.travelFeeType === "string" && raw.travelFeeType.trim().toLowerCase()) ||
         (typeof ld?.travelFeeType === "string" && ld.travelFeeType.trim().toLowerCase()) ||
         "flat";
-      const travelFeeType = travelFeeTypeRaw === "per_mile" || travelFeeTypeRaw === "per_hour" ? travelFeeTypeRaw : "flat";
+      // Canonical fee types are "flat" and "variable"; legacy per_mile/per_hour → variable.
+      const travelFeeType =
+        travelFeeTypeRaw === "variable" || travelFeeTypeRaw === "per_mile" || travelFeeTypeRaw === "per_hour"
+          ? "variable"
+          : "flat";
 
       const travelFeeAmountCents =
         parseOptionalNumber(raw?.travelFeeAmountCents) ??
@@ -651,6 +656,8 @@ function CheckoutContent({
           "radius",
         serviceRadiusMiles:
           parseOptionalNumber(raw?.serviceRadiusMiles) ?? parseOptionalNumber(ld?.serviceRadiusMiles) ?? null,
+        servesOutsideRadius:
+          parseBooleanLike(raw?.servesOutsideRadius ?? ld?.servesOutsideRadius) === true,
         listingServiceCenterLabel:
           (typeof raw?.listingServiceCenterLabel === "string" && raw.listingServiceCenterLabel.trim()) ||
           (typeof ld?.listingServiceCenterLabel === "string" && ld.listingServiceCenterLabel.trim()) ||
@@ -968,6 +975,22 @@ function CheckoutContent({
 
   const isVenueListing = data?.category === "Venues";
 
+  // Radius-aware travel/delivery fee state (mirrors server getListingLogisticsFeeSummaryCents).
+  // Only meaningful when the vendor travels to the event. Missing coords → inside.
+  const isOutsideRadius =
+    Boolean(data?.travelOffered) &&
+    isEventOutsideServiceRadius({
+      listingCenterLat: data?.listingServiceCenterLat ?? null,
+      listingCenterLng: data?.listingServiceCenterLng ?? null,
+      serviceRadiusMiles: data?.serviceRadiusMiles ?? null,
+      eventLat: (deliveryLocation as any)?.lat ?? null,
+      eventLng: (deliveryLocation as any)?.lng ?? null,
+    });
+  // Block: event outside the radius and the vendor does not serve outside it.
+  const blockedOutsideRadius = isOutsideRadius && data?.servesOutsideRadius !== true;
+  const isDeliveryCategory = data?.category === "Rentals" || data?.category === "Catering";
+  const travelFeeNoun = isDeliveryCategory ? "delivery fee" : "travel fee";
+
   const canSubmit =
     (hasPendingPaymentToResume
       ? true
@@ -994,6 +1017,7 @@ function CheckoutContent({
     Boolean(stripe) &&
     Boolean(elements) &&
     cardComplete &&
+    !blockedOutsideRadius &&
     !isSubmitting;
   const baseSubtotal = isHourlyBooking && hourlyDurationHours != null
     ? Math.round(effectivePriceCents * hourlyDurationHours)
@@ -1002,10 +1026,10 @@ function CheckoutContent({
     const unitPrice = data?.attachedAddons?.find((a: { id: string; priceCents: number | null }) => String(a.id) === id)?.priceCents ?? 0;
     return sum + unitPrice * quantity;
   }, 0);
-  const deliveryFeeCents =
-    data?.deliveryIncluded && data?.deliveryFeeEnabled
-      ? Math.max(0, Math.round(data?.deliveryFeeAmountCents || 0))
-      : 0;
+  // Delivery is no longer an independent fee — it is unified into the travel_fee_*
+  // config below (label depends on category). Delivery/pickup availability still shows,
+  // but the fee itself flows through travelFlatFeeCents / the proposal flow.
+  const deliveryFeeCents = 0;
   const setupFeeCents =
     data?.setupIncluded && data?.setupFeeEnabled
       ? Math.max(0, Math.round(data?.setupFeeAmountCents || 0))
@@ -1014,14 +1038,22 @@ function CheckoutContent({
     (data as any)?.takedownIncluded && (data as any)?.takedownFeeEnabled
       ? Math.max(0, Math.round((data as any)?.takedownFeeAmountCents || 0))
       : 0;
+
+  // Flat fee auto-charges only inside the radius; outside-served or variable → proposed
+  // after booking (no auto line item).
   const travelFlatFeeCents =
-    data?.travelOffered && data?.travelFeeEnabled && data?.travelFeeType === "flat"
-      ? Math.max(0, Math.round(data?.travelFeeAmountCents || 0))
-      : 0;
-  const variableTravelFeePending =
     data?.travelOffered &&
     data?.travelFeeEnabled &&
-    (data?.travelFeeType === "per_mile" || data?.travelFeeType === "per_hour");
+    data?.travelFeeType === "flat" &&
+    !isOutsideRadius &&
+    !blockedOutsideRadius
+      ? Math.max(0, Math.round(data?.travelFeeAmountCents || 0))
+      : 0;
+  const feeProposalPending =
+    !blockedOutsideRadius &&
+    Boolean(data?.travelOffered) &&
+    Boolean(data?.travelFeeEnabled) &&
+    (data?.travelFeeType === "variable" || (isOutsideRadius && data?.servesOutsideRadius === true));
   const logisticsSubtotal = deliveryFeeCents + setupFeeCents + takedownFeeCents + travelFlatFeeCents;
   const securityDepositCents =
     data?.securityDepositEnabled && (data?.securityDepositCents ?? 0) > 0
@@ -1962,16 +1994,18 @@ function CheckoutContent({
 
               {travelFlatFeeCents > 0 ? (
                 <div className="flex items-center justify-between">
-                  <span className="text-sm text-muted-foreground">{t("checkout.orderSummaryTravelFee")}</span>
+                  <span className="text-sm text-muted-foreground">
+                    {isDeliveryCategory
+                      ? t("checkout.orderSummaryDeliveryFee")
+                      : t("checkout.orderSummaryTravelFee")}
+                  </span>
                   <span className="font-medium">{formatUsdFromCents(travelFlatFeeCents)}</span>
                 </div>
               ) : null}
 
-              {variableTravelFeePending ? (
+              {feeProposalPending ? (
                 <div className="text-sm text-muted-foreground">
-                  {data?.travelFeeType === "per_mile"
-                    ? t("checkout.travelFeePerMileNote")
-                    : t("checkout.travelFeePerHourNote")}
+                  {t("checkout.feeProposedAfterBooking", { fee: travelFeeNoun })}
                 </div>
               ) : null}
 
@@ -2064,9 +2098,15 @@ function CheckoutContent({
                 {" "}applies.
               </p>
 
+              {blockedOutsideRadius ? (
+                <div className="mb-3 rounded-lg border border-destructive/40 bg-destructive/10 p-3 text-sm text-destructive">
+                  {t("checkout.outsideAreaNotServed")}
+                </div>
+              ) : null}
+
               <Button
                 className="w-full h-12 text-base"
-                disabled={isSubmitting}
+                disabled={isSubmitting || blockedOutsideRadius}
                 onClick={handleSubmitOrder}
                 data-testid="button-place-order"
               >

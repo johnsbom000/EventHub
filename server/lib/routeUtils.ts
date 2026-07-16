@@ -647,6 +647,27 @@ export function resolveBookingLifecycleMode(input: {
   };
 }
 
+/**
+ * Resolves whether a booking must go request-to-book (pending) instead of instant.
+ * A vendor must confirm when the listing is not instant-book, OR when a post-booking
+ * travel/delivery fee proposal is expected (outside-radius+served, or inside+varies) —
+ * so the fee is settled before the booking is final. This is the single predicate that
+ * both the booking-insert path and the payment-success path consult, via the persisted
+ * bookings.fee_proposal_pending column.
+ */
+export function resolveBookingConfirmationRequirement(input: {
+  isInstantBooking?: unknown;
+  feeProposalPending?: unknown;
+}) {
+  const isInstantBooking = parseBooleanInput(input.isInstantBooking) ?? false;
+  const feeProposalPending = parseBooleanInput(input.feeProposalPending) ?? false;
+  const requiresVendorConfirmation = !isInstantBooking || feeProposalPending;
+  return {
+    requiresVendorConfirmation,
+    initialStatus: (requiresVendorConfirmation ? "pending" : "confirmed") as "confirmed" | "pending",
+  };
+}
+
 // ─── Listing photos ───────────────────────────────────────────────────────────
 
 export function getListingPhotoCount(listingDataRaw: unknown, canonicalPhotos?: unknown): number {
@@ -730,9 +751,14 @@ export function hasValidListingPrice(listingDataRaw: unknown, canonicalPriceCent
  * Shared by the main listing-column builder and the package_item routes so
  * both paths validate identically. DB CHECK backstop lives in migration 0146.
  */
-export function normalizeTravelFeeType(value: unknown): "flat" | "per_mile" | "per_hour" | null {
+// Canonical travel/delivery fee types are "flat" (auto line item at checkout) and
+// "variable" (settled after booking via the proposal flow). Legacy per_mile/per_hour
+// values are treated as "variable" for backward compatibility.
+export function normalizeTravelFeeType(value: unknown): "flat" | "variable" | null {
   const v = asTrimmedString(value).toLowerCase();
-  return v === "flat" || v === "per_mile" || v === "per_hour" ? v : null;
+  if (v === "flat") return "flat";
+  if (v === "variable" || v === "per_mile" || v === "per_hour") return "variable";
+  return null;
 }
 
 export function getListingPricingUnit(listingData: any, canonicalPricingUnit?: unknown): "per_day" | "per_hour" {
@@ -789,7 +815,16 @@ export function getListingLogisticsFeeSummaryCents(input: {
     travelFeeEnabled?: unknown;
     travelFeeType?: unknown;
     travelFeeAmountCents?: unknown;
+    // Radius-awareness: geography + the serve-outside flag. When an event location is
+    // supplied, the travel/delivery fee is resolved against the service radius.
+    servesOutsideRadius?: unknown;
+    serviceRadiusMiles?: unknown;
+    listingServiceCenterLat?: unknown;
+    listingServiceCenterLng?: unknown;
   };
+  // Event coordinates (optional). When absent, the event is treated as inside the
+  // radius (permissive) so coordinate-optional booking flows are unaffected.
+  event?: { lat?: unknown; lng?: unknown } | null;
 }) {
   const listingData =
     input.listingData && typeof input.listingData === "object" && !Array.isArray(input.listingData)
@@ -797,23 +832,10 @@ export function getListingLogisticsFeeSummaryCents(input: {
       : {};
   const canonical = input.canonical ?? {};
 
-  const deliveryIncluded =
-    parseBooleanInput(canonical.deliveryOffered) ??
-    parseBooleanInput(listingData?.deliveryIncluded) ??
-    parseBooleanInput(listingData?.deliveryOffered) ??
-    false;
-  const deliveryFeeAmountFromCanonical = parseIntegerValue(canonical.deliveryFeeAmountCents);
-  const deliveryFeeEnabled =
-    parseBooleanInput(canonical.deliveryFeeEnabled) ??
-    parseBooleanInput(listingData?.deliveryFeeEnabled) ??
-    false;
-  const deliveryFeeCents =
-    deliveryIncluded && deliveryFeeEnabled
-      ? deliveryFeeAmountFromCanonical ??
-        parseIntegerValue(listingData?.deliveryFeeAmountCents) ??
-        parseMoneyToCents(listingData?.deliveryFeeAmount) ??
-        0
-      : 0;
+  // Delivery no longer contributes an independent fee: legacy flat delivery fees are
+  // backfilled into the unified travel_fee_* columns (migration 0156). deliveryOffered
+  // is retained only as the "we go to the location / not pickup-only" flag.
+  const deliveryFeeCents = 0;
 
   const setupIncluded =
     parseBooleanInput(canonical.setupOffered) ??
@@ -851,6 +873,7 @@ export function getListingLogisticsFeeSummaryCents(input: {
         0
       : 0;
 
+  // Unified travel/delivery fee config (one model for both categories).
   const travelOffered =
     parseBooleanInput(canonical.travelOffered) ??
     parseBooleanInput(listingData?.travelOffered) ??
@@ -860,24 +883,65 @@ export function getListingLogisticsFeeSummaryCents(input: {
     (parseBooleanInput(canonical.travelFeeEnabled) ??
       parseBooleanInput(listingData?.travelFeeEnabled) ??
       false);
-  const travelFeeType = asTrimmedString(canonical.travelFeeType ?? listingData?.travelFeeType).toLowerCase();
+  const travelFeeType = normalizeTravelFeeType(canonical.travelFeeType ?? listingData?.travelFeeType);
   const travelFeeAmountFromCanonical = parseIntegerValue(canonical.travelFeeAmountCents);
-  const travelFlatFeeCents =
-    travelFeeEnabled && travelFeeType === "flat"
-      ? travelFeeAmountFromCanonical ??
-        parseIntegerValue(listingData?.travelFeeAmountCents) ??
-        parseMoneyToCents(listingData?.travelFeeAmount) ??
-        0
-      : 0;
-  const variableTravelFeePending =
-    travelFeeEnabled && (travelFeeType === "per_mile" || travelFeeType === "per_hour");
+  const configuredFlatFeeCents =
+    travelFeeAmountFromCanonical ??
+    parseIntegerValue(listingData?.travelFeeAmountCents) ??
+    parseMoneyToCents(listingData?.travelFeeAmount) ??
+    0;
+
+  // Resolve the event against the service radius. Missing coords/radius → inside
+  // (permissive). "inside" means at-or-within the radius; "outside" means beyond it.
+  const servesOutsideRadius =
+    parseBooleanInput(canonical.servesOutsideRadius) ??
+    parseBooleanInput(listingData?.servesOutsideRadius) ??
+    false;
+  const eventLat = parseLatLngValue(input.event?.lat);
+  const eventLng = parseLatLngValue(input.event?.lng);
+  // The radius only governs bookings where the vendor travels to the event location.
+  // When travelOffered is false (the customer comes to the vendor), the event-location-
+  // vs-radius comparison is meaningless — never block or propose based on it.
+  const isOutsideRadius =
+    travelOffered &&
+    isEventOutsideServiceRadius({
+      listingCenterLat: parseLatLngValue(canonical.listingServiceCenterLat ?? listingData?.listingServiceCenterLat),
+      listingCenterLng: parseLatLngValue(canonical.listingServiceCenterLng ?? listingData?.listingServiceCenterLng),
+      serviceRadiusMiles: parseIntegerValue(canonical.serviceRadiusMiles ?? listingData?.serviceRadiusMiles),
+      eventLat,
+      eventLng,
+    });
+
+  // Booking must be blocked when the event is outside the radius and the vendor does
+  // not serve outside it. (Only reachable when travelOffered, per isOutsideRadius above.)
+  const blockedOutsideRadius = isOutsideRadius && !servesOutsideRadius;
+
+  // Fee resolution:
+  //  - inside + flat            → charge the flat fee, no proposal
+  //  - inside + variable        → no auto fee, proposal expected
+  //  - outside + served         → no auto fee, proposal expected (replaces flat)
+  //  - outside + not served     → blocked (above)
+  let travelFlatFeeCents = 0;
+  let feeProposalPending = false;
+  if (travelFeeEnabled && !blockedOutsideRadius) {
+    if (!isOutsideRadius && travelFeeType === "flat") {
+      travelFlatFeeCents = configuredFlatFeeCents;
+    } else {
+      // inside+variable, or outside+served (either flat or variable) → propose after booking
+      feeProposalPending = true;
+    }
+  }
 
   return {
     deliveryFeeCents: deliveryFeeCents ?? 0,
     setupFeeCents: setupFeeCents ?? 0,
     takedownFeeCents: takedownFeeCents ?? 0,
     travelFlatFeeCents: travelFlatFeeCents ?? 0,
-    variableTravelFeePending,
+    feeProposalPending,
+    blockedOutsideRadius,
+    isOutsideRadius,
+    // Deprecated alias — retained one release for any caller still reading it.
+    variableTravelFeePending: feeProposalPending,
     totalLogisticsFeeCents:
       (deliveryFeeCents ?? 0) + (setupFeeCents ?? 0) + (takedownFeeCents ?? 0) + (travelFlatFeeCents ?? 0),
   };
@@ -994,6 +1058,7 @@ export function mirrorListingQuantityIntoListingData(input: {
     minimumHours?: unknown;
     serviceAreaMode?: unknown;
     serviceRadiusMiles?: unknown;
+    servesOutsideRadius?: unknown;
     listingServiceCenterLabel?: unknown;
     listingServiceCenterLat?: unknown;
     listingServiceCenterLng?: unknown;
@@ -1050,6 +1115,8 @@ export function mirrorListingQuantityIntoListingData(input: {
 
   const serviceRadiusMiles = parseIntegerValue(canonical.serviceRadiusMiles);
   if (serviceRadiusMiles != null) listingData.serviceRadiusMiles = serviceRadiusMiles;
+
+  listingData.servesOutsideRadius = parseBooleanInput(canonical.servesOutsideRadius) ?? false;
 
   const centerLabel = asTrimmedString(canonical.listingServiceCenterLabel);
   if (centerLabel) listingData.listingServiceCenterLabel = centerLabel;
@@ -1117,6 +1184,7 @@ export function buildCanonicalListingColumns(input: {
     listingServiceCenterLng?: unknown;
     serviceRadiusMiles?: unknown;
     serviceAreaMode?: unknown;
+    servesOutsideRadius?: unknown;
     travelOffered?: unknown;
     travelFeeEnabled?: unknown;
     travelFeeType?: unknown;
@@ -1256,16 +1324,18 @@ export function buildCanonicalListingColumns(input: {
     parseBooleanInput(existing?.travelFeeEnabled) ??
     false;
   const travelFeeEnabled = travelOffered ? travelFeeEnabledRaw : false;
-  const travelFeeTypeRaw = asTrimmedString(listingData?.travelFeeType ?? existing?.travelFeeType).toLowerCase();
-  const travelFeeTypeNormalized =
-    travelFeeTypeRaw === "flat" || travelFeeTypeRaw === "per_mile" || travelFeeTypeRaw === "per_hour"
-      ? travelFeeTypeRaw
-      : null;
+  const travelFeeTypeNormalized = normalizeTravelFeeType(listingData?.travelFeeType ?? existing?.travelFeeType);
   const travelFeeType = travelFeeEnabled ? travelFeeTypeNormalized ?? "flat" : null;
   const travelFeeAmountCentsRaw =
     parseIntegerValue(listingData?.travelFeeAmountCents) ??
     parseMoneyToCents(listingData?.travelFeeAmount) ??
     parseIntegerValue(existing?.travelFeeAmountCents);
+
+  // servesOutsideRadius: whether the vendor takes events beyond serviceRadiusMiles.
+  const servesOutsideRadius =
+    parseBooleanInput(listingData?.servesOutsideRadius) ??
+    parseBooleanInput(existing?.servesOutsideRadius) ??
+    false;
 
   const pickupCategoryDefault =
     input.classification.category === "Rentals" || input.classification.category === "Catering";
@@ -1344,6 +1414,7 @@ export function buildCanonicalListingColumns(input: {
       parseIntegerValue(listingData?.serviceRadiusMiles) ??
       parseIntegerValue(existing?.serviceRadiusMiles),
     serviceAreaMode,
+    servesOutsideRadius,
     travelOffered,
     travelFeeEnabled,
     travelFeeType,

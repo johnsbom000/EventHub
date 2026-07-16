@@ -82,7 +82,7 @@ type ListingHelperCategory = "rental" | "venue" | "service" | "caterer";
 type StepId = "basics" | "perfectFor" | "packages" | "bookingPricing" | "serviceArea" | "logistics" | "media" | "attachAddons" | "attachToListings";
 type PricingUnit = "per_day" | "per_hour";
 type BookingType = "instant" | "request";
-type TravelFeeType = "flat" | "per_mile" | "per_hour";
+type TravelFeeType = "flat" | "variable";
 type CancellationPolicy = "cancel_anytime" | "cancel_within_hours" | "no_cancellations";
 type DimensionUnit = "inches" | "feet" | "meters" | "centimeters";
 
@@ -110,6 +110,7 @@ type ListingDraft = {
 
  serviceAreaMode: "radius";
  serviceRadiusMiles: number;
+ servesOutsideRadius: boolean;
  serviceLocation: LocationResult | null;
  serviceCenter: { lat: number; lng: number } | null;
  serviceStreetAddress: string;
@@ -171,6 +172,7 @@ const DEFAULT_DRAFT: ListingDraft = {
 
  serviceAreaMode: "radius",
  serviceRadiusMiles: 30,
+ servesOutsideRadius: false,
  serviceLocation: null,
  serviceCenter: null,
  serviceStreetAddress: "",
@@ -909,25 +911,39 @@ export function CreateListingWizard({ onClose, initialListingType, parentListing
  }
  : null,
 
- travelOffered: showTravelSection ? draft.travelOffered : false,
- travelFeeEnabled: showTravelSection ? draft.travelOffered && draft.travelFeeEnabled : false,
- travelFeeType: showTravelSection && draft.travelFeeEnabled ? draft.travelFeeType : null,
- travelFeeAmount: showTravelSection && draft.travelFeeEnabled ? Number(draft.travelFeeAmount || 0) : null,
+ // Unified travel/delivery fee. Both Service (travel) and Rental/Catering (delivery)
+ // write into the travel_fee_* columns; the category decides the label shown to users.
+ // "offered" = the vendor goes to the customer's location (travelOffered for Service,
+ // deliveryIncluded for delivery categories). A flat fee only carries an amount; a
+ // "variable" fee is proposed after booking.
+ servesOutsideRadius: showTravelSection || showDeliverySection ? draft.servesOutsideRadius : false,
+ travelOffered: showTravelSection
+ ? draft.travelOffered
+ : showDeliverySection
+ ? draft.deliveryIncluded
+ : false,
+ travelFeeEnabled:
+ (showTravelSection ? draft.travelOffered : showDeliverySection ? draft.deliveryIncluded : false) &&
+ draft.travelFeeEnabled,
+ travelFeeType:
+ (showTravelSection || showDeliverySection) && draft.travelFeeEnabled ? draft.travelFeeType : null,
+ travelFeeAmount:
+ (showTravelSection || showDeliverySection) && draft.travelFeeEnabled && draft.travelFeeType === "flat"
+ ? Number(draft.travelFeeAmount || 0)
+ : null,
  travelFeeAmountCents:
- showTravelSection && draft.travelFeeEnabled ? toMoneyCents(draft.travelFeeAmount) : null,
+ (showTravelSection || showDeliverySection) && draft.travelFeeEnabled && draft.travelFeeType === "flat"
+ ? toMoneyCents(draft.travelFeeAmount)
+ : null,
 
+ // Delivery flags stay for pickup/delivery semantics; the fee itself now lives in
+ // the unified travel_fee_* columns above (delivery_fee_* is no longer a fee source).
  deliveryIncluded: showDeliverySection ? draft.deliveryIncluded : false,
  deliveryOffered: showDeliverySection ? draft.deliveryIncluded : false,
  pickupOffered: showDeliverySection,
- deliveryFeeEnabled: showDeliverySection ? draft.deliveryIncluded && draft.deliveryFeeEnabled : false,
- deliveryFeeAmount:
- showDeliverySection && draft.deliveryIncluded && draft.deliveryFeeEnabled
- ? Number(draft.deliveryFeeAmount || 0)
- : null,
- deliveryFeeAmountCents:
- showDeliverySection && draft.deliveryIncluded && draft.deliveryFeeEnabled
- ? toMoneyCents(draft.deliveryFeeAmount)
- : null,
+ deliveryFeeEnabled: false,
+ deliveryFeeAmount: null,
+ deliveryFeeAmountCents: null,
 
  setupIncluded: showSetupSection ? draft.setupIncluded : false,
  setupOffered: showSetupSection ? draft.setupIncluded : false,

@@ -99,10 +99,13 @@ import { resolveListingPolicyColumns } from "../server/lib/cancellationPolicyPre
 // arbitrary client strings.
 // ─────────────────────────────────────────────────────────────────────────────
 {
+  // Canonical fee types are "flat" and "variable". Legacy per_mile/per_hour normalize
+  // to "variable" (both route to the post-booking proposal flow).
   assert.equal(normalizeTravelFeeType("flat"), "flat");
-  assert.equal(normalizeTravelFeeType("per_mile"), "per_mile");
-  assert.equal(normalizeTravelFeeType("per_hour"), "per_hour");
-  assert.equal(normalizeTravelFeeType("PER_MILE"), "per_mile", "case-insensitive");
+  assert.equal(normalizeTravelFeeType("variable"), "variable");
+  assert.equal(normalizeTravelFeeType("per_mile"), "variable");
+  assert.equal(normalizeTravelFeeType("per_hour"), "variable");
+  assert.equal(normalizeTravelFeeType("PER_MILE"), "variable", "case-insensitive");
   assert.equal(normalizeTravelFeeType("  flat  "), "flat", "trimmed");
   assert.equal(normalizeTravelFeeType("nonsense"), null, "junk → null");
   assert.equal(normalizeTravelFeeType(""), null);

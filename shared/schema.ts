@@ -473,6 +473,10 @@ export const vendorListings = pgTable("vendor_listings", {
   listingServiceCenterLng: doublePrecision("listing_service_center_lng"),
   serviceRadiusMiles: integer("service_radius_miles"),
   serviceAreaMode: text("service_area_mode"),
+  // servesOutsideRadius: whether the vendor will serve events beyond serviceRadiusMiles.
+  // The radius means "area willing to serve" (drives search); this flag governs whether
+  // an out-of-radius booking is blocked (false) or allowed via a proposed fee (true).
+  servesOutsideRadius: boolean("serves_outside_radius").notNull().default(false),
   travelOffered: boolean("travel_offered").notNull().default(false),
   travelFeeEnabled: boolean("travel_fee_enabled").notNull().default(false),
   travelFeeType: text("travel_fee_type"),
@@ -555,6 +559,12 @@ export const bookings = pgTable("bookings", {
   eventLocationLat: doublePrecision("event_location_lat"),
   eventLocationLng: doublePrecision("event_location_lng"),
   outsideServiceRadius: boolean("outside_service_radius").notNull().default(false),
+  // feeProposalPending: single source of truth for "a post-booking travel/delivery fee
+  // proposal is expected here" — true when the event is outside-radius+served, or
+  // inside-radius with a varies-per-location fee. Drives requiresVendorConfirmation so
+  // the fee is settled before the booking is final. outsideServiceRadius stays purely
+  // geographic (email wording / analytics).
+  feeProposalPending: boolean("fee_proposal_pending").notNull().default(false),
   eventTimezone: text("event_timezone"),
   guestCount: integer("guest_count"),
   specialRequests: text("special_requests"),

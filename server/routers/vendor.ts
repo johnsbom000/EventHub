@@ -2229,6 +2229,7 @@ export function registerVendorRoutes(app: Express): void {
             listingServiceCenterLng: existingListing?.listingServiceCenterLng,
             serviceRadiusMiles: existingListing?.serviceRadiusMiles,
             serviceAreaMode: existingListing?.serviceAreaMode,
+            servesOutsideRadius: existingListing?.servesOutsideRadius,
             travelOffered: existingListing?.travelOffered,
             travelFeeEnabled: existingListing?.travelFeeEnabled,
             travelFeeType: existingListing?.travelFeeType,
@@ -2546,6 +2547,7 @@ export function registerVendorRoutes(app: Express): void {
           listingServiceCenterLng: existingListing?.listingServiceCenterLng,
           serviceRadiusMiles: existingListing?.serviceRadiusMiles,
           serviceAreaMode: existingListing?.serviceAreaMode,
+          servesOutsideRadius: existingListing?.servesOutsideRadius,
           travelOffered: existingListing?.travelOffered,
           travelFeeEnabled: existingListing?.travelFeeEnabled,
           travelFeeType: existingListing?.travelFeeType,
@@ -2902,6 +2904,7 @@ export function registerVendorRoutes(app: Express): void {
         title, description, whatsIncluded, whatsNotIncluded,
         priceCents, pricingUnit, sortOrder,
         dimensionUnit, dimensionWidth, dimensionLength, dimensionHeight,
+        servesOutsideRadius,
         travelOffered, travelFeeEnabled, travelFeeType, travelFeeAmountCents,
         deliveryOffered, deliveryFeeEnabled, deliveryFeeAmountCents,
         setupOffered, setupFeeEnabled, setupFeeAmountCents,
@@ -2965,10 +2968,11 @@ export function registerVendorRoutes(app: Express): void {
           dimensionWidth: typeof dimensionWidth === "number" && dimensionWidth > 0 ? dimensionWidth : null,
           dimensionLength: typeof dimensionLength === "number" && dimensionLength > 0 ? dimensionLength : null,
           dimensionHeight: typeof dimensionHeight === "number" && dimensionHeight > 0 ? dimensionHeight : null,
+          servesOutsideRadius: servesOutsideRadius === true,
           travelOffered: travelOffered === true,
           travelFeeEnabled: travelOffered === true && travelFeeEnabled === true,
-          // Normalize to one of the three allowed types (or null); an arbitrary
-          // string here would be persisted verbatim and break downstream fee logic.
+          // Normalize to an allowed type (flat|variable, or null); an arbitrary string
+          // here would be persisted verbatim and break downstream fee logic.
           travelFeeType: travelOffered === true ? normalizeTravelFeeType(travelFeeType) : null,
           travelFeeAmountCents: typeof travelFeeAmountCents === "number" && travelFeeAmountCents >= 0 ? Math.floor(travelFeeAmountCents) : null,
           deliveryOffered: deliveryOffered === true,
@@ -3009,6 +3013,7 @@ export function registerVendorRoutes(app: Express): void {
         title, description, whatsIncluded, whatsNotIncluded,
         priceCents, pricingUnit, sortOrder,
         dimensionUnit, dimensionWidth, dimensionLength, dimensionHeight,
+        servesOutsideRadius,
         travelOffered, travelFeeEnabled, travelFeeType, travelFeeAmountCents,
         deliveryOffered, deliveryFeeEnabled, deliveryFeeAmountCents,
         setupOffered, setupFeeEnabled, setupFeeAmountCents,
@@ -3051,6 +3056,7 @@ export function registerVendorRoutes(app: Express): void {
       updatePayload.dimensionWidth = typeof dimensionWidth === "number" && dimensionWidth > 0 ? dimensionWidth : null;
       updatePayload.dimensionLength = typeof dimensionLength === "number" && dimensionLength > 0 ? dimensionLength : null;
       updatePayload.dimensionHeight = typeof dimensionHeight === "number" && dimensionHeight > 0 ? dimensionHeight : null;
+      if (servesOutsideRadius !== undefined) updatePayload.servesOutsideRadius = servesOutsideRadius === true;
       updatePayload.travelOffered = travelOffered === true;
       updatePayload.travelFeeEnabled = travelOffered === true && travelFeeEnabled === true;
       // Normalize the travel-fee type to an allowed value (or null) rather than
@@ -3523,6 +3529,7 @@ export function registerVendorRoutes(app: Express): void {
           listingServiceCenterLat: vendorListings.listingServiceCenterLat,
           listingServiceCenterLng: vendorListings.listingServiceCenterLng,
           serviceRadiusMiles: vendorListings.serviceRadiusMiles,
+          servesOutsideRadius: vendorListings.servesOutsideRadius,
           travelOffered: vendorListings.travelOffered,
           travelFeeEnabled: vendorListings.travelFeeEnabled,
           travelFeeType: vendorListings.travelFeeType,
