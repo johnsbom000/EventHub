@@ -40,6 +40,112 @@ function ToggleGroup({
   );
 }
 
+/**
+ * The unified travel/delivery fee configuration, shared by the Travel (Service) and
+ * Delivery (Rental/Catering) sections. `feeNoun` is the label ("travel fee" or
+ * "delivery fee"). It writes to the shared draft fields servesOutsideRadius /
+ * travelFeeEnabled / travelFeeType / travelFeeAmount — a listing is a single category,
+ * so only one section renders at a time and there is no field collision.
+ */
+function UnifiedFeeConfig({
+  draft,
+  setDraft,
+  feeNoun,
+}: {
+  draft: ListingDraft;
+  setDraft: React.Dispatch<React.SetStateAction<ListingDraft>>;
+  feeNoun: "travel fee" | "delivery fee";
+}) {
+  return (
+    <div className="space-y-5">
+      <div className="flex items-start justify-between gap-3">
+        <div className="min-w-0 flex-1">
+          <Label className="text-base">Serve events outside your service radius?</Label>
+          <p className="text-sm text-muted-foreground">
+            Your service radius (set on the Service Area step) is the area you're willing to serve.
+            {" "}
+            {draft.servesOutsideRadius
+              ? "You'll be asked to propose a fee for out-of-area bookings after they're requested."
+              : "Bookings outside it will be blocked."}
+          </p>
+        </div>
+        <div className="shrink-0">
+          <ToggleGroup
+            value={draft.servesOutsideRadius}
+            onChange={(next) => setDraft((prev) => ({ ...prev, servesOutsideRadius: next }))}
+            trueLabel="Yes"
+            falseLabel="No"
+          />
+        </div>
+      </div>
+
+      <div className="flex flex-wrap items-center justify-between gap-3">
+        <Label className="text-base">Charge a {feeNoun} inside your radius?</Label>
+        <ToggleGroup
+          value={draft.travelFeeEnabled}
+          onChange={(next) =>
+            setDraft((prev) => ({
+              ...prev,
+              travelFeeEnabled: next,
+              travelFeeAmount: next ? prev.travelFeeAmount : "",
+            }))
+          }
+          trueLabel="Yes"
+          falseLabel="No"
+        />
+      </div>
+
+      {draft.travelFeeEnabled ? (
+        <>
+          <div className="flex flex-wrap items-center justify-between gap-3">
+            <Label className="text-base">Is the {feeNoun} a flat rate or does it vary by location?</Label>
+            <ToggleGroup
+              value={draft.travelFeeType === "flat"}
+              onChange={(isFlat) =>
+                setDraft((prev) => ({
+                  ...prev,
+                  travelFeeType: isFlat ? "flat" : "variable",
+                  travelFeeAmount: isFlat ? prev.travelFeeAmount : "",
+                }))
+              }
+              trueLabel="Flat rate"
+              falseLabel="Varies by location"
+            />
+          </div>
+
+          {draft.travelFeeType === "flat" ? (
+            <div className="max-w-sm space-y-2">
+              <Label>{feeNoun.charAt(0).toUpperCase() + feeNoun.slice(1)} (flat)</Label>
+              <div className="relative">
+                <span className="pointer-events-none absolute left-3 top-1/2 -translate-y-1/2 text-muted-foreground">
+                  $
+                </span>
+                <Input
+                  type="number"
+                  min={0}
+                  step="0.01"
+                  className="pl-7"
+                  value={draft.travelFeeAmount}
+                  onChange={(e) => setDraft((prev) => ({ ...prev, travelFeeAmount: e.target.value }))}
+                  placeholder="0.00"
+                />
+              </div>
+              <p className="text-sm text-muted-foreground">
+                Added automatically at checkout for events inside your radius.
+              </p>
+            </div>
+          ) : (
+            <div className="rounded-lg border border-border bg-muted/40 p-4 text-sm text-muted-foreground">
+              You'll propose the {feeNoun} for each booking after it's requested — the customer
+              accepts and pays it before the booking is finalized.
+            </div>
+          )}
+        </>
+      ) : null}
+    </div>
+  );
+}
+
 interface LogisticsStepProps {
   draft: ListingDraft;
   setDraft: React.Dispatch<React.SetStateAction<ListingDraft>>;
@@ -69,7 +175,7 @@ export function LogisticsStep({ draft, setDraft }: LogisticsStepProps) {
             <div className="text-xl font-semibold">Travel</div>
 
             <div className="flex flex-wrap items-center justify-between gap-3">
-              <Label className="text-base">Do you travel?</Label>
+              <Label className="text-base">Do you travel to the event?</Label>
               <ToggleGroup
                 value={draft.travelOffered}
                 onChange={(next) =>
@@ -81,15 +187,7 @@ export function LogisticsStep({ draft, setDraft }: LogisticsStepProps) {
             </div>
 
             {draft.travelOffered ? (
-              <div className="rounded-lg border border-border bg-muted/40 p-4 text-sm text-muted-foreground space-y-1">
-                <p className="font-medium text-foreground">How travel fees work</p>
-                <p>
-                  Events within your service radius (set on the Service Area step) are covered
-                  at no extra charge. If a booking falls outside your radius, you'll receive a
-                  prompt to propose a travel fee after the booking is created — the customer
-                  must accept before payment is collected.
-                </p>
-              </div>
+              <UnifiedFeeConfig draft={draft} setDraft={setDraft} feeNoun="travel fee" />
             ) : null}
           </Card>
         ) : null}
@@ -113,15 +211,7 @@ export function LogisticsStep({ draft, setDraft }: LogisticsStepProps) {
             <p className="text-sm text-muted-foreground">If no, this listing is pickup only.</p>
 
             {draft.deliveryIncluded ? (
-              <div className="rounded-lg border border-border bg-muted/40 p-4 text-sm text-muted-foreground space-y-1">
-                <p className="font-medium text-foreground">How delivery fees work</p>
-                <p>
-                  Deliveries within your service radius (set on the Service Area step) are
-                  included at no extra charge. If a booking is outside your radius, you'll
-                  receive a prompt to propose a delivery fee after the booking is created —
-                  the customer must accept before payment is collected.
-                </p>
-              </div>
+              <UnifiedFeeConfig draft={draft} setDraft={setDraft} feeNoun="delivery fee" />
             ) : null}
           </Card>
         ) : null}

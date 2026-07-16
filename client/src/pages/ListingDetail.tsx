@@ -431,10 +431,27 @@ export default function ListingDetailPage() {
  const takedownFeeAmount = typeof takedownFeeCents === "number" ? takedownFeeCents / 100 : toFiniteNumber(takedownFeeAmountRaw);
  const radiusMiles = Number(raw?.serviceRadiusMiles ?? ld?.serviceRadiusMiles ?? 0) || null;
 
+ // Unified travel/delivery fee (label depends on category). Prefer travel_fee_* columns;
+ // fall back to legacy delivery_fee_*. A flat fee shows its amount; a "variable" fee is
+ // proposed after booking.
+ const isDeliveryCategory = listingCategory === "Rentals" || listingCategory === "Catering";
+ const feeNoun = isDeliveryCategory ? "Delivery" : "Travel";
+ const servesOutsideRadius = (parseBooleanLike(raw?.servesOutsideRadius ?? ld?.servesOutsideRadius) ?? false) === true;
+ const travelOffered = (parseBooleanLike(raw?.travelOffered ?? ld?.travelOffered) ?? false) === true;
+ const unifiedFeeEnabled =
+ ((parseBooleanLike(raw?.travelFeeEnabled ?? ld?.travelFeeEnabled) ?? false) === true) || deliveryFeeEnabled;
+ const unifiedFeeTypeRaw = String(raw?.travelFeeType ?? ld?.travelFeeType ?? "").toLowerCase();
+ const unifiedFeeIsFlat = unifiedFeeTypeRaw === "flat" || (!unifiedFeeTypeRaw && deliveryFeeEnabled);
+ const unifiedFeeCents = toFiniteNumber(raw?.travelFeeAmountCents) ?? (deliveryFeeCents ?? null);
+ const unifiedFeeAmount = typeof unifiedFeeCents === "number" ? unifiedFeeCents / 100 : null;
+ const travelDeliveryLabel = !unifiedFeeEnabled
+ ? `${feeNoun} included`
+ : unifiedFeeIsFlat
+ ? `${feeNoun} fee: ${money(unifiedFeeAmount) ?? "Applies"}`
+ : `${feeNoun} fee: proposed per booking`;
+
  const deliveryLabel =
- deliveryFeeEnabled
- ? `Delivery fee: ${money(deliveryFeeAmount) ?? "Applies"}`
- : deliveryIncludedValue === true
+ deliveryIncludedValue === true
  ? "Delivery included"
  : deliveryIncludedValue === false
  ? "Delivery not included"
@@ -490,6 +507,10 @@ export default function ListingDetailPage() {
  setupLabel,
  takedownLabel,
  radiusMiles,
+ travelOffered,
+ travelDeliveryLabel,
+ servesOutsideRadius,
+ feeNoun,
  },
  shopActive,
  vacationBlocks,
@@ -801,8 +822,14 @@ export default function ListingDetailPage() {
    }
    if (data.category === "Service") {
      if (pkg.travelFeeEnabled) {
-       const feeType = pkg.travelFeeType === "per_mile" ? "per mile" : pkg.travelFeeType === "per_hour" ? "per hour" : "flat rate";
-       items.push({ icon: Truck, title: "Travel", desc: `Travel fee: ${money(pkg.travelFeeAmountCents != null ? pkg.travelFeeAmountCents / 100 : null) ?? "Applies"} (${feeType})` });
+       const isFlat = pkg.travelFeeType === "flat";
+       items.push({
+         icon: Truck,
+         title: "Travel",
+         desc: isFlat
+           ? `Travel fee: ${money(pkg.travelFeeAmountCents != null ? pkg.travelFeeAmountCents / 100 : null) ?? "Applies"} (flat rate)`
+           : "Travel fee: proposed per booking",
+       });
      } else if (pkg.travelOffered === true) {
        items.push({ icon: Truck, title: "Travel", desc: "Travel included" });
      } else if (pkg.travelOffered === false) {
@@ -840,8 +867,11 @@ export default function ListingDetailPage() {
    const showSetup = setupLabel && setupLabel !== "Not configured yet";
    const showTakedown = takedownLabel && takedownLabel !== "Not configured yet";
    const showRadius = Boolean(data.logistics?.radiusMiles);
+   const showTravelFee = Boolean(data.logistics?.travelOffered);
+   const travelDeliveryLabel = data.logistics?.travelDeliveryLabel;
+   const feeNoun = data.logistics?.feeNoun ?? "Travel";
    const showSecurityDeposit = Boolean(data.securityDepositEnabled) && (data.securityDepositCents ?? 0) > 0;
-   if (!showDelivery && !showSetup && !showTakedown && !showRadius && !showSecurityDeposit) return null;
+   if (!showDelivery && !showSetup && !showTakedown && !showRadius && !showTravelFee && !showSecurityDeposit) return null;
    return (
      <>
        <div className="border-t border-border" />
@@ -866,6 +896,12 @@ export default function ListingDetailPage() {
                <p className="mt-2 text-sm text-muted-foreground">{takedownLabel}</p>
              </div>
            ) : null}
+           {showTravelFee ? (
+             <div className="rounded-xl border border-border p-4">
+               <div className="flex items-center gap-2 font-medium"><Truck className="w-4 h-4" />{feeNoun}</div>
+               <p className="mt-2 text-sm text-muted-foreground">{travelDeliveryLabel}</p>
+             </div>
+           ) : null}
            {showSecurityDeposit ? (
              <div className="rounded-xl border border-border p-4">
                <div className="flex items-center gap-2 font-medium"><Shield className="w-4 h-4" />Security Deposit</div>
@@ -874,7 +910,15 @@ export default function ListingDetailPage() {
            ) : null}
          </div>
          {showRadius ? (
-           <p className="text-sm text-muted-foreground">{t("listing.serviceArea", { miles: data.logistics.radiusMiles })}</p>
+           <p className="text-sm text-muted-foreground">
+             {t("listing.serviceArea", { miles: data.logistics.radiusMiles })}
+             {data.logistics?.travelOffered
+               ? " " +
+                 (data.logistics?.servesOutsideRadius
+                   ? t("listing.servesOutsideRadiusYes")
+                   : t("listing.servesOutsideRadiusNo"))
+               : ""}
+           </p>
          ) : null}
        </section>
      </>

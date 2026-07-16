@@ -1026,6 +1026,7 @@ export async function applyPaymentIntentSuccessInTx(
       vendorPayout: bookings.vendorPayout,
       instantBookSnapshot: bookings.instantBookSnapshot,
       outsideServiceRadius: bookings.outsideServiceRadius,
+      feeProposalPending: bookings.feeProposalPending,
     })
     .from(bookings)
     .where(eq(bookings.id, payment.bookingId))
@@ -1128,11 +1129,12 @@ export async function applyPaymentIntentSuccessInTx(
   } else {
     // Request-to-book listings (instantBookSnapshot = false) must stay
     // "pending" after payment — the vendor needs to explicitly accept.
-    // Instant-book listings outside the service radius also stay "pending"
-    // because the vendor must confirm the out-of-area booking. Only instant-book
-    // listings within the service radius are auto-confirmed.
+    // Bookings that expect a post-booking travel/delivery fee proposal (outside-radius
+    // served, or inside-radius varies-per-location) also stay "pending" until the vendor
+    // settles the fee. This reads the persisted decision (fee_proposal_pending) so it
+    // agrees with the booking-insert path — no re-derivation from geography here.
     const isInstantBook = bookingRow.instantBookSnapshot !== false;
-    const requiresVendorConfirmation = !isInstantBook || bookingRow.outsideServiceRadius === true;
+    const requiresVendorConfirmation = !isInstantBook || bookingRow.feeProposalPending === true;
     await tx
       .update(bookings)
       .set({

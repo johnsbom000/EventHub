@@ -194,9 +194,13 @@ function normalizePhotoCoverRatio(raw: unknown): CoverRatio {
 function YesNoButtons({
   value,
   onChange,
+  trueLabel = "Yes",
+  falseLabel = "No",
 }: {
   value: boolean;
   onChange: (v: boolean) => void;
+  trueLabel?: string;
+  falseLabel?: string;
 }) {
   const selectedButtonClass =
     "border-[#88bdb4] bg-[#9dd4cc] text-[#4a6a7d] hover:bg-[#8ec9c0]";
@@ -209,7 +213,7 @@ function YesNoButtons({
         className={value ? selectedButtonClass : undefined}
         onClick={() => onChange(true)}
       >
-        Yes
+        {trueLabel}
       </Button>
       <Button
         type="button"
@@ -217,7 +221,7 @@ function YesNoButtons({
         className={!value ? selectedButtonClass : undefined}
         onClick={() => onChange(false)}
       >
-        No
+        {falseLabel}
       </Button>
     </div>
   );
@@ -381,6 +385,11 @@ export default function VendorListingEdit() {
       takedownOffered?: unknown;
       takedownFeeEnabled?: unknown;
       takedownFeeAmountCents?: unknown;
+      servesOutsideRadius?: unknown;
+      travelOffered?: unknown;
+      travelFeeEnabled?: unknown;
+      travelFeeType?: unknown;
+      travelFeeAmountCents?: unknown;
       photos?: unknown;
     };
 
@@ -514,19 +523,36 @@ export default function VendorListingEdit() {
       ),
 
 
-      // Delivery / Setup / Takedown
+      // servesOutsideRadius: whether the vendor takes events beyond the radius.
+      servesOutsideRadius: Boolean(canonicalListing?.servesOutsideRadius ?? ld?.servesOutsideRadius),
+      // Delivery / Setup / Takedown. The travel/delivery fee is unified: prefer the
+      // travel_fee_* columns, fall back to legacy delivery_fee_*. feeType is flat or
+      // variable (legacy per_mile/per_hour → variable).
       deliverySetup: {
         deliveryIncluded:
           Boolean(
             ld?.deliverySetup?.deliveryIncluded ??
               ld?.deliveryIncluded ??
               ld?.deliveryOffered ??
-              canonicalListing?.deliveryOffered
+              canonicalListing?.deliveryOffered ??
+              canonicalListing?.travelOffered
           ),
         deliveryFeeEnabled:
-          Boolean(ld?.deliverySetup?.deliveryFeeEnabled ?? ld?.deliveryFeeEnabled ?? canonicalListing?.deliveryFeeEnabled),
+          Boolean(
+            canonicalListing?.travelFeeEnabled ??
+              ld?.deliverySetup?.deliveryFeeEnabled ??
+              ld?.deliveryFeeEnabled ??
+              canonicalListing?.deliveryFeeEnabled
+          ),
+        feeType:
+          (canonicalListing?.travelFeeType ?? ld?.travelFeeType) === "flat"
+            ? "flat"
+            : (canonicalListing?.travelFeeType ?? ld?.travelFeeType)
+              ? "variable"
+              : "flat",
         deliveryFeeAmount: toNumOrEmpty(
-          ld?.deliverySetup?.deliveryFeeAmount ??
+          (canonicalListing?.travelFeeAmountCents != null ? Number(canonicalListing.travelFeeAmountCents) / 100 : null) ??
+            ld?.deliverySetup?.deliveryFeeAmount ??
             ld?.deliveryFeeAmount ??
             (ld?.deliveryFeeAmountCents != null ? Number(ld.deliveryFeeAmountCents) / 100 : null) ??
             (canonicalListing?.deliveryFeeAmountCents != null ? Number(canonicalListing.deliveryFeeAmountCents) / 100 : null)
@@ -1059,9 +1085,15 @@ export default function VendorListingEdit() {
       draft?.deliverySetup && typeof draft.deliverySetup === "object" ? draft.deliverySetup : {};
     const deliveryIncluded = Boolean(deliverySetupDraft?.deliveryIncluded);
     const deliveryFeeEnabled = deliveryIncluded && Boolean(deliverySetupDraft?.deliveryFeeEnabled);
-    const deliveryFeeAmount = deliveryFeeEnabled
-      ? parseMoneyStringToOptionalNumber(deliverySetupDraft?.deliveryFeeAmount)
-      : null;
+    // Unified travel/delivery fee: flat carries an amount; variable is proposed after
+    // booking. Persisted to the travel_fee_* columns for both Service and delivery
+    // categories (the compute + checkout read those).
+    const unifiedFeeType = deliverySetupDraft?.feeType === "variable" ? "variable" : "flat";
+    const deliveryFeeAmount =
+      deliveryFeeEnabled && unifiedFeeType === "flat"
+        ? parseMoneyStringToOptionalNumber(deliverySetupDraft?.deliveryFeeAmount)
+        : null;
+    const servesOutsideRadius = Boolean((draft as any).servesOutsideRadius);
 
     const setupIncluded = Boolean(deliverySetupDraft?.setupIncluded);
     const setupFeeEnabled = setupIncluded && Boolean(deliverySetupDraft?.setupFeeEnabled);
@@ -1114,9 +1146,18 @@ export default function VendorListingEdit() {
       },
       deliveryIncluded,
       deliveryOffered: deliveryIncluded,
-      deliveryFeeEnabled,
-      deliveryFeeAmount,
-      deliveryFeeAmountCents: deliveryFeeAmount != null ? Math.round(deliveryFeeAmount * 100) : null,
+      // Fee lives in the unified travel_fee_* columns now; keep delivery_fee_* off so
+      // it is not treated as a second fee source.
+      deliveryFeeEnabled: false,
+      deliveryFeeAmount: null,
+      deliveryFeeAmountCents: null,
+      // Unified travel/delivery fee (label depends on category downstream).
+      servesOutsideRadius,
+      travelOffered: deliveryIncluded,
+      travelFeeEnabled: deliveryFeeEnabled,
+      travelFeeType: deliveryFeeEnabled ? unifiedFeeType : null,
+      travelFeeAmount: deliveryFeeAmount,
+      travelFeeAmountCents: deliveryFeeAmount != null ? Math.round(deliveryFeeAmount * 100) : null,
       setupIncluded,
       setupOffered: setupIncluded,
       setupFeeEnabled,
@@ -2237,6 +2278,21 @@ export default function VendorListingEdit() {
                               </div>
                             )}
                           </div>
+
+                          <div className="flex items-center justify-between gap-6 pt-2">
+                            <div>
+                              <Label>{t("vendorListingEdit.servesOutsideRadius")}</Label>
+                              <p className="text-sm text-muted-foreground">
+                                {(draft as any).servesOutsideRadius
+                                  ? t("vendorListingEdit.servesOutsideRadiusYesHint")
+                                  : t("vendorListingEdit.servesOutsideRadiusNoHint")}
+                              </p>
+                            </div>
+                            <YesNoButtons
+                              value={!!(draft as any).servesOutsideRadius}
+                              onChange={(v) => setDraft((d: any) => ({ ...d, servesOutsideRadius: v }))}
+                            />
+                          </div>
                         </div>
                       )}
 
@@ -2279,27 +2335,54 @@ export default function VendorListingEdit() {
                             </div>
 
                             {!!draft.deliverySetup?.deliveryFeeEnabled && (
-                              <div className="md:col-start-2 space-y-2">
-                                <Label>{t("vendorListingEdit.deliveryFeeAmount")}</Label>
-                                <div className="relative">
-                                  <span className="pointer-events-none absolute left-3 top-1/2 -translate-y-1/2 text-muted-foreground">$</span>
-                                  <Input
-                                    value={toNumOrEmpty(draft.deliverySetup?.deliveryFeeAmount)}
-                                    onChange={(e) =>
+                              <>
+                                <div className="md:col-span-2 flex items-center justify-between gap-6">
+                                  <Label>{t("vendorListingEdit.feeRateType")}</Label>
+                                  <YesNoButtons
+                                    value={(draft.deliverySetup?.feeType ?? "flat") === "flat"}
+                                    onChange={(isFlat) =>
                                       setDraft((d: any) => ({
                                         ...d,
                                         deliverySetup: {
                                           ...(d.deliverySetup || {}),
-                                          deliveryFeeAmount: e.target.value.replace(/[^\d.]/g, ""),
+                                          feeType: isFlat ? "flat" : "variable",
+                                          deliveryFeeAmount: isFlat ? d.deliverySetup?.deliveryFeeAmount ?? "" : "",
                                         },
                                       }))
                                     }
-                                    inputMode="decimal"
-                                    placeholder="e.g. 75"
-                                    className={`${fieldSurfaceClass} pl-7`}
+                                    trueLabel={t("vendorListingEdit.feeFlat")}
+                                    falseLabel={t("vendorListingEdit.feeVaries")}
                                   />
                                 </div>
-                              </div>
+
+                                {(draft.deliverySetup?.feeType ?? "flat") === "flat" ? (
+                                  <div className="md:col-span-2 flex items-center justify-between gap-6">
+                                    <Label>{t("vendorListingEdit.deliveryFeeAmount")}</Label>
+                                    <div className="relative w-40">
+                                      <span className="pointer-events-none absolute left-3 top-1/2 -translate-y-1/2 text-muted-foreground">$</span>
+                                      <Input
+                                        value={toNumOrEmpty(draft.deliverySetup?.deliveryFeeAmount)}
+                                        onChange={(e) =>
+                                          setDraft((d: any) => ({
+                                            ...d,
+                                            deliverySetup: {
+                                              ...(d.deliverySetup || {}),
+                                              deliveryFeeAmount: e.target.value.replace(/[^\d.]/g, ""),
+                                            },
+                                          }))
+                                        }
+                                        inputMode="decimal"
+                                        placeholder="e.g. 75"
+                                        className={`${fieldSurfaceClass} pl-7`}
+                                      />
+                                    </div>
+                                  </div>
+                                ) : (
+                                  <p className="md:col-span-2 text-sm text-muted-foreground">
+                                    {t("vendorListingEdit.feeVariesHint")}
+                                  </p>
+                                )}
+                              </>
                             )}
                           </div>
                         )}
@@ -2342,9 +2425,9 @@ export default function VendorListingEdit() {
                             </div>
 
                             {!!draft.deliverySetup?.setupFeeEnabled && (
-                              <div className="md:col-start-2 space-y-2">
+                              <div className="md:col-span-2 flex items-center justify-between gap-6">
                                 <Label>{t("vendorListingEdit.setupFeeAmount")}</Label>
-                                <div className="relative">
+                                <div className="relative w-40">
                                   <span className="pointer-events-none absolute left-3 top-1/2 -translate-y-1/2 text-muted-foreground">$</span>
                                   <Input
                                     value={toNumOrEmpty(draft.deliverySetup?.setupFeeAmount)}
@@ -2407,9 +2490,9 @@ export default function VendorListingEdit() {
                                 </div>
 
                                 {!!draft.deliverySetup?.takedownFeeEnabled && (
-                                  <div className="md:col-start-2 space-y-2">
+                                  <div className="md:col-span-2 flex items-center justify-between gap-6">
                                     <Label>{t("vendorListingEdit.takedownFeeAmount")}</Label>
-                                    <div className="relative">
+                                    <div className="relative w-40">
                                       <span className="pointer-events-none absolute left-3 top-1/2 -translate-y-1/2 text-muted-foreground">$</span>
                                       <Input
                                         value={toNumOrEmpty(draft.deliverySetup?.takedownFeeAmount)}

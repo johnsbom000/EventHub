@@ -269,6 +269,7 @@ import {
   normalizeListingSubcategoryDetail,
   normalizeListingClassification,
   resolveBookingLifecycleMode,
+  resolveBookingConfirmationRequirement,
   getListingPhotoCount,
   hasMinimumListingPhotos,
   toCanonicalTagList,
@@ -1117,6 +1118,7 @@ export function registerBookingRoutes(app: Express): void {
         listingServiceCenterLat: vendorListings.listingServiceCenterLat,
         listingServiceCenterLng: vendorListings.listingServiceCenterLng,
         serviceRadiusMiles: vendorListings.serviceRadiusMiles,
+        servesOutsideRadius: vendorListings.servesOutsideRadius,
         travelOffered: vendorListings.travelOffered,
         travelFeeEnabled: vendorListings.travelFeeEnabled,
         travelFeeType: vendorListings.travelFeeType,
@@ -1314,27 +1316,14 @@ export function registerBookingRoutes(app: Express): void {
       const bookingEndDateStr = String(data.eventEndDate || data.eventDate || "").trim().slice(0, 10);
 
       // ── Service radius enforcement ────────────────────────────────────────────
-      // Geographic configuration (service center, radius, travelOffered) lives on
-      // the container listing for package bookings — the package_item child row has
+      // Geographic configuration (service center, radius, servesOutsideRadius) lives
+      // on the container listing for package bookings — the package_item child row has
       // no coordinates of its own. Use containerRow when present so the radius check
-      // always reads from the right row regardless of listing type.
-      // We only enforce when coordinates are present — if the customer didn't supply
-      // event coordinates we allow the booking through (coordinates are optional at
-      // checkout for some flows).
+      // always reads from the right row regardless of listing type. The actual
+      // inside/outside determination + fee resolution happens in the radius-aware
+      // logistics compute below (getListingLogisticsFeeSummaryCents), which receives
+      // this row's geography and the event coordinates.
       const serviceAreaRow = containerRow ?? listingRow;
-      const bookingOutsideServiceRadius =
-        serviceAreaRow != null &&
-        serviceAreaRow.travelOffered === false &&
-        data.eventLocationLat != null &&
-        data.eventLocationLng != null
-          ? isEventOutsideServiceRadius({
-              listingCenterLat: serviceAreaRow.listingServiceCenterLat,
-              listingCenterLng: serviceAreaRow.listingServiceCenterLng,
-              serviceRadiusMiles: serviceAreaRow.serviceRadiusMiles,
-              eventLat: data.eventLocationLat,
-              eventLng: data.eventLocationLng,
-            })
-          : false;
 
       // Resolve and snapshot the cancellation policy before the booking insert.
       //
@@ -1577,8 +1566,31 @@ export function registerBookingRoutes(app: Express): void {
           travelFeeEnabled: listingRow?.travelFeeEnabled ?? false,
           travelFeeType: listingRow?.travelFeeType ?? null,
           travelFeeAmountCents: listingRow?.travelFeeAmountCents ?? null,
+          // Geography is authoritative on the container row for package bookings.
+          servesOutsideRadius: serviceAreaRow?.servesOutsideRadius ?? false,
+          serviceRadiusMiles: serviceAreaRow?.serviceRadiusMiles ?? null,
+          listingServiceCenterLat: serviceAreaRow?.listingServiceCenterLat ?? null,
+          listingServiceCenterLng: serviceAreaRow?.listingServiceCenterLng ?? null,
         },
+        event: { lat: data.eventLocationLat, lng: data.eventLocationLng },
       });
+
+      // Block the booking when the event is outside the vendor's radius and they do
+      // not serve outside it (product decision 1a). Enforced before any DB writes.
+      if (logisticsFees.blockedOutsideRadius) {
+        return res.status(409).json({
+          error:
+            "This event is outside the vendor's service area, and they don't serve events outside it.",
+          code: "outside_service_area_not_served",
+        });
+      }
+
+      // outsideServiceRadius stays purely geographic (email wording / analytics).
+      // feeProposalPending is the single source of truth for "a post-booking
+      // travel/delivery fee proposal is expected" (outside-served OR inside-varies).
+      const bookingOutsideServiceRadius = logisticsFees.isOutsideRadius;
+      const bookingFeeProposalPending = logisticsFees.feeProposalPending;
+
       const subtotalAmount =
         unitPriceCentsTotal +
         addonSubtotalCents +
@@ -1686,14 +1698,18 @@ export function registerBookingRoutes(app: Express): void {
         listingCategory: listingRow?.category ?? null,
         listingInstantBookEnabled: listingRow?.instantBookEnabled ?? false,
       });
-      // Booking status follows the listing's booking type only: instant-book auto-confirms,
-      // request-to-book stays pending for the vendor to accept/decline. Falling outside the
-      // service radius no longer forces a booking pending — the travel/delivery fee is handled
-      // separately via the proposal flow (which keys off outsideServiceRadius), on top of the
-      // already-confirmed (or pending) booking.
+      // A booking must go request-to-book (pending) when the listing is not instant-book,
+      // OR when a post-booking travel/delivery fee proposal is expected (outside-served or
+      // inside-varies) — so the fee is settled before the booking is final (decision 4a).
+      // resolveBookingConfirmationRequirement is the single predicate; the payment-success
+      // path consults the same decision via the persisted fee_proposal_pending column.
+      const bookingConfirmation = resolveBookingConfirmationRequirement({
+        isInstantBooking: bookingLifecycle.isInstantBooking,
+        feeProposalPending: bookingFeeProposalPending,
+      });
       const isDeliveryCategory =
         listingRow?.category === "Rentals" || listingRow?.category === "Catering";
-      const idealBookingStatus = bookingLifecycle.initialStatus;
+      const idealBookingStatus = bookingConfirmation.initialStatus;
       const bookingVendorProfileId = resolvedVendorProfileId ?? null;
       const customerNotes =
         typeof data.customerNotes === "string" && data.customerNotes.trim().length > 0
@@ -1972,6 +1988,7 @@ export function registerBookingRoutes(app: Express): void {
             eventLocationLat: data.eventLocationLat ?? null,
             eventLocationLng: data.eventLocationLng ?? null,
             outsideServiceRadius: bookingOutsideServiceRadius,
+            feeProposalPending: bookingFeeProposalPending,
             eventTimezone: resolvedEventTimeZone,
             guestCount: data.guestCount ?? null,
             specialRequests: data.specialRequests ?? null,
@@ -2290,16 +2307,20 @@ export function registerBookingRoutes(app: Express): void {
         }),
       ]);
 
-      // If the event falls outside the listing's service radius, send the vendor
-      // an additional notification explaining what action is needed.
-      if (booking.outsideServiceRadius) {
+      // If a post-booking travel/delivery fee proposal is expected, send the vendor an
+      // additional notification explaining what action is needed. The wording differs
+      // between an outside-radius booking and an inside-radius varies-per-location fee.
+      if (bookingFeeProposalPending) {
         const notifFeeLabel = isDeliveryCategory ? "delivery fee" : "travel fee";
+        const outsideNotif = bookingOutsideServiceRadius;
         await createNotification({
           recipientId: vendorAccount.id,
           recipientType: "vendor",
           type: "new_booking" as any,
-          title: `Booking outside your service area`,
-          message: `The event on ${data.eventDate} is outside your service area. Accept and propose a ${notifFeeLabel}, or decline the booking.`,
+          title: outsideNotif ? `Booking outside your service area` : `Propose your ${notifFeeLabel}`,
+          message: outsideNotif
+            ? `The event on ${data.eventDate} is outside your service area. Accept and propose a ${notifFeeLabel}, or decline the booking.`
+            : `The event on ${data.eventDate} needs a ${notifFeeLabel} for this location. Propose your ${notifFeeLabel} so the customer can pay it.`,
           link: `/vendor/bookings?bookingId=${encodeURIComponent(booking.id)}`,
           read: false,
         }).catch(() => { /* non-blocking */ });
@@ -2355,6 +2376,7 @@ export function registerBookingRoutes(app: Express): void {
             role: "customer",
             isInstant: emailIsInstant,
             outsideServiceRadius: bookingOutsideServiceRadius,
+            feeProposalPending: bookingFeeProposalPending,
             feeLabel: emailFeeLabel,
             serverUrl,
           })
@@ -2374,6 +2396,7 @@ export function registerBookingRoutes(app: Express): void {
             role: "vendor",
             isInstant: emailIsInstant,
             outsideServiceRadius: bookingOutsideServiceRadius,
+            feeProposalPending: bookingFeeProposalPending,
             feeLabel: emailFeeLabel,
             serverUrl,
           })
@@ -2457,6 +2480,7 @@ export function registerBookingRoutes(app: Express): void {
             status: bookings.status,
             eventDate: bookings.eventDate,
             outsideServiceRadius: bookings.outsideServiceRadius,
+            feeProposalPending: bookings.feeProposalPending,
           })
           .from(bookings)
           .where(eq(bookings.id, bookingId))
@@ -2464,11 +2488,12 @@ export function registerBookingRoutes(app: Express): void {
 
         if (!booking) return res.status(404).json({ error: "Booking not found" });
         if (booking.vendorAccountId !== vendorId) return res.status(403).json({ error: "Access denied" });
-        // Allow proposals when pending, or when confirmed but location is outside the service
-        // radius (vendor must still confirm the out-of-area booking).
+        // Allow proposals when pending, or when a fee proposal is expected for this booking
+        // (outside-radius+served, or inside-radius varies-per-location — the vendor must still
+        // settle the fee even if the booking has otherwise confirmed).
         const canPropose =
           booking.status === "pending" ||
-          (booking.status === "confirmed" && booking.outsideServiceRadius === true);
+          booking.feeProposalPending === true;
         if (!canPropose) {
           return res.status(409).json({ error: "Travel fee proposals can only be sent before accepting a booking" });
         }

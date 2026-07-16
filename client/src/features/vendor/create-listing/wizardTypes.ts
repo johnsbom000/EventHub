@@ -22,7 +22,9 @@ export type StepId =
 export type ListingCategory = "Rental" | "Venue" | "Service" | "Catering";
 export type PricingUnit = "per_day" | "per_hour";
 export type BookingType = "instant" | "request";
-export type TravelFeeType = "flat" | "per_mile" | "per_hour";
+// "flat" → auto line item at checkout for events inside the radius.
+// "variable" → fee varies per location; settled after booking via the proposal flow.
+export type TravelFeeType = "flat" | "variable";
 export type CancellationPolicy = "cancel_anytime" | "cancel_within_hours" | "no_cancellations";
 export type DimensionUnit = "inches" | "feet" | "meters" | "centimeters";
 
@@ -51,6 +53,9 @@ export type ListingDraft = {
 
   serviceAreaMode: "radius";
   serviceRadiusMiles: number;
+  // Whether the vendor will serve events beyond the service radius. When false, an
+  // out-of-radius booking is blocked; when true, the vendor proposes a fee for it.
+  servesOutsideRadius: boolean;
   serviceLocation: LocationResult | null;
   serviceCenter: { lat: number; lng: number } | null;
   serviceStreetAddress: string;
@@ -58,6 +63,8 @@ export type ListingDraft = {
   serviceState: string;
   serviceZip: string;
 
+  // Unified travel/delivery fee config (label shown depends on category).
+  // travelOffered / deliveryIncluded mean "we go to the customer location / not pickup-only".
   travelOffered: boolean;
   travelFeeEnabled: boolean;
   travelFeeType: TravelFeeType;
@@ -112,6 +119,7 @@ export const DEFAULT_DRAFT: ListingDraft = {
 
   serviceAreaMode: "radius",
   serviceRadiusMiles: 30,
+  servesOutsideRadius: false,
   serviceLocation: null,
   serviceCenter: null,
   serviceStreetAddress: "",
