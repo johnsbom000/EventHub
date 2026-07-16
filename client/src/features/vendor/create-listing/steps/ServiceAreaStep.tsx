@@ -167,7 +167,8 @@ export function ServiceAreaStep({ draft, setDraft, showValidation }: ServiceArea
       <header className="space-y-3">
         <h1 className="text-5xl font-semibold tracking-tight">Service Area</h1>
         <p className="text-base text-muted-foreground">
-          Set your coverage area for this listing. This controls where you operate, not global shipping.
+          Set the area you're willing to serve for this listing. This is what customers search within.
+          Whether you take events beyond it — and any travel or delivery fee — is set on the Logistics step.
         </p>
       </header>
 

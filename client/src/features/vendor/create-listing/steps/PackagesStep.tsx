@@ -14,7 +14,7 @@ import { DIMENSION_UNIT_OPTIONS } from "../wizardTypes";
 
 // ── Types ─────────────────────────────────────────────────────────────────────
 
-type TravelFeeType = "flat" | "per_mile" | "per_hour";
+type TravelFeeType = "flat" | "variable";
 type CancellationPolicy = "cancel_anytime" | "cancel_within_hours" | "no_cancellations";
 
 interface PackageItem {
@@ -170,6 +170,80 @@ function ToggleGroup({
   );
 }
 
+/**
+ * Per-package unified travel/delivery fee config (flat vs varies + amount). Mirrors
+ * the single-listing UnifiedFeeConfig; servesOutsideRadius is set on the container
+ * listing, not per package. `feeNoun` is "travel fee" or "delivery fee".
+ */
+function PackageFeeConfig({
+  form,
+  setForm,
+  feeNoun,
+}: {
+  form: PackageFormState;
+  setForm: React.Dispatch<React.SetStateAction<PackageFormState>>;
+  feeNoun: "travel fee" | "delivery fee";
+}) {
+  return (
+    <div className="space-y-4">
+      <div className="flex flex-wrap items-center justify-between gap-3">
+        <Label className="text-sm">Charge a {feeNoun} inside your radius?</Label>
+        <ToggleGroup
+          value={form.travelFeeEnabled}
+          onChange={(next) =>
+            setForm((f) => ({ ...f, travelFeeEnabled: next, travelFeeAmount: next ? f.travelFeeAmount : "" }))
+          }
+          trueLabel="Yes"
+          falseLabel="No"
+        />
+      </div>
+      {form.travelFeeEnabled && (
+        <>
+          <div className="flex flex-wrap items-center justify-between gap-3">
+            <Label className="text-sm">Flat rate or varies by location?</Label>
+            <ToggleGroup
+              value={form.travelFeeType === "flat"}
+              onChange={(isFlat) =>
+                setForm((f) => ({
+                  ...f,
+                  travelFeeType: isFlat ? "flat" : "variable",
+                  travelFeeAmount: isFlat ? f.travelFeeAmount : "",
+                }))
+              }
+              trueLabel="Flat rate"
+              falseLabel="Varies by location"
+            />
+          </div>
+          {form.travelFeeType === "flat" ? (
+            <div className="max-w-xs space-y-2">
+              <Label className="text-sm">{feeNoun.charAt(0).toUpperCase() + feeNoun.slice(1)} (flat)</Label>
+              <div className="relative">
+                <span className="pointer-events-none absolute left-3 top-1/2 -translate-y-1/2 text-muted-foreground">
+                  $
+                </span>
+                <Input
+                  type="number"
+                  min={0}
+                  step="0.01"
+                  className="pl-7"
+                  value={form.travelFeeAmount}
+                  onChange={(e) => setForm((f) => ({ ...f, travelFeeAmount: e.target.value }))}
+                  placeholder="0.00"
+                />
+              </div>
+              <p className="text-xs text-muted-foreground">Added at checkout for events inside your radius.</p>
+            </div>
+          ) : (
+            <p className="text-xs text-muted-foreground">
+              You'll propose the {feeNoun} after each booking is requested.
+            </p>
+          )}
+        </>
+      )}
+    </div>
+  );
+}
+
 // ── Props ─────────────────────────────────────────────────────────────────────
 
 interface PackagesStepProps {
@@ -300,10 +374,12 @@ function PackagesStep({ listingId, category, draft, setDraft, onPackageCountChan
       dimensionWidth: pkg.dimensionWidth != null ? String(pkg.dimensionWidth) : "",
       dimensionLength: pkg.dimensionLength != null ? String(pkg.dimensionLength) : "",
       dimensionHeight: pkg.dimensionHeight != null ? String(pkg.dimensionHeight) : "",
-      travelOffered: pkg.travelOffered,
-      travelFeeEnabled: pkg.travelFeeEnabled,
-      travelFeeType: (pkg.travelFeeType as TravelFeeType) ?? "flat",
-      travelFeeAmount: centsToDisplay(pkg.travelFeeAmountCents),
+      // Unified fee: prefer the travel_fee_* columns; fall back to legacy delivery_fee_*
+      // for rows not yet migrated. Legacy per_mile/per_hour types normalize to "variable".
+      travelOffered: pkg.travelOffered || pkg.deliveryOffered,
+      travelFeeEnabled: pkg.travelFeeEnabled || pkg.deliveryFeeEnabled,
+      travelFeeType: pkg.travelFeeType === "flat" ? "flat" : pkg.travelFeeType ? "variable" : "flat",
+      travelFeeAmount: centsToDisplay(pkg.travelFeeAmountCents ?? pkg.deliveryFeeAmountCents),
       deliveryOffered: pkg.deliveryOffered,
       deliveryFeeEnabled: pkg.deliveryFeeEnabled,
       deliveryFeeAmount: centsToDisplay(pkg.deliveryFeeAmountCents),
@@ -375,12 +451,21 @@ function PackagesStep({ listingId, category, draft, setDraft, onPackageCountChan
       dimensionWidth: showDimensions ? parseDimension(form.dimensionWidth) : null,
       dimensionLength: showDimensions ? parseDimension(form.dimensionLength) : null,
       dimensionHeight: showDimensions ? parseDimension(form.dimensionHeight) : null,
-      // Travel — fees are proposed post-booking, never set upfront in the wizard.
-      travelOffered: showTravel ? form.travelOffered : false,
-      travelFeeEnabled: false,
-      travelFeeType: null,
-      travelFeeAmountCents: null,
-      // Delivery — fees are proposed post-booking, never set upfront in the wizard.
+      // Unified travel/delivery fee (same model as single listings). Both Service
+      // (travel) and Rental/Catering (delivery) write into the travel_fee_* fields;
+      // a flat fee carries an amount, a "variable" fee is proposed after booking.
+      // servesOutsideRadius is authoritative on the container listing, so it is not
+      // sent per-package here.
+      travelOffered: showTravel ? form.travelOffered : showDelivery ? form.deliveryOffered : false,
+      travelFeeEnabled:
+        (showTravel ? form.travelOffered : showDelivery ? form.deliveryOffered : false) && form.travelFeeEnabled,
+      travelFeeType:
+        (showTravel || showDelivery) && form.travelFeeEnabled ? form.travelFeeType : null,
+      travelFeeAmountCents:
+        (showTravel || showDelivery) && form.travelFeeEnabled && form.travelFeeType === "flat"
+          ? parseDollars(form.travelFeeAmount)
+          : null,
+      // Delivery flags stay for pickup/delivery semantics; the fee is unified above.
       deliveryOffered: showDelivery ? form.deliveryOffered : false,
       deliveryFeeEnabled: false,
       deliveryFeeAmountCents: null,
@@ -817,15 +902,7 @@ function PackagesStep({ listingId, category, draft, setDraft, onPackageCountChan
                 />
               </div>
               {form.travelOffered && (
-                <div className="rounded-lg border border-border bg-muted/40 p-4 text-sm text-muted-foreground space-y-1">
-                  <p className="font-medium text-foreground">How travel fees work</p>
-                  <p>
-                    Events within your service radius (set on the Service Area step) are covered
-                    at no extra charge. If a booking falls outside your radius, you'll receive a
-                    prompt to propose a travel fee after the booking is created — the customer
-                    must accept before payment is collected.
-                  </p>
-                </div>
+                <PackageFeeConfig form={form} setForm={setForm} feeNoun="travel fee" />
               )}
             </div>
           )}
@@ -845,15 +922,7 @@ function PackagesStep({ listingId, category, draft, setDraft, onPackageCountChan
               </div>
               <p className="text-xs text-muted-foreground">If no, this package is pickup only.</p>
               {form.deliveryOffered && (
-                <div className="rounded-lg border border-border bg-muted/40 p-4 text-sm text-muted-foreground space-y-1">
-                  <p className="font-medium text-foreground">How delivery fees work</p>
-                  <p>
-                    Deliveries within your service radius (set on the Service Area step) are
-                    included at no extra charge. If a booking is outside your radius, you'll
-                    receive a prompt to propose a delivery fee after the booking is created —
-                    the customer must accept before payment is collected.
-                  </p>
-                </div>
+                <PackageFeeConfig form={form} setForm={setForm} feeNoun="delivery fee" />
               )}
             </div>
           )}

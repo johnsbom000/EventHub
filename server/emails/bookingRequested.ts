@@ -39,6 +39,7 @@ export interface BookingRequestedParams {
   addOns?: Array<{ title: string; priceCents: number }>;
   packageName?: string | null;
   outsideServiceRadius?: boolean | null;
+  feeProposalPending?: boolean | null;
   feeLabel?: "delivery fee" | "travel fee";
   basePriceCents?: number | null;
   deliveryFeeAmountCents?: number | null;
@@ -54,8 +55,11 @@ export function bookingRequestedTemplate(params: BookingRequestedParams): {
   html: string;
   text: string;
 } {
-  const { recipientName, counterpartName, eventDate, listingTitle, totalAmountCents, role, isInstant, serverUrl, addOns, outsideServiceRadius, feeLabel } = params;
+  const { recipientName, counterpartName, eventDate, listingTitle, totalAmountCents, role, isInstant, serverUrl, addOns, outsideServiceRadius, feeProposalPending, feeLabel } = params;
   const radiusFeeLabel = feeLabel ?? "travel fee";
+  // A fee proposal is expected when the event is outside the service area, or when the
+  // fee varies per location (inside the radius). The wording differs between the two.
+  const showFeeNote = Boolean(outsideServiceRadius) || Boolean(feeProposalPending);
 
   const dashboardUrl = role === "vendor"
     ? `${serverUrl}/vendor/bookings`
@@ -87,13 +91,15 @@ export function bookingRequestedTemplate(params: BookingRequestedParams): {
       </div>`
     : "";
 
-  const outsideRadiusNote = outsideServiceRadius
-    ? role === "customer"
-      ? `<div style="background:#fff8f0;border-left:3px solid ${CORAL};padding:12px 16px;border-radius:4px;margin-bottom:20px;">
-          <p style="margin:0;font-size:13px;color:#b45309;">Your event is outside ${counterpartName}'s standard service area, so they may propose a ${radiusFeeLabel} for you to review and pay separately before the event.</p>
-        </div>`
-      : `<div style="background:#fff8f0;border-left:3px solid ${CORAL};padding:12px 16px;border-radius:4px;margin-bottom:20px;">
-          <p style="margin:0;font-size:13px;color:#b45309;">This event is outside your service area — you can propose a ${radiusFeeLabel} to the customer from your bookings dashboard.</p>
+  const customerFeeNote = outsideServiceRadius
+    ? `Your event is outside ${counterpartName}'s standard service area, so they may propose a ${radiusFeeLabel} for you to review and pay separately before the event.`
+    : `${counterpartName} will propose a ${radiusFeeLabel} for your event location for you to review and pay separately before the event.`;
+  const vendorFeeNote = outsideServiceRadius
+    ? `This event is outside your service area — you can propose a ${radiusFeeLabel} to the customer from your bookings dashboard.`
+    : `This booking needs a ${radiusFeeLabel} for the event location — you can propose it to the customer from your bookings dashboard.`;
+  const outsideRadiusNote = showFeeNote
+    ? `<div style="background:#fff8f0;border-left:3px solid ${CORAL};padding:12px 16px;border-radius:4px;margin-bottom:20px;">
+          <p style="margin:0;font-size:13px;color:#b45309;">${role === "customer" ? customerFeeNote : vendorFeeNote}</p>
         </div>`
     : "";
 
@@ -125,13 +131,8 @@ export function bookingRequestedTemplate(params: BookingRequestedParams): {
         ? `New instant booking from ${counterpartName}.`
         : `New booking request from ${counterpartName}. Please accept or decline within 7 days or the booking will be automatically cancelled.`,
     ``,
-    ...(outsideServiceRadius
-      ? [
-          role === "customer"
-            ? `Note: Your event is outside ${counterpartName}'s standard service area, so they may propose a ${radiusFeeLabel} for you to review and pay separately before the event.`
-            : `Note: This event is outside your service area — you can propose a ${radiusFeeLabel} to the customer from your bookings dashboard.`,
-          ``,
-        ]
+    ...(showFeeNote
+      ? [`Note: ${role === "customer" ? customerFeeNote : vendorFeeNote}`, ``]
       : []),
     `Service: ${listingTitle}`,
     ...(addOns ?? []).map(a => `${a.title}: ${formatCents(a.priceCents)}`),
