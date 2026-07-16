@@ -38,6 +38,7 @@ import { runReviewPromptJob } from "../jobs/reviewPromptJob";
 import { runStripeWebhookCleanupJob } from "../jobs/stripeWebhookCleanup";
 import { runDataRetentionCleanupJob } from "../jobs/dataRetentionCleanup";
 import { runCompExpiryReminderJob } from "../jobs/compExpiryReminders";
+import { runCompPublishEnforcementJob } from "../jobs/compPublishEnforcement";
 
 // Module-level lazy-init guards for DDL-side-effect tables
 let moderationTableReadyPromise: Promise<void> | null = null;
@@ -1200,6 +1201,33 @@ export function startDataRetentionCleanupWorker() {
   startTimer.unref?.();
 }
 
+export function startCompPublishEnforcementWorker() {
+  const INTERVAL_MS = 24 * 60 * 60 * 1000; // daily
+  const serverUrl = appUrl();
+  const run = async () => {
+    // Lock so multiple app instances don't double-send emails or double-release
+    // campaign slots.
+    const lockToken = await tryAcquireWorkerLock("comp_publish_enforcement", 30 * 60 * 1000);
+    if (!lockToken) return;
+    try {
+      await runCompPublishEnforcementJob({
+        serverUrl,
+        logger: { log: logger.info.bind(logger), warn: logger.warn.bind(logger) },
+      });
+    } catch (err: any) {
+      captureJobError("comp_publish_enforcement", err, { stage: "worker" });
+    } finally {
+      await releaseWorkerLock("comp_publish_enforcement", lockToken);
+    }
+  };
+  const startTimer = setTimeout(() => {
+    void run();
+    const t = setInterval(() => void run(), INTERVAL_MS);
+    t.unref?.();
+  }, 12 * 60 * 1000);
+  startTimer.unref?.();
+}
+
 export function startCompExpiryReminderWorker() {
   const INTERVAL_MS = 24 * 60 * 60 * 1000; // daily
   const serverUrl = appUrl();
@@ -1744,4 +1772,5 @@ export function startAllBackgroundWorkers() {
   startStripeWebhookCleanupWorker();
   startDataRetentionCleanupWorker();
   startCompExpiryReminderWorker();
+  startCompPublishEnforcementWorker();
 }

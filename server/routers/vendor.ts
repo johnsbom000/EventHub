@@ -49,7 +49,11 @@ import {
   resolveVendorBusinessNameForIdentity,
   resolveCustomerAuthFromRequest,
 } from "../services/customerAuth";
-import { tryGrantCampaignComp } from "../services/compCampaignService";
+import {
+  LAUNCH_CAMPAIGN_KEY,
+  getCompPublishDeadline,
+  tryGrantCampaignComp,
+} from "../services/compCampaignService";
 import {
   ensureStripeCustomer,
   recomputeBookingPaymentStatusInTx,
@@ -785,6 +789,25 @@ export function registerVendorRoutes(app: Express): void {
       );
       const needsNewVendorProfileOnboarding = hasVendorAccount && !hasAnyVendorProfiles;
 
+      // Launch-comp publish stipulation (dashboard countdown banner). Non-null
+      // only while a launch-campaign comp is active and the vendor hasn't
+      // published a first listing yet. Deadline comes from the same helper the
+      // enforcement job uses, so the banner always matches what's enforced.
+      let compPublishRequirement: { deadline: string; graceApplied: boolean } | null = null;
+      if (
+        account.subscriptionStatus === "comp" &&
+        account.compSource === LAUNCH_CAMPAIGN_KEY &&
+        !account.firstListingPublishedAt &&
+        !account.compRevokedAt &&
+        account.createdAt
+      ) {
+        const { deadline, graceApplied } = getCompPublishDeadline({
+          createdAt: new Date(account.createdAt),
+          stripeConnectId: account.stripeConnectId ?? null,
+        });
+        compPublishRequirement = { deadline: deadline.toISOString(), graceApplied };
+      }
+
       res.json({
         id: account.id,
         email: account.email,
@@ -824,6 +847,7 @@ export function registerVendorRoutes(app: Express): void {
         subscriptionCurrentPeriodEnd: account.subscriptionCurrentPeriodEnd ?? null,
         subscriptionCancelAtPeriodEnd: account.subscriptionCancelAtPeriodEnd ?? false,
         compEndsAt: account.compEndsAt ?? null,
+        compPublishRequirement,
         __marker: "vendor_me_route_hit",
         vendorOnlySignup,
         onboardingCompleted: Boolean(account.onboardingCompletedAt),
@@ -2711,6 +2735,16 @@ export function registerVendorRoutes(app: Express): void {
       const finalListing = isPackageContainer
         ? (await db.select().from(vendorListings).where(eq(vendorListings.id, id)))[0] ?? updated
         : updated;
+
+      if (updated?.status === "active") {
+        // Permanent first-publish stamp — satisfies the launch-comp publish
+        // stipulation and is never cleared. Guarded on IS NULL so re-publishes
+        // (including listings that predate the column) keep the earliest date.
+        await db
+          .update(vendorAccounts)
+          .set({ firstListingPublishedAt: new Date() })
+          .where(and(eq(vendorAccounts.id, vendorAuth.id), isNull(vendorAccounts.firstListingPublishedAt)));
+      }
 
       if (updated?.status === "active" && existing[0]?.status !== "active") {
         const [{ activeCount }] = await db
