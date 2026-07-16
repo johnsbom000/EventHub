@@ -35,7 +35,7 @@ import {
 import { cn } from "@/lib/utils";
 
 
-import { Calendar, DollarSign, Users, TrendingUp, Loader2, Copy, Check, Sparkles, Lock } from "lucide-react";
+import { Calendar, Clock, DollarSign, Users, TrendingUp, Loader2, Copy, Check, Sparkles, Lock } from "lucide-react";
 
 type VendorMe = {
  id?: string | null;
@@ -50,6 +50,9 @@ type VendorMe = {
  hasAnyVendorProfiles?: boolean | null;
  hasActiveVendorProfile?: boolean | null;
  needsNewVendorProfileOnboarding?: boolean | null;
+ // Launch-comp publish stipulation: present while the vendor holds a launch
+ // spot but hasn't published a first listing yet (drives the countdown banner).
+ compPublishRequirement?: { deadline?: string | null; graceApplied?: boolean | null } | null;
  shopActive?: boolean | null;
  isPro?: boolean | null;
  canUseAnalytics?: boolean | null;
@@ -330,7 +333,7 @@ function formatGoogleSyncIssueCode(issueCode: string) {
 }
 
 export default function VendorDashboard() {
- const { t } = useTranslation();
+ const { t, i18n } = useTranslation();
  const { isAuthenticated, isLoading: isAuthLoading, getAccessTokenSilently, logout, user } = useAuth0();
  const [location, setLocation] = useLocation();
  const qc = useQueryClient();
@@ -1132,6 +1135,14 @@ export default function VendorDashboard() {
  const formatMoneyFromCents = (cents: number) =>
  new Intl.NumberFormat("en-US", { style: "currency", currency: "USD" }).format((cents || 0) / 100);
  const showStripeSetupCard = !vendorAccount?.stripeOnboardingComplete;
+ // Launch-comp publish countdown. daysLeft floors at 0 ("due today") — past-due
+ // vendors keep seeing the banner until the daily enforcement job runs.
+ const compPublishDeadline = vendorAccount?.compPublishRequirement?.deadline
+ ? new Date(vendorAccount.compPublishRequirement.deadline)
+ : null;
+ const compPublishDaysLeft = compPublishDeadline
+ ? Math.max(0, Math.ceil((compPublishDeadline.getTime() - Date.now()) / (24 * 60 * 60 * 1000)))
+ : null;
  const dashboardDividerBorderClass = "border-[rgba(74,106,125,0.22)]";
  const dashboardDividerBgClass = "bg-[rgba(74,106,125,0.22)]";
  const selectedGoogleCalendar = googleCalendars.find((calendar) => calendar.id === (vendorAccount?.googleCalendarId || ""));
@@ -1372,6 +1383,46 @@ export default function VendorDashboard() {
  </div>
 
  <div className="space-y-8">
+
+ {compPublishDeadline && compPublishDaysLeft !== null ? (
+ <div
+ className="rounded-xl border border-[#E07A6A]/50 bg-[#E07A6A]/10 p-6"
+ data-testid="section-comp-publish-countdown"
+ >
+ <div className="flex flex-wrap items-center gap-3">
+ <h2 className="font-heading text-[20px] leading-none tracking-tight">
+ {t("vendorDashboard.compPublishTitle")}
+ </h2>
+ <span className="inline-flex items-center gap-1.5 rounded-full bg-[#E07A6A] px-3 py-1 text-sm font-semibold text-white">
+ <Clock className="h-3.5 w-3.5" />
+ {compPublishDaysLeft === 0
+ ? t("vendorDashboard.compPublishDueToday")
+ : t("vendorDashboard.compPublishDaysLeft", { count: compPublishDaysLeft })}
+ </span>
+ </div>
+ <p className="mt-3 text-sm text-[#2a3a42]">
+ {t("vendorDashboard.compPublishBody", {
+ deadline: compPublishDeadline.toLocaleDateString(i18n.language, {
+ month: "long",
+ day: "numeric",
+ }),
+ })}
+ </p>
+ {vendorAccount?.compPublishRequirement?.graceApplied ? (
+ <p className="mt-2 text-sm text-muted-foreground">
+ {t("vendorDashboard.compPublishGraceNote")}
+ </p>
+ ) : null}
+ <div className="mt-5">
+ <Button
+ onClick={() => setLocation("/vendor/listings")}
+ data-testid="button-comp-publish-cta"
+ >
+ {t("vendorDashboard.compPublishCta")}
+ </Button>
+ </div>
+ </div>
+ ) : null}
 
  {showStripeSetupCard ? (
  <div className="rounded-xl border border-[hsl(var(--secondary-accent)/0.45)] bg-[hsl(var(--secondary-accent)/0.12)] p-6" data-testid="section-stripe-setup">
