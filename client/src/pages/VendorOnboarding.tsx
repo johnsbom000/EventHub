@@ -1,6 +1,6 @@
 // client/src/pages/VendorOnboarding.tsx
 
-import { useEffect, useState } from "react";
+import { useEffect, useMemo, useRef, useState } from "react";
 import { useLocation } from "wouter";
 import { BadgeCheck, Building2, Check, ClipboardList, Sparkles } from "lucide-react";
 import { useMutation } from "@tanstack/react-query";
@@ -17,6 +17,11 @@ import { trackEvent, trackEventBeacon } from "@/lib/analytics";
 import Step2_BusinessDetails from "@/features/vendor/onboarding/Step2_BusinessDetails";
 import Step3_AboutOwner from "@/features/vendor/onboarding/Step3_AboutOwner";
 import Step4_Confirm from "@/features/vendor/onboarding/Step4_Confirm";
+import {
+  clearOnboardingDraft,
+  loadOnboardingDraft,
+  saveOnboardingDraft,
+} from "@/features/vendor/onboarding/onboardingDraft";
 
 // Temporary: hide vendor type selection while we are Prop/Decor-only.
 // Flip to false when we re-enable multi-vendor onboarding.
@@ -269,9 +274,28 @@ export default function VendorOnboarding() {
  // eslint-disable-next-line react-hooks/exhaustive-deps
  }, []);
 
- const [currentStep, setCurrentStep] = useState<number>(1);
- const [formData, setFormData] = useState<VendorOnboardingData>(DEFAULT_ONBOARDING_DATA);
- const [completedStepIds, setCompletedStepIds] = useState<number[]>([]);
+ // Hydrate from a saved draft (if any) so refreshes, closed tabs, and the
+ // Auth0 login redirect don't lose progress. Lazy initializers avoid a flash
+ // of an empty form. Photos are never persisted, so they always start empty.
+ const [initialDraft] = useState(() => loadOnboardingDraft());
+ const [currentStep, setCurrentStep] = useState<number>(() =>
+ initialDraft
+ ? Math.min(Math.max(1, Math.floor(initialDraft.currentStep)), STEPS.length)
+ : 1
+ );
+ const [formData, setFormData] = useState<VendorOnboardingData>(() =>
+ initialDraft
+ ? {
+ ...DEFAULT_ONBOARDING_DATA,
+ ...initialDraft.formData,
+ shopProfilePhotoDataUrl: "",
+ shopCoverPhotoDataUrl: "",
+ }
+ : DEFAULT_ONBOARDING_DATA
+ );
+ const [completedStepIds, setCompletedStepIds] = useState<number[]>(
+ () => initialDraft?.completedStepIds ?? []
+ );
  const [isFinalizingOnboarding, setIsFinalizingOnboarding] = useState(false);
  const [pendingFinalAction, setPendingFinalAction] = useState<"createListing" | "myHub" | "dashboard" | null>(null);
  const [businessNameError, setBusinessNameError] = useState<string | null>(null);
@@ -279,6 +303,44 @@ export default function VendorOnboarding() {
  const updateFormData = (updates: Partial<VendorOnboardingData>) => {
  if ("businessName" in updates) setBusinessNameError(null);
  setFormData((prev) => ({ ...prev, ...updates }));
+ };
+
+ // Set once onboarding completes so a pending debounced save can't resurrect
+ // the draft we just cleared.
+ const draftClearedRef = useRef(false);
+
+ // referralCode is auto-seeded from the URL, not typed by the vendor, so it
+ // doesn't count toward "has the vendor entered anything worth saving".
+ const isFormDirty = useMemo(() => {
+ const { referralCode: _currentRef, ...current } = formData;
+ const { referralCode: _defaultRef, ...defaults } = DEFAULT_ONBOARDING_DATA;
+ return JSON.stringify(current) !== JSON.stringify(defaults);
+ }, [formData]);
+
+ const hasDraftableProgress =
+ isFormDirty || currentStep > 1 || completedStepIds.length > 0;
+
+ useEffect(() => {
+ if (draftClearedRef.current || !hasDraftableProgress) return;
+ const timeout = window.setTimeout(() => {
+ if (draftClearedRef.current) return;
+ saveOnboardingDraft({ formData, currentStep, completedStepIds });
+ }, 400);
+ return () => window.clearTimeout(timeout);
+ }, [formData, currentStep, completedStepIds, hasDraftableProgress]);
+
+ const handleStartOver = () => {
+ clearOnboardingDraft();
+ const pendingReferral = localStorage.getItem(REFERRAL_STORAGE_KEY);
+ setFormData({
+ ...DEFAULT_ONBOARDING_DATA,
+ operatingTimezone: detectBrowserTimezone(),
+ ...(pendingReferral ? { referralCode: pendingReferral } : {}),
+ });
+ setCurrentStep(1);
+ setCompletedStepIds([]);
+ setBusinessNameError(null);
+ trackEvent("vendor_onboarding_draft_cleared", { step: currentStep });
  };
 
  // Enforce vendorType at runtime as well (handles hot reload / toggles)
@@ -416,6 +478,8 @@ export default function VendorOnboarding() {
 
  const finishAndNavigate = async () => {
  await completeOnboardingMutation.mutateAsync(formData);
+ draftClearedRef.current = true;
+ clearOnboardingDraft();
  localStorage.removeItem(REFERRAL_STORAGE_KEY);
  if (createListing) {
  setLocation("/vendor/listings/new");
@@ -614,6 +678,19 @@ export default function VendorOnboarding() {
  "vendor-onboarding-input-surface vendor-onboarding-steps-typography mx-auto w-full max-w-[1400px] py-10 px-4 sm:px-12 lg:px-36"
  )}
  >
+ {hasDraftableProgress && (
+ <div className="mb-2 flex justify-end">
+ <button
+ type="button"
+ onClick={handleStartOver}
+ disabled={isFinalizingOnboarding}
+ className="text-sm text-[#4a6a7d] underline underline-offset-2 transition-colors hover:text-[#2a3a42] disabled:cursor-not-allowed disabled:opacity-50"
+ data-testid="onboarding-start-over"
+ >
+ Start over
+ </button>
+ </div>
+ )}
  {renderStep()}
  </div>
  </div>
