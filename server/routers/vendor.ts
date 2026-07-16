@@ -49,6 +49,7 @@ import {
   resolveVendorBusinessNameForIdentity,
   resolveCustomerAuthFromRequest,
 } from "../services/customerAuth";
+import { tryGrantCampaignComp } from "../services/compCampaignService";
 import {
   ensureStripeCustomer,
   recomputeBookingPaymentStatusInTx,
@@ -1225,6 +1226,13 @@ export function registerVendorRoutes(app: Express): void {
 
       logger.info(`[vendor-provision] Created stub account ${created.id}`);
 
+      // Launch offer: the first N vendors to sign up get complimentary Pro for
+      // 180 days (no card). The claim is atomic, so exactly N accounts are ever
+      // comped; once slots run out this is a no-op and they follow the normal
+      // no-card trial path instead. `comped` is returned so the client can skip
+      // starting a trial (a comp already grants Pro) and celebrate the offer.
+      const { comped, compDays } = await tryGrantCampaignComp(created.id);
+
       // Fire-and-forget: send vendor welcome email on first account creation.
       void (async () => {
         try {
@@ -1243,6 +1251,8 @@ export function registerVendorRoutes(app: Express): void {
         vendorAccountId: created.id,
         businessName: created.businessName,
         alreadyExisted: false,
+        comped,
+        compDays: comped ? compDays ?? null : null,
       });
     } catch (error: any) {
       logRouteError("/api/vendor/provision", error);

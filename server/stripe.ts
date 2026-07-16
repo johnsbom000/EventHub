@@ -524,10 +524,17 @@ export async function createSubscriptionCheckoutSession(params: {
   couponId?: string;
   /** Optional reassurance shown above the submit button (e.g. the ongoing price). */
   submitMessage?: string;
+  /** Experiment attribution stored on the subscription metadata (card arm). */
+  treatment?: string;
+  variant?: string;
   successUrl: string;
   cancelUrl: string;
 }): Promise<Stripe.Checkout.Session> {
-  const { stripeCustomerId, priceId, vendorAccountId, trialPeriodDays, couponId, submitMessage, successUrl, cancelUrl } = params;
+  const { stripeCustomerId, priceId, vendorAccountId, trialPeriodDays, couponId, submitMessage, treatment, variant, successUrl, cancelUrl } = params;
+  const experimentMeta = {
+    ...(treatment ? { treatment } : {}),
+    ...(variant ? { variant } : {}),
+  };
 
   // A coupon (auto-applied launch discount) and allow_promotion_codes are
   // mutually exclusive in Checkout — Stripe rejects both. When we have a coupon,
@@ -544,15 +551,69 @@ export async function createSubscriptionCheckoutSession(params: {
     payment_method_collection: "always",
     subscription_data: {
       ...(trialPeriodDays && trialPeriodDays > 0 ? { trial_period_days: trialPeriodDays } : {}),
-      metadata: { vendorAccountId, kind: "vendor_pro_subscription" },
+      metadata: { vendorAccountId, kind: "vendor_pro_subscription", ...experimentMeta },
     },
     // Mirror the identifiers onto the session too for checkout.session.completed.
-    metadata: { vendorAccountId, kind: "vendor_pro_subscription" },
+    metadata: { vendorAccountId, kind: "vendor_pro_subscription", ...experimentMeta },
     ...(submitMessage ? { custom_text: { submit: { message: submitMessage } } } : {}),
     success_url: successUrl,
     cancel_url: cancelUrl,
     ...discountConfig,
   });
+}
+
+/**
+ * Starts a Pro subscription trial WITHOUT collecting a card up front (Treatment B
+ * of the trial A/B test). Unlike `createSubscriptionCheckoutSession`, there is no
+ * hosted Checkout page — we create the subscription directly, so it is born in
+ * `trialing` status immediately and the vendor lands on the dashboard as Pro with
+ * nothing to pay.
+ *
+ * `trial_settings.end_behavior.missing_payment_method: 'cancel'` is the crux: at
+ * the end of the trial, if the vendor never added a card, Stripe CANCELS the
+ * subscription (firing `customer.subscription.deleted`, which our webhook already
+ * turns into a downgrade to Free) instead of letting it lapse into `past_due`.
+ * Stripe also fires `customer.subscription.trial_will_end` ~3 days before, which
+ * drives the day-27 "add a card" nudge.
+ *
+ * `treatment` and `variant` are stored on the subscription metadata so the
+ * conversion/downgrade webhook events can be attributed back to the experiment
+ * arm without any client involvement.
+ */
+export async function createNoCardTrialSubscription(params: {
+  stripeCustomerId: string;
+  priceId: string;
+  vendorAccountId: string;
+  trialPeriodDays: number;
+  treatment?: string;
+  variant?: string;
+  /**
+   * Idempotency key so concurrent /start-trial requests from the same vendor
+   * collapse to ONE subscription instead of stacking duplicate trials (closes the
+   * read-then-create race on the repeat-trial guard). Keyed by vendorAccountId.
+   */
+  idempotencyKey?: string;
+}): Promise<Stripe.Subscription> {
+  const { stripeCustomerId, priceId, vendorAccountId, trialPeriodDays, treatment, variant, idempotencyKey } = params;
+
+  return stripeClient.subscriptions.create(
+    {
+      customer: stripeCustomerId,
+      items: [{ price: priceId }],
+      trial_period_days: trialPeriodDays,
+      // No card is collected; if none is added by the end of the trial, cancel the
+      // subscription (→ subscription.deleted → downgrade to Free) rather than let it
+      // fall into past_due.
+      trial_settings: { end_behavior: { missing_payment_method: "cancel" } },
+      metadata: {
+        vendorAccountId,
+        kind: "vendor_pro_subscription",
+        ...(treatment ? { treatment } : {}),
+        ...(variant ? { variant } : {}),
+      },
+    },
+    idempotencyKey ? { idempotencyKey } : undefined
+  );
 }
 
 /**

@@ -49,6 +49,7 @@ export default function TemporaryLandingFreeD() {
       <CustomerExperienceSection storefrontImages={VARIED_STOREFRONT_IMAGES} />
       <Testimonials theme="light" layout="stacked" eyebrowKey={`${NS}.testimonials.eyebrow`} />
       <FreeVsProSection
+        treatment="nocard"
         onStartFree={() => handleSignupCta("pricing_start_free")}
         onTryPro={() => handleProCta("pricing_try_pro")}
       />

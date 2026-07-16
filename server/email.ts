@@ -10,6 +10,8 @@ import { newReviewReceivedTemplate, type NewReviewReceivedParams } from "./email
 import { paymentReceiptTemplate, type PaymentReceiptParams } from "./emails/paymentReceipt";
 import { listingTakenDownTemplate, type ListingTakenDownParams } from "./emails/listingTakenDown";
 import { vendorWelcomeTemplate, type VendorWelcomeParams } from "./emails/vendorWelcome";
+import { proTrialEndingTemplate, type ProTrialEndingParams } from "./emails/proTrialEnding";
+import { compExpiryReminderTemplate, type CompExpiryReminderParams } from "./emails/compExpiryReminder";
 import { eventDayReminderTemplate, type EventDayReminderParams } from "./emails/eventDayReminder";
 import { payoutProcessedTemplate, type PayoutProcessedParams } from "./emails/payoutProcessed";
 import { suspensionLiftedTemplate, type SuspensionLiftedParams } from "./emails/suspensionLifted";
@@ -208,6 +210,22 @@ export async function sendVendorWelcomeEmail(
   params: VendorWelcomeParams
 ): Promise<EmailResult> {
   const { subject, html, text } = vendorWelcomeTemplate(params);
+  return sendViaResend({ to, subject, html, text });
+}
+
+export async function sendProTrialEndingEmail(
+  to: string,
+  params: ProTrialEndingParams
+): Promise<EmailResult> {
+  const { subject, html, text } = proTrialEndingTemplate(params);
+  return sendViaResend({ to, subject, html, text });
+}
+
+export async function sendCompExpiryReminderEmail(
+  to: string,
+  params: CompExpiryReminderParams
+): Promise<EmailResult> {
+  const { subject, html, text } = compExpiryReminderTemplate(params);
   return sendViaResend({ to, subject, html, text });
 }
 

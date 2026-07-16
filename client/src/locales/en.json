@@ -1500,8 +1500,9 @@
         "calendar": "Google Calendar sync"
       },
       "risk": {
-        "trial": "14-day free trial on Pro",
+        "trial": "30-day free trial on Pro",
         "noCard": "No credit card to start",
+        "reminder": "We'll remind you before it renews",
         "cancel": "Cancel anytime",
         "keepFree": "Keep your free plan forever"
       }

@@ -66,6 +66,7 @@ export default function TemporaryLandingFreeB() {
       <HowItWorks onSignup={() => handleSignupCta("how_it_works")} />
       <CustomerExperienceSection storefrontImages={VARIED_STOREFRONT_IMAGES} />
       <FreeVsProSection
+        treatment="nocard"
         onStartFree={() => handleSignupCta("pricing_start_free")}
         onTryPro={() => handleProCta("pricing_try_pro")}
       />
