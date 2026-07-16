@@ -37,6 +37,7 @@ import { reconcilePaymentIntent, firePaymentSucceededSideEffects } from "./payme
 import { runReviewPromptJob } from "../jobs/reviewPromptJob";
 import { runStripeWebhookCleanupJob } from "../jobs/stripeWebhookCleanup";
 import { runDataRetentionCleanupJob } from "../jobs/dataRetentionCleanup";
+import { runCompExpiryReminderJob } from "../jobs/compExpiryReminders";
 
 // Module-level lazy-init guards for DDL-side-effect tables
 let moderationTableReadyPromise: Promise<void> | null = null;
@@ -1199,6 +1200,32 @@ export function startDataRetentionCleanupWorker() {
   startTimer.unref?.();
 }
 
+export function startCompExpiryReminderWorker() {
+  const INTERVAL_MS = 24 * 60 * 60 * 1000; // daily
+  const serverUrl = appUrl();
+  const run = async () => {
+    // Lock so multiple app instances don't send duplicate reminder emails.
+    const lockToken = await tryAcquireWorkerLock("comp_expiry_reminders", 30 * 60 * 1000);
+    if (!lockToken) return;
+    try {
+      await runCompExpiryReminderJob({
+        serverUrl,
+        logger: { log: logger.info.bind(logger), warn: logger.warn.bind(logger) },
+      });
+    } catch (err: any) {
+      captureJobError("comp_expiry_reminder", err, { stage: "worker" });
+    } finally {
+      await releaseWorkerLock("comp_expiry_reminders", lockToken);
+    }
+  };
+  const startTimer = setTimeout(() => {
+    void run();
+    const t = setInterval(() => void run(), INTERVAL_MS);
+    t.unref?.();
+  }, 10 * 60 * 1000);
+  startTimer.unref?.();
+}
+
 export function startBookingExpiryWorker() {
   let backoffMs = 5 * 60 * 1000;
   const MAX_BACKOFF_MS = 60 * 60 * 1000;
@@ -1716,4 +1743,5 @@ export function startAllBackgroundWorkers() {
   startPaymentEffectsSweepWorker();
   startStripeWebhookCleanupWorker();
   startDataRetentionCleanupWorker();
+  startCompExpiryReminderWorker();
 }
