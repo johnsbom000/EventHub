@@ -33,6 +33,7 @@ import { type ListingPhotoCrop } from "@/components/listings/InlinePhotoEditor";
 import { Button } from "@/components/ui/button";
 import { useToast } from "@/hooks/use-toast";
 import { getFreshAccessToken } from "@/lib/authToken";
+import { buildListingLogisticsPayload, isDeliveryCategory, isTravelCategory } from "@/lib/listingLogistics";
 import { DEFAULT_COVER_RATIO, type CoverRatio } from "@/lib/listingPhotos";
 import { getPublishFailureToastContent, isStripeNotConfiguredError, isListingLimitReachedError, isOnboardingIncompleteError } from "@/lib/publishFailureToast";
 import { UpgradeModal } from "@/components/UpgradeModal";
@@ -792,8 +793,8 @@ export function CreateListingWizard({ onClose, initialListingType, parentListing
 
  const stepIndex = useMemo(() => steps.findIndex((step) => step.id === currentStep), [steps, currentStep]);
 
- const showTravelSection = draft.category === "Service";
- const showDeliverySection = draft.category === "Rental" || draft.category === "Catering";
+ const showTravelSection = isTravelCategory(draft.category);
+ const showDeliverySection = isDeliveryCategory(draft.category);
  const showSetupSection = draft.category === "Rental" || draft.category === "Venue" || draft.category === "Catering";
  const showTakedownSection = draft.category === "Rental" || draft.category === "Venue" || draft.category === "Catering";
  const showDimensionsSection = draft.category === "Rental";
@@ -911,39 +912,17 @@ export function CreateListingWizard({ onClose, initialListingType, parentListing
  }
  : null,
 
- // Unified travel/delivery fee. Both Service (travel) and Rental/Catering (delivery)
- // write into the travel_fee_* columns; the category decides the label shown to users.
- // "offered" = the vendor goes to the customer's location (travelOffered for Service,
- // deliveryIncluded for delivery categories). A flat fee only carries an amount; a
- // "variable" fee is proposed after booking.
- servesOutsideRadius: showTravelSection || showDeliverySection ? draft.servesOutsideRadius : false,
- travelOffered: showTravelSection
- ? draft.travelOffered
- : showDeliverySection
- ? draft.deliveryIncluded
- : false,
- travelFeeEnabled:
- (showTravelSection ? draft.travelOffered : showDeliverySection ? draft.deliveryIncluded : false) &&
- draft.travelFeeEnabled,
- travelFeeType:
- (showTravelSection || showDeliverySection) && draft.travelFeeEnabled ? draft.travelFeeType : null,
- travelFeeAmount:
- (showTravelSection || showDeliverySection) && draft.travelFeeEnabled && draft.travelFeeType === "flat"
- ? Number(draft.travelFeeAmount || 0)
- : null,
- travelFeeAmountCents:
- (showTravelSection || showDeliverySection) && draft.travelFeeEnabled && draft.travelFeeType === "flat"
- ? toMoneyCents(draft.travelFeeAmount)
- : null,
-
- // Delivery flags stay for pickup/delivery semantics; the fee itself now lives in
- // the unified travel_fee_* columns above (delivery_fee_* is no longer a fee source).
- deliveryIncluded: showDeliverySection ? draft.deliveryIncluded : false,
- deliveryOffered: showDeliverySection ? draft.deliveryIncluded : false,
- pickupOffered: showDeliverySection,
- deliveryFeeEnabled: false,
- deliveryFeeAmount: null,
- deliveryFeeAmountCents: null,
+ // Unified travel/delivery fee — shared with VendorListingEdit via
+ // buildListingLogisticsPayload so both writers persist identically.
+ ...buildListingLogisticsPayload({
+ category: draft.category,
+ servesOutsideRadius: draft.servesOutsideRadius,
+ travelOffered: draft.travelOffered,
+ deliveryIncluded: draft.deliveryIncluded,
+ feeEnabled: draft.travelFeeEnabled,
+ feeType: draft.travelFeeType,
+ feeAmountCents: toMoneyCents(draft.travelFeeAmount),
+ }),
 
  setupIncluded: showSetupSection ? draft.setupIncluded : false,
  setupOffered: showSetupSection ? draft.setupIncluded : false,

@@ -4,6 +4,7 @@ import {
   getListingLogisticsFeeSummaryCents,
   resolveBookingConfirmationRequirement,
 } from "../server/lib/routeUtils";
+import { buildListingLogisticsPayload } from "../client/src/lib/listingLogistics";
 
 // Service center: downtown Salt Lake City. Radius 30 miles.
 const CENTER = { lat: 40.7608, lng: -111.891 };
@@ -113,6 +114,78 @@ function summary(opts: {
     resolveBookingConfirmationRequirement({ isInstantBooking: true, feeProposalPending: true }).requiresVendorConfirmation,
     true,
   );
+}
+
+// ── buildListingLogisticsPayload (shared wizard/edit-page writer) ─────────────
+{
+  // Service: the travel toggle drives travelOffered — a title-only edit must
+  // round-trip travel config unchanged (regression: edit page once wiped it).
+  const service = buildListingLogisticsPayload({
+    category: "Service",
+    servesOutsideRadius: true,
+    travelOffered: true,
+    deliveryIncluded: false, // wizard stores an explicit false for Services
+    feeEnabled: true,
+    feeType: "flat",
+    feeAmountCents: 5000,
+  });
+  assert.equal(service.travelOffered, true, "Service keeps travelOffered despite deliveryIncluded:false");
+  assert.equal(service.travelFeeEnabled, true);
+  assert.equal(service.travelFeeType, "flat");
+  assert.equal(service.travelFeeAmountCents, 5000);
+  assert.equal(service.servesOutsideRadius, true);
+  assert.equal(service.deliveryOffered, false, "Service never writes delivery flags on");
+}
+
+{
+  // Rental: the delivery toggle drives travelOffered; variable fee carries no amount.
+  const rental = buildListingLogisticsPayload({
+    category: "Rental",
+    servesOutsideRadius: false,
+    travelOffered: false,
+    deliveryIncluded: true,
+    feeEnabled: true,
+    feeType: "variable",
+    feeAmountCents: 5000,
+  });
+  assert.equal(rental.travelOffered, true, "Rental maps deliveryIncluded → travelOffered");
+  assert.equal(rental.travelFeeType, "variable");
+  assert.equal(rental.travelFeeAmountCents, null, "variable fee never persists an amount");
+  assert.equal(rental.deliveryOffered, true);
+  assert.equal(rental.pickupOffered, true);
+}
+
+{
+  // Category with neither section (Venue): everything forced off.
+  const venue = buildListingLogisticsPayload({
+    category: "Venue",
+    servesOutsideRadius: true,
+    travelOffered: true,
+    deliveryIncluded: true,
+    feeEnabled: true,
+    feeType: "flat",
+    feeAmountCents: 5000,
+  });
+  assert.equal(venue.travelOffered, false);
+  assert.equal(venue.travelFeeEnabled, false);
+  assert.equal(venue.travelFeeType, null);
+  assert.equal(venue.servesOutsideRadius, false);
+}
+
+{
+  // Fee cannot be enabled when the vendor doesn't travel/deliver at all.
+  const notOffered = buildListingLogisticsPayload({
+    category: "Service",
+    servesOutsideRadius: false,
+    travelOffered: false,
+    deliveryIncluded: false,
+    feeEnabled: true,
+    feeType: "flat",
+    feeAmountCents: 5000,
+  });
+  assert.equal(notOffered.travelFeeEnabled, false, "fee gated on offered");
+  assert.equal(notOffered.travelFeeType, null);
+  assert.equal(notOffered.travelFeeAmountCents, null);
 }
 
 console.log("service-radius-fee.test.ts: all assertions passed");

@@ -17,9 +17,20 @@ import { db } from "../server/db";
  * requiresVendorConfirmation. outside_service_radius stays purely geographic.
  *
  * Idempotent: ADD COLUMN IF NOT EXISTS + guarded backfills. travel_fee_type is a
- * free-text column, so no enum change is needed — this migration is transaction-safe.
+ * free-text column, but 0146 added a CHECK constraint pinning it to
+ * ('flat','per_mile','per_hour') — dropped below BEFORE the 'variable' backfill,
+ * or step 4 aborts the whole migration. 0157 re-adds the CHECK widened to
+ * ('flat','variable').
  */
 export async function up() {
+  // 0. Drop the 0146 CHECK that predates the 'variable' fee type. Must happen
+  //    before step 4 writes 'variable'. (Environments that already ran this
+  //    migration are covered by 0157, which drops + re-adds it widened.)
+  await db.execute(sql`
+    ALTER TABLE IF EXISTS vendor_listings
+      DROP CONSTRAINT IF EXISTS chk_vendor_listings_travel_fee_type
+  `);
+
   // 1. New columns
   await db.execute(sql`
     ALTER TABLE IF EXISTS vendor_listings
