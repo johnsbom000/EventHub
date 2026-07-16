@@ -81,6 +81,7 @@ export const notificationTypeEnum = pgEnum("notification_type", [
   "travel_fee_proposed",
   "travel_fee_accepted",
   "travel_fee_declined",
+  "pro_trial_ending",
 ]);
 
 export const messageSenderTypeEnum = pgEnum("message_sender_type", ["customer", "vendor"]);
@@ -269,6 +270,21 @@ export const eventLog = pgTable("event_log", {
 
 export type EventLogEntry = typeof eventLog.$inferSelect;
 
+// Campaign counter for auto-granting complimentary Pro to the first N signups
+// (e.g. the launch offer: first 50 vendors get 180 days free). One row per
+// campaign; the provision handler claims a slot with an atomic conditional
+// UPDATE so exactly slots_total vendors can ever be comped. See migration 0153.
+export const compCampaigns = pgTable("comp_campaigns", {
+  key: text("key").primaryKey(),
+  slotsTotal: integer("slots_total").notNull(),
+  slotsClaimed: integer("slots_claimed").notNull().default(0),
+  compDays: integer("comp_days").notNull().default(180),
+  active: boolean("active").notNull().default(true),
+  createdAt: timestamp("created_at", { withTimezone: true }).notNull().defaultNow(),
+});
+
+export type CompCampaign = typeof compCampaigns.$inferSelect;
+
 // Vendor Accounts (authentication only)
 export const vendorAccounts = pgTable(
   "vendor_accounts",
@@ -337,6 +353,11 @@ export const vendorAccounts = pgTable(
     // to Free. Used for the 30-day grant given to vendors existing at launch.
     compEndsAt: timestamp("comp_ends_at"),
     subscriptionUpdatedAt: timestamp("subscription_updated_at"),
+    // Pre-expiry reminder tracking for a comp grant (migration 0154): stamped when
+    // the 7-days-before / 1-day-before "your free Pro is ending" emails are sent,
+    // so the daily reminder job never double-sends. Reset to NULL on a new grant.
+    compReminder7dSentAt: timestamp("comp_reminder_7d_sent_at", { withTimezone: true }),
+    compReminder1dSentAt: timestamp("comp_reminder_1d_sent_at", { withTimezone: true }),
     // AI reply assistant (Pro-gated, metered — migration 0136). Feature toggle is
     // opt-in (default off); overage auto-billing is opt-out (default on). When the
     // included monthly allowance is exhausted: overage on → meter to Stripe, overage

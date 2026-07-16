@@ -7,6 +7,7 @@ import BrandWordmark from "@/components/BrandWordmark";
 import AuthModal from "@/components/AuthModal";
 import { trackBoth } from "@/lib/tracking";
 import { initEngagement } from "@/lib/engagement";
+import { readLandingVariant, type LandingVariant } from "@/hooks/useLandingVariant";
 
 /* ---------------------------------------------------------------------------
    Shared sign-up flow for the free-first landing variants (A–E).
@@ -20,17 +21,29 @@ import { initEngagement } from "@/lib/engagement";
      vendor/customer choice on its Sign-up tab, so even the login → sign-up
      detour can't silently mint a customer account.
 
-   PRO-TRIAL ("Try Pro free") — DEFERRED:
-   For now this behaves exactly like a free vendor signup (creates a free vendor
-   account, no card, no Stripe). The click is tagged `intent: "pro"` so interest
-   is still measurable. When the Pro-trial payment timeline is decided, flip the
-   TODO in `startSignup` to set `eh:pro-trial-intent` and VendorProvision will
-   hand off to Stripe Checkout after the account is created.
+   PRO-TRIAL ("Try Pro free") — A/B TEST (tied to landing variant):
+   A "Try Pro free" click starts a 30-day Pro trial after the vendor account is
+   created. Which trial treatment fires is tied to the landing variant the
+   visitor saw (see `treatmentForVariant`):
+     - card-upfront (A/C/E): VendorProvision hands off to Stripe Checkout to
+       collect a card, then the trial auto-charges at day 30.
+     - no-card (B/D): VendorProvision calls /billing/start-trial to begin a
+       card-free trial that downgrades to Free at day 30 unless a card is added.
+   The chosen treatment is passed to VendorProvision via `eh:pro-trial-mode`.
 --------------------------------------------------------------------------- */
 
 const VENDOR_INTENT_RETURN_TO = "/vendor/provision";
 
 type SignupIntent = "free" | "pro";
+
+// Pro-trial treatment assignment. The card-upfront arm is PAUSED for now, so
+// every landing variant starts a no-card trial. The card path (Stripe Checkout)
+// remains built and dormant in VendorProvision; to re-enable the card-vs-no-card
+// A/B, map direction-a/c/e back to "card" here.
+type ProTrialTreatment = "card" | "nocard";
+function treatmentForVariant(_variant: LandingVariant): ProTrialTreatment {
+  return "nocard";
+}
 
 function SignupDialog({
   open,
@@ -149,13 +162,19 @@ export function useLandingSignup(_ns?: string) {
   // /vendor/provision so the existing provisioning flow runs unchanged.
   const startSignup = async (method: "google" | "email") => {
     sessionStorage.setItem("eh:after-auth-intent", "vendor");
-    // Never let a stale "Try Pro" intent leak in. (When Pro-trial billing is
-    // un-deferred, set eh:pro-trial-intent here when intent === "pro" instead.)
-    sessionStorage.removeItem("eh:pro-trial-intent");
-    sessionStorage.removeItem("eh:pro-trial-interval");
-    // TODO(pro-trial): when payment timeline is decided, for intent === "pro"
-    // set sessionStorage "eh:pro-trial-intent" (+ interval) so VendorProvision
-    // hands off to Stripe Checkout after the vendor account is created.
+    // Pro-trial A/B: a "Try Pro free" click (intent === "pro") starts a trial
+    // after the account is created; the treatment is tied to the landing variant.
+    // A plain "Start free" click clears any stale flags so it can never inherit a
+    // Pro trial. These are read (and cleared) by VendorProvision post-provision.
+    if (intent === "pro") {
+      sessionStorage.setItem("eh:pro-trial-intent", "1");
+      sessionStorage.setItem("eh:pro-trial-interval", "monthly");
+      sessionStorage.setItem("eh:pro-trial-mode", treatmentForVariant(readLandingVariant()));
+    } else {
+      sessionStorage.removeItem("eh:pro-trial-intent");
+      sessionStorage.removeItem("eh:pro-trial-interval");
+      sessionStorage.removeItem("eh:pro-trial-mode");
+    }
 
     const authorizationParams: Record<string, string> = { screen_hint: "signup" };
     if (method === "google") {

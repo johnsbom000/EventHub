@@ -31,12 +31,18 @@ const ROWS: { key: string; free: CellValue; pro: CellValue }[] = [
   { key: "calendar", free: false, pro: true },
 ];
 
-const RISK_KEYS = ["trial", "noCard", "cancel", "keepFree"] as const;
+// Risk-reduction strip. The second item is treatment-specific: the no-card arm
+// (B/D) truthfully advertises "no credit card required"; the card-upfront arm
+// (A/C/E) must NOT — instead it reassures that we'll remind them before the trial
+// renews, so the copy always matches what the flow actually does.
+const RISK_KEYS_NOCARD = ["trial", "noCard", "cancel", "keepFree"] as const;
+const RISK_KEYS_CARD = ["trial", "reminder", "cancel", "keepFree"] as const;
 
 export default function FreeVsProSection({
   onStartFree,
   onTryPro,
   animated = false,
+  treatment = "nocard",
 }: {
   onStartFree: () => void;
   onTryPro: () => void;
@@ -44,9 +50,14 @@ export default function FreeVsProSection({
   // on the comparison card + deal-fill gradient on the Try Pro button), matching
   // the launch-deal animation on the original TemporaryLanding page.
   animated?: boolean;
+  // Which Pro-trial arm this page is in — drives the reassurance copy. The
+  // card-upfront arm is paused, so this defaults to "nocard" (no-card promise
+  // shown). Set to "card" only if the card-vs-no-card A/B is re-enabled.
+  treatment?: "card" | "nocard";
 }) {
   const { t } = useTranslation();
   const [annual, setAnnual] = useState(true);
+  const riskKeys = treatment === "nocard" ? RISK_KEYS_NOCARD : RISK_KEYS_CARD;
 
   const Cell = ({ v, pro }: { v: CellValue; pro?: boolean }) => {
     if (v === true)
@@ -197,7 +208,7 @@ export default function FreeVsProSection({
 
           {/* Risk-reduction strip */}
           <div className="flex flex-wrap items-center justify-center gap-x-8 gap-y-2 border-t border-[rgba(74,106,125,0.1)] bg-[#f8fafb] px-5 py-4 sm:px-8">
-            {RISK_KEYS.map((k) => (
+            {riskKeys.map((k) => (
               <span key={k} className="flex items-center gap-2 font-sans text-[0.95rem] font-medium text-[#4a6a7d]">
                 <span className="flex h-5 w-5 items-center justify-center rounded-full bg-[#e6f3f1] text-[0.65rem] font-bold text-[#3f7d75]">
                   ✓

@@ -177,6 +177,7 @@ import {
   sendDisputeResponseEmail,
   sendTravelFeeProposedEmail,
   sendTravelFeeRespondedEmail,
+  sendProTrialEndingEmail,
 } from "../email";
 import { calculateRefund } from "../lib/calculateRefund";
 import { apportionChargeRefunds } from "../lib/refundApportionment";
@@ -1112,11 +1113,15 @@ export function registerPaymentRoutes(app: Express): void {
         const subscription = event?.data?.object ?? {};
         const subscriptionId = asTrimmedString(subscription?.id);
         if (subscriptionId) {
-          const { vendorAccountId } = await markVendorSubscriptionCanceled(subscriptionId);
+          const { vendorAccountId, downgraded } = await markVendorSubscriptionCanceled(
+            subscriptionId,
+            subscription?.metadata as Record<string, string> | undefined
+          );
           // Drop to Free: trim extra active listings down to the free-tier cap and
           // tear down Google Calendar sync (a Pro-only feature) so it stops for the
-          // now-free vendor.
-          if (vendorAccountId) {
+          // now-free vendor. Skipped when an active comp grant kept them Pro
+          // (downgraded === false), so a comped vendor's listings aren't trimmed.
+          if (vendorAccountId && downgraded) {
             await deactivateExtraActiveListingsForFreeTier(vendorAccountId);
             await disconnectGoogleCalendarForVendor(vendorAccountId);
           }
@@ -1144,6 +1149,75 @@ export function registerPaymentRoutes(app: Express): void {
                 inArray(vendorAccounts.subscriptionStatus, ["active", "trialing", "past_due"])
               )
             );
+        }
+      } else if (eventType === "customer.subscription.trial_will_end") {
+        // Day-27 nudge for the no-card trial (Treatment B). Stripe fires this ~3
+        // days before the trial ends. We only nudge trials with NO card on file —
+        // the card-upfront arm (Treatment A) auto-converts, so nagging it would be
+        // wrong. Fetch the live subscription + customer to see the payment method
+        // reliably (the card may be the subscription's OR the customer's default).
+        const subscription = event?.data?.object ?? {};
+        const subscriptionId = asTrimmedString(subscription?.id);
+        if (subscriptionId) {
+          const fresh: any = await stripe.subscriptions.retrieve(subscriptionId);
+          if (asTrimmedString(fresh?.metadata?.kind) === "vendor_pro_subscription") {
+            let hasCard = Boolean(fresh?.default_payment_method);
+            const customerId = asTrimmedString(fresh?.customer);
+            if (!hasCard && customerId) {
+              const customer: any = await stripe.customers.retrieve(customerId);
+              hasCard =
+                Boolean(customer?.invoice_settings?.default_payment_method) ||
+                Boolean(customer?.default_source);
+            }
+            if (!hasCard) {
+              const metaVendorId = asTrimmedString(fresh?.metadata?.vendorAccountId);
+              const rows = await db
+                .select({
+                  id: vendorAccounts.id,
+                  email: vendorAccounts.email,
+                  businessName: vendorAccounts.businessName,
+                  subscriptionStatus: vendorAccounts.subscriptionStatus,
+                  compEndsAt: vendorAccounts.compEndsAt,
+                })
+                .from(vendorAccounts)
+                .where(
+                  metaVendorId
+                    ? eq(vendorAccounts.id, metaVendorId)
+                    : eq(vendorAccounts.stripeSubscriptionId, subscriptionId)
+                )
+                .limit(1);
+              const vendor = rows[0];
+              // Skip the "add a card" nudge for a vendor kept Pro by an active comp
+              // grant — their comp outlasts this Stripe trial, so it would mislead.
+              const compActive =
+                vendor?.subscriptionStatus === "comp" &&
+                vendor.compEndsAt != null &&
+                new Date(vendor.compEndsAt).getTime() > Date.now();
+              if (vendor && !compActive) {
+                const trialEndMs =
+                  typeof fresh?.trial_end === "number" ? fresh.trial_end * 1000 : null;
+                const daysLeft = trialEndMs
+                  ? Math.max(1, Math.ceil((trialEndMs - Date.now()) / 86_400_000))
+                  : 3;
+                await createNotification({
+                  recipientId: vendor.id,
+                  recipientType: "vendor",
+                  type: "pro_trial_ending",
+                  title: "Your Pro trial ends soon",
+                  message: `Add a card to keep Pro — your free trial ends in ${daysLeft} day${daysLeft === 1 ? "" : "s"}. If you don't, you'll simply move to the free plan.`,
+                  link: "/vendor/dashboard",
+                });
+                if (vendor.email) {
+                  await sendProTrialEndingEmail(vendor.email, {
+                    recipientName: vendor.businessName || "there",
+                    businessName: vendor.businessName || "your business",
+                    daysLeft,
+                    serverUrl: appUrl(),
+                  });
+                }
+              }
+            }
+          }
         }
       } else if (
         eventType === "account.updated" ||

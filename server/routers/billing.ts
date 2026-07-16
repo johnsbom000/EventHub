@@ -12,6 +12,7 @@ import { deactivateExtraActiveListingsForFreeTier } from "../services/bookingSer
 import { disconnectGoogleCalendarForVendor } from "../google";
 import { appUrl, logRouteError, respondWithInternalServerError } from "../lib/routeHelpers";
 import { mutationRateLimiter } from "../lib/rateLimiters";
+import { logEvent } from "../lib/events";
 import {
   STRIPE_PRICE_PRO_MONTHLY,
   STRIPE_PRICE_PRO_ANNUAL,
@@ -31,6 +32,15 @@ export function registerBillingRoutes(app: Express) {
     if (interval === "annual") return STRIPE_PRICE_PRO_ANNUAL || null;
     if (interval === "monthly") return STRIPE_PRICE_PRO_MONTHLY || null;
     return null;
+  }
+
+  // Sanitize an experiment label (treatment / variant) coming from the client.
+  // These are ANALYTICS metadata only — never used for billing logic — so a
+  // tampered value can't grant Pro or bypass a guard; we just bound it.
+  function experimentLabel(value: unknown): string | undefined {
+    if (typeof value !== "string") return undefined;
+    const cleaned = value.trim().slice(0, 40);
+    return cleaned.length ? cleaned : undefined;
   }
 
   // GET /api/vendor/billing/status — entitlements + billing period info for the
@@ -71,6 +81,10 @@ export function registerBillingRoutes(app: Express) {
       if (!priceId) {
         return res.status(400).json({ error: "billing_not_configured", message: "Pro pricing is not configured." });
       }
+      // Experiment attribution — analytics labels only, never used for billing
+      // decisions, so it is safe to take from the client. Bounded for safety.
+      const treatment = experimentLabel(req.body?.treatment);
+      const variant = experimentLabel(req.body?.variant);
 
       // If they already have a live subscription, send them to the portal to
       // manage it instead of creating a duplicate.
@@ -105,6 +119,8 @@ export function registerBillingRoutes(app: Express) {
         trialPeriodDays,
         couponId: STRIPE_COUPON_PRO || undefined,
         submitMessage,
+        treatment,
+        variant,
         successUrl: `${base}/vendor/dashboard?checkout=success`,
         cancelUrl: `${base}/vendor/dashboard?checkout=cancelled`,
       });
@@ -113,6 +129,67 @@ export function registerBillingRoutes(app: Express) {
     } catch (err: any) {
       logRouteError("/api/vendor/billing/checkout", err);
       return res.status(500).json({ error: "Unable to start checkout" });
+    }
+  });
+
+  // POST /api/vendor/billing/start-trial — start a 30-day Pro trial WITHOUT a card
+  // (Treatment B of the trial A/B test). Body: { interval, treatment?, variant? }.
+  // Creates the subscription directly (no Checkout page), so the vendor is Pro
+  // immediately. Stripe cancels it at day 30 if no card was added.
+  app.post("/api/vendor/billing/start-trial", mutationRateLimiter, ...requireVendorAuth0, async (req, res) => {
+    try {
+      const account = await getVendorAccountFromRequest(req);
+      if (!account?.id) return res.status(404).json({ error: "Vendor account not found" });
+      if (!account.userId || !account.email) {
+        return res.status(400).json({ error: "Vendor account is missing identity for billing" });
+      }
+
+      // If they already hold an active comp grant (e.g. the launch offer
+      // auto-granted 180 days at provision), they're already Pro — don't start a
+      // redundant Stripe trial that would end long before their comp does.
+      if (isCompActive(account, new Date())) {
+        return res.json({ ok: true, status: "comp" });
+      }
+
+      const interval = typeof req.body?.interval === "string" ? req.body.interval.trim() : "monthly";
+      const priceId = priceIdForInterval(interval);
+      if (!priceId) {
+        return res.status(400).json({ error: "billing_not_configured", message: "Pro pricing is not configured." });
+      }
+      const treatment = experimentLabel(req.body?.treatment);
+      const variant = experimentLabel(req.body?.variant);
+
+      // The no-card trial is for BRAND-NEW vendors only. Anyone who has ever held a
+      // subscription (stripeSubscriptionId is retained even after cancel) must
+      // upgrade through the normal card flow — this both prevents repeat-trial
+      // abuse AND avoids creating a 0-day trial that would instantly fail to charge
+      // a customer with no card on file.
+      if (account.stripeSubscriptionId) {
+        return res.status(409).json({ error: "trial_not_available", message: "A free trial is only available on a new account. Please upgrade to Pro instead." });
+      }
+
+      const stripeCustomerId = await ensureStripeCustomer(account.userId, account.email);
+      const { createNoCardTrialSubscription } = await import("../stripe");
+      const subscription = await createNoCardTrialSubscription({
+        stripeCustomerId,
+        priceId,
+        vendorAccountId: account.id,
+        trialPeriodDays: PRO_TRIAL_PERIOD_DAYS,
+        treatment,
+        variant,
+        // Stable per-vendor key: parallel start-trial requests collapse to one
+        // subscription rather than stacking duplicate trials.
+        idempotencyKey: `start-trial:${account.id}`,
+      });
+
+      // Persist the trialing state now so /vendor/me reflects Pro immediately,
+      // without waiting for the customer.subscription.created webhook to arrive.
+      await applyStripeSubscriptionToVendor(subscription as any);
+
+      return res.json({ ok: true, status: "trialing" });
+    } catch (err: any) {
+      logRouteError("/api/vendor/billing/start-trial", err);
+      return res.status(500).json({ error: "Unable to start trial" });
     }
   });
 
@@ -255,6 +332,17 @@ export async function applyStripeSubscriptionToVendor(subscription: {
     })
     .where(eq(vendorAccounts.id, account.id));
 
+  // Trial → paid conversion (both A/B arms): the vendor was trialing and Stripe
+  // just moved them to active. Attributed with the experiment metadata so the
+  // A/B test can compare paid-conversion rates per treatment.
+  if (account.subscriptionStatus === "trialing" && localStatus === "active") {
+    logEvent("pro_trial_converted", "vendor", account.id, {
+      treatment: subscription.metadata?.treatment ?? null,
+      variant: subscription.metadata?.variant ?? null,
+      priceId,
+    });
+  }
+
   return { vendorAccountId: account.id };
 }
 
@@ -262,14 +350,28 @@ export async function applyStripeSubscriptionToVendor(subscription: {
  * Marks a vendor's subscription as canceled (subscription.deleted webhook). The
  * caller is responsible for triggering the free-tier listing trim afterwards.
  */
-export async function markVendorSubscriptionCanceled(subscriptionId: string): Promise<{ vendorAccountId: string | null }> {
+export async function markVendorSubscriptionCanceled(
+  subscriptionId: string,
+  metadata?: Record<string, string> | null
+): Promise<{ vendorAccountId: string | null; downgraded: boolean }> {
   const rows = await db
-    .select({ id: vendorAccounts.id })
+    .select({
+      id: vendorAccounts.id,
+      subscriptionStatus: vendorAccounts.subscriptionStatus,
+      compEndsAt: vendorAccounts.compEndsAt,
+    })
     .from(vendorAccounts)
     .where(eq(vendorAccounts.stripeSubscriptionId, subscriptionId))
     .limit(1);
   const account = rows[0];
-  if (!account) return { vendorAccountId: null };
+  if (!account) return { vendorAccountId: null, downgraded: false };
+
+  // Comp takes precedence: if an active complimentary grant is in effect (e.g. a
+  // launch-offer comp), a Stripe trial/subscription ending must NOT drop them to
+  // Free. Leave the comp intact — it expires on its own schedule.
+  if (isCompActive(account, new Date())) {
+    return { vendorAccountId: account.id, downgraded: false };
+  }
 
   await db
     .update(vendorAccounts)
@@ -281,5 +383,15 @@ export async function markVendorSubscriptionCanceled(subscriptionId: string): Pr
     })
     .where(eq(vendorAccounts.id, account.id));
 
-  return { vendorAccountId: account.id };
+  // Trial → downgrade (both A/B arms): the subscription ended while the vendor was
+  // still trialing (no-card trial hit day 30 with no card, or they cancelled mid-
+  // trial). Distinguished from paid churn by the prior 'trialing' status.
+  if (account.subscriptionStatus === "trialing") {
+    logEvent("pro_trial_downgraded", "vendor", account.id, {
+      treatment: metadata?.treatment ?? null,
+      variant: metadata?.variant ?? null,
+    });
+  }
+
+  return { vendorAccountId: account.id, downgraded: true };
 }
