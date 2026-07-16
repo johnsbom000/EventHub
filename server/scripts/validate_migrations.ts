@@ -27,7 +27,7 @@ for (const file of files) {
   byNumber.set(prefix, existing);
 }
 
-const duplicates = [...byNumber.entries()].filter(([, names]) => names.length > 1);
+const duplicates = Array.from(byNumber.entries()).filter(([, names]) => names.length > 1);
 
 if (duplicates.length > 0) {
   console.error("\n[validate-migrations] ERROR: Duplicate migration numbers found:\n");
@@ -43,7 +43,7 @@ if (duplicates.length > 0) {
   process.exit(1);
 }
 
-const numbers = [...byNumber.keys()].map(Number).sort((a, b) => a - b);
+const numbers = Array.from(byNumber.keys()).map(Number).sort((a, b) => a - b);
 console.log(
   `[validate-migrations] OK — ${files.length} migration files, ` +
   `numbers ${numbers[0].toString().padStart(4, "0")}–${numbers[numbers.length - 1].toString().padStart(4, "0")}, no duplicates.`
