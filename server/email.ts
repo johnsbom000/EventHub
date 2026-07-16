@@ -12,6 +12,8 @@ import { listingTakenDownTemplate, type ListingTakenDownParams } from "./emails/
 import { vendorWelcomeTemplate, type VendorWelcomeParams } from "./emails/vendorWelcome";
 import { proTrialEndingTemplate, type ProTrialEndingParams } from "./emails/proTrialEnding";
 import { compExpiryReminderTemplate, type CompExpiryReminderParams } from "./emails/compExpiryReminder";
+import { compPublishNudgeTemplate, type CompPublishNudgeParams } from "./emails/compPublishNudge";
+import { compRevokedTemplate, type CompRevokedParams } from "./emails/compRevoked";
 import { eventDayReminderTemplate, type EventDayReminderParams } from "./emails/eventDayReminder";
 import { payoutProcessedTemplate, type PayoutProcessedParams } from "./emails/payoutProcessed";
 import { suspensionLiftedTemplate, type SuspensionLiftedParams } from "./emails/suspensionLifted";
@@ -226,6 +228,22 @@ export async function sendCompExpiryReminderEmail(
   params: CompExpiryReminderParams
 ): Promise<EmailResult> {
   const { subject, html, text } = compExpiryReminderTemplate(params);
+  return sendViaResend({ to, subject, html, text });
+}
+
+export async function sendCompPublishNudgeEmail(
+  to: string,
+  params: CompPublishNudgeParams
+): Promise<EmailResult> {
+  const { subject, html, text } = compPublishNudgeTemplate(params);
+  return sendViaResend({ to, subject, html, text });
+}
+
+export async function sendCompRevokedEmail(
+  to: string,
+  params: CompRevokedParams
+): Promise<EmailResult> {
+  const { subject, html, text } = compRevokedTemplate(params);
   return sendViaResend({ to, subject, html, text });
 }
 
