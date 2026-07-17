@@ -38,6 +38,8 @@ export interface VendorEntitlements {
   canUseDiscounts: boolean;
   /** Reply to customer reviews (reputation management). Pro only. */
   canManageReviews: boolean;
+  /** Create add-on listings (standalone bookable upgrades). Pro only. */
+  canCreateAddons: boolean;
   plan: "free" | "pro";
   status: VendorSubscriptionStatus;
   /**
@@ -121,6 +123,7 @@ export function getVendorEntitlements(
     canUseGoogleSync: isPro,
     canUseDiscounts: isPro,
     canManageReviews: isPro,
+    canCreateAddons: isPro,
     plan: isPro ? "pro" : "free",
     status,
     reason,

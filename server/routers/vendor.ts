@@ -2192,6 +2192,23 @@ export function registerVendorRoutes(app: Express): void {
       const resolvedListingType: TopLevelListingType =
         allowedListingTypes.includes(rawListingType) ? rawListingType : "single";
 
+      // Add-on listings are a Pro feature. Block creation (even as a draft) for
+      // free vendors — the paywall is enforced here, not just hidden in the UI.
+      if (resolvedListingType === "addon") {
+        const [addonGateAccount] = await db
+          .select()
+          .from(vendorAccounts)
+          .where(eq(vendorAccounts.id, vendorAuth.id))
+          .limit(1);
+        if (!addonGateAccount || !getVendorEntitlements(addonGateAccount).canCreateAddons) {
+          return res.status(403).json({
+            error: "addon_requires_pro",
+            message: "Add-on listings are a Pro feature. Upgrade to Pro to create add-ons.",
+            upgradeUrl: "/vendor/dashboard#vendor-billing",
+          });
+        }
+      }
+
       if (!listingData || typeof listingData !== "object") {
         return res.status(400).json({ error: "listingData must be a JSON object." });
       }
@@ -2563,6 +2580,16 @@ export function registerVendorRoutes(app: Express): void {
       // re-publishing an already-active listing never trips it. package_item rows
       // are managed by their parent container, so they're excluded from the count.
       const entitlements = getVendorEntitlements(vendorAccount);
+      // Add-ons are Pro-only. Defense-in-depth for the downgrade case: a vendor
+      // who created an add-on while Pro must not be able to publish it after
+      // dropping to Free (creation is already blocked at POST for new add-ons).
+      if (existing[0]?.listingType === "addon" && !entitlements.canCreateAddons) {
+        return res.status(403).json({
+          error: "addon_requires_pro",
+          message: "Add-on listings are a Pro feature. Upgrade to Pro to publish add-ons.",
+          upgradeUrl: "/vendor/dashboard#vendor-billing",
+        });
+      }
       if (!entitlements.isPro) {
         const isAlreadyActive = (existing[0]?.status || "").toLowerCase() === "active";
         if (!isAlreadyActive) {
