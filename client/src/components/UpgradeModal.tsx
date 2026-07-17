@@ -20,6 +20,7 @@ import {
   MessageSquareText,
   Tag,
   Star,
+  Plus,
 } from "lucide-react";
 
 type BillingInterval = "monthly" | "annual";
@@ -155,6 +156,7 @@ export function UpgradeModal({
 
           <ul className="mt-5 space-y-2.5 text-sm">
             <Feature icon={<LayoutGrid className="h-4 w-4" />}>Unlimited active listings</Feature>
+            <Feature icon={<Plus className="h-4 w-4" />}>Add-on listings (bookable upgrades)</Feature>
             <Feature icon={<MessageSquareText className="h-4 w-4" />}>AI reply assistant for messages</Feature>
             <Feature icon={<Tag className="h-4 w-4" />}>Discounts &amp; promo codes</Feature>
             <Feature icon={<Star className="h-4 w-4" />}>Reputation management &amp; review replies</Feature>
