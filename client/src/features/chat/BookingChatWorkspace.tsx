@@ -15,7 +15,6 @@ import { Button } from "@/components/ui/button";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { Dialog, DialogContent, DialogHeader, DialogTitle } from "@/components/ui/dialog";
 import { useToast } from "@/hooks/use-toast";
-import { chatBlockMessage } from "@/components/CircumventionWarningModal";
 import { detectChatCircumvention } from "@shared/circumvention";
 import { useTranslation } from "react-i18next";
 
@@ -839,38 +838,23 @@ export function BookingChatWorkspace({ role, initialBookingId, initialVendorId }
     }) => {
       const sourceText = String(message.text || "");
 
-      // ── Circumvention check (hard block — runs before profanity filter) ──────
+      // ── Circumvention detection (SILENT) ─────────────────────────────────────
+      // Detected contact info is NOT blocked and nothing is shown to the sender.
+      // We only record a pending flag for admin review, then let the message send
+      // normally. Admins review flags and issue warnings/suspensions manually.
       const circumvention = detectChatCircumvention(sourceText);
       if (circumvention.blocked && selectedConversation?.bookingId) {
-        // Fire-and-forget: log flag + issue warning on server
         circumventionFlagMutation
           .mutateAsync({
             bookingId: selectedConversation.bookingId,
             contentSnapshot: sourceText.slice(0, 2000),
             matches: circumvention.matches,
           })
-          .then((result) => {
-            toast({
-              variant: "destructive",
-              title: t("chat.messageBlockedTitle"),
-              description: chatBlockMessage(result.warningNumber, result.suspended),
-              duration: 8000,
-            });
-          })
           .catch(() => {
-            toast({
-              variant: "destructive",
-              title: t("chat.messageBlockedTitle"),
-              description: chatBlockMessage(),
-              duration: 6000,
-            });
+            // Keep chat sending resilient even if flag logging fails.
           });
-        // Return without calling activeChannel.sendMessage — message is silently
-        // dropped. Because we're in overrideSubmitHandler, the optimistic message
-        // was never added to Stream channel state, so nothing lingers in the UI.
-        return;
       }
-      // ── End circumvention check ───────────────────────────────────────────────
+      // ── End circumvention detection ───────────────────────────────────────────
 
       const moderation = moderateText(profanityFilter, sourceText);
       const safeText = moderation.sanitizedText.trim();
