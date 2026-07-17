@@ -7,7 +7,7 @@ import { Button } from "@/components/ui/button";
 import { Badge } from "@/components/ui/badge";
 import { Plus, Edit, Eye, Sparkles, Lock } from "lucide-react";
 import type { VendorMeState } from "@/lib/vendorState";
-import { CreateListingWizard } from "@/features/vendor/create-listing/CreateListingWizard";
+import { CreateListingFlow } from "@/features/vendor/create-listing/CreateListingFlow";
 import { useQuery, useMutation } from "@tanstack/react-query";
 import { queryClient } from "@/lib/queryClient";
 import { useToast } from "@/hooks/use-toast";
@@ -462,7 +462,7 @@ export default function VendorListings() {
 
         {showCreateWizard && (
           <div className="fixed inset-0 z-50 bg-background">
-            <CreateListingWizard onClose={() => setShowCreateWizard(false)} />
+            <CreateListingFlow onClose={() => setShowCreateWizard(false)} />
           </div>
         )}
 
