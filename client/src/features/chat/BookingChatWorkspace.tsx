@@ -429,12 +429,16 @@ export function BookingChatWorkspace({ role, initialBookingId, initialVendorId }
       return;
     }
 
-    if (!bookingConversations.length) {
+    // Vendors see every conversation (bookings AND pre-booking inquiries) in a
+    // single flat list, so default/validate the selection against all
+    // conversations. Using bookingConversations here wiped the selection for a
+    // vendor whose only thread was an inquiry, leaving the chat area blank.
+    if (!conversations.length) {
       setSelectedBookingId("");
       return;
     }
     if (!selectedBookingId || !conversations.some((c) => c.bookingId === selectedBookingId)) {
-      setSelectedBookingId(bookingConversations[0].bookingId);
+      setSelectedBookingId(conversations[0].bookingId);
     }
   }, [bookingConversations, conversations, role, selectedBookingId, showEventList, visibleConversations]);
 
