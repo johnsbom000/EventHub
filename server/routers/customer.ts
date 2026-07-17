@@ -1011,24 +1011,10 @@ export function registerCustomerRoutes(app: Express): void {
     }
   });
 
-  app.post("/api/events", eventsRateLimiter, requireCustomerAnyAuth, async (req, res) => {
-    try {
-      const customerAuth = await resolveCustomerAuthFromRequest(req, { createIfMissing: true });
-      if (!customerAuth?.id) {
-        return res.status(401).json({ error: "Authentication required" });
-      }
-      // customerId always comes from the authenticated identity, never the body.
-      const validatedData = insertEventSchema.omit({ customerId: true }).parse(req.body);
-      const [event] = await db
-        .insert(events)
-        .values({ ...validatedData, customerId: customerAuth.id })
-        .returning();
-      res.json(event);
-    } catch (error: any) {
-      logRouteError("/api/events POST", error);
-      res.status(400).json({ error: "Invalid event payload" });
-    }
-  });
+  // NOTE: there is deliberately no POST /api/events here. That path is the
+  // anonymous analytics-tracking endpoint in misc.ts (registered first, so a
+  // duplicate here would be unreachable dead code — one shadowed the analytics
+  // route until it was removed). Event rows are created through other flows.
 
   app.get("/api/events/:eventId/recommendations", requireCustomerAnyAuth, async (req, res) => {
     try {
