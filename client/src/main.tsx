@@ -126,17 +126,40 @@ function AuthTokenBridge() {
     });
   }, [auth0Error]);
 
-  // When authenticated, register a callback so any 401 from the server triggers
-  // a logout. This catches stale sessions synced across devices (iCloud / Google
-  // account) where Auth0's localStorage tokens are present but server-rejected.
+  // When authenticated, register a callback for server 401s. This catches stale
+  // sessions synced across devices (iCloud / Google account) where Auth0's
+  // localStorage tokens are present but server-rejected. A 401 alone is NOT
+  // proof the session is dead — it can be a transient server hiccup (e.g. a
+  // JWKS fetch timeout) or a business-level 401 from a route handler — so
+  // instead of logging out immediately, force a fresh token mint and only log
+  // out when Auth0 itself reports the session is gone.
+  const verifying401Ref = React.useRef(false);
   React.useEffect(() => {
     if (!isAuthenticated) {
       setGlobal401Callback(null);
       return;
     }
-    setGlobal401Callback(() => setNeedsLogout(true));
+    setGlobal401Callback(() => {
+      if (verifying401Ref.current) return;
+      verifying401Ref.current = true;
+      getAccessTokenSilently({
+        cacheMode: "off",
+        authorizationParams: {
+          audience: "https://eventhub-api",
+          scope: "openid profile email",
+        },
+      })
+        .catch((err: any) => {
+          if (err?.error === "login_required" || err?.error === "consent_required") {
+            setNeedsLogout(true);
+          }
+        })
+        .finally(() => {
+          verifying401Ref.current = false;
+        });
+    });
     return () => setGlobal401Callback(null);
-  }, [isAuthenticated]);
+  }, [isAuthenticated, getAccessTokenSilently]);
 
   const tokenGetter = React.useCallback(async (opts?: { forceRefresh?: boolean }) => {
     try {
