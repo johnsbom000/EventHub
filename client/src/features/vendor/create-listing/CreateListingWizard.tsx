@@ -570,6 +570,13 @@ export type CreateListingWizardProps = {
  initialData?: any;
  /** Pre-sets the listing type and skips the type selection screen. */
  initialListingType?: ListingType;
+ /** Pre-populate the draft (e.g. from the "Fill with AI" flow). Opens the
+  *  wizard with these values so the vendor reviews rather than starts blank. */
+ initialDraft?: ListingDraft;
+ /** Step to open on when pre-populating (defaults to "basics"). */
+ initialStep?: StepId;
+ /** When provided, a "Fill with AI" entry is shown on the type-selection screen. */
+ onFillWithAI?: () => void;
  /** When set, this wizard is running as a nested add-on creator. After
   *  save/publish the new add-on is auto-linked to this listing ID. */
  parentListingId?: string;
@@ -579,7 +586,7 @@ export type CreateListingWizardProps = {
  onStripeRequired?: () => void;
 };
 
-export function CreateListingWizard({ onClose, initialListingType, parentListingId, onComplete, onStripeRequired }: CreateListingWizardProps) {
+export function CreateListingWizard({ onClose, initialListingType, initialDraft, initialStep, onFillWithAI, parentListingId, onComplete, onStripeRequired }: CreateListingWizardProps) {
  const { toast } = useToast();
  const { isAuthenticated } = useAuth0();
 
@@ -588,9 +595,12 @@ export function CreateListingWizard({ onClose, initialListingType, parentListing
 
  const vendorType = ((me as any)?.vendorType || "unspecified") as string;
 
- const [currentStep, setCurrentStep] = useState<StepId>("basics");
- const [maxStepReached, setMaxStepReached] = useState(0);
- const [draft, setDraft] = useState<ListingDraft>(DEFAULT_DRAFT);
+ const [currentStep, setCurrentStep] = useState<StepId>(initialStep ?? "basics");
+ // When pre-populated (AI flow), let the vendor jump to any step to review/publish.
+ const [maxStepReached, setMaxStepReached] = useState(
+ initialDraft ? Math.max(0, getStepsForListingType(initialListingType ?? null).length - 1) : 0
+ );
+ const [draft, setDraft] = useState<ListingDraft>(initialDraft ?? DEFAULT_DRAFT);
  const [listingId, setListingId] = useState<string | null>(null);
  const [authModalOpen, setAuthModalOpen] = useState(false);
  const [listingType, setListingType] = useState<ListingType | null>(initialListingType ?? null);
@@ -1971,6 +1981,23 @@ export function CreateListingWizard({ onClose, initialListingType, parentListing
  }}
  />
  <div className="min-h-0 flex-1 overflow-y-auto">
+ {onFillWithAI ? (
+ <div className="mx-auto w-full max-w-3xl px-4 pt-6">
+ <button
+ type="button"
+ onClick={onFillWithAI}
+ className="flex w-full items-center gap-3 rounded-2xl border border-primary/30 bg-primary/5 px-5 py-4 text-left transition hover:bg-primary/10"
+ >
+ <span className="text-2xl" aria-hidden>✨</span>
+ <span className="flex flex-col">
+ <span className="font-semibold text-foreground">Fill with AI</span>
+ <span className="text-sm text-muted-foreground">
+ Upload a few photos and we'll draft the listing for you to review.
+ </span>
+ </span>
+ </button>
+ </div>
+ ) : null}
  <ListingTypeSelector onSelect={(type) => setListingType(type)} />
  </div>
  </div>

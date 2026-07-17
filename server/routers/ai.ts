@@ -19,6 +19,7 @@ import {
   getAiSettings,
   AiReplyError,
 } from "../aiReplyService";
+import { generateListingDraft, AiListingDraftError } from "../aiListingDraftService";
 
 /**
  * AI reply assistant routes (Pro-gated, metered). Generates suggested replies for
@@ -57,6 +58,45 @@ export function registerAiRoutes(app: Express): void {
         }
         logRouteError("/api/vendor/ai/suggest-reply", err);
         return res.status(500).json({ error: "ai_error", message: "Could not generate a reply" });
+      }
+    }
+  );
+
+  // POST /api/vendor/ai/draft-listing — read uploaded photos + the vendor's chosen
+  // category/subcategory and return a pre-filled listing draft they review in the
+  // wizard. Free for all vendors (no Pro gate, no metering); the mutation rate
+  // limiter is the cost ceiling. Never publishes — produces a draft only.
+  app.post(
+    "/api/vendor/ai/draft-listing",
+    mutationRateLimiter,
+    ...requireVendorAuth0,
+    async (req, res) => {
+      try {
+        const account = await getVendorAccountFromRequest(req);
+        if (!account?.id) return res.status(404).json({ error: "vendor_not_found" });
+
+        const { category, subcategory, subcategoryDetail, photoUrls } = req.body ?? {};
+        const outcome = await generateListingDraft({
+          category,
+          subcategory,
+          subcategoryDetail,
+          photoUrls,
+        });
+
+        return res.json({
+          draft: outcome.draft,
+          category: outcome.category,
+          subcategory: outcome.subcategory,
+          subcategoryDetail: outcome.subcategoryDetail,
+        });
+      } catch (err: any) {
+        if (err instanceof AiListingDraftError) {
+          return res.status(err.status).json({ error: err.code, message: err.message });
+        }
+        logRouteError("/api/vendor/ai/draft-listing", err);
+        return res
+          .status(500)
+          .json({ error: "ai_error", message: "Could not generate a draft" });
       }
     }
   );

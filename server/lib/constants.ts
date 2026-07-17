@@ -28,6 +28,16 @@ export const STRIPE_COUPON_PRO = process.env.STRIPE_COUPON_PRO || "";
 export const AI_REPLY_MODEL = "claude-haiku-4-5";
 export const AI_INCLUDED_RESPONSES_PER_PERIOD = 200;
 export const AI_OVERAGE_PRICE_CENTS = 5;
+
+// ─── AI listing-draft assistant (free for all vendors, soft rate-limited) ──────
+// Reads a vendor's uploaded photos + the category/subcategory they picked, and
+// fills out a listing draft they then review in the wizard. Vision + marketing
+// copy is a harder task than chat replies, so it runs on a stronger model.
+// Un-metered by design (an onboarding lever); the endpoint's rate limit is the
+// cost ceiling. Model is a constant so it's a one-line swap.
+export const AI_LISTING_DRAFT_MODEL = "claude-sonnet-5";
+// How many photos we send to the model per request (bounds vision cost).
+export const AI_LISTING_DRAFT_MAX_PHOTOS = 6;
 // Stripe Billing Meter event name + metered Price ID for AI-reply overage (created
 // in the Stripe dashboard / via setup). Read from env so test/live both work.
 export const STRIPE_AI_OVERAGE_METER_EVENT = process.env.STRIPE_AI_OVERAGE_METER_EVENT || "ai_reply_overage";
