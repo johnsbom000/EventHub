@@ -24,6 +24,7 @@ import { disputeResolvedTemplate, type DisputeResolvedParams } from "./emails/di
 import { disputeResponseTemplate, type DisputeResponseParams } from "./emails/disputeResponse";
 import { travelFeeProposedTemplate, type TravelFeeProposedParams } from "./emails/travelFeeProposed";
 import { travelFeeRespondedTemplate, type TravelFeeRespondedParams } from "./emails/travelFeeResponded";
+import { feedbackReceivedTemplate, type FeedbackReceivedParams } from "./emails/feedbackReceived";
 import { appUrl } from "./lib/routeHelpers";
 
 export type EmailResult = {
@@ -311,5 +312,23 @@ export async function sendTravelFeeRespondedEmail(
 ): Promise<EmailResult> {
   const { subject, html, text } = travelFeeRespondedTemplate(params);
   return sendViaResend({ to, subject, html, text });
+}
+
+// ── Internal: feedback notifications ─────────────────────────────────────────
+
+/**
+ * The single inbox that receives an alert every time a user submits a feature
+ * request or bug report. Defaults to the founder's personal address so it goes
+ * to only one person; override with FEEDBACK_NOTIFY_EMAIL if that changes.
+ */
+export function feedbackNotifyRecipient(): string {
+  return (process.env.FEEDBACK_NOTIFY_EMAIL || "").trim() || "johnsbom000@gmail.com";
+}
+
+export async function sendFeedbackReceivedEmail(
+  params: Omit<FeedbackReceivedParams, "serverUrl">
+): Promise<EmailResult> {
+  const { subject, html, text } = feedbackReceivedTemplate({ ...params, serverUrl: appUrl() });
+  return sendViaResend({ to: feedbackNotifyRecipient(), subject, html, text });
 }
 
