@@ -16,6 +16,12 @@ import { useEffect, useState } from "react";
 import { apiRequest } from "@/lib/queryClient";
 import AdminShell from "@/components/AdminShell";
 import { Switch } from "@/components/ui/switch";
+import {
+  Dialog, DialogContent, DialogHeader, DialogFooter, DialogTitle, DialogDescription,
+} from "@/components/ui/dialog";
+import { Textarea } from "@/components/ui/textarea";
+import { Input } from "@/components/ui/input";
+import { Label } from "@/components/ui/label";
 
 // ─── Shared helpers ───────────────────────────────────────────────────────────
 
@@ -1266,6 +1272,37 @@ function ModerationSection({ isAdmin }: { isAdmin: boolean }) {
     onSuccess: () => qc.invalidateQueries({ queryKey: ["/api/admin/circumvention/rereviews"] }),
   });
 
+  // Vendor targeted by the suspend dialog (null = dialog closed).
+  const [suspendTarget, setSuspendTarget] = useState<{ vendorAccountId: string; businessName: string } | null>(null);
+  const [suspendReason, setSuspendReason] = useState("");
+  const [suspendDuration, setSuspendDuration] = useState("30");
+
+  const suspendMutation = useMutation({
+    mutationFn: async (vars: { vendorAccountId: string; reason: string; durationDays: number }) => {
+      const res = await apiRequest("POST", `/api/admin/circumvention/vendors/${vars.vendorAccountId}/suspend`, {
+        reason: vars.reason || undefined,
+        durationDays: vars.durationDays,
+      });
+      if (!res.ok) throw new Error("Failed to suspend");
+      return res.json();
+    },
+    onSuccess: () => {
+      qc.invalidateQueries({ queryKey: ["/api/admin/circumvention/flags", statusFilter] });
+      qc.invalidateQueries({ queryKey: ["/api/admin/circumvention/suspensions"] });
+      setSuspendTarget(null);
+      setSuspendReason("");
+      setSuspendDuration("30");
+    },
+  });
+
+  const liftMutation = useMutation({
+    mutationFn: async (suspensionId: string) => {
+      const res = await apiRequest("POST", `/api/admin/circumvention/suspensions/${suspensionId}/lift`);
+      if (!res.ok) throw new Error("Failed to lift suspension");
+    },
+    onSuccess: () => qc.invalidateQueries({ queryKey: ["/api/admin/circumvention/suspensions"] }),
+  });
+
   const pendingCount = flags.filter((f) => f.status === "pending").length;
 
   return (
@@ -1365,7 +1402,12 @@ function ModerationSection({ isAdmin }: { isAdmin: boolean }) {
                         </span>
                         {flag.warningCount > 0 && (
                           <span className={`inline-block rounded px-2 py-0.5 text-xs font-semibold ${flag.warningCount >= 3 ? "bg-red-100 text-red-800" : "bg-orange-100 text-orange-800"}`}>
-                            {flag.warningCount}/3 warnings
+                            {flag.warningCount} {flag.warningCount === 1 ? "warning" : "warnings"}
+                          </span>
+                        )}
+                        {flag.isSuspended && (
+                          <span className="inline-flex items-center gap-1 rounded bg-red-600 px-2 py-0.5 text-xs font-semibold text-white">
+                            <Ban className="h-3 w-3" /> Suspended
                           </span>
                         )}
                       </div>
@@ -1413,10 +1455,28 @@ function ModerationSection({ isAdmin }: { isAdmin: boolean }) {
                           type="button"
                           disabled={warnRemoveMutation.isPending}
                           onClick={() => warnRemoveMutation.mutate(flag.id)}
-                          className="rounded bg-destructive px-3 py-1 text-xs font-medium text-destructive-foreground hover:bg-destructive/90 transition-colors disabled:opacity-50"
+                          className="rounded bg-amber-600 px-3 py-1 text-xs font-medium text-white hover:bg-amber-700 transition-colors disabled:opacity-50"
                         >
-                          Warn + Remove
+                          Warn + Remove listing
                         </button>
+                        {flag.vendorAccountId && !flag.isSuspended && (
+                          <button
+                            type="button"
+                            onClick={() => {
+                              setSuspendReason("");
+                              setSuspendDuration("30");
+                              setSuspendTarget({ vendorAccountId: flag.vendorAccountId, businessName: flag.businessName || "this vendor" });
+                            }}
+                            className="rounded bg-destructive px-3 py-1 text-xs font-medium text-destructive-foreground hover:bg-destructive/90 transition-colors disabled:opacity-50"
+                          >
+                            Suspend vendor
+                          </button>
+                        )}
+                        {flag.vendorAccountId && flag.isSuspended && (
+                          <span className="inline-flex items-center rounded border border-red-200 px-3 py-1 text-xs font-medium text-red-700">
+                            Already suspended
+                          </span>
+                        )}
                       </div>
                     )}
                   </div>
@@ -1459,7 +1519,7 @@ function ModerationSection({ isAdmin }: { isAdmin: boolean }) {
                       </div>
                       {listing.warningCount > 0 && (
                         <span className={`inline-block rounded px-2 py-0.5 text-xs font-semibold ${listing.warningCount >= 3 ? "bg-red-100 text-red-800" : "bg-orange-100 text-orange-800"}`}>
-                          {listing.warningCount}/3 warnings
+                          {listing.warningCount} {listing.warningCount === 1 ? "warning" : "warnings"}
                         </span>
                       )}
                     </div>
@@ -1525,7 +1585,7 @@ function ModerationSection({ isAdmin }: { isAdmin: boolean }) {
                         </td>
                         <td className="py-2 pr-4">
                           <span className={`inline-block rounded px-2 py-0.5 text-xs font-bold ${w.warningNumber >= 3 ? "bg-red-100 text-red-800" : w.warningNumber === 2 ? "bg-orange-100 text-orange-800" : "bg-yellow-100 text-yellow-800"}`}>
-                            {w.warningNumber}/3
+                            #{w.warningNumber}
                           </span>
                         </td>
                         <td className="py-2 pr-4 max-w-xs">
@@ -1565,7 +1625,8 @@ function ModerationSection({ isAdmin }: { isAdmin: boolean }) {
                       <th className="pb-2 pr-4 font-medium">Vendor</th>
                       <th className="pb-2 pr-4 font-medium">Reason</th>
                       <th className="pb-2 pr-4 font-medium">Started</th>
-                      <th className="pb-2 font-medium">Expires</th>
+                      <th className="pb-2 pr-4 font-medium">Expires</th>
+                      <th className="pb-2 font-medium text-right">Action</th>
                     </tr>
                   </thead>
                   <tbody className="divide-y">
@@ -1579,7 +1640,21 @@ function ModerationSection({ isAdmin }: { isAdmin: boolean }) {
                           <p className="text-xs text-muted-foreground">{s.reason}</p>
                         </td>
                         <td className="py-2 pr-4 text-xs text-muted-foreground">{fmtDate(s.startsAt)}</td>
-                        <td className="py-2 text-xs text-muted-foreground">{fmtDate(s.endsAt)}</td>
+                        <td className="py-2 pr-4 text-xs text-muted-foreground">{fmtDate(s.endsAt)}</td>
+                        <td className="py-2 text-right">
+                          <button
+                            type="button"
+                            disabled={liftMutation.isPending}
+                            onClick={() => {
+                              if (window.confirm(`Lift the suspension for ${s.businessName || "this vendor"}?`)) {
+                                liftMutation.mutate(s.id);
+                              }
+                            }}
+                            className="rounded border px-3 py-1 text-xs font-medium text-muted-foreground hover:bg-muted transition-colors disabled:opacity-50"
+                          >
+                            Lift
+                          </button>
+                        </td>
                       </tr>
                     ))}
                   </tbody>
@@ -1589,6 +1664,71 @@ function ModerationSection({ isAdmin }: { isAdmin: boolean }) {
           </CardContent>
         </Card>
       )}
+
+      {/* ── Suspend vendor dialog ─────────────────────────────────────────────── */}
+      <Dialog open={!!suspendTarget} onOpenChange={(open) => { if (!open) setSuspendTarget(null); }}>
+        <DialogContent>
+          <DialogHeader>
+            <DialogTitle className="flex items-center gap-2">
+              <Ban className="h-4 w-4 text-destructive" /> Suspend vendor
+            </DialogTitle>
+            <DialogDescription>
+              Suspending <span className="font-medium text-foreground">{suspendTarget?.businessName}</span> deactivates
+              all their live listings for the duration below and emails them. You can lift it early from the Suspensions tab.
+            </DialogDescription>
+          </DialogHeader>
+
+          <div className="space-y-4 py-2">
+            <div className="space-y-1.5">
+              <Label htmlFor="suspend-duration">Duration (days)</Label>
+              <Input
+                id="suspend-duration"
+                type="number"
+                min={1}
+                max={3650}
+                value={suspendDuration}
+                onChange={(e) => setSuspendDuration(e.target.value)}
+                className="w-32"
+              />
+            </div>
+            <div className="space-y-1.5">
+              <Label htmlFor="suspend-reason">Reason <span className="text-muted-foreground font-normal">(optional — shown to the vendor)</span></Label>
+              <Textarea
+                id="suspend-reason"
+                rows={3}
+                placeholder="e.g. Repeated attempts to share off-platform contact information."
+                value={suspendReason}
+                onChange={(e) => setSuspendReason(e.target.value)}
+              />
+            </div>
+          </div>
+
+          <DialogFooter>
+            <button
+              type="button"
+              onClick={() => setSuspendTarget(null)}
+              className="rounded border px-4 py-2 text-sm font-medium text-muted-foreground hover:bg-muted transition-colors"
+            >
+              Cancel
+            </button>
+            <button
+              type="button"
+              disabled={suspendMutation.isPending || !suspendTarget || !(Number(suspendDuration) > 0)}
+              onClick={() => {
+                if (!suspendTarget) return;
+                suspendMutation.mutate({
+                  vendorAccountId: suspendTarget.vendorAccountId,
+                  reason: suspendReason.trim(),
+                  durationDays: Math.floor(Number(suspendDuration)),
+                });
+              }}
+              className="rounded bg-destructive px-4 py-2 text-sm font-medium text-destructive-foreground hover:bg-destructive/90 transition-colors disabled:opacity-50"
+            >
+              {suspendMutation.isPending ? "Suspending…" : "Suspend vendor"}
+            </button>
+          </DialogFooter>
+        </DialogContent>
+      </Dialog>
     </>
   );
 }

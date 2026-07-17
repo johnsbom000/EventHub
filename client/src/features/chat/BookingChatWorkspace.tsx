@@ -15,7 +15,6 @@ import { Button } from "@/components/ui/button";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { Dialog, DialogContent, DialogHeader, DialogTitle } from "@/components/ui/dialog";
 import { useToast } from "@/hooks/use-toast";
-import { chatBlockMessage } from "@/components/CircumventionWarningModal";
 import { detectChatCircumvention } from "@shared/circumvention";
 import { useTranslation } from "react-i18next";
 
@@ -430,12 +429,16 @@ export function BookingChatWorkspace({ role, initialBookingId, initialVendorId }
       return;
     }
 
-    if (!bookingConversations.length) {
+    // Vendors see every conversation (bookings AND pre-booking inquiries) in a
+    // single flat list, so default/validate the selection against all
+    // conversations. Using bookingConversations here wiped the selection for a
+    // vendor whose only thread was an inquiry, leaving the chat area blank.
+    if (!conversations.length) {
       setSelectedBookingId("");
       return;
     }
     if (!selectedBookingId || !conversations.some((c) => c.bookingId === selectedBookingId)) {
-      setSelectedBookingId(bookingConversations[0].bookingId);
+      setSelectedBookingId(conversations[0].bookingId);
     }
   }, [bookingConversations, conversations, role, selectedBookingId, showEventList, visibleConversations]);
 
@@ -444,15 +447,21 @@ export function BookingChatWorkspace({ role, initialBookingId, initialVendorId }
       setSelectedEventKey(null);
       return;
     }
-    if (eventGroups.length === 0) {
-      setSelectedEventKey(null);
+    // The pre-booking inquiry pseudo-group ("__inquiry__") is not part of
+    // eventGroups (which only holds booking-based groups). Keep it selected as
+    // long as at least one inquiry conversation exists, otherwise the deep-link
+    // auto-open (and manual selection) would be immediately reset to null.
+    if (selectedEventKey === "__inquiry__") {
+      if (inquiryConversations.length === 0) {
+        setSelectedEventKey(null);
+      }
       return;
     }
     if (selectedEventKey && eventGroups.some((item) => item.key === selectedEventKey)) {
       return;
     }
     setSelectedEventKey(null);
-  }, [eventGroups, role, selectedEventKey]);
+  }, [eventGroups, inquiryConversations, role, selectedEventKey]);
 
   // ── Deep-link: auto-select a specific booking when navigated from another page ──
   const initialAppliedRef = useRef(false);
@@ -839,38 +848,23 @@ export function BookingChatWorkspace({ role, initialBookingId, initialVendorId }
     }) => {
       const sourceText = String(message.text || "");
 
-      // ── Circumvention check (hard block — runs before profanity filter) ──────
+      // ── Circumvention detection (SILENT) ─────────────────────────────────────
+      // Detected contact info is NOT blocked and nothing is shown to the sender.
+      // We only record a pending flag for admin review, then let the message send
+      // normally. Admins review flags and issue warnings/suspensions manually.
       const circumvention = detectChatCircumvention(sourceText);
       if (circumvention.blocked && selectedConversation?.bookingId) {
-        // Fire-and-forget: log flag + issue warning on server
         circumventionFlagMutation
           .mutateAsync({
             bookingId: selectedConversation.bookingId,
             contentSnapshot: sourceText.slice(0, 2000),
             matches: circumvention.matches,
           })
-          .then((result) => {
-            toast({
-              variant: "destructive",
-              title: t("chat.messageBlockedTitle"),
-              description: chatBlockMessage(result.warningNumber, result.suspended),
-              duration: 8000,
-            });
-          })
           .catch(() => {
-            toast({
-              variant: "destructive",
-              title: t("chat.messageBlockedTitle"),
-              description: chatBlockMessage(),
-              duration: 6000,
-            });
+            // Keep chat sending resilient even if flag logging fails.
           });
-        // Return without calling activeChannel.sendMessage — message is silently
-        // dropped. Because we're in overrideSubmitHandler, the optimistic message
-        // was never added to Stream channel state, so nothing lingers in the UI.
-        return;
       }
-      // ── End circumvention check ───────────────────────────────────────────────
+      // ── End circumvention detection ───────────────────────────────────────────
 
       const moderation = moderateText(profanityFilter, sourceText);
       const safeText = moderation.sanitizedText.trim();

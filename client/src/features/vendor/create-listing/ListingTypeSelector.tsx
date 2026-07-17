@@ -1,4 +1,4 @@
-import { Package, Plus, ShoppingBag } from "lucide-react";
+import { Package, Plus, ShoppingBag, Sparkles } from "lucide-react";
 import { buttonVariants } from "@/components/ui/button";
 import { cn } from "@/lib/utils";
 import type { ListingType } from "./wizardTypes";
@@ -9,6 +9,8 @@ interface ListingTypeOption {
   label: string;
   description: string;
   details: string[];
+  /** Requires a Pro subscription to select. */
+  proOnly?: boolean;
 }
 
 const LISTING_TYPE_OPTIONS: ListingTypeOption[] = [
@@ -46,14 +48,17 @@ const LISTING_TYPE_OPTIONS: ListingTypeOption[] = [
       "Appears in the A-la-carte section on your shop page",
       "Shared inventory pool across all attached listings",
     ],
+    proOnly: true,
   },
 ];
 
 interface ListingTypeSelectorProps {
   onSelect: (type: ListingType) => void;
+  /** When false, Pro-only types render with a lock and route to the upgrade CTA. */
+  isPro?: boolean;
 }
 
-export function ListingTypeSelector({ onSelect }: ListingTypeSelectorProps) {
+export function ListingTypeSelector({ onSelect, isPro = false }: ListingTypeSelectorProps) {
   return (
     <div className="flex min-h-full flex-col items-center justify-center bg-background px-4 py-16">
       <div className="w-full max-w-3xl space-y-10">
@@ -67,13 +72,21 @@ export function ListingTypeSelector({ onSelect }: ListingTypeSelectorProps) {
         <div className="grid gap-5 sm:grid-cols-3">
           {LISTING_TYPE_OPTIONS.map((option) => {
             const Icon = option.icon;
+            const locked = Boolean(option.proOnly) && !isPro;
             return (
               <button
                 key={option.type}
                 type="button"
                 onClick={() => onSelect(option.type)}
-                className="group flex flex-col items-start gap-4 rounded-2xl border border-border bg-background p-6 text-left shadow-sm transition hover:border-primary hover:shadow-md focus:outline-none focus:ring-2 focus:ring-primary"
+                aria-disabled={locked}
+                className="group relative flex flex-col items-start gap-4 rounded-2xl border border-border bg-background p-6 text-left shadow-sm transition hover:border-primary hover:shadow-md focus:outline-none focus:ring-2 focus:ring-primary"
               >
+                {option.proOnly && (
+                  <span className="absolute right-4 top-4 inline-flex items-center gap-1 rounded-full bg-primary/10 px-2.5 py-1 text-xs font-medium text-primary">
+                    <Sparkles className="h-3 w-3" />
+                    Pro
+                  </span>
+                )}
                 <div className="flex h-12 w-12 items-center justify-center rounded-xl bg-muted group-hover:bg-primary/10 transition">
                   <Icon className="h-6 w-6 text-muted-foreground group-hover:text-primary transition" />
                 </div>
@@ -95,7 +108,7 @@ export function ListingTypeSelector({ onSelect }: ListingTypeSelectorProps) {
                 {/* Styled as a button but rendered as a span — the whole card is
                     already a <button>, and nesting real buttons is invalid DOM. */}
                 <span className={cn(buttonVariants(), "mt-auto w-full")}>
-                  Choose {option.label}
+                  {locked ? "Upgrade to Pro" : `Choose ${option.label}`}
                 </span>
               </button>
             );
