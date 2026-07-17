@@ -24,6 +24,7 @@ import {
   MessageSquareText,
   Tag,
   Star,
+  Plus,
 } from "lucide-react";
 
 type AiSettings = {
@@ -294,6 +295,7 @@ export default function VendorBillingPanel() {
             <Feature ok>List, take bookings, and get paid — no EventHub commission</Feature>
             <Feature ok>1 active listing at a time</Feature>
             <Feature ok>Lifetime totals (bookings &amp; revenue)</Feature>
+            <Feature>Add-on listings (bookable upgrades)</Feature>
             <Feature>AI reply assistant for messages</Feature>
             <Feature>Discounts &amp; promo codes</Feature>
             <Feature>Reputation management &amp; review replies</Feature>
@@ -350,6 +352,7 @@ export default function VendorBillingPanel() {
           <ul className="mt-5 space-y-2.5 text-sm">
             <Feature ok>Everything in Free</Feature>
             <Feature ok icon={<LayoutGrid className="h-4 w-4" />}>Unlimited active listings</Feature>
+            <Feature ok icon={<Plus className="h-4 w-4" />}>Add-on listings (bookable upgrades)</Feature>
             <Feature ok icon={<MessageSquareText className="h-4 w-4" />}>AI reply assistant for messages</Feature>
             <Feature ok icon={<Tag className="h-4 w-4" />}>Discounts &amp; promo codes</Feature>
             <Feature ok icon={<Star className="h-4 w-4" />}>Reputation management &amp; review replies</Feature>

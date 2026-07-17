@@ -587,6 +587,8 @@ export function CreateListingWizard({ onClose, initialListingType, parentListing
  const { data: vendorProfile } = useQuery({ queryKey: ["/api/vendor/profile"] });
 
  const vendorType = ((me as any)?.vendorType || "unspecified") as string;
+ const isPro = Boolean((me as any)?.isPro);
+ const [showUpgradeForAddon, setShowUpgradeForAddon] = useState(false);
 
  const [currentStep, setCurrentStep] = useState<StepId>("basics");
  const [maxStepReached, setMaxStepReached] = useState(0);
@@ -1971,8 +1973,23 @@ export function CreateListingWizard({ onClose, initialListingType, parentListing
  }}
  />
  <div className="min-h-0 flex-1 overflow-y-auto">
- <ListingTypeSelector onSelect={(type) => setListingType(type)} />
+ <ListingTypeSelector
+ isPro={isPro}
+ onSelect={(type) => {
+ if (type === "addon" && !isPro) {
+ setShowUpgradeForAddon(true);
+ return;
+ }
+ setListingType(type);
+ }}
+ />
  </div>
+ <UpgradeModal
+ open={showUpgradeForAddon}
+ onOpenChange={setShowUpgradeForAddon}
+ title="Add-ons are a Pro feature"
+ description="Upgrade to Pro to create add-on listings — standalone bookable upgrades you can attach to any of your listings."
+ />
  </div>
  );
  }
