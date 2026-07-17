@@ -1447,9 +1447,10 @@ export function registerVendorRoutes(app: Express): void {
             return res.status(409).json({ error: "A vendor with this business name already exists.", code: "business_name_taken" });
           }
         }
+        const accountId = account.id;
         const [updated] = await withSlugAllocationRetry(async () => {
           const newSlug = nameIsChanging
-            ? await allocateUniqueVendorSlug(normalizedProfileName, account.id)
+            ? await allocateUniqueVendorSlug(normalizedProfileName, accountId)
             : undefined;
           return db
             .update(vendorAccounts)
@@ -1457,7 +1458,7 @@ export function registerVendorRoutes(app: Express): void {
               businessName: currentBusinessName || normalizedProfileName,
               ...(newSlug ? { shopSlug: newSlug } : {}),
             })
-            .where(eq(vendorAccounts.id, account.id))
+            .where(eq(vendorAccounts.id, accountId))
             .returning();
         });
 
