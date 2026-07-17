@@ -1,7 +1,6 @@
 import React, { useEffect, useState } from "react";
 import { useLocation, useRoute } from "wouter";
-import { useQuery, useMutation } from "@tanstack/react-query";
-import { apiRequest } from "@/lib/queryClient";
+import { useQuery } from "@tanstack/react-query";
 import HeartBoardPopover from "@/components/HeartBoardPopover";
 import ListingCard from "@/components/ListingCard";
 import MasonryListingGrid from "@/components/MasonryListingGrid";
@@ -215,7 +214,6 @@ export default function ListingDetailPage() {
  const listingId = params?.id;
 
  const [heartOpen, setHeartOpen] = useState(false);
- const [reportSent, setReportSent] = useState(false);
  const [selectedPackageId, setSelectedPackageId] = useState<string | null>(null);
  const [selectedAddons, setSelectedAddons] = useState<{ id: string; quantity: number }[]>([]);
  const setAddonQty = (id: string, qty: number) =>
@@ -228,14 +226,6 @@ export default function ListingDetailPage() {
    );
 
  const { isAuthenticated } = useAuth0();
-
- const reportMutation = useMutation({
-   mutationFn: async (payload: { contentType: string; contentSnapshot: string; listingId: string; vendorAccountId?: string }) => {
-     const res = await apiRequest("POST", "/api/circumvention/report", payload);
-     if (!res.ok) throw new Error("Failed to send report");
-   },
-   onSuccess: () => setReportSent(true),
- });
 
  const { data: savedIdsData } = useQuery<{ listingIds: string[] }>({
  queryKey: ["/api/boards/saved-ids"],
@@ -660,30 +650,6 @@ export default function ListingDetailPage() {
    <p className="text-muted-foreground leading-relaxed">{data.description}</p>
  ) : (
    <p className="text-muted-foreground">{t("listing.descriptionNotConfigured")}</p>
- )}
- {isAuthenticated && data.listingType !== "package_container" && (
-   <div className="pt-1">
-     {reportSent ? (
-       <p className="text-xs text-muted-foreground">{t("listing.reportSubmitted")}</p>
-     ) : (
-       <button
-         type="button"
-         onClick={() => {
-           if (!listingId) return;
-           reportMutation.mutate({
-             contentType: "listing_description",
-             contentSnapshot: (data.description || "").slice(0, 2000),
-             listingId,
-             vendorAccountId: data.vendorId ?? undefined,
-           });
-         }}
-         disabled={reportMutation.isPending}
-         className="text-xs text-muted-foreground underline-offset-2 hover:underline disabled:opacity-50"
-       >
-         {t("listing.reportListing")}
-       </button>
-     )}
-   </div>
  )}
  </section>
 
