@@ -399,10 +399,11 @@ function collectListingContentFields(
   return fields;
 }
 
-// Hard-block circumvention moderation shared by listing create, update, and
-// publish (previously only update ran it, so direct API callers could create or
-// publish off-platform-contact content unchecked). Records the violation and
-// returns the 422 body when blocked; null when clean.
+// Circumvention detection shared by listing create, update, and publish.
+// SILENT: detected contact info is no longer blocked — each matching field is
+// recorded as a pending admin flag and the save proceeds. Always returns null
+// (kept as the return type so existing call sites need no change). Admins review
+// flags and issue warnings/suspensions manually.
 async function runListingHardBlockCheck(params: {
   fields: ListingContentField[];
   vendorAccountId: string;
@@ -412,7 +413,7 @@ async function runListingHardBlockCheck(params: {
   for (const field of params.fields) {
     const detection = checkContent(field.value);
     if (!detection.hardBlocked) continue;
-    const result = await handleCircumventionViolation({
+    await handleCircumventionViolation({
       vendorAccountId: params.vendorAccountId,
       contentType: field.contentType,
       contentSnapshot: field.value,
@@ -420,19 +421,7 @@ async function runListingHardBlockCheck(params: {
       reason: `${field.label} contained ${blockReasonSummary(detection.blockReasons)}`,
       listingId: params.listingId,
       serverUrl,
-    });
-    return {
-      error: "content_blocked",
-      field: field.label,
-      reason: `Your ${field.label.toLowerCase()} cannot include ${blockReasonSummary(detection.blockReasons)}. Please remove this information and try again.`,
-      blockReasons: detection.blockReasons,
-      matches: detection.matches,
-      phase: result.phase,
-      softAttemptNumber: result.phase === "soft" ? result.softAttemptNumber : null,
-      warningNumber: result.phase === "hard" ? result.warningNumber : null,
-      suspended: result.phase === "hard" ? result.suspended : false,
-      suspensionEndsAt: result.phase === "hard" ? result.endsAt : null,
-    };
+    }).catch((err: any) => logger.warn("[circumvention] listing flag insert failed:", err?.message));
   }
   return null;
 }
@@ -1935,37 +1924,12 @@ export function registerVendorRoutes(app: Express): void {
         }
       }
 
+      // SILENT detection: contact info in profile fields is no longer blocked.
+      // Any hard or soft match is recorded as a pending admin flag and the save
+      // proceeds; admins review and act on flags manually.
       for (const field of profileFieldsToCheck) {
         const detection = checkContent(field.value);
-        if (detection.hardBlocked) {
-          const serverUrlForProfile = appUrl();
-          let violationMeta: { phase: string; softAttemptNumber?: number; warningNumber?: number; suspended?: boolean; endsAt?: Date | null } = { phase: "soft" };
-          if (vendorAccountIdForCircumvention) {
-            const result = await handleCircumventionViolation({
-              vendorAccountId: vendorAccountIdForCircumvention,
-              contentType: field.contentType,
-              contentSnapshot: field.value,
-              matches: detection.matches,
-              reason: `${field.label} contained ${blockReasonSummary(detection.blockReasons)}`,
-              serverUrl: serverUrlForProfile,
-            });
-            violationMeta = result;
-          }
-          return res.status(422).json({
-            error: "content_blocked",
-            field: field.label,
-            reason: `Your ${field.label.toLowerCase()} cannot include ${blockReasonSummary(detection.blockReasons)}. Please remove this information and try again.`,
-            blockReasons: detection.blockReasons,
-            matches: detection.matches,
-            phase: violationMeta.phase,
-            softAttemptNumber: (violationMeta as any).softAttemptNumber ?? null,
-            warningNumber: (violationMeta as any).warningNumber ?? null,
-            suspended: (violationMeta as any).suspended ?? false,
-            suspensionEndsAt: (violationMeta as any).endsAt ?? null,
-          });
-        }
-        if (detection.softFlagged && vendorAccountIdForCircumvention) {
-          // Allow save but flag for admin review
+        if ((detection.hardBlocked || detection.softFlagged) && vendorAccountIdForCircumvention) {
           db.insert(circumventionFlags).values({
             flagType: "soft_flag",
             contentType: field.contentType as any,
@@ -1973,7 +1937,7 @@ export function registerVendorRoutes(app: Express): void {
             matches: detection.matches,
             vendorAccountId: vendorAccountIdForCircumvention,
             status: "pending",
-          }).catch((err: any) => logger.warn("[circumvention] soft flag insert failed:", err?.message));
+          }).catch((err: any) => logger.warn("[circumvention] profile flag insert failed:", err?.message));
         }
       }
       // ── End circumvention detection ──────────────────────────────────────────

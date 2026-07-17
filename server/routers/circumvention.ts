@@ -319,13 +319,16 @@ import {
   browseRateLimiter,
 } from "../lib/rateLimiters";
 
+// Issues a warning to a vendor (admin-initiated). Records a circumvention_warnings
+// row and emails the vendor. Warnings NO LONGER auto-suspend — suspension is a
+// separate, fully manual admin action (see suspendVendorAccount).
 async function issueCircumventionWarning(
   vendorAccountId: string,
   flagId: string | null,
   reason: string,
   issuedBy: string,
   serverUrl: string
-): Promise<{ warningNumber: number; suspended: boolean; endsAt: Date | null }> {
+): Promise<{ warningNumber: number }> {
   const existingWarnings = await db
     .select({ id: circumventionWarnings.id })
     .from(circumventionWarnings)
@@ -345,54 +348,6 @@ async function issueCircumventionWarning(
     })
     .returning();
 
-  let suspended = false;
-  let endsAt: Date | null = null;
-
-  if (warningNumber >= 3) {
-    const now = new Date();
-    const [existing] = await db
-      .select({ id: vendorSuspensions.id, endsAt: vendorSuspensions.endsAt })
-      .from(vendorSuspensions)
-      .where(
-        and(
-          eq(vendorSuspensions.vendorAccountId, vendorAccountId),
-          drizzleSql`ends_at > ${now}`,
-          isNull(vendorSuspensions.liftedAt)
-        )
-      )
-      .limit(1);
-
-    if (!existing) {
-      const thirtyDaysFromNow = new Date(now.getTime() + 30 * 24 * 60 * 60 * 1000);
-      endsAt = thirtyDaysFromNow;
-
-      await db.insert(vendorSuspensions).values({
-        vendorAccountId,
-        reason,
-        warningSnapshot: warningNumber,
-        startsAt: now,
-        endsAt: thirtyDaysFromNow,
-        createdBy: issuedBy,
-        notifiedEmail: false,
-      });
-
-      await db
-        .update(vendorListings)
-        .set({ status: "inactive", updatedAt: new Date() })
-        .where(
-          and(
-            eq(vendorListings.accountId, vendorAccountId),
-            drizzleSql`status NOT IN ('deleted', 'draft')`
-          )
-        );
-
-      suspended = true;
-    } else {
-      endsAt = existing.endsAt;
-      suspended = true;
-    }
-  }
-
   (async () => {
     try {
       const vendorRows = await db
@@ -403,44 +358,114 @@ async function issueCircumventionWarning(
       const vendor = vendorRows[0];
       if (!vendor?.email) return;
 
-      if (suspended && endsAt) {
-        const endsAtFormatted = endsAt.toLocaleDateString("en-US", {
-          month: "long",
-          day: "numeric",
-          year: "numeric",
-        });
-        await sendAccountSuspendedEmail(vendor.email, {
-          recipientName: vendor.businessName || "Vendor",
-          suspensionEndsAt: endsAtFormatted,
-          reason,
-          serverUrl,
-        });
-      } else {
-        await sendCircumventionWarningEmail(vendor.email, {
-          recipientName: vendor.businessName || "Vendor",
-          warningNumber: Math.min(3, Math.max(1, warningNumber)) as 1 | 2 | 3,
-          serverUrl,
-        });
-      }
+      await sendCircumventionWarningEmail(vendor.email, {
+        recipientName: vendor.businessName || "Vendor",
+        warningNumber: Math.min(3, Math.max(1, warningNumber)) as 1 | 2 | 3,
+        serverUrl,
+      });
 
       await db
         .update(circumventionWarnings)
         .set({ notifiedEmail: true })
         .where(eq(circumventionWarnings.id, warning.id));
     } catch (err: any) {
-      logger.warn("[circumvention] email notification failed:", err?.message || err);
+      logger.warn("[circumvention] warning email failed:", err?.message || err);
     }
   })();
 
-  return { warningNumber, suspended, endsAt };
+  return { warningNumber };
 }
 
+// Suspends a vendor account (admin-initiated). Creates a vendor_suspensions row,
+// deactivates the vendor's live listings, and emails the vendor. Idempotent: if
+// an active suspension already exists it is returned unchanged.
+async function suspendVendorAccount(params: {
+  vendorAccountId: string;
+  reason: string;
+  createdBy: string;
+  serverUrl: string;
+  durationDays?: number;
+}): Promise<{ suspended: boolean; endsAt: Date; alreadySuspended: boolean }> {
+  const { vendorAccountId, reason, createdBy, serverUrl } = params;
+  const durationDays = params.durationDays && params.durationDays > 0 ? params.durationDays : 30;
+  const now = new Date();
+
+  const [existing] = await db
+    .select({ id: vendorSuspensions.id, endsAt: vendorSuspensions.endsAt })
+    .from(vendorSuspensions)
+    .where(
+      and(
+        eq(vendorSuspensions.vendorAccountId, vendorAccountId),
+        drizzleSql`ends_at > ${now}`,
+        isNull(vendorSuspensions.liftedAt)
+      )
+    )
+    .limit(1);
+
+  if (existing) {
+    return { suspended: true, endsAt: existing.endsAt, alreadySuspended: true };
+  }
+
+  const endsAt = new Date(now.getTime() + durationDays * 24 * 60 * 60 * 1000);
+  const warningCountRows = await db
+    .select({ id: circumventionWarnings.id })
+    .from(circumventionWarnings)
+    .where(eq(circumventionWarnings.vendorAccountId, vendorAccountId));
+
+  await db.insert(vendorSuspensions).values({
+    vendorAccountId,
+    reason,
+    warningSnapshot: warningCountRows.length,
+    startsAt: now,
+    endsAt,
+    createdBy,
+    notifiedEmail: false,
+  });
+
+  await db
+    .update(vendorListings)
+    .set({ status: "inactive", updatedAt: new Date() })
+    .where(
+      and(
+        eq(vendorListings.accountId, vendorAccountId),
+        drizzleSql`status NOT IN ('deleted', 'draft')`
+      )
+    );
+
+  (async () => {
+    try {
+      const [vendor] = await db
+        .select({ email: vendorAccounts.email, businessName: vendorAccounts.businessName })
+        .from(vendorAccounts)
+        .where(eq(vendorAccounts.id, vendorAccountId))
+        .limit(1);
+      if (!vendor?.email) return;
+      await sendAccountSuspendedEmail(vendor.email, {
+        recipientName: vendor.businessName || "Vendor",
+        suspensionEndsAt: endsAt.toLocaleDateString("en-US", {
+          month: "long",
+          day: "numeric",
+          year: "numeric",
+        }),
+        reason,
+        serverUrl,
+      });
+    } catch (err: any) {
+      logger.warn("[circumvention] suspension email failed:", err?.message || err);
+    }
+  })();
+
+  return { suspended: true, endsAt, alreadySuspended: false };
+}
+
+// Retained for the vendor status endpoint's informational payload only; it no
+// longer gates any enforcement (detection never blocks or escalates).
 const SOFT_ATTEMPT_LIMIT = 5;
 
-type ViolationResult =
-  | { phase: "soft"; softAttemptNumber: number; flagId: string }
-  | { phase: "hard"; warningNumber: number; suspended: boolean; endsAt: Date | null; flagId: string };
-
+// Records a circumvention detection as a pending flag for admin review. This is
+// now FULLY SILENT: no content is blocked, nothing is shown to the user, and no
+// warning or suspension is issued automatically. Admins review these flags and
+// issue warnings/suspensions manually from the moderation panel.
 export async function handleCircumventionViolation(params: {
   vendorAccountId: string;
   contentType: string;
@@ -450,37 +475,11 @@ export async function handleCircumventionViolation(params: {
   listingId?: string | null;
   bookingId?: string | null;
   serverUrl: string;
-}): Promise<ViolationResult> {
-  const { vendorAccountId, contentType, contentSnapshot, matches, reason, listingId, bookingId, serverUrl } = params;
-
-  const softRows = await db
-    .select({ id: circumventionFlags.id })
-    .from(circumventionFlags)
-    .where(
-      and(
-        eq(circumventionFlags.vendorAccountId, vendorAccountId),
-        drizzleSql`flag_type = 'soft_attempt'`
-      )
-    );
-  const softAttemptCount = softRows.length;
-
-  if (softAttemptCount < SOFT_ATTEMPT_LIMIT) {
-    const [flag] = await db.insert(circumventionFlags).values({
-      flagType: "soft_attempt" as any,
-      contentType: contentType as any,
-      contentSnapshot: contentSnapshot.slice(0, 2000),
-      matches,
-      vendorAccountId,
-      listingId: listingId ?? undefined,
-      bookingId: bookingId ?? undefined,
-      status: "pending",
-    }).returning();
-
-    return { phase: "soft", softAttemptNumber: softAttemptCount + 1, flagId: flag.id };
-  }
+}): Promise<{ flagId: string }> {
+  const { vendorAccountId, contentType, contentSnapshot, matches, listingId, bookingId } = params;
 
   const [flag] = await db.insert(circumventionFlags).values({
-    flagType: "hard_block_attempt" as any,
+    flagType: "soft_flag" as any,
     contentType: contentType as any,
     contentSnapshot: contentSnapshot.slice(0, 2000),
     matches,
@@ -490,21 +489,7 @@ export async function handleCircumventionViolation(params: {
     status: "pending",
   }).returning();
 
-  const warningResult = await issueCircumventionWarning(
-    vendorAccountId,
-    flag.id,
-    reason,
-    "system",
-    serverUrl
-  );
-
-  return {
-    phase: "hard",
-    warningNumber: warningResult.warningNumber,
-    suspended: warningResult.suspended,
-    endsAt: warningResult.endsAt,
-    flagId: flag.id,
-  };
+  return { flagId: flag.id };
 }
 
 export async function getActiveSuspension(vendorAccountId: string) {
@@ -527,14 +512,13 @@ export function registerCircumventionRoutes(app: Express): void {
   // ── Circumvention Prevention ─────────────────────────────────────────────────
 
   // POST /api/chat/circumvention/flag
-  // Called by the chat client when a message is hard-blocked.
-  // Logs the flag, issues a warning, and returns the vendor's new warning state.
+  // Called by the chat client when a message contains detected contact info.
+  // SILENT: this only records a pending flag for admin review — the message is
+  // NOT blocked and no warning/suspension is issued. Admins act on flags
+  // manually from the moderation panel.
   //
-  // SECURITY: this route is advisory only. The authoritative scan is the
-  // server-side checkContent/handleCircumventionViolation path; the
-  // client-supplied `matches` are stored as evidence on the flag row but must
-  // never influence strike severity (escalation depends solely on the count of
-  // prior flags for the vendor, not on `matches` content).
+  // SECURITY: client-supplied `matches` are stored only as evidence on the flag
+  // row; they never drive any automated action.
   app.post("/api/chat/circumvention/flag", messagingRateLimiter, requireDualAuthAuth0, async (req, res) => {
     try {
       const payload = z.object({
@@ -542,8 +526,6 @@ export function registerCircumventionRoutes(app: Express): void {
         contentSnapshot: z.string().min(1).max(2000),
         matches: z.array(z.string()).default([]),
       }).parse(req.body ?? {});
-
-      const serverUrl = appUrl();
 
       // Resolve who is sending
       const vendorAuth = (req as any).vendorAuth;
@@ -556,55 +538,18 @@ export function registerCircumventionRoutes(app: Express): void {
       const actorUserId = vendorAuth?.userId || customerAuth?.id || null;
       const vendorAccountId = vendorAuth?.id || null;
 
-      if (vendorAccountId) {
-        // Vendor-side message: run through the escalation ladder.
-        const result = await handleCircumventionViolation({
-          vendorAccountId,
-          contentType: "chat_message",
-          contentSnapshot: payload.contentSnapshot,
-          matches: payload.matches,
-          reason: "Attempted to send contact information in booking chat",
-          bookingId: payload.bookingId,
-          serverUrl,
-        });
-
-        // Also tag the flag with the actor user id (handleCircumventionViolation
-        // inserts the flag, but doesn't know the userId — update it now).
-        if (actorUserId) {
-          db.execute(drizzleSql`
-            UPDATE circumvention_flags SET user_id = ${actorUserId} WHERE id = ${result.flagId}
-          `).catch(() => {});
-        }
-
-        return res.status(201).json({
-          flagId: result.flagId,
-          phase: result.phase,
-          softAttemptNumber: result.phase === "soft" ? result.softAttemptNumber : null,
-          warningNumber: result.phase === "hard" ? result.warningNumber : null,
-          suspended: result.phase === "hard" ? result.suspended : false,
-          suspensionEndsAt: result.phase === "hard" ? result.endsAt : null,
-        });
-      }
-
-      // Customer-side message (no vendor account): just log and return.
       const [flag] = await db.insert(circumventionFlags).values({
-        flagType: "hard_block_attempt" as any,
+        flagType: "soft_flag" as any,
         contentType: "chat_message" as any,
         contentSnapshot: payload.contentSnapshot.slice(0, 2000),
         matches: payload.matches,
+        vendorAccountId: vendorAccountId ?? undefined,
         userId: actorUserId ?? undefined,
         bookingId: payload.bookingId,
         status: "pending",
       }).returning();
 
-      return res.status(201).json({
-        flagId: flag.id,
-        phase: "soft",
-        softAttemptNumber: null,
-        warningNumber: null,
-        suspended: false,
-        suspensionEndsAt: null,
-      });
+      return res.status(201).json({ flagId: flag.id });
     } catch (error: any) {
       return respondWithInternalServerError(req, res, error);
     }
@@ -744,7 +689,13 @@ export function registerCircumventionRoutes(app: Express): void {
           vl.status         AS "listingStatus",
           vl.violation_removal      AS "violationRemoval",
           vl.pending_admin_review   AS "pendingAdminReview",
-          (SELECT COUNT(*)::int FROM circumvention_warnings w WHERE w.vendor_account_id = va.id) AS "warningCount"
+          (SELECT COUNT(*)::int FROM circumvention_warnings w WHERE w.vendor_account_id = va.id) AS "warningCount",
+          EXISTS (
+            SELECT 1 FROM vendor_suspensions vs
+            WHERE vs.vendor_account_id = va.id
+              AND vs.ends_at > NOW()
+              AND vs.lifted_at IS NULL
+          ) AS "isSuspended"
         FROM circumvention_flags f
         LEFT JOIN vendor_accounts va ON va.id = f.vendor_account_id
         LEFT JOIN vendor_listings  vl ON vl.id = f.listing_id
@@ -884,7 +835,7 @@ export function registerCircumventionRoutes(app: Express): void {
       }
 
       // Issue a warning
-      let warningResult: { warningNumber: number; suspended: boolean; endsAt: Date | null } | null = null;
+      let warningResult: { warningNumber: number } | null = null;
       if (flag.vendorAccountId) {
         const reason =
           flag.listingId
@@ -931,9 +882,105 @@ export function registerCircumventionRoutes(app: Express): void {
       return res.json({
         success: true,
         warningNumber: warningResult?.warningNumber ?? null,
-        suspended: warningResult?.suspended ?? false,
-        suspensionEndsAt: warningResult?.endsAt ?? null,
       });
+    } catch (error: any) {
+      return respondWithInternalServerError(req, res, error);
+    }
+  });
+
+  // POST /api/admin/circumvention/vendors/:vendorAccountId/suspend
+  // Admin manually suspends a vendor account. Deactivates the vendor's live
+  // listings and emails them. Optional body: { reason?, durationDays? }.
+  app.post("/api/admin/circumvention/vendors/:vendorAccountId/suspend", adminRateLimiter, requireAdminAuth, async (req, res) => {
+    try {
+      const vendorAccountId = asTrimmedString(req.params?.vendorAccountId);
+      if (!vendorAccountId) return res.status(400).json({ error: "Vendor account id required" });
+
+      const body = z.object({
+        reason: z.string().max(500).optional(),
+        durationDays: z.number().int().positive().max(3650).optional(),
+      }).parse(req.body ?? {});
+
+      const [vendor] = await db
+        .select({ id: vendorAccounts.id })
+        .from(vendorAccounts)
+        .where(eq(vendorAccounts.id, vendorAccountId))
+        .limit(1);
+      if (!vendor) return res.status(404).json({ error: "Vendor not found" });
+
+      const adminAuth = (req as any).adminAuth;
+      const adminEmail = adminAuth?.email || "admin";
+
+      const result = await suspendVendorAccount({
+        vendorAccountId,
+        reason: body.reason?.trim() || "Off-platform contact / circumvention (admin action)",
+        createdBy: adminEmail,
+        serverUrl: appUrl(),
+        durationDays: body.durationDays,
+      });
+
+      return res.json({
+        success: true,
+        suspended: result.suspended,
+        alreadySuspended: result.alreadySuspended,
+        endsAt: result.endsAt,
+      });
+    } catch (error: any) {
+      if (error?.name === "ZodError") {
+        return res.status(400).json({ error: "Validation failed", details: error.errors });
+      }
+      return respondWithInternalServerError(req, res, error);
+    }
+  });
+
+  // POST /api/admin/circumvention/suspensions/:id/lift
+  // Admin manually lifts an active suspension and emails the vendor. Listings
+  // that were deactivated stay inactive until re-approved/re-published.
+  app.post("/api/admin/circumvention/suspensions/:id/lift", adminRateLimiter, requireAdminAuth, async (req, res) => {
+    try {
+      const suspensionId = asTrimmedString(req.params?.id);
+      if (!suspensionId) return res.status(400).json({ error: "Suspension id required" });
+
+      const adminAuth = (req as any).adminAuth;
+      const adminEmail = adminAuth?.email || "admin";
+      const serverUrl = appUrl();
+
+      const [suspension] = await db
+        .select()
+        .from(vendorSuspensions)
+        .where(eq(vendorSuspensions.id, suspensionId))
+        .limit(1);
+      if (!suspension) return res.status(404).json({ error: "Suspension not found" });
+      if (suspension.liftedAt) return res.status(400).json({ error: "Suspension already lifted" });
+
+      await db
+        .update(vendorSuspensions)
+        .set({ liftedAt: new Date(), liftedBy: adminEmail, liftEmailSent: false })
+        .where(eq(vendorSuspensions.id, suspensionId));
+
+      void (async () => {
+        try {
+          const [vendor] = await db
+            .select({ email: vendorAccounts.email, businessName: vendorAccounts.businessName })
+            .from(vendorAccounts)
+            .where(eq(vendorAccounts.id, suspension.vendorAccountId))
+            .limit(1);
+          if (!vendor?.email) return;
+          await sendSuspensionLiftedEmail(vendor.email, {
+            recipientName: vendor.businessName || "Vendor",
+            businessName: vendor.businessName || "Vendor",
+            serverUrl,
+          });
+          await db
+            .update(vendorSuspensions)
+            .set({ liftEmailSent: true })
+            .where(eq(vendorSuspensions.id, suspensionId));
+        } catch (err: any) {
+          logger.warn("[circumvention] suspension-lifted email failed:", err?.message || err);
+        }
+      })();
+
+      return res.json({ success: true });
     } catch (error: any) {
       return respondWithInternalServerError(req, res, error);
     }
