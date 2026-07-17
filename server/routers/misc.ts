@@ -168,6 +168,7 @@ import {
   sendDisputeResponseEmail,
   sendTravelFeeProposedEmail,
   sendTravelFeeRespondedEmail,
+  sendFeedbackReceivedEmail,
 } from "../email";
 import { calculateRefund } from "../lib/calculateRefund";
 import {
@@ -2014,6 +2015,21 @@ app.post(
           submitterEmail,
         })
         .returning({ id: feedbackSubmissions.id });
+
+      // Fire-and-forget: alert the founder so feedback doesn't sit unseen in the
+      // admin page. Never let an email failure break the submission itself.
+      void sendFeedbackReceivedEmail({
+        type: body.type as "feature_request" | "bug_report",
+        title: body.title.trim(),
+        description: body.description.trim(),
+        submitterRole,
+        submitterName,
+        submitterEmail,
+        attachmentUrl: body.attachmentUrl?.trim() || null,
+        submittedAt: new Date().toLocaleString("en-US", { timeZone: "America/Denver" }),
+      }).catch((emailError: any) => {
+        logger.warn("[feedback notify email] failed:", emailError?.message || emailError);
+      });
 
       return res.status(201).json({ id: row.id });
     } catch (err: any) {
