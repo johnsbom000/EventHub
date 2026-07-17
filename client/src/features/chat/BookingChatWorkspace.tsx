@@ -443,15 +443,21 @@ export function BookingChatWorkspace({ role, initialBookingId, initialVendorId }
       setSelectedEventKey(null);
       return;
     }
-    if (eventGroups.length === 0) {
-      setSelectedEventKey(null);
+    // The pre-booking inquiry pseudo-group ("__inquiry__") is not part of
+    // eventGroups (which only holds booking-based groups). Keep it selected as
+    // long as at least one inquiry conversation exists, otherwise the deep-link
+    // auto-open (and manual selection) would be immediately reset to null.
+    if (selectedEventKey === "__inquiry__") {
+      if (inquiryConversations.length === 0) {
+        setSelectedEventKey(null);
+      }
       return;
     }
     if (selectedEventKey && eventGroups.some((item) => item.key === selectedEventKey)) {
       return;
     }
     setSelectedEventKey(null);
-  }, [eventGroups, role, selectedEventKey]);
+  }, [eventGroups, inquiryConversations, role, selectedEventKey]);
 
   // ── Deep-link: auto-select a specific booking when navigated from another page ──
   const initialAppliedRef = useRef(false);
