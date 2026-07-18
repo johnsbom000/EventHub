@@ -44,3 +44,12 @@ AUDIT-REPORT.md
 EVENTHUB.md
 MARKETING.md
 STRATEGY.md
+
+# design-sync: staged converter scripts, build output, and machine state.
+# Durable inputs under .design-sync/ (config.json, NOTES.md, conventions.md,
+# prebuild.mjs, tailwind.ds.config.ts, previews/, overrides/) stay tracked.
+.ds-sync/
+ds-bundle/
+.design-sync/.cache/
+.design-sync/learnings/
+.design-sync/node_modules
