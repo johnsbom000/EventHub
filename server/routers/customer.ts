@@ -1680,13 +1680,15 @@ export function registerCustomerRoutes(app: Express): void {
 
       const schema = z.object({
         rating: z.number().int().min(1).max(5),
-        body: z.string().min(4).max(2000),
+        // Comment is optional (a rating-only review is valid). When provided,
+        // require a minimum length so partial one/two-word entries don't slip in.
+        body: z.string().max(2000).optional().default(""),
       });
       const data = schema.parse(req.body ?? {});
       const reviewBody = data.body.trim();
 
-      if (reviewBody.length < 4) {
-        return res.status(400).json({ error: "Review body is too short" });
+      if (reviewBody.length > 0 && reviewBody.length < 6) {
+        return res.status(400).json({ error: "Review comment is too short" });
       }
 
       const bookingRows: any = await db.execute(drizzleSql`
