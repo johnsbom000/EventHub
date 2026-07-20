@@ -363,7 +363,7 @@ function ReviewPrompt({ booking }: { booking: CustomerBooking }) {
  <Button
  size="sm"
  type="button"
- disabled={submitMutation.isPending || body.trim().length < 4}
+ disabled={submitMutation.isPending || rating < 1 || (body.trim().length > 0 && body.trim().length < 6)}
  onClick={() => submitMutation.mutate()}
  className="bg-[#e07a6a] text-white hover:bg-[#c9685a]"
  >
