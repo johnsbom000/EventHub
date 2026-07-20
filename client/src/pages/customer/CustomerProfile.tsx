@@ -52,6 +52,8 @@ interface CustomerProfileProps {
   customer: {
     id: string;
     name: string;
+    firstName?: string | null;
+    lastName?: string | null;
     displayName?: string | null;
     profilePhotoDataUrl?: string | null;
     email: string;
@@ -66,6 +68,50 @@ function estimateDataUrlBytes(dataUrl: string) {
   const base64 = dataUrl.split(",")[1] || "";
   const padding = base64.endsWith("==") ? 2 : base64.endsWith("=") ? 1 : 0;
   return Math.max(0, Math.floor((base64.length * 3) / 4) - padding);
+}
+
+// Seeds the First/Last name inputs from whatever name is on file. Never seeds
+// from an email address (accounts provisioned from email have `name` = email),
+// so the customer sees empty fields prompting a real name instead of their email.
+function splitStoredName(
+  displayName?: string | null,
+  fallbackName?: string | null,
+): { firstName: string; lastName: string } {
+  const candidate = (displayName ?? "").trim() || (fallbackName ?? "").trim();
+  if (!candidate || candidate.includes("@")) {
+    return { firstName: "", lastName: "" };
+  }
+  const parts = candidate.split(/\s+/).filter(Boolean);
+  if (parts.length === 0) return { firstName: "", lastName: "" };
+  if (parts.length === 1) return { firstName: parts[0], lastName: "" };
+  return { firstName: parts[0], lastName: parts.slice(1).join(" ") };
+}
+
+// Derives the initial First/Last/Display form values from the account. First and
+// last come from the structured columns when present, otherwise from splitting
+// an existing real name (never an email). Display name defaults to "First Last"
+// but is treated as customized when the stored display name differs from that.
+function deriveNameState(customer: {
+  firstName?: string | null;
+  lastName?: string | null;
+  displayName?: string | null;
+  name?: string | null;
+}): { firstName: string; lastName: string; displayName: string; displayNameTouched: boolean } {
+  const columnFirst = (customer.firstName ?? "").trim();
+  const columnLast = (customer.lastName ?? "").trim();
+  const seed =
+    columnFirst || columnLast
+      ? { firstName: columnFirst, lastName: columnLast }
+      : splitStoredName(customer.displayName, customer.name);
+
+  const computedDefault = [seed.firstName, seed.lastName].filter(Boolean).join(" ");
+  const storedDisplay = (customer.displayName ?? "").trim();
+  return {
+    firstName: seed.firstName,
+    lastName: seed.lastName,
+    displayName: storedDisplay || computedDefault,
+    displayNameTouched: Boolean(storedDisplay) && storedDisplay !== computedDefault,
+  };
 }
 
 function getInitials(name: string) {
@@ -224,8 +270,14 @@ export default function CustomerProfile({ customer }: CustomerProfileProps) {
       ? customer.profilePhotoDataUrl.trim()
       : null;
 
+  const initialName = deriveNameState(customer);
   const [isEditing, setIsEditing] = useState(false);
-  const [displayName, setDisplayName] = useState(resolvedDisplayName);
+  const [firstName, setFirstName] = useState(initialName.firstName);
+  const [lastName, setLastName] = useState(initialName.lastName);
+  const [displayName, setDisplayName] = useState(initialName.displayName);
+  // Once the customer edits the display name themselves, stop auto-filling it
+  // from First + Last name.
+  const [displayNameTouched, setDisplayNameTouched] = useState(initialName.displayNameTouched);
   const [profilePhotoSource, setProfilePhotoSource] = useState<ProfilePhotoSource | null>(null);
   const [profilePhotoPosition, setProfilePhotoPosition] = useState<ProfilePhotoPosition>({ x: 0, y: 0 });
   const [profilePhotoScale, setProfilePhotoScale] = useState(1);
@@ -268,8 +320,19 @@ export default function CustomerProfile({ customer }: CustomerProfileProps) {
   };
 
   useEffect(() => {
-    setDisplayName(resolvedDisplayName);
-  }, [resolvedDisplayName]);
+    const next = deriveNameState(customer);
+    setFirstName(next.firstName);
+    setLastName(next.lastName);
+    setDisplayName(next.displayName);
+    setDisplayNameTouched(next.displayNameTouched);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [customer.firstName, customer.lastName, customer.displayName, customer.name]);
+
+  // Keep the display name mirroring "First Last" until the customer overrides it.
+  useEffect(() => {
+    if (displayNameTouched) return;
+    setDisplayName([firstName.trim(), lastName.trim()].filter(Boolean).join(" "));
+  }, [firstName, lastName, displayNameTouched]);
 
   useEffect(() => {
     let cancelled = false;
@@ -303,13 +366,19 @@ export default function CustomerProfile({ customer }: CustomerProfileProps) {
 
   const saveProfileMutation = useMutation({
     mutationFn: async ({
+      nextFirstName,
+      nextLastName,
       nextDisplayName,
       nextProfilePhotoDataUrl,
     }: {
+      nextFirstName: string;
+      nextLastName: string;
       nextDisplayName: string;
       nextProfilePhotoDataUrl: string | null;
     }) => {
       const res = await apiRequest("PATCH", "/api/customer/me", {
+        firstName: nextFirstName || null,
+        lastName: nextLastName || null,
         displayName: nextDisplayName,
         profilePhotoDataUrl: nextProfilePhotoDataUrl,
       });
@@ -487,15 +556,19 @@ export default function CustomerProfile({ customer }: CustomerProfileProps) {
   };
 
   const handleSave = async () => {
-    const nextDisplayName = displayName.trim();
-    if (!nextDisplayName) {
+    const nextFirstName = firstName.trim();
+    const nextLastName = lastName.trim();
+    if (!nextFirstName) {
       toast({
-        title: "Display name required",
-        description: "Please enter a display name.",
+        title: t("customerProfile.nameRequired"),
+        description: t("customerProfile.nameRequired"),
         variant: "destructive",
       });
       return;
     }
+    // Display name defaults to "First Last" when the customer hasn't set one.
+    const nextDisplayName =
+      displayName.trim() || [nextFirstName, nextLastName].filter(Boolean).join(" ");
 
     if (isPreparingPhoto || saveProfileMutation.isPending) return;
 
@@ -530,12 +603,17 @@ export default function CustomerProfile({ customer }: CustomerProfileProps) {
     }
 
     saveProfileMutation.mutate({
+      nextFirstName,
+      nextLastName,
       nextDisplayName,
       nextProfilePhotoDataUrl,
     });
   };
 
-  const activeNameForInitials = displayName.trim() || resolvedDisplayName;
+  const activeNameForInitials =
+    displayName.trim() ||
+    [firstName.trim(), lastName.trim()].filter(Boolean).join(" ") ||
+    resolvedDisplayName;
   const activeInitials = getInitials(activeNameForInitials);
   const isSaving = saveProfileMutation.isPending || saveProfilePhotoMutation.isPending || isPreparingPhoto;
 
@@ -670,16 +748,49 @@ export default function CustomerProfile({ customer }: CustomerProfileProps) {
           )}
         </CardHeader>
         <CardContent className="space-y-4">
+          <div className="grid gap-4 sm:grid-cols-2">
+            <div>
+              <Label htmlFor="firstName">{t("customerProfile.firstName")}</Label>
+              <Input
+                id="firstName"
+                value={firstName}
+                onChange={(event) => setFirstName(event.target.value)}
+                disabled={!isEditing}
+                placeholder={t("customerProfile.firstNamePlaceholder")}
+                className="mt-1.5"
+                data-testid="input-first-name"
+              />
+            </div>
+            <div>
+              <Label htmlFor="lastName">{t("customerProfile.lastName")}</Label>
+              <Input
+                id="lastName"
+                value={lastName}
+                onChange={(event) => setLastName(event.target.value)}
+                disabled={!isEditing}
+                placeholder={t("customerProfile.lastNamePlaceholder")}
+                className="mt-1.5"
+                data-testid="input-last-name"
+              />
+            </div>
+          </div>
+
           <div>
             <Label htmlFor="displayName">{t("customerProfile.displayName")}</Label>
             <Input
               id="displayName"
               value={displayName}
-              onChange={(event) => setDisplayName(event.target.value)}
+              onChange={(event) => {
+                setDisplayNameTouched(true);
+                setDisplayName(event.target.value);
+              }}
               disabled={!isEditing}
               className="mt-1.5"
               data-testid="input-display-name"
             />
+            <p className="text-sm text-muted-foreground mt-1">
+              {t("customerProfile.displayNameNote")}
+            </p>
           </div>
 
           <div>
@@ -826,7 +937,11 @@ export default function CustomerProfile({ customer }: CustomerProfileProps) {
               <Button
                 variant="outline"
                 onClick={() => {
-                  setDisplayName(resolvedDisplayName);
+                  const next = deriveNameState(customer);
+                  setFirstName(next.firstName);
+                  setLastName(next.lastName);
+                  setDisplayName(next.displayName);
+                  setDisplayNameTouched(next.displayNameTouched);
                   void hydrateResolvedProfilePhoto(resolvedProfilePhotoDataUrl);
                   setIsEditing(false);
                 }}

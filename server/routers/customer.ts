@@ -413,6 +413,8 @@ export function registerCustomerRoutes(app: Express): void {
       res.json({
         id: user.id,
         name: user.name,
+        firstName: user.firstName ?? null,
+        lastName: user.lastName ?? null,
         displayName: user.displayName ?? null,
         profilePhotoDataUrl,
         email: responseEmail,
@@ -465,6 +467,8 @@ export function registerCustomerRoutes(app: Express): void {
   });
 
   const updateCustomerMeSchema = z.object({
+    firstName: z.string().trim().max(120).nullable().optional(),
+    lastName: z.string().trim().max(120).nullable().optional(),
     displayName: z.string().trim().min(1).max(120).optional(),
     // Accepts a data: URL (a newly picked photo, uploaded to S3 server-side),
     // OR an already-stored URL/path the client echoes back unchanged (treated
@@ -514,6 +518,12 @@ export function registerCustomerRoutes(app: Express): void {
         updatedAt: new Date(),
       };
 
+      if (Object.prototype.hasOwnProperty.call(data, "firstName")) {
+        updates.firstName = data.firstName ? data.firstName : null;
+      }
+      if (Object.prototype.hasOwnProperty.call(data, "lastName")) {
+        updates.lastName = data.lastName ? data.lastName : null;
+      }
       if (Object.prototype.hasOwnProperty.call(data, "displayName")) {
         updates.displayName = data.displayName;
       }
@@ -577,6 +587,8 @@ export function registerCustomerRoutes(app: Express): void {
       return res.json({
         id: updated.id,
         name: updated.name,
+        firstName: updated.firstName ?? null,
+        lastName: updated.lastName ?? null,
         displayName: updated.displayName ?? null,
         profilePhotoDataUrl,
         email: updated.email,
