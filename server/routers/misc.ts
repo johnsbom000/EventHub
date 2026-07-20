@@ -224,6 +224,7 @@ import {
   zonedDateTimeToUtc,
 } from "../timezone";
 import { serializeHobbyList } from "@shared/hobby-tags";
+import { formatReviewerName } from "@shared/reviewerName";
 import {
   computePayoutEligibility,
   deriveDisputeWindowCloseAt,
@@ -1147,7 +1148,7 @@ app.post(
           lr.title,
           lr.body,
           lr.created_at as "createdAt",
-          coalesce(nullif(u.display_name, ''), nullif(u.name, ''), 'Customer') as "authorName",
+          coalesce(nullif(u.display_name, ''), 'Customer') as "authorName",
           rr.reply as "vendorReply",
           rr.created_at as "vendorRepliedAt"
         from listing_reviews lr
@@ -1177,10 +1178,7 @@ app.post(
           title: typeof row.title === "string" ? row.title : null,
           body: typeof row.body === "string" ? row.body : null,
           createdAt: row.createdAt ?? null,
-          authorName:
-            typeof row.authorName === "string" && row.authorName.trim().length > 0
-              ? row.authorName.trim()
-              : "Customer",
+          authorName: formatReviewerName(row.authorName),
           vendorReply: typeof row.vendorReply === "string" && row.vendorReply.trim().length > 0
             ? row.vendorReply.trim()
             : null,

@@ -108,6 +108,8 @@ export const users = pgTable(
     email: text("email").notNull(),
     role: userRoleEnum("role").notNull().default("customer"),
     auth0Sub: text("auth0_sub"),
+    firstName: text("first_name"),
+    lastName: text("last_name"),
     displayName: text("display_name"),
     lastLoginAt: timestamp("last_login_at"),
     defaultLocation: jsonb("default_location"),
