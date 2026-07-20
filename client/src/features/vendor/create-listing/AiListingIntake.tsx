@@ -194,7 +194,7 @@ export function AiListingIntake({ onDrafted, onCancel }: AiListingIntakeProps) {
 
   return (
     <div
-      className="fixed inset-0 z-[60] grid place-items-center bg-black/50 p-4"
+      className="fixed inset-0 z-[60] grid place-items-center bg-black/60 p-4 backdrop-blur-sm"
       role="dialog"
       aria-modal="true"
       aria-label="Fill listing with AI"
@@ -203,7 +203,9 @@ export function AiListingIntake({ onDrafted, onCancel }: AiListingIntakeProps) {
         if (e.target === e.currentTarget && !generating) onCancel();
       }}
     >
-      <div className="flex max-h-[90vh] w-full max-w-2xl flex-col overflow-hidden rounded-2xl border border-border bg-background shadow-xl">
+      {/* Solid white panel — this app's `bg-background` token is not opaque
+          (the wizard itself uses bg-[#ffffff]), so use an explicit white here. */}
+      <div className="flex max-h-[90vh] w-full max-w-2xl flex-col overflow-hidden rounded-2xl border border-border bg-white shadow-xl">
         {/* Header */}
         <div className="flex items-start gap-3 border-b border-border p-6">
           <div className="flex h-10 w-10 flex-none items-center justify-center rounded-xl bg-primary/10 text-primary">
