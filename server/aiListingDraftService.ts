@@ -177,26 +177,43 @@ async function toImageBlock(raw: unknown): Promise<any> {
   const publicBase = (process.env.OBJECT_STORAGE_PUBLIC_BASE_URL || "").trim().replace(/\/$/, "");
 
   if (/^https?:\/\//i.test(value)) {
-    if (isObjectStorageConfigured() && publicBase) {
-      if (!value.startsWith(`${publicBase}/`)) {
-        throw new AiListingDraftError(
-          "ai_bad_photo",
-          400,
-          "Photos must be uploaded through EventHub before generating a draft"
-        );
-      }
-      return { type: "image", source: { type: "url", url: value } };
+    // SSRF guard: only ever fetch URLs under our own storage (or any absolute
+    // URL in genuine local dev). Anything else is rejected before we make a
+    // server-side request.
+    const trusted =
+      (isObjectStorageConfigured() && !!publicBase && value.startsWith(`${publicBase}/`)) ||
+      localFallbackAllowed();
+    if (!trusted) {
+      throw new AiListingDraftError(
+        "ai_bad_photo",
+        400,
+        "Photos must be uploaded through EventHub before generating a draft"
+      );
     }
-    // Object storage not configured but an absolute URL was supplied — only
-    // trust it in genuine local dev (never in production/Railway).
-    if (localFallbackAllowed()) {
-      return { type: "image", source: { type: "url", url: value } };
+
+    // Fetch the bytes on our server and send them to Claude as base64, rather
+    // than handing Claude the URL to download itself. Anthropic's image fetcher
+    // can't be relied on to reach our storage (it returns "Unable to download
+    // the file" for buckets that block non-browser fetchers / redirects), but
+    // our own server can always read its own storage.
+    let resp: Response;
+    try {
+      resp = await fetch(value);
+    } catch {
+      throw new AiListingDraftError("ai_bad_photo", 502, "Uploaded photo could not be retrieved");
     }
-    throw new AiListingDraftError(
-      "ai_bad_photo",
-      400,
-      "Photos must be uploaded through EventHub before generating a draft"
-    );
+    if (!resp.ok) {
+      throw new AiListingDraftError("ai_bad_photo", 502, "Uploaded photo could not be retrieved");
+    }
+    const buffer = Buffer.from(await resp.arrayBuffer());
+    return {
+      type: "image",
+      source: {
+        type: "base64",
+        media_type: mediaTypeForPath(value.split("?")[0]),
+        data: buffer.toString("base64"),
+      },
+    };
   }
 
   // Dev local-upload path: /uploads/listings/<file> → base64 from disk.
