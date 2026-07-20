@@ -364,11 +364,52 @@ export async function generateListingDraft(
       output_config: { format: { type: "json_schema", schema: DRAFT_SCHEMA } },
     } as Anthropic.MessageCreateParamsNonStreaming);
   } catch (err: any) {
+    // Anthropic SDK errors carry an HTTP status + a nested error object; pull
+    // them apart so the failure is diagnosable instead of a generic 502.
+    const status = Number(err?.status) || null;
+    const apiType = err?.error?.error?.type || err?.error?.type || err?.type || null;
+    const apiMessage = err?.error?.error?.message || err?.message || String(err);
     logger.error(
-      { err: err?.message || String(err) },
+      { status, apiType, err: apiMessage },
       "[ai-listing-draft] generation failed"
     );
-    throw new AiListingDraftError("ai_generation_failed", 502, "Could not generate a draft");
+
+    if (status === 401) {
+      throw new AiListingDraftError(
+        "ai_unauthorized",
+        502,
+        "AI isn't authenticated — check the ANTHROPIC_API_KEY value."
+      );
+    }
+    if (status === 403) {
+      throw new AiListingDraftError(
+        "ai_forbidden_model",
+        502,
+        "This API key isn't allowed to use the drafting model."
+      );
+    }
+    if (status === 404) {
+      throw new AiListingDraftError(
+        "ai_model_unavailable",
+        502,
+        "The drafting model isn't available on this Anthropic account."
+      );
+    }
+    if (status === 429) {
+      throw new AiListingDraftError(
+        "ai_rate_limited",
+        429,
+        "The AI is busy right now — please try again in a moment."
+      );
+    }
+    if (status === 400 && /image|url|fetch|download|media|photo/i.test(String(apiMessage))) {
+      throw new AiListingDraftError(
+        "ai_photo_unreachable",
+        502,
+        "The AI couldn't load your photos. Make sure uploaded images are publicly accessible."
+      );
+    }
+    throw new AiListingDraftError("ai_generation_failed", 502, "Could not generate a draft.");
   }
 
   const draft = parseDraft(response);
