@@ -111,6 +111,11 @@ export const users = pgTable(
     displayName: text("display_name"),
     lastLoginAt: timestamp("last_login_at"),
     defaultLocation: jsonb("default_location"),
+    // Customer profile photo, stored as a `/uploads/customer-avatars/<file>`
+    // path (resolved to a CDN URL on read). Replaces the legacy base64
+    // `_profilePhotoDataUrl` blob that used to live inside default_location
+    // (migration 0159 + backfill_customer_photos_to_s3.ts).
+    profilePhotoUrl: text("profile_photo_url"),
     preferredLanguage: varchar("preferred_language", { length: 10 }).notNull().default("en"),
     stripeCustomerId: text("stripe_customer_id"),
     vendorOnlySignup: boolean("vendor_only_signup").notNull().default(false),
