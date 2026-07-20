@@ -249,6 +249,7 @@ import {
   zonedDateTimeToUtc,
 } from "../timezone";
 import { serializeHobbyList } from "@shared/hobby-tags";
+import { formatReviewerName } from "@shared/reviewerName";
 import {
   computePayoutEligibility,
   deriveDisputeWindowCloseAt,
@@ -3713,7 +3714,7 @@ export function registerVendorRoutes(app: Express): void {
           lr.title,
           lr.body,
           lr.created_at as "createdAt",
-          coalesce(nullif(u.display_name, ''), nullif(u.name, ''), 'Customer') as "authorName",
+          coalesce(nullif(u.display_name, ''), 'Customer') as "authorName",
           coalesce(nullif(vl.title, ''), 'Event') as "eventLabel"
         from listing_reviews lr
         inner join vendor_listings vl on vl.id = lr.listing_id
@@ -3742,10 +3743,7 @@ export function registerVendorRoutes(app: Express): void {
           title: typeof row.title === "string" ? row.title : null,
           body: typeof row.body === "string" ? row.body : "",
           createdAt: row.createdAt ?? null,
-          authorName:
-            typeof row.authorName === "string" && row.authorName.trim().length > 0
-              ? row.authorName.trim()
-              : "Customer",
+          authorName: formatReviewerName(row.authorName),
           eventLabel:
             typeof row.eventLabel === "string" && row.eventLabel.trim().length > 0
               ? row.eventLabel.trim()

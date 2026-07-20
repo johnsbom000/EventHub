@@ -47,6 +47,8 @@ import { Avatar, AvatarFallback, AvatarImage } from "@/components/ui/avatar";
 interface Customer {
   id: string;
   name: string;
+  firstName?: string | null;
+  lastName?: string | null;
   displayName?: string | null;
   profilePhotoDataUrl?: string | null;
   email: string;
