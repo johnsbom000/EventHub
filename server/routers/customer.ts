@@ -377,6 +377,21 @@ export function registerCustomerRoutes(app: Express): void {
     return Object.keys(merged).length > 0 ? merged : null;
   };
 
+  const customerAvatarUploadsDir = path.join(process.cwd(), "server/uploads/customer-avatars");
+
+  // The photo the API returns under the (legacy-named) `profilePhotoDataUrl`
+  // field: prefer the dedicated column resolved to a CDN URL, and fall back to
+  // any base64 blob still living in default_location on rows not yet migrated
+  // by backfill_customer_photos_to_s3.ts.
+  const resolveCustomerProfilePhoto = (user: {
+    profilePhotoUrl?: string | null;
+    defaultLocation?: unknown;
+  }): string | null => {
+    const fromColumn = resolveStoredUploadPath(user.profilePhotoUrl ?? null);
+    if (fromColumn) return fromColumn;
+    return splitCustomerDefaultLocation(user.defaultLocation).profilePhotoDataUrl;
+  };
+
   app.get("/api/customer/me", requireCustomerAnyAuth, async (req, res) => {
     try {
       const customerAuth = await resolveCustomerAuthFromRequest(req, { createIfMissing: true });
@@ -389,7 +404,8 @@ export function registerCustomerRoutes(app: Express): void {
         return res.status(404).json({ error: "Account not found" });
       }
       const user = userAccounts[0];
-      const { defaultLocation, profilePhotoDataUrl } = splitCustomerDefaultLocation(user.defaultLocation);
+      const { defaultLocation } = splitCustomerDefaultLocation(user.defaultLocation);
+      const profilePhotoDataUrl = resolveCustomerProfilePhoto(user);
       const responseEmail =
         normalizeIdentityEmailCandidate(customerAuth.email) ||
         user.email;
@@ -450,11 +466,19 @@ export function registerCustomerRoutes(app: Express): void {
 
   const updateCustomerMeSchema = z.object({
     displayName: z.string().trim().min(1).max(120).optional(),
+    // Accepts a data: URL (a newly picked photo, uploaded to S3 server-side),
+    // OR an already-stored URL/path the client echoes back unchanged (treated
+    // as a no-op), OR null (clear the photo).
     profilePhotoDataUrl: z
       .string()
       .trim()
       .max(3000000)
-      .refine((value) => CUSTOMER_PROFILE_PHOTO_DATA_URL_REGEX.test(value), "Invalid profile photo format")
+      .refine(
+        (value) =>
+          CUSTOMER_PROFILE_PHOTO_DATA_URL_REGEX.test(value) ||
+          /^(https?:\/\/|\/uploads\/)/i.test(value),
+        "Invalid profile photo format",
+      )
       .nullable()
       .optional(),
     defaultLocation: z
@@ -496,14 +520,46 @@ export function registerCustomerRoutes(app: Express): void {
 
       const hasDefaultLocationUpdate = Object.prototype.hasOwnProperty.call(data, "defaultLocation");
       const hasProfilePhotoUpdate = Object.prototype.hasOwnProperty.call(data, "profilePhotoDataUrl");
-      if (hasDefaultLocationUpdate || hasProfilePhotoUpdate) {
-        const nextDefaultLocation = hasDefaultLocationUpdate
-          ? (data.defaultLocation ? ({ ...data.defaultLocation } as Record<string, unknown>) : null)
-          : existingSplit.defaultLocation;
-        const nextProfilePhotoDataUrl = hasProfilePhotoUpdate
-          ? (typeof data.profilePhotoDataUrl === "string" ? data.profilePhotoDataUrl.trim() : null)
-          : existingSplit.profilePhotoDataUrl;
-        updates.defaultLocation = composeCustomerDefaultLocation(nextDefaultLocation, nextProfilePhotoDataUrl);
+
+      // --- Profile photo (now stored in its own column via object storage) ---
+      // clearedLegacyPhoto tracks whether we've superseded/cleared any base64
+      // blob still embedded in default_location on a not-yet-backfilled row.
+      let clearedLegacyPhoto = false;
+      if (hasProfilePhotoUpdate) {
+        const raw = typeof data.profilePhotoDataUrl === "string" ? data.profilePhotoDataUrl.trim() : null;
+        if (!raw) {
+          updates.profilePhotoUrl = null; // explicit clear
+          clearedLegacyPhoto = true;
+        } else if (CUSTOMER_PROFILE_PHOTO_DATA_URL_REGEX.test(raw)) {
+          const buffer = decodeImageDataUrlToBuffer(raw);
+          if (!buffer) {
+            return res.status(400).json({ error: "Invalid profile photo format." });
+          }
+          try {
+            const persisted = await persistUploadedImage(buffer, customerAvatarUploadsDir);
+            updates.profilePhotoUrl = `/uploads/customer-avatars/${persisted.filename}`;
+            clearedLegacyPhoto = true; // the new column photo supersedes any legacy blob
+          } catch (uploadError: any) {
+            logRouteError("/api/customer/me profile photo upload", uploadError);
+            return res.status(500).json({
+              error: "Failed to save profile photo. Please try again or contact support.",
+            });
+          }
+        }
+        // else: an already-stored URL echoed back by the client → no-op.
+      }
+
+      // --- Location --- (default_location no longer carries the photo; only a
+      // legacy blob on un-backfilled rows, preserved until superseded/cleared)
+      const keepLegacyPhoto = clearedLegacyPhoto ? null : existingSplit.profilePhotoDataUrl;
+      if (hasDefaultLocationUpdate) {
+        const nextLocation = data.defaultLocation
+          ? ({ ...data.defaultLocation } as Record<string, unknown>)
+          : null;
+        updates.defaultLocation = composeCustomerDefaultLocation(nextLocation, keepLegacyPhoto);
+      } else if (clearedLegacyPhoto && existingSplit.profilePhotoDataUrl) {
+        // No location edit requested, but we must drop the stale legacy blob.
+        updates.defaultLocation = composeCustomerDefaultLocation(existingSplit.defaultLocation, null);
       }
 
       const [updated] = await db
@@ -515,7 +571,8 @@ export function registerCustomerRoutes(app: Express): void {
       if (!updated) {
         return res.status(404).json({ error: "Account not found" });
       }
-      const { defaultLocation, profilePhotoDataUrl } = splitCustomerDefaultLocation(updated.defaultLocation);
+      const { defaultLocation } = splitCustomerDefaultLocation(updated.defaultLocation);
+      const profilePhotoDataUrl = resolveCustomerProfilePhoto(updated);
 
       return res.json({
         id: updated.id,
