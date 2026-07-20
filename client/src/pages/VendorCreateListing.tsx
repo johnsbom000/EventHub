@@ -1,6 +1,6 @@
 import { useRef } from "react";
 import { useLocation } from "wouter";
-import { CreateListingFlow } from "@/features/vendor/create-listing/CreateListingFlow";
+import { CreateListingWizard } from "@/features/vendor/create-listing/CreateListingWizard";
 
 export default function VendorCreateListing() {
   const [, setLocation] = useLocation();
@@ -20,7 +20,7 @@ export default function VendorCreateListing() {
 
   return (
     <div data-testid="page-vendor-create-listing">
-      <CreateListingFlow
+      <CreateListingWizard
         onClose={handleClose}
         onComplete={handleComplete}
         onStripeRequired={handleStripeRequired}

@@ -193,115 +193,156 @@ export function AiListingIntake({ onDrafted, onCancel }: AiListingIntakeProps) {
   const canGenerate = photos.length > 0 && !!category && !!subcategory && !uploading && !generating;
 
   return (
-    <div className="mx-auto w-full max-w-2xl px-4 py-8">
-      <div className="mb-6 flex items-start gap-3">
-        <Sparkles className="mt-1 h-6 w-6 text-primary" aria-hidden />
-        <div>
-          <h1 className="text-2xl font-semibold text-foreground">Fill with AI</h1>
-          <p className="text-sm text-muted-foreground">
-            Upload a few photos and tell us the category — we'll draft the title, description,
-            what's included, tags, and a suggested price. You'll review and edit everything before
-            publishing.
-          </p>
+    <div
+      className="fixed inset-0 z-[60] grid place-items-center bg-black/50 p-4"
+      role="dialog"
+      aria-modal="true"
+      aria-label="Fill listing with AI"
+      onMouseDown={(e) => {
+        // Click on the backdrop (not the panel) cancels — unless mid-generation.
+        if (e.target === e.currentTarget && !generating) onCancel();
+      }}
+    >
+      <div className="flex max-h-[90vh] w-full max-w-2xl flex-col overflow-hidden rounded-2xl border border-border bg-background shadow-xl">
+        {/* Header */}
+        <div className="flex items-start gap-3 border-b border-border p-6">
+          <div className="flex h-10 w-10 flex-none items-center justify-center rounded-xl bg-primary/10 text-primary">
+            <Sparkles className="h-5 w-5" aria-hidden />
+          </div>
+          <div className="min-w-0 flex-1">
+            <h2 className="text-2xl font-semibold tracking-tight text-foreground">Fill with AI</h2>
+            <p className="mt-1 text-sm text-muted-foreground">
+              Upload a few photos and pick a category — we'll draft the title, description, what's
+              included, tags, and a suggested price for you to review.
+            </p>
+          </div>
+          <button
+            type="button"
+            onClick={onCancel}
+            disabled={generating}
+            className="flex-none rounded-lg p-1.5 text-muted-foreground transition hover:bg-muted disabled:opacity-50"
+            aria-label="Close"
+          >
+            <X className="h-[18px] w-[18px]" />
+          </button>
         </div>
-      </div>
 
-      {/* Step 1 — photos */}
-      <section className="mb-6">
-        <h2 className="mb-2 text-sm font-medium text-foreground">1. Add photos</h2>
-        <div className="flex flex-wrap gap-3">
-          {photos.map((p, i) => (
-            <div key={p.url} className="relative h-24 w-24 overflow-hidden rounded-xl border">
-              <img src={p.preview} alt="" className="h-full w-full object-cover" />
-              <button
-                type="button"
-                onClick={() => removePhoto(i)}
-                className="absolute right-1 top-1 rounded-full bg-black/60 p-0.5 text-white"
-                aria-label="Remove photo"
-              >
-                <X className="h-3.5 w-3.5" />
-              </button>
+        {/* Body */}
+        <div className="flex-1 space-y-6 overflow-y-auto p-6">
+          {/* Section 1 — photos */}
+          <section>
+            <div className="mb-3 flex items-center gap-2">
+              <span className="flex h-6 w-6 items-center justify-center rounded-full bg-primary/10 text-xs font-semibold text-primary">
+                1
+              </span>
+              <h3 className="text-sm font-semibold text-foreground">Add photos</h3>
             </div>
-          ))}
-          {photos.length < MAX_PHOTOS ? (
-            <button
-              type="button"
-              onClick={() => fileInputRef.current?.click()}
-              disabled={uploading}
-              className="flex h-24 w-24 items-center justify-center rounded-xl border border-dashed text-sm text-muted-foreground transition hover:bg-muted disabled:opacity-60"
-            >
-              {uploading ? <Loader2 className="h-5 w-5 animate-spin" /> : "+ Photo"}
-            </button>
+            <div className="flex flex-wrap gap-3">
+              {photos.map((p, i) => (
+                <div key={p.url} className="relative h-24 w-24 overflow-hidden rounded-xl border border-border">
+                  <img src={p.preview} alt="" className="h-full w-full object-cover" />
+                  <button
+                    type="button"
+                    onClick={() => removePhoto(i)}
+                    className="absolute right-1 top-1 rounded-full bg-black/60 p-0.5 text-white"
+                    aria-label="Remove photo"
+                  >
+                    <X className="h-3.5 w-3.5" />
+                  </button>
+                </div>
+              ))}
+              {photos.length < MAX_PHOTOS ? (
+                <button
+                  type="button"
+                  onClick={() => fileInputRef.current?.click()}
+                  disabled={uploading}
+                  className="flex h-24 w-24 items-center justify-center rounded-xl border border-dashed border-border text-sm text-muted-foreground transition hover:bg-muted disabled:opacity-60"
+                >
+                  {uploading ? <Loader2 className="h-5 w-5 animate-spin" /> : "+ Photo"}
+                </button>
+              ) : null}
+            </div>
+            <input
+              ref={fileInputRef}
+              type="file"
+              accept="image/jpeg,image/png,image/webp"
+              multiple
+              className="hidden"
+              onChange={(e) => handlePickPhotos(e.target.files)}
+            />
+            <p className="mt-2 text-xs text-muted-foreground">Up to {MAX_PHOTOS} photos. JPG, PNG, or WebP.</p>
+          </section>
+
+          <div className="h-px bg-border" />
+
+          {/* Section 2 — category */}
+          <section>
+            <div className="mb-3 flex items-center gap-2">
+              <span className="flex h-6 w-6 items-center justify-center rounded-full bg-primary/10 text-xs font-semibold text-primary">
+                2
+              </span>
+              <h3 className="text-sm font-semibold text-foreground">What is it?</h3>
+            </div>
+            <div className="mb-3 grid grid-cols-2 gap-3">
+              {AI_CATEGORY_OPTIONS.map((opt) => {
+                const active = category === opt.value;
+                return (
+                  <button
+                    key={opt.value}
+                    type="button"
+                    onClick={() => {
+                      setCategory(opt.value);
+                      setSubcategory("");
+                      setSubcategoryDetail("");
+                    }}
+                    className={[
+                      "rounded-xl border px-4 py-3 text-sm font-medium transition",
+                      active
+                        ? "border-primary bg-primary text-primary-foreground"
+                        : "border-border bg-background hover:bg-muted",
+                    ].join(" ")}
+                  >
+                    {opt.label}
+                  </button>
+                );
+              })}
+            </div>
+            {category ? (
+              <SubcategoryPicker
+                category={category}
+                value={{ subcategory, subcategoryDetail }}
+                onChange={(next) => {
+                  setSubcategory(next.subcategory);
+                  setSubcategoryDetail(next.subcategoryDetail);
+                }}
+              />
+            ) : null}
+          </section>
+
+          {error ? (
+            <div className="rounded-lg border border-destructive/30 bg-destructive/5 px-4 py-3 text-sm text-destructive">
+              {error}
+            </div>
           ) : null}
         </div>
-        <input
-          ref={fileInputRef}
-          type="file"
-          accept="image/jpeg,image/png,image/webp"
-          multiple
-          className="hidden"
-          onChange={(e) => handlePickPhotos(e.target.files)}
-        />
-        <p className="mt-2 text-xs text-muted-foreground">Up to {MAX_PHOTOS} photos. JPG, PNG, or WebP.</p>
-      </section>
 
-      {/* Step 2 — category */}
-      <section className="mb-6">
-        <h2 className="mb-2 text-sm font-medium text-foreground">2. What is it?</h2>
-        <div className="mb-3 grid grid-cols-2 gap-3">
-          {AI_CATEGORY_OPTIONS.map((opt) => (
-            <button
-              key={opt.value}
-              type="button"
-              onClick={() => {
-                setCategory(opt.value);
-                setSubcategory("");
-                setSubcategoryDetail("");
-              }}
-              className={[
-                "rounded-xl border px-4 py-3 text-sm font-medium transition",
-                category === opt.value
-                  ? "border-primary bg-primary/10 text-foreground"
-                  : "hover:bg-muted",
-              ].join(" ")}
-            >
-              {opt.label}
-            </button>
-          ))}
+        {/* Footer */}
+        <div className="flex items-center justify-end gap-3 border-t border-border p-4">
+          <Button variant="ghost" onClick={onCancel} disabled={generating}>
+            Cancel
+          </Button>
+          <Button onClick={handleGenerate} disabled={!canGenerate} className="min-w-44">
+            {generating ? (
+              <>
+                <Loader2 className="mr-2 h-4 w-4 animate-spin" /> Drafting…
+              </>
+            ) : (
+              <>
+                <Sparkles className="mr-2 h-4 w-4" /> Generate draft
+              </>
+            )}
+          </Button>
         </div>
-        {category ? (
-          <SubcategoryPicker
-            category={category}
-            value={{ subcategory, subcategoryDetail }}
-            onChange={(next) => {
-              setSubcategory(next.subcategory);
-              setSubcategoryDetail(next.subcategoryDetail);
-            }}
-          />
-        ) : null}
-      </section>
-
-      {error ? (
-        <div className="mb-4 rounded-lg border border-destructive/30 bg-destructive/5 px-4 py-3 text-sm text-destructive">
-          {error}
-        </div>
-      ) : null}
-
-      <div className="flex flex-col gap-3 sm:flex-row-reverse">
-        <Button onClick={handleGenerate} disabled={!canGenerate} className="sm:min-w-44">
-          {generating ? (
-            <>
-              <Loader2 className="mr-2 h-4 w-4 animate-spin" /> Drafting…
-            </>
-          ) : (
-            <>
-              <Sparkles className="mr-2 h-4 w-4" /> Generate draft
-            </>
-          )}
-        </Button>
-        <Button variant="ghost" onClick={onCancel} disabled={generating}>
-          Fill it in myself
-        </Button>
       </div>
     </div>
   );
