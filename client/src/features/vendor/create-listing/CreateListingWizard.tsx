@@ -31,6 +31,7 @@ import AuthModal from "@/components/AuthModal";
 import Navigation from "@/components/Navigation";
 import { type ListingPhotoCrop } from "@/components/listings/InlinePhotoEditor";
 import { Button } from "@/components/ui/button";
+import { AiListingIntake } from "./AiListingIntake";
 import { useToast } from "@/hooks/use-toast";
 import { getFreshAccessToken } from "@/lib/authToken";
 import { buildListingLogisticsPayload, isDeliveryCategory, isTravelCategory } from "@/lib/listingLogistics";
@@ -593,6 +594,8 @@ export function CreateListingWizard({ onClose, initialListingType, parentListing
  const [currentStep, setCurrentStep] = useState<StepId>("basics");
  const [maxStepReached, setMaxStepReached] = useState(0);
  const [draft, setDraft] = useState<ListingDraft>(DEFAULT_DRAFT);
+ // "Fill with AI" intake modal (opened from the Basics step).
+ const [aiIntakeOpen, setAiIntakeOpen] = useState(false);
  const [listingId, setListingId] = useState<string | null>(null);
  const [authModalOpen, setAuthModalOpen] = useState(false);
  const [listingType, setListingType] = useState<ListingType | null>(initialListingType ?? null);
@@ -2072,11 +2075,46 @@ export function CreateListingWizard({ onClose, initialListingType, parentListing
 
 
          {currentStep === "basics" && (
-           <BasicsStep
-             draft={draft}
-             setDraft={setDraft}
-             showValidation={showBasicsValidation}
-             isPackageListing={listingType === "package_container"}
+           <div className="space-y-6">
+             {!parentListingId && (
+               <div className="mx-auto w-full max-w-[53rem]">
+                 <div className="flex items-center gap-4 rounded-2xl border border-primary/30 bg-primary/5 p-4 sm:p-5">
+                   <div className="flex h-10 w-10 flex-none items-center justify-center rounded-xl bg-primary/10 text-primary">
+                     <Sparkles className="h-5 w-5" aria-hidden />
+                   </div>
+                   <div className="min-w-0 flex-1">
+                     <div className="flex items-center gap-2">
+                       <p className="font-semibold text-foreground">Skip the typing</p>
+                       <span className="inline-flex items-center rounded-full bg-primary/10 px-2 py-0.5 text-[10px] font-semibold uppercase tracking-wide text-primary">
+                         Beta
+                       </span>
+                     </div>
+                     <p className="text-sm text-muted-foreground">
+                       Upload a few photos and let AI draft this listing for you to review.
+                     </p>
+                   </div>
+                   <Button type="button" className="flex-none" onClick={() => setAiIntakeOpen(true)}>
+                     <Sparkles className="mr-2 h-4 w-4" /> Fill with AI
+                   </Button>
+                 </div>
+               </div>
+             )}
+             <BasicsStep
+               draft={draft}
+               setDraft={setDraft}
+               showValidation={showBasicsValidation}
+               isPackageListing={listingType === "package_container"}
+             />
+           </div>
+         )}
+
+         {aiIntakeOpen && (
+           <AiListingIntake
+             onCancel={() => setAiIntakeOpen(false)}
+             onDrafted={(nextDraft) => {
+               setDraft(nextDraft);
+               setAiIntakeOpen(false);
+             }}
            />
          )}
 
