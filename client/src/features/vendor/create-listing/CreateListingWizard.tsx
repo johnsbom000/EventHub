@@ -2083,7 +2083,12 @@ export function CreateListingWizard({ onClose, initialListingType, parentListing
                      <Sparkles className="h-5 w-5" aria-hidden />
                    </div>
                    <div className="min-w-0 flex-1">
-                     <p className="font-semibold text-foreground">Skip the typing</p>
+                     <div className="flex items-center gap-2">
+                       <p className="font-semibold text-foreground">Skip the typing</p>
+                       <span className="inline-flex items-center rounded-full bg-primary/10 px-2 py-0.5 text-[10px] font-semibold uppercase tracking-wide text-primary">
+                         Beta
+                       </span>
+                     </div>
                      <p className="text-sm text-muted-foreground">
                        Upload a few photos and let AI draft this listing for you to review.
                      </p>

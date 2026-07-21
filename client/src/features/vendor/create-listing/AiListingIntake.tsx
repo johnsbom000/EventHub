@@ -212,7 +212,12 @@ export function AiListingIntake({ onDrafted, onCancel }: AiListingIntakeProps) {
             <Sparkles className="h-5 w-5" aria-hidden />
           </div>
           <div className="min-w-0 flex-1">
-            <h2 className="text-2xl font-semibold tracking-tight text-foreground">Fill with AI</h2>
+            <div className="flex items-center gap-2">
+              <h2 className="text-2xl font-semibold tracking-tight text-foreground">Fill with AI</h2>
+              <span className="inline-flex items-center rounded-full bg-primary/10 px-2 py-0.5 text-[10px] font-semibold uppercase tracking-wide text-primary">
+                Beta
+              </span>
+            </div>
             <p className="mt-1 text-sm text-muted-foreground">
               Upload a few photos and pick a category — we'll draft the title, description, what's
               included, tags, and a suggested price for you to review.
