@@ -8,6 +8,7 @@ import { Button } from "@/components/ui/button";
 import type {
   AiListingDraftResponse,
   AiListingDraftResult,
+  AiListingPackage,
 } from "@shared/aiListingDraft";
 
 import {
@@ -85,13 +86,22 @@ function buildDraftFromAi(
 }
 
 export type AiListingIntakeProps = {
-  /** Called with a pre-populated draft once generation succeeds. */
-  onDrafted: (draft: ListingDraft) => void;
+  /**
+   * Called with a pre-populated draft (and, for package listings, the generated
+   * package tiers) once generation succeeds. May be async — the modal keeps its
+   * "Drafting…" state until it resolves, so the caller can persist packages.
+   */
+  onDrafted: (draft: ListingDraft, packages: AiListingPackage[]) => void | Promise<void>;
   /** Called when the vendor backs out / chooses to start blank instead. */
   onCancel: () => void;
+  /** The wizard's selected listing type — enables the package-count question. */
+  listingType?: string | null;
 };
 
-export function AiListingIntake({ onDrafted, onCancel }: AiListingIntakeProps) {
+const MAX_PACKAGES = 5;
+
+export function AiListingIntake({ onDrafted, onCancel, listingType }: AiListingIntakeProps) {
+  const packageMode = listingType === "package_container";
   const { isAuthenticated } = useAuth0();
   const fileInputRef = useRef<HTMLInputElement | null>(null);
 
@@ -99,6 +109,7 @@ export function AiListingIntake({ onDrafted, onCancel }: AiListingIntakeProps) {
   const [category, setCategory] = useState<"Rental" | "Service" | "">("");
   const [subcategory, setSubcategory] = useState("");
   const [subcategoryDetail, setSubcategoryDetail] = useState("");
+  const [packageCount, setPackageCount] = useState(3);
 
   const [uploading, setUploading] = useState(false);
   const [generating, setGenerating] = useState(false);
@@ -169,6 +180,7 @@ export function AiListingIntake({ onDrafted, onCancel }: AiListingIntakeProps) {
           subcategory,
           subcategoryDetail: subcategoryDetail || null,
           photoUrls: photos.map((p) => p.url),
+          packageCount: packageMode ? packageCount : undefined,
         }),
       });
 
@@ -176,7 +188,10 @@ export function AiListingIntake({ onDrafted, onCancel }: AiListingIntakeProps) {
       if (!response.ok) {
         throw new Error(json?.message || "We couldn't generate a draft. You can fill it in yourself.");
       }
-      onDrafted(buildDraftFromAi(json as AiListingDraftResponse, photos));
+      const resp = json as AiListingDraftResponse;
+      const packages = packageMode ? resp.packages ?? [] : [];
+      // onDrafted may persist the packages (async) — await so the spinner holds.
+      await onDrafted(buildDraftFromAi(resp, photos), packages);
     } catch (err: any) {
       const aborted = err?.name === "AbortError";
       setError(
@@ -325,6 +340,45 @@ export function AiListingIntake({ onDrafted, onCancel }: AiListingIntakeProps) {
               />
             ) : null}
           </section>
+
+          {/* Section 3 — package count (package listings only) */}
+          {packageMode ? (
+            <>
+              <div className="h-px bg-border" />
+              <section>
+                <div className="mb-3 flex items-center gap-2">
+                  <span className="flex h-6 w-6 items-center justify-center rounded-full bg-primary/10 text-xs font-semibold text-primary">
+                    3
+                  </span>
+                  <h3 className="text-sm font-semibold text-foreground">How many packages?</h3>
+                </div>
+                <div className="flex flex-wrap gap-2">
+                  {Array.from({ length: MAX_PACKAGES }, (_, i) => i + 1).map((n) => {
+                    const active = packageCount === n;
+                    return (
+                      <button
+                        key={n}
+                        type="button"
+                        onClick={() => setPackageCount(n)}
+                        className={[
+                          "h-10 w-10 rounded-xl border text-sm font-medium transition",
+                          active
+                            ? "border-primary bg-primary text-primary-foreground"
+                            : "border-border bg-background hover:bg-muted",
+                        ].join(" ")}
+                      >
+                        {n}
+                      </button>
+                    );
+                  })}
+                </div>
+                <p className="mt-2 text-xs text-muted-foreground">
+                  We'll draft {packageCount} tiered package{packageCount > 1 ? "s" : ""} (Platinum /
+                  Gold / Silver style) for you to review and edit.
+                </p>
+              </section>
+            </>
+          ) : null}
 
           {error ? (
             <div className="rounded-lg border border-destructive/30 bg-destructive/5 px-4 py-3 text-sm text-destructive">

@@ -32,6 +32,18 @@ export interface AiListingDraftResult {
   pricingUnit: AiListingPricingUnit;
 }
 
+/** One generated package tier for a package_container listing. */
+export interface AiListingPackage {
+  /** Tier name (Platinum / Gold / Silver …). */
+  name: string;
+  description: string;
+  whatsIncluded: string[];
+  whatsNotIncluded: string[];
+  /** Rough per-tier price ESTIMATE in cents, or null. Higher tier → higher price. */
+  suggestedPriceCents: number | null;
+  pricingUnit: AiListingPricingUnit;
+}
+
 /** Request body for POST /api/vendor/ai/draft-listing. */
 export interface AiListingDraftRequest {
   category: string;
@@ -39,6 +51,11 @@ export interface AiListingDraftRequest {
   subcategoryDetail?: string | null;
   /** Public storage URLs (or dev /uploads paths) from /api/uploads/listing-photo. */
   photoUrls: string[];
+  /**
+   * For package_container listings: how many tiered packages to generate (1–5).
+   * Omit / 0 for single or add-on listings.
+   */
+  packageCount?: number;
 }
 
 /** Response body for POST /api/vendor/ai/draft-listing. */
@@ -47,4 +64,6 @@ export interface AiListingDraftResponse {
   category: string;
   subcategory: string;
   subcategoryDetail: string | null;
+  /** Generated package tiers (empty unless packageCount was requested). */
+  packages: AiListingPackage[];
 }

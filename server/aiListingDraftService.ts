@@ -12,6 +12,7 @@ import { isObjectStorageConfigured, localFallbackAllowed } from "./lib/objectSto
 import { logger } from "./lib/logger";
 import type {
   AiListingDraftResult,
+  AiListingPackage,
   AiListingPricingUnit,
 } from "@shared/aiListingDraft";
 
@@ -90,10 +91,29 @@ function subcategoriesFor(category: "Rentals" | "Services"): readonly string[] {
   return category === "Rentals" ? RENTAL_SUBCATEGORIES : SERVICE_SUBCATEGORIES;
 }
 
+// Tier naming for AI-generated packages. Index 0 is always the most premium tier
+// (most inclusive, highest price); later tiers step down. Names are enforced by
+// index server-side so the convention is guaranteed regardless of model output.
+const MAX_PACKAGES = 5;
+const PACKAGE_TIER_NAMES: Record<number, string[]> = {
+  1: ["Standard"],
+  2: ["Gold", "Silver"],
+  3: ["Platinum", "Gold", "Silver"],
+  4: ["Platinum", "Gold", "Silver", "Bronze"],
+  5: ["Diamond", "Platinum", "Gold", "Silver", "Bronze"],
+};
+function tierNamesForCount(n: number): string[] {
+  return PACKAGE_TIER_NAMES[n] ?? PACKAGE_TIER_NAMES[3];
+}
+
 // ─── Prompt + output schema ───────────────────────────────────────────────────
 
-function buildSystemPrompt(category: "Rentals" | "Services", subcategory: string): string {
-  return [
+function buildSystemPrompt(
+  category: "Rentals" | "Services",
+  subcategory: string,
+  packageTiers: string[] | null
+): string {
+  const lines = [
     "You help a vendor on EventHub — an event-services marketplace — turn photos of",
     "their offering into a listing draft. The vendor will review and edit everything",
     "you produce before it is ever published; you are drafting, not publishing.",
@@ -116,8 +136,47 @@ function buildSystemPrompt(category: "Rentals" | "Services", subcategory: string
     "  This is only a starting point the vendor will correct — never state it as final.",
     "- pricingUnit: 'per_day' or 'per_hour', whichever the vendor's peers typically use",
     `  for ${subcategory} (${category === "Rentals" ? "rentals are usually per_day" : "services are often per_hour"}).`,
-  ].join("\n");
+  ];
+
+  if (packageTiers && packageTiers.length > 0) {
+    lines.push(
+      "",
+      `This is a PACKAGE listing offering ${packageTiers.length} tiers. In "packages" return`,
+      `exactly ${packageTiers.length} objects, in this order (most premium first): ${packageTiers.join(", ")}.`,
+      "- The FIRST tier is the most premium: most inclusive, highest suggestedPriceCents. Each",
+      "  later tier includes less and costs less. Make the differences meaningful and realistic.",
+      "- Each package needs its own name (use the tier names above, in order), description,",
+      "  whatsIncluded, whatsNotIncluded, suggestedPriceCents, and pricingUnit.",
+      "- The top-level title/tags/popularFor describe the overall listing; keep the top-level",
+      "  description/whatsIncluded/whatsNotIncluded brief — the real detail lives in the packages."
+    );
+  } else {
+    lines.push("", '- packages: return an empty array [] (this is not a package listing).');
+  }
+
+  return lines.join("\n");
 }
+
+const PACKAGE_ITEM_SCHEMA = {
+  type: "object",
+  additionalProperties: false,
+  required: [
+    "name",
+    "description",
+    "whatsIncluded",
+    "whatsNotIncluded",
+    "suggestedPriceCents",
+    "pricingUnit",
+  ],
+  properties: {
+    name: { type: "string" },
+    description: { type: "string" },
+    whatsIncluded: { type: "array", items: { type: "string" } },
+    whatsNotIncluded: { type: "array", items: { type: "string" } },
+    suggestedPriceCents: { type: ["integer", "null"] },
+    pricingUnit: { type: "string", enum: ["per_day", "per_hour"] },
+  },
+} as const;
 
 const DRAFT_SCHEMA = {
   type: "object",
@@ -131,6 +190,7 @@ const DRAFT_SCHEMA = {
     "popularFor",
     "suggestedPriceCents",
     "pricingUnit",
+    "packages",
   ],
   properties: {
     title: { type: "string" },
@@ -141,6 +201,7 @@ const DRAFT_SCHEMA = {
     popularFor: { type: "array", items: { type: "string", enum: [...POPULAR_FOR] } },
     suggestedPriceCents: { type: ["integer", "null"] },
     pricingUnit: { type: "string", enum: ["per_day", "per_hour"] },
+    packages: { type: "array", items: PACKAGE_ITEM_SCHEMA },
   },
 } as const;
 
@@ -259,7 +320,38 @@ function toStringList(value: unknown, max: number): string[] {
   return out;
 }
 
-function parseDraft(response: Anthropic.Message): AiListingDraftResult {
+function parsePackages(value: unknown): AiListingPackage[] {
+  if (!Array.isArray(value)) return [];
+  const out: AiListingPackage[] = [];
+  for (const item of value) {
+    if (out.length >= MAX_PACKAGES) break;
+    const name = typeof item?.name === "string" ? item.name.trim().slice(0, 80) : "";
+    const description =
+      typeof item?.description === "string"
+        ? item.description.trim().slice(0, LISTING_DESCRIPTION_MAX_CHARS)
+        : "";
+    const pricingUnit: AiListingPricingUnit =
+      item?.pricingUnit === "per_hour" ? "per_hour" : "per_day";
+    let suggestedPriceCents: number | null = null;
+    const rawPrice = item?.suggestedPriceCents;
+    if (typeof rawPrice === "number" && Number.isFinite(rawPrice) && rawPrice > 0) {
+      suggestedPriceCents = Math.min(Math.round(rawPrice), 100_000_00);
+    }
+    out.push({
+      name,
+      description,
+      whatsIncluded: toStringList(item?.whatsIncluded, 12),
+      whatsNotIncluded: toStringList(item?.whatsNotIncluded, 12),
+      suggestedPriceCents,
+      pricingUnit,
+    });
+  }
+  return out;
+}
+
+function parseDraft(
+  response: Anthropic.Message
+): { result: AiListingDraftResult; packages: AiListingPackage[] } {
   const text = (response.content || [])
     .filter((b): b is Anthropic.TextBlock => b.type === "text")
     .map((b) => b.text)
@@ -296,7 +388,7 @@ function parseDraft(response: Anthropic.Message): AiListingDraftResult {
   const popularAllowed = new Set<string>(POPULAR_FOR as readonly string[]);
   const popularFor = toStringList(parsed?.popularFor, 8).filter((p) => popularAllowed.has(p));
 
-  return {
+  const result: AiListingDraftResult = {
     title,
     description,
     whatsIncluded: toStringList(parsed?.whatsIncluded, 12),
@@ -306,6 +398,7 @@ function parseDraft(response: Anthropic.Message): AiListingDraftResult {
     suggestedPriceCents,
     pricingUnit,
   };
+  return { result, packages: parsePackages(parsed?.packages) };
 }
 
 // ─── Public entry point ───────────────────────────────────────────────────────
@@ -315,6 +408,7 @@ export interface GenerateListingDraftParams {
   subcategory: string;
   subcategoryDetail?: string | null;
   photoUrls: unknown;
+  packageCount?: unknown;
 }
 
 export interface GenerateListingDraftOutcome {
@@ -322,6 +416,7 @@ export interface GenerateListingDraftOutcome {
   category: "Rentals" | "Services";
   subcategory: string;
   subcategoryDetail: string | null;
+  packages: AiListingPackage[];
 }
 
 export async function generateListingDraft(
@@ -350,6 +445,13 @@ export async function generateListingDraft(
       ? params.subcategoryDetail.trim().slice(0, 120)
       : null;
 
+  // For package_container listings the vendor picks how many tiers to generate.
+  const requestedCount = Number(params.packageCount);
+  const packageCount = Number.isFinite(requestedCount)
+    ? Math.max(0, Math.min(MAX_PACKAGES, Math.floor(requestedCount)))
+    : 0;
+  const packageTiers = packageCount >= 1 ? tierNamesForCount(packageCount) : null;
+
   const rawPhotos = Array.isArray(params.photoUrls) ? params.photoUrls : [];
   if (rawPhotos.length === 0) {
     throw new AiListingDraftError("ai_no_photos", 400, "Upload at least one photo first");
@@ -362,21 +464,25 @@ export async function generateListingDraft(
     ...imageBlocks,
     {
       type: "text",
-      text:
-        `Draft a listing from ${imageBlocks.length} photo(s) of this ` +
-        `${subcategory} ${category === "Rentals" ? "rental" : "service"}. ` +
-        "Return only the structured fields.",
+      text: packageTiers
+        ? `Draft a package listing with ${packageTiers.length} tiers (${packageTiers.join(", ")}) ` +
+          `from these ${imageBlocks.length} photo(s) of a ${subcategory} ` +
+          `${category === "Rentals" ? "rental" : "service"}. Return only the structured fields.`
+        : `Draft a listing from ${imageBlocks.length} photo(s) of this ` +
+          `${subcategory} ${category === "Rentals" ? "rental" : "service"}. ` +
+          "Return only the structured fields.",
     },
   ];
 
   let response: Anthropic.Message;
   try {
     response = await client.messages.create({
+      // Package mode returns several tiers, so give it more room.
       model: AI_LISTING_DRAFT_MODEL,
-      max_tokens: 2048,
+      max_tokens: packageTiers ? 4096 : 2048,
       // Fast, deterministic extraction — no need for adaptive thinking latency.
       thinking: { type: "disabled" },
-      system: buildSystemPrompt(category, subcategory),
+      system: buildSystemPrompt(category, subcategory, packageTiers),
       messages: [{ role: "user", content }],
       output_config: { format: { type: "json_schema", schema: DRAFT_SCHEMA } },
     } as Anthropic.MessageCreateParamsNonStreaming);
@@ -429,6 +535,14 @@ export async function generateListingDraft(
     throw new AiListingDraftError("ai_generation_failed", 502, "Could not generate a draft.");
   }
 
-  const draft = parseDraft(response);
-  return { draft, category, subcategory, subcategoryDetail };
+  const { result: draft, packages: rawPackages } = parseDraft(response);
+  // Enforce our tier names by index so the naming convention is guaranteed
+  // (Platinum/Gold/Silver …), keeping the model's per-tier content + price.
+  const packages: AiListingPackage[] = packageTiers
+    ? rawPackages
+        .slice(0, packageCount)
+        .map((pkg, i) => ({ ...pkg, name: packageTiers[i] ?? (pkg.name || `Package ${i + 1}`) }))
+    : [];
+
+  return { draft, category, subcategory, subcategoryDetail, packages };
 }
