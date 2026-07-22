@@ -2110,9 +2110,53 @@ export function CreateListingWizard({ onClose, initialListingType, parentListing
 
          {aiIntakeOpen && (
            <AiListingIntake
+             listingType={listingType}
              onCancel={() => setAiIntakeOpen(false)}
-             onDrafted={(nextDraft) => {
+             onDrafted={async (nextDraft, aiPackages) => {
                setDraft(nextDraft);
+               // Package listings: packages are server-owned child rows, so
+               // create the container and POST each generated tier, then refresh
+               // the Define Packages step. Listing-level fields autosave as usual.
+               if (aiPackages.length > 0 && listingType === "package_container") {
+                 try {
+                   const containerId = await ensureListingSaved({ forceCreate: true });
+                   if (containerId) {
+                     // ensureListingSaved used the pre-AI draft (setDraft hasn't
+                     // flushed yet), so set the classification explicitly — packages
+                     // inherit the container's category server-side.
+                     await apiRequest("PATCH", `/api/vendor/listings/${containerId}`, {
+                       listingData: {
+                         category: nextDraft.category,
+                         subcategory: nextDraft.subcategory,
+                         subcategoryDetail: nextDraft.subcategoryDetail,
+                       },
+                     });
+                     for (let i = 0; i < aiPackages.length; i++) {
+                       const p = aiPackages[i];
+                       await apiRequest("POST", `/api/vendor/listings/${containerId}/packages`, {
+                         title: p.name,
+                         description: p.description,
+                         whatsIncluded: p.whatsIncluded,
+                         whatsNotIncluded: p.whatsNotIncluded,
+                         priceCents: p.suggestedPriceCents ?? undefined,
+                         pricingUnit: p.pricingUnit,
+                         sortOrder: i,
+                       });
+                     }
+                     await queryClient.invalidateQueries({
+                       queryKey: ["/api/vendor/listings", containerId, "packages"],
+                     });
+                     setPackageCount(aiPackages.length);
+                   }
+                 } catch {
+                   toast({
+                     title: "Couldn't create all packages",
+                     description:
+                       "Your draft is filled in — you can add or edit packages in the Packages step.",
+                     variant: "destructive",
+                   });
+                 }
+               }
                setAiIntakeOpen(false);
              }}
            />
