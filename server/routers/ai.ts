@@ -75,12 +75,14 @@ export function registerAiRoutes(app: Express): void {
         const account = await getVendorAccountFromRequest(req);
         if (!account?.id) return res.status(404).json({ error: "vendor_not_found" });
 
-        const { category, subcategory, subcategoryDetail, photoUrls } = req.body ?? {};
+        const { category, subcategory, subcategoryDetail, photoUrls, packageCount } =
+          req.body ?? {};
         const outcome = await generateListingDraft({
           category,
           subcategory,
           subcategoryDetail,
           photoUrls,
+          packageCount,
         });
 
         return res.json({
@@ -88,6 +90,7 @@ export function registerAiRoutes(app: Express): void {
           category: outcome.category,
           subcategory: outcome.subcategory,
           subcategoryDetail: outcome.subcategoryDetail,
+          packages: outcome.packages,
         });
       } catch (err: any) {
         if (err instanceof AiListingDraftError) {
