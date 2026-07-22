@@ -502,6 +502,7 @@ export default function VendorHub() {
  {asTrimmedString(vendor.tagline) ? (
  <p className="mt-1 font-heading text-[1.5rem] italic text-muted-foreground">{vendor.tagline}</p>
  ) : null}
+ {/* TEMP: review summary under name/tagline hidden — add back later
  <div className="mt-2 flex items-center gap-3">
  {renderStars(averageRating)}
  <span className="text-lg font-medium text-[#2a3a42] ">
@@ -511,6 +512,7 @@ export default function VendorHub() {
  ({reviewCount} review{reviewCount === 1 ? "" : "s"})
  </span>
  </div>
+ */}
  </div>
  </div>
  </section>
