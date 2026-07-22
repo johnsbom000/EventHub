@@ -4,6 +4,7 @@ import { Loader2, Sparkles, X } from "lucide-react";
 import { useAuth0 } from "@auth0/auth0-react";
 import { getFreshAccessToken } from "@/lib/authToken";
 import { SubcategoryPicker } from "@/components/listings/SubcategoryPicker";
+import { POPULAR_FOR_OPTIONS } from "@/constants/eventTypes";
 import { Button } from "@/components/ui/button";
 import type {
   AiListingDraftResponse,
@@ -61,6 +62,22 @@ function buildDraftFromAi(
   // the singular enum ("Rental"/"Service").
   const category: ListingCategory = resp.category === "Rentals" ? "Rental" : "Service";
 
+  // Default security deposit = 50% of the price: the item's price for single
+  // listings, or the cheapest package for package listings. Editable estimate.
+  const packages = resp.packages ?? [];
+  const packagePrices = packages
+    .map((p) => p.suggestedPriceCents)
+    .filter((c): c is number => typeof c === "number" && c > 0);
+  const depositBasisCents = packages.length
+    ? packagePrices.length
+      ? Math.min(...packagePrices)
+      : null
+    : ai.suggestedPriceCents;
+  const depositDollars =
+    depositBasisCents != null && depositBasisCents > 0
+      ? Math.round(depositBasisCents / 2 / 100).toString()
+      : "";
+
   return {
     ...DEFAULT_DRAFT,
     category,
@@ -70,10 +87,16 @@ function buildDraftFromAi(
     listingDescription: ai.description,
     whatsIncluded: ai.whatsIncluded,
     whatsNotIncluded: ai.whatsNotIncluded,
-    popularFor: ai.popularFor,
+    // Default: every event type selected (matches the "Select all" set).
+    popularFor: [...POPULAR_FOR_OPTIONS],
     pricingUnit: ai.pricingUnit,
     // Suggested price is an ESTIMATE — the vendor confirms it in the wizard.
     rate: ai.suggestedPriceCents != null ? (ai.suggestedPriceCents / 100).toString() : "",
+    // Default service radius of 50 miles.
+    serviceRadiusMiles: 50,
+    // Default security deposit = 50% of the (cheapest) price.
+    securityDepositEnabled: depositDollars !== "",
+    securityDepositAmount: depositDollars,
     tagsByPropType: {
       [LISTING_TAG_KEY]: ai.tags.map((label) => ({
         label,
