@@ -26,6 +26,15 @@ export type VendorMeState = {
   subscriptionCurrentPeriodEnd?: string | null;
   subscriptionCancelAtPeriodEnd?: boolean | null;
   compEndsAt?: string | null;
+  // Reverse-trial state (from /api/vendor/me). Non-null once auto-enrolled at
+  // signup. `active` = still on the free trial with no card, so the dashboard
+  // "add a card to keep Pro" prompt should show.
+  reverseTrial?: {
+    daysLeft?: number | null;
+    trialEndsAt?: string | null;
+    cardCaptured?: boolean | null;
+    active?: boolean | null;
+  } | null;
 };
 
 export type VendorDetectionStatus =

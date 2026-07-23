@@ -52,7 +52,6 @@ import {
 import {
   LAUNCH_CAMPAIGN_KEY,
   getCompPublishDeadline,
-  tryGrantCampaignComp,
 } from "../services/compCampaignService";
 import {
   ensureStripeCustomer,
@@ -101,7 +100,7 @@ import {
   sendCancellationEmailsAsync,
 } from "../services/bookingService";
 import { getVendorEntitlements } from "../services/entitlementsService";
-import { reconcileVendorSubscriptionState } from "./billing";
+import { reconcileVendorSubscriptionState, startReverseTrialForVendor } from "./billing";
 import { registerGoogleRoutes } from "../routers/google";
 import { registerBoardRoutes } from "../routers/boards";
 import { registerCircumventionRoutes } from "../routers/circumvention";
@@ -868,6 +867,27 @@ export function registerVendorRoutes(app: Express): void {
         compPublishRequirement = { deadline: deadline.toISOString(), graceApplied };
       }
 
+      // Reverse-trial state (drives the dashboard "X days of Pro left — add a card"
+      // banner + KeepProModal). Non-null once the vendor was auto-enrolled. `active`
+      // = still on the free trial with no card yet, so the prompt should show.
+      let reverseTrial:
+        | { daysLeft: number; trialEndsAt: string | null; cardCaptured: boolean; active: boolean }
+        | null = null;
+      if (account.reverseTrialStartedAt) {
+        const now = Date.now();
+        const DAY_MS = 24 * 60 * 60 * 1000;
+        const trialEnd = account.subscriptionCurrentPeriodEnd
+          ? new Date(account.subscriptionCurrentPeriodEnd)
+          : new Date(new Date(account.reverseTrialStartedAt).getTime() + 30 * DAY_MS);
+        const cardCaptured = Boolean(account.reverseTrialCardCapturedAt);
+        reverseTrial = {
+          daysLeft: Math.max(0, Math.ceil((trialEnd.getTime() - now) / DAY_MS)),
+          trialEndsAt: trialEnd.toISOString(),
+          cardCaptured,
+          active: entitlements.status === "trialing" && !cardCaptured,
+        };
+      }
+
       res.json({
         id: account.id,
         email: account.email,
@@ -908,6 +928,7 @@ export function registerVendorRoutes(app: Express): void {
         subscriptionCancelAtPeriodEnd: account.subscriptionCancelAtPeriodEnd ?? false,
         compEndsAt: account.compEndsAt ?? null,
         compPublishRequirement,
+        reverseTrial,
         __marker: "vendor_me_route_hit",
         vendorOnlySignup,
         onboardingCompleted: Boolean(account.onboardingCompletedAt),
@@ -1310,12 +1331,15 @@ export function registerVendorRoutes(app: Express): void {
 
       logger.info(`[vendor-provision] Created stub account ${created.id}`);
 
-      // Launch offer: the first N vendors to sign up get complimentary Pro for
-      // 180 days (no card). The claim is atomic, so exactly N accounts are ever
-      // comped; once slots run out this is a no-op and they follow the normal
-      // no-card trial path instead. `comped` is returned so the client can skip
-      // starting a trial (a comp already grants Pro) and celebrate the offer.
-      const { comped, compDays } = await tryGrantCampaignComp(created.id);
+      // Reverse-Trial Experiment: auto-enroll every new vendor in a card-free
+      // 30-day Pro trial. Awaited so the vendor lands on the dashboard already Pro,
+      // but FAIL-OPEN — startReverseTrialForVendor never throws, so a Stripe hiccup
+      // or the REVERSE_TRIAL_ENABLED kill switch just leaves them on the free
+      // "Starter" tier instead of blocking signup. (The 180-day launch comp is
+      // retired — migration 0161 deactivates the campaign — so there is no comp
+      // grant here anymore; existing comp grants ride out on their own schedule.)
+      const trialResult = await startReverseTrialForVendor(created);
+      const reverseTrial = trialResult.status === "started";
 
       // Fire-and-forget: send vendor welcome email on first account creation.
       void (async () => {
@@ -1335,8 +1359,12 @@ export function registerVendorRoutes(app: Express): void {
         vendorAccountId: created.id,
         businessName: created.businessName,
         alreadyExisted: false,
-        comped,
-        compDays: comped ? compDays ?? null : null,
+        // Reverse-trial replaces the retired launch comp. `comped` is kept in the
+        // response shape (always false now) for backward compatibility with any
+        // client still reading it; `reverseTrial` is the new signal.
+        comped: false,
+        compDays: null,
+        reverseTrial,
       });
     } catch (error: any) {
       logRouteError("/api/vendor/provision", error);

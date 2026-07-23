@@ -108,20 +108,20 @@ export default function VendorProvision() {
         throw new Error(err?.error || "Failed to create vendor account");
       }
 
-      // Launch offer: the server auto-grants comp Pro to the first N signups. When
-      // it did, the account is already Pro — skip the trial hand-off below and
-      // celebrate instead.
+      // Reverse-trial experiment: the server auto-enrolls every new vendor in a
+      // card-free 30-day Pro trial at provision (no client hand-off needed).
       const provisionData = await res.json().catch(() => ({} as any));
-      const comped: boolean = Boolean(provisionData?.comped);
-      const compMonths =
-        typeof provisionData?.compDays === "number"
-          ? Math.round(provisionData.compDays / 30)
-          : null;
+      const reverseTrial: boolean = Boolean(provisionData?.reverseTrial);
 
       // Primary conversion event for the landing A/B/n experiment: a brand-new
       // vendor account was just created. Tagged with the sticky landing variant
       // so PostHog can attribute the conversion back to the arm the visitor saw.
       phCapture("vendor_provisioned", { variant: readLandingVariant() });
+      // Reverse-trial cohort marker (server also logs reverse_trial_started to
+      // event_log). Captured here with the landing variant for PostHog attribution.
+      if (reverseTrial) {
+        phCapture("reverse_trial_started", { variant: readLandingVariant() });
+      }
       // The vendor account was just created — this is the ad campaign's primary
       // conversion. Mirror it to PostHog (signup_completed) and the Meta Pixel
       // (CompleteRegistration) so the funnel and Meta both register the signup.
@@ -132,17 +132,8 @@ export default function VendorProvision() {
         user?.email,
       );
 
-      // Read the "Try Pro" cohort flags BEFORE invalidating /api/vendor/me: that
-      // refetch flips hasVendorAccount to true and fires the early-redirect
-      // effect, which would otherwise clear these flags before we get here.
-      const proTrialIntent = sessionStorage.getItem("eh:pro-trial-intent");
-      const proTrialInterval =
-        sessionStorage.getItem("eh:pro-trial-interval") === "annual" ? "annual" : "monthly";
-      // "card" (Stripe Checkout, card upfront) or "nocard" (card-free trial). Any
-      // other/missing value defaults to the fully-built, safe card path.
-      const proTrialMode =
-        sessionStorage.getItem("eh:pro-trial-mode") === "nocard" ? "nocard" : "card";
-      const proTrialVariant = readLandingVariant();
+      // Clear any stale "Try Pro" flags from an older landing flow — enrollment now
+      // happens server-side at provision, so there is no client-side trial hand-off.
       sessionStorage.removeItem("eh:pro-trial-intent");
       sessionStorage.removeItem("eh:pro-trial-interval");
       sessionStorage.removeItem("eh:pro-trial-mode");
@@ -150,81 +141,9 @@ export default function VendorProvision() {
       await qc.invalidateQueries({ queryKey: ["/api/vendor/me"] });
       await qc.invalidateQueries({ queryKey: ["/api/customer/me"] });
 
-      // Launch-offer winners already have Pro via comp — skip the trial entirely
-      // and show a celebratory note on the way to the dashboard.
-      if (comped) {
-        phCapture("comp_pro_granted", { source: "launch_campaign", variant: proTrialVariant });
-        toast({
-          title: compMonths
-            ? `🎉 You've got ${compMonths} months of Pro, free`
-            : "🎉 You've got free Pro",
-          description: "Unlimited listings, analytics, and calendar sync — no card needed.",
-        });
-      }
-
-      // "Try Pro" cohort: the vendor account now exists, so start their 30-day
-      // trial. Which treatment fires was tied to the landing variant back on the
-      // signup page. Any failure falls through to the dashboard so onboarding is
-      // never blocked. Skipped for comped vendors — they're already Pro.
-      if (proTrialIntent && !comped) {
-        // Trial-start attribution (fires for both arms). For the card arm this
-        // marks entering Checkout; the subscription.created webhook is the
-        // authoritative "trial actually started" signal.
-        phCapture("pro_trial_started", {
-          treatment: proTrialMode,
-          variant: proTrialVariant,
-          interval: proTrialInterval,
-        });
-
-        if (proTrialMode === "nocard") {
-          // Treatment B: start a card-free trial server-side, then land on the
-          // dashboard as trialing Pro. No Stripe redirect.
-          try {
-            await fetch("/api/vendor/billing/start-trial", {
-              method: "POST",
-              headers: {
-                "Content-Type": "application/json",
-                Authorization: `Bearer ${token}`,
-              },
-              body: JSON.stringify({
-                interval: proTrialInterval,
-                treatment: proTrialMode,
-                variant: proTrialVariant,
-              }),
-            });
-          } catch {
-            // fall through to the dashboard below
-          }
-        } else {
-          // Treatment A: hand off to Stripe Checkout to collect a card and start
-          // the trial. Stripe returns to /vendor/dashboard on success and cancel;
-          // cancelling simply leaves them on the default freemium plan.
-          try {
-            const checkoutRes = await fetch("/api/vendor/billing/checkout", {
-              method: "POST",
-              headers: {
-                "Content-Type": "application/json",
-                Authorization: `Bearer ${token}`,
-              },
-              body: JSON.stringify({
-                interval: proTrialInterval,
-                treatment: proTrialMode,
-                variant: proTrialVariant,
-              }),
-            });
-            const checkoutJson = await checkoutRes.json().catch(() => ({} as any));
-            if (checkoutRes.ok && checkoutJson?.url) {
-              window.location.href = checkoutJson.url;
-              return;
-            }
-          } catch {
-            // fall through to the dashboard below
-          }
-        }
-      }
-
       // A freshly provisioned vendor has never seen the tour — send them to the
-      // dashboard so the timezone modal + onboarding tour fire.
+      // dashboard so the timezone modal + onboarding tour fire. They arrive already
+      // on Pro (trialing) from the server-side reverse-trial enrollment.
       setLocation("/vendor/dashboard");
     } catch (err: any) {
       toast({

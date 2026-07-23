@@ -6,6 +6,7 @@ import { useLocation } from "wouter";
 import VendorShell from "@/components/VendorShell";
 import { useUpgradeModal } from "@/components/UpgradeModal";
 import VendorBillingPanel from "@/components/VendorBillingPanel";
+import KeepProModal from "@/components/KeepProModal";
 
 
 import { Button } from "@/components/ui/button";
@@ -53,6 +54,14 @@ type VendorMe = {
  // Launch-comp publish stipulation: present while the vendor holds a launch
  // spot but hasn't published a first listing yet (drives the countdown banner).
  compPublishRequirement?: { deadline?: string | null; graceApplied?: boolean | null } | null;
+ // Reverse-trial state: present once auto-enrolled. `active` = still on the free
+ // trial with no card, so the "add a card to keep Pro" banner should show.
+ reverseTrial?: {
+ daysLeft?: number | null;
+ trialEndsAt?: string | null;
+ cardCaptured?: boolean | null;
+ active?: boolean | null;
+ } | null;
  shopActive?: boolean | null;
  isPro?: boolean | null;
  canUseAnalytics?: boolean | null;
@@ -464,6 +473,7 @@ export default function VendorDashboard() {
  // -------------------------
  // Draft fields (match onboarding inputs)
  // -------------------------
+ const [keepProOpen, setKeepProOpen] = useState(false);
  const [businessNameDraft, setBusinessNameDraft] = useState("");
  const [businessPhoneDraft, setBusinessPhoneDraft] = useState("");
  const [businessEmailDraft, setBusinessEmailDraft] = useState("");
@@ -1383,6 +1393,41 @@ export default function VendorDashboard() {
  </div>
 
  <div className="space-y-8">
+
+ <KeepProModal
+ open={keepProOpen}
+ onOpenChange={setKeepProOpen}
+ daysLeft={vendorAccount?.reverseTrial?.daysLeft ?? null}
+ trialEndsAt={vendorAccount?.reverseTrial?.trialEndsAt ?? null}
+ />
+
+ {vendorAccount?.reverseTrial?.active ? (
+ <div
+ className="rounded-xl border border-[#4a6a7d]/40 bg-[#4a6a7d]/10 p-6"
+ data-testid="section-reverse-trial-card-prompt"
+ >
+ <div className="flex flex-wrap items-center gap-3">
+ <h2 className="font-heading text-[20px] leading-none tracking-tight">
+ You're on Pro — free for now
+ </h2>
+ <span className="inline-flex items-center gap-1.5 rounded-full bg-[#4a6a7d] px-3 py-1 text-sm font-semibold text-white">
+ <Clock className="h-3.5 w-3.5" />
+ {(vendorAccount.reverseTrial.daysLeft ?? 0) <= 0
+ ? "Trial ends today"
+ : `${vendorAccount.reverseTrial.daysLeft} day${vendorAccount.reverseTrial.daysLeft === 1 ? "" : "s"} left`}
+ </span>
+ </div>
+ <p className="mt-3 text-sm text-[#2a3a42]">
+ You're enjoying full Pro — unlimited listings, analytics, and calendar sync. Add a card to
+ keep it when your free trial ends. You won't be charged until then, and you can cancel anytime.
+ </p>
+ <div className="mt-5">
+ <Button onClick={() => setKeepProOpen(true)} data-testid="button-reverse-trial-keep-pro">
+ Add a card to keep Pro
+ </Button>
+ </div>
+ </div>
+ ) : null}
 
  {compPublishDeadline && compPublishDaysLeft !== null ? (
  <div
