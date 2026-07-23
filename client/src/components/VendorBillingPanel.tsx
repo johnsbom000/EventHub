@@ -10,6 +10,7 @@ import { Badge } from "@/components/ui/badge";
 import { Switch } from "@/components/ui/switch";
 import { apiRequest } from "@/lib/queryClient";
 import type { VendorMeState } from "@/lib/vendorState";
+import KeepProModal from "@/components/KeepProModal";
 import {
   Check,
   Sparkles,
@@ -75,6 +76,7 @@ export default function VendorBillingPanel() {
   const [interval, setInterval] = useState<BillingInterval>("annual");
   const [busy, setBusy] = useState<null | "checkout" | "portal">(null);
   const [error, setError] = useState<string | null>(null);
+  const [keepProOpen, setKeepProOpen] = useState(false);
 
   const checkoutResult = new URLSearchParams(location.split("?")[1] ?? "").get("checkout");
 
@@ -230,13 +232,42 @@ export default function VendorBillingPanel() {
       );
     }
     if (reason === "trialing") {
+      // Reverse-trial vendor with NO card yet: nothing will be charged at day 30 —
+      // they'll simply downgrade unless they add a card. Prompt them to keep Pro.
+      if (me?.reverseTrial && !me.reverseTrial.cardCaptured) {
+        const daysLeft = me.reverseTrial.daysLeft ?? 0;
+        return (
+          <Banner tone="info" icon={<Sparkles className="h-5 w-5" />}>
+            <div className="flex flex-wrap items-center justify-between gap-3">
+              <div>
+                <p className="font-semibold">
+                  {daysLeft > 0
+                    ? `${daysLeft} day${daysLeft === 1 ? "" : "s"} of Pro left`
+                    : "Your Pro trial ends today"}
+                </p>
+                <p className="mt-0.5 text-sm">
+                  Add a card to keep unlimited listings, analytics, and calendar sync. You won't be
+                  charged until your free trial ends — cancel anytime before then.
+                </p>
+              </div>
+              <Button size="sm" className="shrink-0" onClick={() => setKeepProOpen(true)}>
+                Add a card to keep Pro
+              </Button>
+            </div>
+          </Banner>
+        );
+      }
+      // Reverse-trial vendor who HAS added a card, or a normal card-first trial:
+      // the card will be charged at trial end.
       return (
         <Banner tone="info" icon={<Sparkles className="h-5 w-5" />}>
           <div className="flex flex-wrap items-center justify-between gap-3">
             <div>
               <p className="font-semibold">You're an EventHub Pro</p>
               <p className="mt-0.5 text-sm">
-                Free trial{periodEnd ? ` until ${periodEnd}` : ""} — your card will be charged when it ends unless you cancel.
+                {me?.reverseTrial?.cardCaptured
+                  ? `Your card is saved — Pro continues${periodEnd ? ` on ${periodEnd}` : " when your trial ends"}.`
+                  : `Free trial${periodEnd ? ` until ${periodEnd}` : ""} — your card will be charged when it ends unless you cancel.`}
               </p>
             </div>
             <Button size="sm" variant="outline" className="shrink-0" onClick={openPortal} disabled={busy !== null}>
@@ -266,6 +297,12 @@ export default function VendorBillingPanel() {
 
   return (
     <div className="space-y-5">
+      <KeepProModal
+        open={keepProOpen}
+        onOpenChange={setKeepProOpen}
+        daysLeft={me?.reverseTrial?.daysLeft ?? null}
+        trialEndsAt={me?.reverseTrial?.trialEndsAt ?? null}
+      />
       <div>
         <h2 className="font-heading text-[20px] leading-none tracking-tight mb-2">Billing &amp; Plan</h2>
         <p className="text-sm text-muted-foreground">

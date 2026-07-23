@@ -588,19 +588,29 @@ export async function createNoCardTrialSubscription(params: {
   treatment?: string;
   variant?: string;
   /**
+   * Launch-offer coupon (STRIPE_COUPON_PRO) that discounts the base price to the
+   * advertised rate ($39→$29 / $390→$290). MUST be applied here — the base Stripe
+   * price is the pre-discount amount, so without it the card added during the trial
+   * gets charged the full $39/$390 at conversion instead of the $29/$290 the paywall
+   * promises. The `forever` coupon rides on the subscription for its lifetime.
+   */
+  couponId?: string;
+  /**
    * Idempotency key so concurrent /start-trial requests from the same vendor
    * collapse to ONE subscription instead of stacking duplicate trials (closes the
    * read-then-create race on the repeat-trial guard). Keyed by vendorAccountId.
    */
   idempotencyKey?: string;
 }): Promise<Stripe.Subscription> {
-  const { stripeCustomerId, priceId, vendorAccountId, trialPeriodDays, treatment, variant, idempotencyKey } = params;
+  const { stripeCustomerId, priceId, vendorAccountId, trialPeriodDays, treatment, variant, couponId, idempotencyKey } = params;
 
   return stripeClient.subscriptions.create(
     {
       customer: stripeCustomerId,
       items: [{ price: priceId }],
       trial_period_days: trialPeriodDays,
+      // Apply the launch discount so the eventual charge is the advertised rate.
+      ...(couponId ? { discounts: [{ coupon: couponId }] } : {}),
       // No card is collected; if none is added by the end of the trial, cancel the
       // subscription (→ subscription.deleted → downgrade to Free) rather than let it
       // fall into past_due.
@@ -628,6 +638,33 @@ export async function createBillingPortalSession(params: {
   return stripeClient.billingPortal.sessions.create({
     customer: params.stripeCustomerId,
     return_url: params.returnUrl,
+  });
+}
+
+/**
+ * Creates a SetupIntent so a vendor can add a card IN-APP (Stripe Elements) during
+ * their reverse trial without being charged now. `usage: 'off_session'` means the
+ * saved card can later be charged automatically (when the trial converts at day 30).
+ *
+ * The resulting card is attached to the customer on confirmation; our
+ * `setup_intent.succeeded` webhook then sets it as the trial subscription's default
+ * payment method (via `subscriptionId` in metadata) so Stripe charges it at trial
+ * end instead of cancelling the trial. Also stamps reverse_trial_card_captured_at.
+ */
+export async function createSubscriptionSetupIntent(params: {
+  stripeCustomerId: string;
+  vendorAccountId: string;
+  subscriptionId?: string;
+}): Promise<Stripe.SetupIntent> {
+  return stripeClient.setupIntents.create({
+    customer: params.stripeCustomerId,
+    usage: "off_session",
+    payment_method_types: ["card"],
+    metadata: {
+      vendorAccountId: params.vendorAccountId,
+      kind: "reverse_trial_card_capture",
+      ...(params.subscriptionId ? { subscriptionId: params.subscriptionId } : {}),
+    },
   });
 }
 

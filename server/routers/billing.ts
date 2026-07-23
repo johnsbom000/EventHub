@@ -1,6 +1,6 @@
 import type { Express } from "express";
 import { db } from "../db";
-import { eq } from "drizzle-orm";
+import { eq, and, isNull } from "drizzle-orm";
 import { vendorAccounts } from "@shared/schema";
 import {
   getVendorAccountFromRequest,
@@ -18,7 +18,17 @@ import {
   STRIPE_PRICE_PRO_ANNUAL,
   STRIPE_COUPON_PRO,
   PRO_TRIAL_PERIOD_DAYS,
+  REVERSE_TRIAL_ENABLED,
 } from "../lib/constants";
+
+// Resolve which Stripe Price the requested interval maps to. Price IDs come from
+// server config, never from the client (prevents billing tampering). Module-scope
+// so both the route handlers and startReverseTrialForVendor can use it.
+function priceIdForInterval(interval: string): string | null {
+  if (interval === "annual") return STRIPE_PRICE_PRO_ANNUAL || null;
+  if (interval === "monthly") return STRIPE_PRICE_PRO_MONTHLY || null;
+  return null;
+}
 
 /**
  * Vendor Pro subscription billing routes. Stripe Billing only — never touches the
@@ -26,14 +36,6 @@ import {
  * (users.stripe_customer_id, reused from the booking checkout flow).
  */
 export function registerBillingRoutes(app: Express) {
-  // Resolve which Stripe Price the requested interval maps to. Price IDs come
-  // from server config, never from the client (prevents billing tampering).
-  function priceIdForInterval(interval: string): string | null {
-    if (interval === "annual") return STRIPE_PRICE_PRO_ANNUAL || null;
-    if (interval === "monthly") return STRIPE_PRICE_PRO_MONTHLY || null;
-    return null;
-  }
-
   // Sanitize an experiment label (treatment / variant) coming from the client.
   // These are ANALYTICS metadata only — never used for billing logic — so a
   // tampered value can't grant Pro or bypass a guard; we just bound it.
@@ -132,11 +134,54 @@ export function registerBillingRoutes(app: Express) {
     }
   });
 
-  // POST /api/vendor/billing/start-trial — start a 30-day Pro trial WITHOUT a card
-  // (Treatment B of the trial A/B test). Body: { interval, treatment?, variant? }.
-  // Creates the subscription directly (no Checkout page), so the vendor is Pro
-  // immediately. Stripe cancels it at day 30 if no card was added.
+  // POST /api/vendor/billing/start-trial — start a 30-day Pro trial WITHOUT a card.
+  // Body: { interval?, treatment?, variant? }. Creates the subscription directly
+  // (no Checkout page), so the vendor is Pro immediately; Stripe cancels it at day
+  // 30 if no card was added. Delegates to the shared startReverseTrialForVendor so
+  // this route and the auto-enroll-at-provision path use identical logic.
+  //
+  // NOTE: as of the reverse-trial experiment, every new vendor is auto-enrolled at
+  // provision, so this route is normally a no-op (returns already_subscribed). It
+  // is kept as an explicit entry point / fallback.
   app.post("/api/vendor/billing/start-trial", mutationRateLimiter, ...requireVendorAuth0, async (req, res) => {
+    try {
+      const account = await getVendorAccountFromRequest(req);
+      if (!account?.id) return res.status(404).json({ error: "Vendor account not found" });
+
+      const interval = typeof req.body?.interval === "string" ? req.body.interval.trim() : "monthly";
+      const result = await startReverseTrialForVendor(account, {
+        interval,
+        treatment: experimentLabel(req.body?.treatment) ?? "reverse_trial",
+        variant: experimentLabel(req.body?.variant),
+      });
+
+      switch (result.status) {
+        case "started":
+          return res.json({ ok: true, status: "trialing" });
+        case "comp":
+          return res.json({ ok: true, status: "comp" });
+        case "missing_identity":
+          return res.status(400).json({ error: "Vendor account is missing identity for billing" });
+        case "not_configured":
+          return res.status(400).json({ error: "billing_not_configured", message: "Pro pricing is not configured." });
+        case "disabled":
+        case "already_subscribed":
+          return res.status(409).json({ error: "trial_not_available", message: "A free trial is only available on a new account. Please upgrade to Pro instead." });
+        default:
+          return res.status(500).json({ error: "Unable to start trial" });
+      }
+    } catch (err: any) {
+      logRouteError("/api/vendor/billing/start-trial", err);
+      return res.status(500).json({ error: "Unable to start trial" });
+    }
+  });
+
+  // POST /api/vendor/billing/setup-intent — create a Stripe SetupIntent so the
+  // vendor can add a card IN-APP (Stripe Elements) during their reverse trial
+  // without being charged now. Returns { clientSecret }. The card is attached to
+  // the subscription as its default payment method by the setup_intent.succeeded
+  // webhook, so at day 30 the trial converts to a paid Pro subscription.
+  app.post("/api/vendor/billing/setup-intent", mutationRateLimiter, ...requireVendorAuth0, async (req, res) => {
     try {
       const account = await getVendorAccountFromRequest(req);
       if (!account?.id) return res.status(404).json({ error: "Vendor account not found" });
@@ -144,52 +189,44 @@ export function registerBillingRoutes(app: Express) {
         return res.status(400).json({ error: "Vendor account is missing identity for billing" });
       }
 
-      // If they already hold an active comp grant (e.g. the launch offer
-      // auto-granted 180 days at provision), they're already Pro — don't start a
-      // redundant Stripe trial that would end long before their comp does.
-      if (isCompActive(account, new Date())) {
-        return res.json({ ok: true, status: "comp" });
-      }
-
-      const interval = typeof req.body?.interval === "string" ? req.body.interval.trim() : "monthly";
-      const priceId = priceIdForInterval(interval);
-      if (!priceId) {
-        return res.status(400).json({ error: "billing_not_configured", message: "Pro pricing is not configured." });
-      }
-      const treatment = experimentLabel(req.body?.treatment);
-      const variant = experimentLabel(req.body?.variant);
-
-      // The no-card trial is for BRAND-NEW vendors only. Anyone who has ever held a
-      // subscription (stripeSubscriptionId is retained even after cancel) must
-      // upgrade through the normal card flow — this both prevents repeat-trial
-      // abuse AND avoids creating a 0-day trial that would instantly fail to charge
-      // a customer with no card on file.
-      if (account.stripeSubscriptionId) {
-        return res.status(409).json({ error: "trial_not_available", message: "A free trial is only available on a new account. Please upgrade to Pro instead." });
-      }
-
       const stripeCustomerId = await ensureStripeCustomer(account.userId, account.email);
-      const { createNoCardTrialSubscription } = await import("../stripe");
-      const subscription = await createNoCardTrialSubscription({
+      const { createSubscriptionSetupIntent } = await import("../stripe");
+      const setupIntent = await createSubscriptionSetupIntent({
         stripeCustomerId,
-        priceId,
         vendorAccountId: account.id,
-        trialPeriodDays: PRO_TRIAL_PERIOD_DAYS,
-        treatment,
-        variant,
-        // Stable per-vendor key: parallel start-trial requests collapse to one
-        // subscription rather than stacking duplicate trials.
-        idempotencyKey: `start-trial:${account.id}`,
+        subscriptionId: account.stripeSubscriptionId ?? undefined,
       });
 
-      // Persist the trialing state now so /vendor/me reflects Pro immediately,
-      // without waiting for the customer.subscription.created webhook to arrive.
-      await applyStripeSubscriptionToVendor(subscription as any);
-
-      return res.json({ ok: true, status: "trialing" });
+      return res.json({ clientSecret: setupIntent.client_secret });
     } catch (err: any) {
-      logRouteError("/api/vendor/billing/start-trial", err);
-      return res.status(500).json({ error: "Unable to start trial" });
+      logRouteError("/api/vendor/billing/setup-intent", err);
+      return res.status(500).json({ error: "Unable to start card setup" });
+    }
+  });
+
+  // POST /api/vendor/billing/paywall-variant — record which paywall A/B variant
+  // (1a–1e) this vendor was shown. Assigned client-side by a PostHog flag (drawn
+  // independently of the landing variant) and persisted here STICKILY — set once,
+  // never overwritten — so a vendor is always attributed to the first variant they
+  // saw, and the admin per-variant breakdown is stable. Body: { variant }.
+  app.post("/api/vendor/billing/paywall-variant", mutationRateLimiter, ...requireVendorAuth0, async (req, res) => {
+    try {
+      const account = await getVendorAccountFromRequest(req);
+      if (!account?.id) return res.status(404).json({ error: "Vendor account not found" });
+
+      const variant = experimentLabel(req.body?.variant);
+      if (!variant) return res.status(400).json({ error: "variant is required" });
+
+      // Sticky: only set when currently null (WHERE guard makes it a no-op on repeat).
+      await db
+        .update(vendorAccounts)
+        .set({ paywallVariant: variant })
+        .where(and(eq(vendorAccounts.id, account.id), isNull(vendorAccounts.paywallVariant)));
+
+      return res.json({ ok: true });
+    } catch (err: any) {
+      logRouteError("/api/vendor/billing/paywall-variant", err);
+      return res.status(500).json({ error: "Unable to record paywall variant" });
     }
   });
 
@@ -394,4 +431,91 @@ export async function markVendorSubscriptionCanceled(
   }
 
   return { vendorAccountId: account.id, downgraded: true };
+}
+
+/** Outcome of an attempt to auto-enroll a vendor in the reverse trial. */
+export type ReverseTrialResult =
+  | { status: "started" }
+  | { status: "comp" } // already Pro via an active comp grant — skip
+  | { status: "already_subscribed" } // has (or had) a Stripe subscription — skip
+  | { status: "disabled" } // REVERSE_TRIAL_ENABLED kill switch is off
+  | { status: "missing_identity" } // no userId/email to bill
+  | { status: "not_configured" } // Pro price IDs not set in env
+  | { status: "error"; error: unknown };
+
+/**
+ * Auto-enroll a vendor in the reverse trial: create a card-free 30-day Pro
+ * `trialing` subscription (createNoCardTrialSubscription) and stamp
+ * reverse_trial_started_at as the cohort marker + 30-day clock anchor.
+ *
+ * Shared by POST /api/vendor/provision (fire-and-forget at signup) and the
+ * /api/vendor/billing/start-trial route. FAIL-OPEN: on any error it returns an
+ * error result and never throws, so vendor provisioning is never blocked — the
+ * vendor just stays on the free "Starter" tier and can upgrade normally.
+ */
+export async function startReverseTrialForVendor(
+  account: {
+    id: string;
+    userId?: string | null;
+    email?: string | null;
+    stripeSubscriptionId?: string | null;
+    subscriptionStatus?: string | null;
+    compEndsAt?: Date | string | null;
+  },
+  opts: { interval?: string; treatment?: string; variant?: string } = {}
+): Promise<ReverseTrialResult> {
+  try {
+    if (!REVERSE_TRIAL_ENABLED) return { status: "disabled" };
+    if (!account?.id) return { status: "error", error: new Error("missing account id") };
+    if (!account.userId || !account.email) return { status: "missing_identity" };
+
+    // Already Pro via a comp grant (e.g. a legacy launch-offer comp still riding
+    // out) — don't start a redundant Stripe trial that ends before their comp.
+    if (isCompActive(account, new Date())) return { status: "comp" };
+
+    // Brand-new accounts only. Any prior subscription (stripe_subscription_id is
+    // retained even after cancel) means no auto-trial: prevents repeat-trial abuse
+    // and avoids a 0-day trial that instantly fails to charge a card-less customer.
+    if (account.stripeSubscriptionId) return { status: "already_subscribed" };
+
+    const interval = opts.interval === "annual" ? "annual" : "monthly";
+    const priceId = priceIdForInterval(interval);
+    if (!priceId) return { status: "not_configured" };
+
+    const stripeCustomerId = await ensureStripeCustomer(account.userId, account.email);
+    const { createNoCardTrialSubscription } = await import("../stripe");
+    const subscription = await createNoCardTrialSubscription({
+      stripeCustomerId,
+      priceId,
+      vendorAccountId: account.id,
+      trialPeriodDays: PRO_TRIAL_PERIOD_DAYS,
+      // Apply the launch coupon so the trial converts at the advertised $29/$290,
+      // not the base $39/$390 (same discount the card-first checkout uses).
+      couponId: STRIPE_COUPON_PRO || undefined,
+      treatment: opts.treatment ?? "reverse_trial",
+      variant: opts.variant,
+      // Stable per-vendor key: parallel enroll attempts (provision retry + a
+      // manual start-trial) collapse to ONE subscription instead of stacking.
+      idempotencyKey: `reverse-trial:${account.id}`,
+    });
+
+    // Persist trialing state now so /vendor/me reflects Pro immediately, and stamp
+    // the cohort marker (applyStripeSubscriptionToVendor does not touch it).
+    await applyStripeSubscriptionToVendor(subscription as any);
+    await db
+      .update(vendorAccounts)
+      .set({ reverseTrialStartedAt: new Date() })
+      .where(eq(vendorAccounts.id, account.id));
+
+    logEvent("reverse_trial_started", "vendor", account.id, {
+      interval,
+      subscriptionId: subscription.id,
+    });
+
+    return { status: "started" };
+  } catch (error) {
+    // Fail-open: log and let the caller continue (vendor stays on Starter).
+    logRouteError("startReverseTrialForVendor", error as any);
+    return { status: "error", error };
+  }
 }

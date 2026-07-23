@@ -968,6 +968,114 @@ function CompManagementCard() {
   );
 }
 
+// Reverse-Trial Experiment panel: the three experiment metrics with success/kill
+// thresholds color-coded, plus the raw funnel. Denominators are maturity-gated and
+// conversion is activated-only (see GET /api/admin/reverse-trial/stats).
+function ReverseTrialExperimentCard({ isAdmin }: { isAdmin: boolean }) {
+  const { data } = useQuery<any>({ queryKey: ["/api/admin/reverse-trial/stats"], enabled: isAdmin });
+  const m = data?.metrics;
+  const f = data?.funnel;
+
+  const pct = (v: number | null | undefined) =>
+    v === null || v === undefined ? "—" : `${Math.round(v * 100)}%`;
+
+  const verdictClass = (verdict?: string) => {
+    switch (verdict) {
+      case "success": return "border-green-300 bg-green-50 text-green-900";
+      case "fail": return "border-red-300 bg-red-50 text-red-900";
+      case "watch": return "border-amber-300 bg-amber-50 text-amber-900";
+      default: return "border-muted bg-muted/30 text-muted-foreground";
+    }
+  };
+
+  const MetricTile = ({
+    label, metric, thresholdLabel,
+  }: { label: string; metric: any; thresholdLabel: string }) => (
+    <div className={`rounded-lg border p-4 ${verdictClass(metric?.verdict)}`}>
+      <p className="text-xs font-medium uppercase tracking-wide opacity-80">{label}</p>
+      <p className="mt-1 text-3xl font-bold">{pct(metric?.value)}</p>
+      <p className="mt-1 text-xs opacity-80">
+        {metric?.verdict === "insufficient"
+          ? "Not enough data yet"
+          : `${metric?.numerator ?? 0} of ${metric?.denominator ?? 0} · ${thresholdLabel}`}
+      </p>
+    </div>
+  );
+
+  return (
+    <Card>
+      <CardHeader>
+        <CardTitle className="flex items-center gap-2">
+          <Sparkles className="h-4 w-4" /> Reverse-Trial Experiment
+        </CardTitle>
+        <CardDescription>
+          Card-free 30-day Pro trial → pay or downgrade at day 30. Conversion is measured only
+          among activated vendors (published a listing + completed ≥1 booking).
+        </CardDescription>
+      </CardHeader>
+      <CardContent className="space-y-4">
+        <div className="grid gap-4 md:grid-cols-3">
+          <MetricTile
+            label="Activated conversion · day 30"
+            metric={m?.activatedConversionDay30}
+            thresholdLabel="win ≥20% · kill <8%"
+          />
+          <MetricTile
+            label="Card capture · day 21"
+            metric={m?.cardCaptureDay21}
+            thresholdLabel="win ≥40% · kill <15%"
+          />
+          <MetricTile
+            label="Payer retention · day 60"
+            metric={m?.payerRetentionDay60}
+            thresholdLabel="win ≥85% · kill <60%"
+          />
+        </div>
+        <div className="grid grid-cols-2 gap-x-6 gap-y-1 text-xs text-muted-foreground md:grid-cols-4">
+          <span>Cohort: <strong className="text-foreground">{f?.cohortTotal ?? 0}</strong></span>
+          <span>Activated: <strong className="text-foreground">{f?.activatedTotal ?? 0}</strong></span>
+          <span>Cards captured: <strong className="text-foreground">{f?.day21Captured ?? 0}</strong></span>
+          <span>Converted (paid): <strong className="text-foreground">{f?.day30ActivatedConverted ?? 0}</strong></span>
+        </div>
+
+        {Array.isArray(data?.paywallByVariant) && data.paywallByVariant.length > 0 ? (
+          <div>
+            <p className="mb-2 text-xs font-semibold uppercase tracking-wide text-muted-foreground">
+              Card capture by paywall variant (day-21 cohort)
+            </p>
+            <div className="overflow-x-auto rounded-lg border">
+              <table className="w-full text-sm">
+                <thead>
+                  <tr className="border-b bg-muted/30 text-left text-xs text-muted-foreground">
+                    <th className="px-3 py-2 font-medium">Variant</th>
+                    <th className="px-3 py-2 text-right font-medium">Shown (day-21)</th>
+                    <th className="px-3 py-2 text-right font-medium">Captured</th>
+                    <th className="px-3 py-2 text-right font-medium">Rate</th>
+                  </tr>
+                </thead>
+                <tbody>
+                  {[...data.paywallByVariant]
+                    .sort((a: any, b: any) => (b.rate ?? -1) - (a.rate ?? -1))
+                    .map((row: any) => (
+                      <tr key={row.variant} className="border-b last:border-0">
+                        <td className="px-3 py-2 font-medium">{row.variant}</td>
+                        <td className="px-3 py-2 text-right tabular-nums">{row.mature}</td>
+                        <td className="px-3 py-2 text-right tabular-nums">{row.captured}</td>
+                        <td className="px-3 py-2 text-right font-semibold tabular-nums">
+                          {row.rate === null ? "—" : `${Math.round(row.rate * 100)}%`}
+                        </td>
+                      </tr>
+                    ))}
+                </tbody>
+              </table>
+            </div>
+          </div>
+        ) : null}
+      </CardContent>
+    </Card>
+  );
+}
+
 function UsersSection({ isAdmin }: { isAdmin: boolean }) {
   const { data: userStats } = useQuery<any>({ queryKey: ["/api/admin/stats/users"], enabled: isAdmin });
 
@@ -987,6 +1095,10 @@ function UsersSection({ isAdmin }: { isAdmin: boolean }) {
         <StatCard title="Trialing" value={userStats?.subscriptionCounts?.trialing ?? 0} sub="In free trial" icon={<Clock className="h-4 w-4 text-muted-foreground" />} />
         <StatCard title="Complimentary" value={userStats?.subscriptionCounts?.comp ?? 0} sub="Comp grants" icon={<Star className="h-4 w-4 text-muted-foreground" />} />
         <StatCard title="Past due" value={userStats?.subscriptionCounts?.pastDue ?? 0} sub="Payment retrying" icon={<AlertTriangle className="h-4 w-4 text-muted-foreground" />} />
+      </div>
+
+      <div className="mb-6">
+        <ReverseTrialExperimentCard isAdmin={isAdmin} />
       </div>
 
       <div className="mb-6">
