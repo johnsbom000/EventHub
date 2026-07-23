@@ -378,6 +378,23 @@ export const vendorAccounts = pgTable(
     // campaign grant.
     compPublishNudgeSentAt: timestamp("comp_publish_nudge_sent_at", { withTimezone: true }),
     compRevokedAt: timestamp("comp_revoked_at", { withTimezone: true }),
+    // Reverse-Trial Experiment (migration 0161). Every new vendor is auto-enrolled
+    // in a card-free 30-day Pro trial at provision; at day 21 we prompt for a card
+    // in-app; at day 30 Stripe charges the card (paying Pro) or cancels (→ Starter).
+    // reverse_trial_started_at is the cohort marker + 30-day clock anchor and the
+    // signal that distinguishes this trial from any other trialing subscription.
+    reverseTrialStartedAt: timestamp("reverse_trial_started_at", { withTimezone: true }),
+    // Day-21 "add a card to keep Pro" email/notification sent (once per trial), so
+    // the daily prompt worker never double-sends.
+    reverseTrialCardPromptSentAt: timestamp("reverse_trial_card_prompt_sent_at", { withTimezone: true }),
+    // Stamped when the vendor adds a card via the in-app SetupIntent flow
+    // (setup_intent.succeeded webhook). Drives the card-capture-rate metric and
+    // hides the day-21 prompt.
+    reverseTrialCardCapturedAt: timestamp("reverse_trial_card_captured_at", { withTimezone: true }),
+    // Paywall A/B test (migration 0162): which "keep Pro" modal variant (1a–1e)
+    // this vendor was shown, assigned independently of the landing variant via a
+    // PostHog flag and persisted (sticky) for the admin per-variant breakdown.
+    paywallVariant: text("paywall_variant"),
     // AI reply assistant (Pro-gated, metered — migration 0136). Feature toggle is
     // opt-in (default off); overage auto-billing is opt-out (default on). When the
     // included monthly allowance is exhausted: overage on → meter to Stripe, overage

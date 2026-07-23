@@ -1219,6 +1219,63 @@ export function registerPaymentRoutes(app: Express): void {
             }
           }
         }
+      } else if (eventType === "setup_intent.succeeded") {
+        // Reverse-trial card capture: the vendor added a card in-app (Stripe
+        // Elements) during their trial. Attach it as the subscription's default
+        // payment method so the trial converts to paid Pro at day 30 instead of
+        // cancelling, stamp the capture time (the day-21 card-capture metric), and
+        // log the event. Idempotent: only the FIRST capture stamps/logs.
+        const setupIntent = event?.data?.object ?? {};
+        if (asTrimmedString(setupIntent?.metadata?.kind) === "reverse_trial_card_capture") {
+          const paymentMethodId = asTrimmedString(setupIntent?.payment_method);
+          const customerId = asTrimmedString(setupIntent?.customer);
+          const metaVendorId = asTrimmedString(setupIntent?.metadata?.vendorAccountId);
+          let subscriptionId = asTrimmedString(setupIntent?.metadata?.subscriptionId);
+
+          // Resolve the vendor (prefer metadata) and their live subscription id.
+          const rows = await db
+            .select({
+              id: vendorAccounts.id,
+              stripeSubscriptionId: vendorAccounts.stripeSubscriptionId,
+              reverseTrialCardCapturedAt: vendorAccounts.reverseTrialCardCapturedAt,
+              paywallVariant: vendorAccounts.paywallVariant,
+            })
+            .from(vendorAccounts)
+            .where(
+              metaVendorId
+                ? eq(vendorAccounts.id, metaVendorId)
+                : subscriptionId
+                  ? eq(vendorAccounts.stripeSubscriptionId, subscriptionId)
+                  : eq(vendorAccounts.id, "__none__")
+            )
+            .limit(1);
+          const vendor = rows[0];
+          if (!subscriptionId) subscriptionId = asTrimmedString(vendor?.stripeSubscriptionId);
+
+          if (paymentMethodId && customerId) {
+            // Make the card the default for the subscription AND the customer's
+            // invoices, so Stripe charges it when the trial ends.
+            if (subscriptionId) {
+              await stripe.subscriptions.update(subscriptionId, {
+                default_payment_method: paymentMethodId,
+              });
+            }
+            await stripe.customers.update(customerId, {
+              invoice_settings: { default_payment_method: paymentMethodId },
+            });
+          }
+
+          if (vendor && !vendor.reverseTrialCardCapturedAt) {
+            await db
+              .update(vendorAccounts)
+              .set({ reverseTrialCardCapturedAt: new Date() })
+              .where(eq(vendorAccounts.id, vendor.id));
+            logEvent("reverse_trial_card_captured", "vendor", vendor.id, {
+              subscriptionId: subscriptionId || null,
+              paywallVariant: vendor.paywallVariant ?? null,
+            });
+          }
+        }
       } else if (
         eventType === "account.updated" ||
         eventType === "account.application.authorized" ||

@@ -1398,6 +1398,142 @@ export function registerAdminRoutes(app: Express): void {
     }
   });
 
+  // Reverse-Trial Experiment dashboard. Computes the three experiment metrics with
+  // maturity-gated denominators (a metric only counts vendors old enough to have
+  // reached that day) and, crucially, measures conversion ONLY among ACTIVATED
+  // vendors (published a listing + completed ≥1 booking) — tourists are noise.
+  app.get("/api/admin/reverse-trial/stats", adminRateLimiter, requireAdminAuth, async (req, res) => {
+    try {
+      // Single query: funnel counts + the three metrics' numerators/denominators.
+      // activated = first_listing_published_at set AND has a completed booking (a
+      // completed booking guarantees a real listing with real inventory existed).
+      const rows = await db.execute(drizzleSql`
+        WITH cohort AS (
+          SELECT
+            va.id,
+            va.reverse_trial_started_at AS started_at,
+            va.reverse_trial_card_captured_at AS captured_at,
+            va.subscription_status AS status,
+            (va.first_listing_published_at IS NOT NULL
+              AND EXISTS (
+                SELECT 1 FROM bookings b
+                WHERE b.vendor_account_id = va.id AND b.status = 'completed'
+              )) AS activated
+          FROM vendor_accounts va
+          WHERE va.deleted_at IS NULL
+            AND va.active = true
+            AND va.reverse_trial_started_at IS NOT NULL
+        )
+        SELECT
+          COUNT(*)::int AS cohort_total,
+          COUNT(*) FILTER (WHERE activated)::int AS activated_total,
+          -- Card capture @ day 21: among cohort that has reached day 21.
+          COUNT(*) FILTER (WHERE started_at <= NOW() - INTERVAL '21 days')::int AS day21_mature,
+          COUNT(*) FILTER (WHERE started_at <= NOW() - INTERVAL '21 days' AND captured_at IS NOT NULL)::int AS day21_captured,
+          -- Activated conversion @ day 30: activated vendors past day 30 now paying.
+          COUNT(*) FILTER (WHERE activated AND started_at <= NOW() - INTERVAL '30 days')::int AS day30_activated,
+          COUNT(*) FILTER (WHERE activated AND started_at <= NOW() - INTERVAL '30 days' AND status = 'active')::int AS day30_activated_converted,
+          -- Payer retention @ day 60: vendors who captured a card and are past day 60.
+          COUNT(*) FILTER (WHERE captured_at IS NOT NULL AND started_at <= NOW() - INTERVAL '60 days')::int AS day60_payers,
+          COUNT(*) FILTER (WHERE captured_at IS NOT NULL AND started_at <= NOW() - INTERVAL '60 days' AND status = 'active')::int AS day60_payers_retained
+        FROM cohort
+      `);
+      const r = extractRows<Record<string, number>>(rows)[0] ?? {};
+      const n = (v: unknown) => Number(v ?? 0);
+
+      // Per-paywall-variant card-capture breakdown (the A/B test result). Among the
+      // reverse-trial cohort that has reached day 21, group by paywall_variant and
+      // compute capture rate for each. NULL variant = never assigned (e.g. modal
+      // never opened / PostHog not loaded).
+      const variantRows = await db.execute(drizzleSql`
+        SELECT
+          COALESCE(va.paywall_variant, 'unassigned') AS variant,
+          COUNT(*)::int AS mature,
+          COUNT(*) FILTER (WHERE va.reverse_trial_card_captured_at IS NOT NULL)::int AS captured
+        FROM vendor_accounts va
+        WHERE va.deleted_at IS NULL
+          AND va.active = true
+          AND va.reverse_trial_started_at IS NOT NULL
+          AND va.reverse_trial_started_at <= NOW() - INTERVAL '21 days'
+        GROUP BY COALESCE(va.paywall_variant, 'unassigned')
+        ORDER BY variant
+      `);
+      const byVariant = extractRows<{ variant: string; mature: number; captured: number }>(variantRows).map((row) => {
+        const mature = n(row.mature);
+        const captured = n(row.captured);
+        return {
+          variant: row.variant,
+          mature,
+          captured,
+          rate: mature > 0 ? captured / mature : null,
+        };
+      });
+
+      // Rate as a 0–1 fraction, or null when the denominator is 0 (not yet
+      // measurable — never report 0% off an empty denominator).
+      const rate = (num: number, den: number): number | null => (den > 0 ? num / den : null);
+
+      const cardCaptureRate = rate(n(r.day21_captured), n(r.day21_mature));
+      const activatedConversion = rate(n(r.day30_activated_converted), n(r.day30_activated));
+      const payerRetention = rate(n(r.day60_payers_retained), n(r.day60_payers));
+
+      // Verdict vs. the experiment's success / kill thresholds (null = insufficient
+      // data). Lets the admin panel color each metric without duplicating thresholds.
+      const verdict = (
+        value: number | null,
+        success: number,
+        kill: number
+      ): "success" | "fail" | "watch" | "insufficient" => {
+        if (value === null) return "insufficient";
+        if (value >= success) return "success";
+        if (value < kill) return "fail";
+        return "watch";
+      };
+
+      res.json({
+        funnel: {
+          cohortTotal: n(r.cohort_total),
+          activatedTotal: n(r.activated_total),
+          day21Mature: n(r.day21_mature),
+          day21Captured: n(r.day21_captured),
+          day30Activated: n(r.day30_activated),
+          day30ActivatedConverted: n(r.day30_activated_converted),
+          day60Payers: n(r.day60_payers),
+          day60PayersRetained: n(r.day60_payers_retained),
+        },
+        metrics: {
+          activatedConversionDay30: {
+            value: activatedConversion,
+            numerator: n(r.day30_activated_converted),
+            denominator: n(r.day30_activated),
+            successThreshold: 0.2,
+            killThreshold: 0.08,
+            verdict: verdict(activatedConversion, 0.2, 0.08),
+          },
+          payerRetentionDay60: {
+            value: payerRetention,
+            numerator: n(r.day60_payers_retained),
+            denominator: n(r.day60_payers),
+            successThreshold: 0.85,
+            killThreshold: 0.6,
+            verdict: verdict(payerRetention, 0.85, 0.6),
+          },
+          cardCaptureDay21: {
+            value: cardCaptureRate,
+            numerator: n(r.day21_captured),
+            denominator: n(r.day21_mature),
+            successThreshold: 0.4,
+            killThreshold: 0.15,
+            verdict: verdict(cardCaptureRate, 0.4, 0.15),
+          },
+        },
+        paywallByVariant: byVariant,
+      });
+    } catch (error: any) {
+      return respondWithInternalServerError(req, res, error);
+    }
+  });
+
   app.get("/api/admin/stats/listings", adminRateLimiter, requireAdminAuth, async (req, res) => {
     try {
       // Exclude soft-deleted listings from all counts
