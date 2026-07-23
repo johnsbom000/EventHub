@@ -38,6 +38,7 @@ import { runReviewPromptJob } from "../jobs/reviewPromptJob";
 import { runStripeWebhookCleanupJob } from "../jobs/stripeWebhookCleanup";
 import { runDataRetentionCleanupJob } from "../jobs/dataRetentionCleanup";
 import { runCompExpiryReminderJob } from "../jobs/compExpiryReminders";
+import { runReverseTrialCardPromptJob } from "../jobs/reverseTrialCardPrompt";
 import { runCompPublishEnforcementJob } from "../jobs/compPublishEnforcement";
 
 // Module-level lazy-init guards for DDL-side-effect tables
@@ -1254,6 +1255,32 @@ export function startCompExpiryReminderWorker() {
   startTimer.unref?.();
 }
 
+export function startReverseTrialCardPromptWorker() {
+  const INTERVAL_MS = 24 * 60 * 60 * 1000; // daily
+  const serverUrl = appUrl();
+  const run = async () => {
+    // Lock so multiple app instances don't send duplicate day-21 prompts.
+    const lockToken = await tryAcquireWorkerLock("reverse_trial_card_prompt", 30 * 60 * 1000);
+    if (!lockToken) return;
+    try {
+      await runReverseTrialCardPromptJob({
+        serverUrl,
+        logger: { log: logger.info.bind(logger), warn: logger.warn.bind(logger) },
+      });
+    } catch (err: any) {
+      captureJobError("reverse_trial_card_prompt", err, { stage: "worker" });
+    } finally {
+      await releaseWorkerLock("reverse_trial_card_prompt", lockToken);
+    }
+  };
+  const startTimer = setTimeout(() => {
+    void run();
+    const t = setInterval(() => void run(), INTERVAL_MS);
+    t.unref?.();
+  }, 14 * 60 * 1000);
+  startTimer.unref?.();
+}
+
 export function startBookingExpiryWorker() {
   let backoffMs = 5 * 60 * 1000;
   const MAX_BACKOFF_MS = 60 * 60 * 1000;
@@ -1772,5 +1799,6 @@ export function startAllBackgroundWorkers() {
   startStripeWebhookCleanupWorker();
   startDataRetentionCleanupWorker();
   startCompExpiryReminderWorker();
+  startReverseTrialCardPromptWorker();
   startCompPublishEnforcementWorker();
 }

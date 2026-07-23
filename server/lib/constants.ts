@@ -20,6 +20,18 @@ export const STRIPE_PRICE_PRO_ANNUAL = process.env.STRIPE_PRICE_PRO_ANNUAL || ""
 // prices ($39 -> $29, $390 -> $290). Empty = no discount (charge base price).
 export const STRIPE_COUPON_PRO = process.env.STRIPE_COUPON_PRO || "";
 
+// ─── Reverse-Trial Experiment ─────────────────────────────────────────────────
+// Every new vendor is auto-enrolled in a card-free 30-day Pro trial at provision
+// (see startReverseTrialForVendor in server/routers/billing.ts). Kill switch:
+// defaults ON; set REVERSE_TRIAL_ENABLED=false to stop auto-enrolling new signups
+// (existing enrolled vendors are unaffected). Turning it off leaves new vendors on
+// the free "Starter" tier.
+export const REVERSE_TRIAL_ENABLED =
+  (process.env.REVERSE_TRIAL_ENABLED ?? "true").toLowerCase() !== "false";
+// Days into the 30-day trial at which we send the in-app "add a card to keep Pro"
+// prompt. Stripe also fires its native trial_will_end nudge ~day 27 (day 30 − 3).
+export const REVERSE_TRIAL_CARD_PROMPT_DAY = 21;
+
 // ─── AI reply assistant (Pro-gated, metered) ──────────────────────────────────
 // Generates (never auto-sends) suggested replies for vendors in the chat section.
 // Each Pro vendor gets AI_INCLUDED_RESPONSES_PER_PERIOD drafts per billing month;
