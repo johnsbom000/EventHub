@@ -43,10 +43,9 @@ function formatUsdFromCents(cents: number) {
  * UI-ONLY render test. These rows are generated in the browser and are NEVER
  * persisted or fetched from the server — they exist purely to verify that the
  * payment history list renders correctly with many cards. Activated only when
- * BOTH conditions hold: the signed-in account is the owner test account AND the
- * page is loaded with `?uiTest=1`. It has no effect for any other user or URL.
+ * the page is loaded with the explicit `?uiTest=1` query param, so it never
+ * appears on a normal page load. Nothing is written anywhere.
  */
-const UI_TEST_ACCOUNT_EMAIL = "johnsbom000@gmail.com";
 const UI_TEST_AMOUNTS_CENTS = [35000, 1000, 7500, 15000]; // $350, $10, $75, $150
 
 function buildUiTestHistory(): VendorPaymentHistoryItem[] {
@@ -67,7 +66,7 @@ function buildUiTestHistory(): VendorPaymentHistoryItem[] {
 
 export default function VendorPayments() {
   const { t } = useTranslation();
-  const { isAuthenticated, getAccessTokenSilently, user } = useAuth0();
+  const { isAuthenticated, getAccessTokenSilently } = useAuth0();
   const [setupLoading, setSetupLoading] = useState(false);
   const [setupError, setSetupError] = useState<string | null>(null);
 
@@ -78,11 +77,9 @@ export default function VendorPayments() {
   );
   const fromStripeReturn = searchParams.get("stripe_setup") === "success";
 
-  // UI-only render test — see buildUiTestHistory() above. Gated to the owner
-  // test account AND an explicit ?uiTest=1 query param so it never appears on a
-  // normal page load or for any other user.
-  const uiTestActive =
-    searchParams.get("uiTest") === "1" && user?.email === UI_TEST_ACCOUNT_EMAIL;
+  // UI-only render test — see buildUiTestHistory() above. Gated behind an
+  // explicit ?uiTest=1 query param so it never appears on a normal page load.
+  const uiTestActive = searchParams.get("uiTest") === "1";
 
   const { data } = useQuery<VendorPaymentsResponse>({
     queryKey: ["/api/vendor/payments"],
