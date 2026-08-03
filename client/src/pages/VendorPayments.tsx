@@ -2,7 +2,6 @@ import { useState } from "react";
 import { useQuery } from "@tanstack/react-query";
 import { useAuth0 } from "@auth0/auth0-react";
 import { useTranslation } from "react-i18next";
-import { useLocation } from "wouter";
 
 import VendorShell from "@/components/VendorShell";
 import { Button } from "@/components/ui/button";
@@ -69,11 +68,14 @@ function buildUiTestHistory(): VendorPaymentHistoryItem[] {
 export default function VendorPayments() {
   const { t } = useTranslation();
   const { isAuthenticated, getAccessTokenSilently, user } = useAuth0();
-  const [location] = useLocation();
   const [setupLoading, setSetupLoading] = useState(false);
   const [setupError, setSetupError] = useState<string | null>(null);
 
-  const searchParams = new URLSearchParams(location.split("?")[1] ?? "");
+  // wouter's useLocation() returns only the pathname in v3, so query params are
+  // read from window.location.search (which reliably contains them).
+  const searchParams = new URLSearchParams(
+    typeof window !== "undefined" ? window.location.search : "",
+  );
   const fromStripeReturn = searchParams.get("stripe_setup") === "success";
 
   // UI-only render test — see buildUiTestHistory() above. Gated to the owner
