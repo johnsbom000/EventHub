@@ -40,14 +40,47 @@ function formatUsdFromCents(cents: number) {
   }).format((cents || 0) / 100);
 }
 
+/**
+ * UI-ONLY render test. These rows are generated in the browser and are NEVER
+ * persisted or fetched from the server — they exist purely to verify that the
+ * payment history list renders correctly with many cards. Activated only when
+ * BOTH conditions hold: the signed-in account is the owner test account AND the
+ * page is loaded with `?uiTest=1`. It has no effect for any other user or URL.
+ */
+const UI_TEST_ACCOUNT_EMAIL = "johnsbom000@gmail.com";
+const UI_TEST_AMOUNTS_CENTS = [35000, 1000, 7500, 15000]; // $350, $10, $75, $150
+
+function buildUiTestHistory(): VendorPaymentHistoryItem[] {
+  return Array.from({ length: 30 }, (_, i) => {
+    const amount = UI_TEST_AMOUNTS_CENTS[i % UI_TEST_AMOUNTS_CENTS.length];
+    // Deterministic, unique 8-char hex id per card so each booking number
+    // (rendered from id.slice(0, 8)) is distinct and looks like a real one.
+    const id = (0x10000000 + i * 0x1a2b3d).toString(16);
+    return {
+      id,
+      netAmount: amount,
+      grossPayoutAmount: amount,
+      status: i % 3 === 0 ? "pending" : "paid",
+      eventDate: `2026-${String((i % 12) + 1).padStart(2, "0")}-15`,
+    };
+  });
+}
+
 export default function VendorPayments() {
   const { t } = useTranslation();
-  const { isAuthenticated, getAccessTokenSilently } = useAuth0();
+  const { isAuthenticated, getAccessTokenSilently, user } = useAuth0();
   const [location] = useLocation();
   const [setupLoading, setSetupLoading] = useState(false);
   const [setupError, setSetupError] = useState<string | null>(null);
 
-  const fromStripeReturn = new URLSearchParams(location.split("?")[1] ?? "").get("stripe_setup") === "success";
+  const searchParams = new URLSearchParams(location.split("?")[1] ?? "");
+  const fromStripeReturn = searchParams.get("stripe_setup") === "success";
+
+  // UI-only render test — see buildUiTestHistory() above. Gated to the owner
+  // test account AND an explicit ?uiTest=1 query param so it never appears on a
+  // normal page load or for any other user.
+  const uiTestActive =
+    searchParams.get("uiTest") === "1" && user?.email === UI_TEST_ACCOUNT_EMAIL;
 
   const { data } = useQuery<VendorPaymentsResponse>({
     queryKey: ["/api/vendor/payments"],
@@ -59,7 +92,11 @@ export default function VendorPayments() {
     enabled: isAuthenticated,
   });
 
-  const history = Array.isArray(data?.history) ? data!.history! : [];
+  const history = uiTestActive
+    ? buildUiTestHistory()
+    : Array.isArray(data?.history)
+      ? data!.history!
+      : [];
   const totalNetEarned = Number(data?.totalNetEarned ?? 0);
   const upcomingNetPayout = Number(data?.upcomingNetPayout ?? 0);
   const payoutPolicyNote =
