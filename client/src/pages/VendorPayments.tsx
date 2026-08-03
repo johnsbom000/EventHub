@@ -1,7 +1,8 @@
-import { useEffect, useState } from "react";
+import { useState } from "react";
 import { useQuery } from "@tanstack/react-query";
 import { useAuth0 } from "@auth0/auth0-react";
 import { useTranslation } from "react-i18next";
+import { useLocation } from "wouter";
 
 import VendorShell from "@/components/VendorShell";
 import { Button } from "@/components/ui/button";
@@ -39,79 +40,14 @@ function formatUsdFromCents(cents: number) {
   }).format((cents || 0) / 100);
 }
 
-/**
- * UI-ONLY render test. These rows are generated in the browser and are NEVER
- * persisted or fetched from the server — they exist purely to verify that the
- * payment history list renders correctly with many cards.
- *
- * Turn ON:  load the page once with `?uiTest=1`
- * Turn OFF: load the page once with `?uiTest=0`
- *
- * The choice is remembered in localStorage, so once enabled the cards stay
- * visible across normal in-app navigation (e.g. clicking the sidebar) — you do
- * NOT need the query param in the URL every time. Nothing is written anywhere
- * except this single local browser flag.
- */
-const UI_TEST_AMOUNTS_CENTS = [35000, 1000, 7500, 15000]; // $350, $10, $75, $150
-const UI_TEST_STORAGE_KEY = "eh_payments_ui_test";
-
-function readUiTestFlag(): boolean {
-  if (typeof window === "undefined") return false;
-  const param = new URLSearchParams(window.location.search).get("uiTest");
-  if (param === "1") return true;
-  if (param === "0") return false;
-  try {
-    return window.localStorage.getItem(UI_TEST_STORAGE_KEY) === "1";
-  } catch {
-    return false;
-  }
-}
-
-function buildUiTestHistory(): VendorPaymentHistoryItem[] {
-  return Array.from({ length: 30 }, (_, i) => {
-    const amount = UI_TEST_AMOUNTS_CENTS[i % UI_TEST_AMOUNTS_CENTS.length];
-    // Deterministic, unique 8-char hex id per card so each booking number
-    // (rendered from id.slice(0, 8)) is distinct and looks like a real one.
-    const id = (0x10000000 + i * 0x1a2b3d).toString(16);
-    return {
-      id,
-      netAmount: amount,
-      grossPayoutAmount: amount,
-      status: i % 3 === 0 ? "pending" : "paid",
-      eventDate: `2026-${String((i % 12) + 1).padStart(2, "0")}-15`,
-    };
-  });
-}
-
 export default function VendorPayments() {
   const { t } = useTranslation();
   const { isAuthenticated, getAccessTokenSilently } = useAuth0();
+  const [location] = useLocation();
   const [setupLoading, setSetupLoading] = useState(false);
   const [setupError, setSetupError] = useState<string | null>(null);
 
-  // wouter's useLocation() returns only the pathname in v3, so query params are
-  // read from window.location.search (which reliably contains them).
-  const searchParams = new URLSearchParams(
-    typeof window !== "undefined" ? window.location.search : "",
-  );
-  const fromStripeReturn = searchParams.get("stripe_setup") === "success";
-
-  // UI-only render test — see buildUiTestHistory() above. Reads ?uiTest=1/0 and
-  // falls back to the persisted localStorage flag so it survives in-app nav.
-  const uiTestActive = readUiTestFlag();
-
-  // Persist the ?uiTest choice so the toggle sticks after the param leaves the
-  // URL (e.g. navigating via the sidebar). Runs once on mount.
-  useEffect(() => {
-    if (typeof window === "undefined") return;
-    const param = new URLSearchParams(window.location.search).get("uiTest");
-    try {
-      if (param === "1") window.localStorage.setItem(UI_TEST_STORAGE_KEY, "1");
-      else if (param === "0") window.localStorage.removeItem(UI_TEST_STORAGE_KEY);
-    } catch {
-      // localStorage unavailable — the param still works for this page load.
-    }
-  }, []);
+  const fromStripeReturn = new URLSearchParams(location.split("?")[1] ?? "").get("stripe_setup") === "success";
 
   const { data } = useQuery<VendorPaymentsResponse>({
     queryKey: ["/api/vendor/payments"],
@@ -123,22 +59,9 @@ export default function VendorPayments() {
     enabled: isAuthenticated,
   });
 
-  const history = uiTestActive
-    ? buildUiTestHistory()
-    : Array.isArray(data?.history)
-      ? data!.history!
-      : [];
-  // When the UI-only render test is active, derive the headline stats from the
-  // 30 test cards so they stay consistent with the list: Net Earned = sum of all
-  // cards, Upcoming Net Payout = sum of the still-pending cards.
-  const totalNetEarned = uiTestActive
-    ? history.reduce((sum, p) => sum + Number(p.netAmount ?? 0), 0)
-    : Number(data?.totalNetEarned ?? 0);
-  const upcomingNetPayout = uiTestActive
-    ? history
-        .filter((p) => p.status === "pending")
-        .reduce((sum, p) => sum + Number(p.netAmount ?? 0), 0)
-    : Number(data?.upcomingNetPayout ?? 0);
+  const history = Array.isArray(data?.history) ? data!.history! : [];
+  const totalNetEarned = Number(data?.totalNetEarned ?? 0);
+  const upcomingNetPayout = Number(data?.upcomingNetPayout ?? 0);
   const payoutPolicyNote =
     typeof data?.payoutPolicyNote === "string" && data.payoutPolicyNote.trim().length > 0
       ? data.payoutPolicyNote.trim()
