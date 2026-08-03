@@ -128,8 +128,17 @@ export default function VendorPayments() {
     : Array.isArray(data?.history)
       ? data!.history!
       : [];
-  const totalNetEarned = Number(data?.totalNetEarned ?? 0);
-  const upcomingNetPayout = Number(data?.upcomingNetPayout ?? 0);
+  // When the UI-only render test is active, derive the headline stats from the
+  // 30 test cards so they stay consistent with the list: Net Earned = sum of all
+  // cards, Upcoming Net Payout = sum of the still-pending cards.
+  const totalNetEarned = uiTestActive
+    ? history.reduce((sum, p) => sum + Number(p.netAmount ?? 0), 0)
+    : Number(data?.totalNetEarned ?? 0);
+  const upcomingNetPayout = uiTestActive
+    ? history
+        .filter((p) => p.status === "pending")
+        .reduce((sum, p) => sum + Number(p.netAmount ?? 0), 0)
+    : Number(data?.upcomingNetPayout ?? 0);
   const payoutPolicyNote =
     typeof data?.payoutPolicyNote === "string" && data.payoutPolicyNote.trim().length > 0
       ? data.payoutPolicyNote.trim()
