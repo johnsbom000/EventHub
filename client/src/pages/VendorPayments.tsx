@@ -1,4 +1,4 @@
-import { useState } from "react";
+import { useEffect, useState } from "react";
 import { useQuery } from "@tanstack/react-query";
 import { useAuth0 } from "@auth0/auth0-react";
 import { useTranslation } from "react-i18next";
@@ -42,11 +42,30 @@ function formatUsdFromCents(cents: number) {
 /**
  * UI-ONLY render test. These rows are generated in the browser and are NEVER
  * persisted or fetched from the server — they exist purely to verify that the
- * payment history list renders correctly with many cards. Activated only when
- * the page is loaded with the explicit `?uiTest=1` query param, so it never
- * appears on a normal page load. Nothing is written anywhere.
+ * payment history list renders correctly with many cards.
+ *
+ * Turn ON:  load the page once with `?uiTest=1`
+ * Turn OFF: load the page once with `?uiTest=0`
+ *
+ * The choice is remembered in localStorage, so once enabled the cards stay
+ * visible across normal in-app navigation (e.g. clicking the sidebar) — you do
+ * NOT need the query param in the URL every time. Nothing is written anywhere
+ * except this single local browser flag.
  */
 const UI_TEST_AMOUNTS_CENTS = [35000, 1000, 7500, 15000]; // $350, $10, $75, $150
+const UI_TEST_STORAGE_KEY = "eh_payments_ui_test";
+
+function readUiTestFlag(): boolean {
+  if (typeof window === "undefined") return false;
+  const param = new URLSearchParams(window.location.search).get("uiTest");
+  if (param === "1") return true;
+  if (param === "0") return false;
+  try {
+    return window.localStorage.getItem(UI_TEST_STORAGE_KEY) === "1";
+  } catch {
+    return false;
+  }
+}
 
 function buildUiTestHistory(): VendorPaymentHistoryItem[] {
   return Array.from({ length: 30 }, (_, i) => {
@@ -77,9 +96,22 @@ export default function VendorPayments() {
   );
   const fromStripeReturn = searchParams.get("stripe_setup") === "success";
 
-  // UI-only render test — see buildUiTestHistory() above. Gated behind an
-  // explicit ?uiTest=1 query param so it never appears on a normal page load.
-  const uiTestActive = searchParams.get("uiTest") === "1";
+  // UI-only render test — see buildUiTestHistory() above. Reads ?uiTest=1/0 and
+  // falls back to the persisted localStorage flag so it survives in-app nav.
+  const uiTestActive = readUiTestFlag();
+
+  // Persist the ?uiTest choice so the toggle sticks after the param leaves the
+  // URL (e.g. navigating via the sidebar). Runs once on mount.
+  useEffect(() => {
+    if (typeof window === "undefined") return;
+    const param = new URLSearchParams(window.location.search).get("uiTest");
+    try {
+      if (param === "1") window.localStorage.setItem(UI_TEST_STORAGE_KEY, "1");
+      else if (param === "0") window.localStorage.removeItem(UI_TEST_STORAGE_KEY);
+    } catch {
+      // localStorage unavailable — the param still works for this page load.
+    }
+  }, []);
 
   const { data } = useQuery<VendorPaymentsResponse>({
     queryKey: ["/api/vendor/payments"],
