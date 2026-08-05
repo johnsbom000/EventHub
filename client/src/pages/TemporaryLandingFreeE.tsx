@@ -1,11 +1,11 @@
 import { useTranslation, Trans } from "react-i18next";
-import { Bar, Header, Closing, Footer, Eyebrow, PrimaryButton, GhostButton } from "@/pages/landing/primitives";
+import { Bar, Header, Footer, Eyebrow, PrimaryButton, GhostButton } from "@/pages/landing/primitives";
 import { useLandingSignup } from "@/pages/landing/signup";
 import HowItWorks from "@/pages/landing/HowItWorks";
 import Testimonials from "@/pages/landing/Testimonials";
 import FreeVsProSection from "@/pages/landing/FreeVsProSection";
 import ListingWizardDemo from "@/pages/landing/ListingWizardDemo";
-import BookingFlowDemo, { VARIED_STOREFRONT_IMAGES } from "@/pages/landing/BookingFlowDemo";
+import VendorDashboardDemo from "@/pages/landing/VendorDashboardDemo";
 
 /* Direction E — "Demand-led": showing customer demand (the booking flow they'll
    follow) motivates vendors. Split hero: dark copy left + booking demo right. */
@@ -54,7 +54,7 @@ export default function TemporaryLandingFreeE() {
         </div>
         <div className="order-2 flex items-center bg-[#f8fafb] px-6 py-16 lg:py-24">
           <div className="mx-auto w-full max-w-[480px]">
-            <BookingFlowDemo storefrontImages={VARIED_STOREFRONT_IMAGES} />
+            <VendorDashboardDemo still />
           </div>
         </div>
       </section>
@@ -89,13 +89,6 @@ export default function TemporaryLandingFreeE() {
       <FreeVsProSection
         onStartFree={() => handleSignupCta("pricing_start_free")}
         onTryPro={() => handleProCta("pricing_try_pro")}
-      />
-      <Closing
-        onSignup={() => handleSignupCta("closing_cta")}
-        onLogin={openLogin}
-        theme="dark"
-        title={<Trans i18nKey={`${NS}.closing.title`} components={{ accent: <em className="italic text-[#e07a6a]" /> }} />}
-        subtitle={t(`${NS}.closing.subtitle`)}
       />
       <Footer />
 

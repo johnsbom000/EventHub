@@ -1545,9 +1545,10 @@
       },
       "hero": {
         "eyebrow": "See it work — no payment needed",
-        "title": "Watch a storefront <accent>build itself</accent>.",
+        "title": "Your event rental business is eating your time.<br /><accent>Take it back</accent>.",
+        "subtitle": "DMs, spreadsheets, quotes that go nowhere. It adds up. EventHub allows you to give customers total transparency to book you without any effort on your part.",
         "trust": "Loved by event vendors",
-        "ctaPrimary": "Build mine free"
+        "ctaPrimary": "Try it out"
       },
       "testimonials": {
         "eyebrow": "Don't take our word for it"
@@ -1567,31 +1568,29 @@
       },
       "hero": {
         "eyebrow": "Your money, your rules",
-        "title": "Keep <accent>100%</accent> of every booking.",
-        "subtitle": "No vendor fees. Customers pay through Stripe and payouts land in your bank automatically. What you earn stays yours.",
-        "trust": "Free to start · No credit card · Get paid via Stripe",
-        "ctaPrimary": "Start earning free"
-      },
-      "stats": {
-        "commission": {
-          "big": "0%",
-          "label": "commission on your bookings"
-        },
-        "payouts": {
-          "big": "Stripe",
-          "label": "secure automatic payouts"
-        },
-        "start": {
-          "big": "$0",
-          "label": "to start — no credit card"
-        }
+        "title": "Get more event rental bookings. <accent>Work a fraction of the time</accent>.",
+        "subtitle": "Your storefront shows customers everything up front, pricing, availability, and what's included, so more inquiries turn into paid bookings and fewer waste your day.",
+        "trust": "Free to start · No credit card",
+        "ctaPrimary": "Try it out"
       },
       "testimonials": {
-        "eyebrow": "No commission, ever"
+        "eyebrow": ""
       },
-      "closing": {
-        "title": "Start keeping <accent>all</accent> of it.",
-        "subtitle": "Set up a real storefront, take real bookings, and get paid in full — free to start."
+      "faq": {
+        "eyebrow": "Common questions",
+        "title": "You stay in control",
+        "q1": {
+          "q": "My event business is so custom — does EventHub have flexibility for customization?",
+          "a": "Yes. Build listings your way: single items, multi-tier packages, and add-ons customers can attach — each with your own pricing, what's included, deposit, and cancellation policy. Turn on pre-booking contact and customers can message you to work out the details before they book."
+        },
+        "q2": {
+          "q": "Do I have to allow \"instant bookings\" from customers?",
+          "a": "No. Every listing has a booking type you control: Instant Book, or Request to Book — where customers submit their dates and you personally accept or decline. Outside of Rentals, listings default to Request to Book, so nothing lands on your calendar without your say-so."
+        },
+        "q3": {
+          "q": "My business is logistics-heavy. How does EventHub handle logistics?",
+          "a": "Set your service radius and offer delivery, pickup, setup, takedown, and travel — each with its own fee. Fees can be flat or vary by location, and for out-of-area or variable jobs you send the customer a custom quote to accept before the booking is final."
+        }
       }
     },
 
@@ -1648,23 +1647,19 @@
       },
       "hero": {
         "eyebrow": "The customer experience",
-        "title": "Customers are ready to <accent>book you</accent>.",
-        "subtitle": "They browse, pick a date, and check out on their own — around the clock. All you need is a storefront for them to land on.",
-        "trust": "Free to start · Self-serve booking · Secure Stripe checkout",
-        "ctaPrimary": "Give them a place to book"
+        "title": "Stop responding to event rental <accent>DMs</accent>.",
+        "subtitle": "Paste one link into Facebook Marketplace and your socials. Customers see availability, logistics, inclusions, add-ons, and more. No more back-and-forth that goes nowhere.",
+        "trust": "Free to start · No credit card · Upgrade Anytime",
+        "ctaPrimary": "Try it out"
       },
       "setup": {
         "eyebrow": "Your side takes minutes",
         "title": "Give them something to book in <accent>two minutes</accent>.",
-        "body": "A guided wizard turns your photos and prices into a live storefront. Publish, share the link, and let the bookings begin.",
+        "body": "Guided listing creation turns your photos and prices into a live storefront. Publish, share the link, and let the bookings begin.",
         "cta": "Create your storefront"
       },
       "testimonials": {
         "eyebrow": "From vendors like you"
-      },
-      "closing": {
-        "title": "The demand is <accent>already there</accent>.",
-        "subtitle": "Set up your storefront, drop the link, and let customers book themselves."
       }
     }
 }
