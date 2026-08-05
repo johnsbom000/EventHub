@@ -49,7 +49,7 @@ export default function Testimonials({
       <div className="mx-auto max-w-[1240px] px-5 py-20 lg:px-10 lg:py-24">
         <div className="mb-12 flex flex-wrap items-end justify-between gap-4">
           <div>
-            <Eyebrow>{t(eyebrowKey)}</Eyebrow>
+            {t(eyebrowKey) && <Eyebrow>{t(eyebrowKey)}</Eyebrow>}
             <h2 className={`mt-3 font-heading text-[2.2rem] font-light leading-[1.1] lg:text-[2.9rem] ${headText}`}>
               {t("testimonials.title")}
             </h2>

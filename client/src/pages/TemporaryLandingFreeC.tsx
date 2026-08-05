@@ -1,5 +1,5 @@
 import { useTranslation, Trans } from "react-i18next";
-import { Bar, Header, Closing, Footer, Stars, PrimaryButton, GhostButton } from "@/pages/landing/primitives";
+import { Bar, Header, Closing, Footer, PrimaryButton, GhostButton } from "@/pages/landing/primitives";
 import { useLandingSignup } from "@/pages/landing/signup";
 import HowItWorks from "@/pages/landing/HowItWorks";
 import Testimonials from "@/pages/landing/Testimonials";
@@ -32,10 +32,6 @@ export default function TemporaryLandingFreeC() {
       <section className="bg-gradient-to-b from-[#f5f0e8] to-white">
         <div className="mx-auto grid max-w-[1320px] items-center gap-12 px-5 py-16 lg:grid-cols-[1.05fr_1fr] lg:gap-16 lg:px-10 lg:py-20">
           <div>
-            <div className="mb-5 inline-flex items-center gap-2 rounded-full bg-white px-3.5 py-1.5 shadow-[0_4px_16px_rgba(74,106,125,0.1)]">
-              <Stars size="h-4 w-4" />
-              <span className="font-sans text-[0.9rem] font-semibold text-[#2a3a42]">{t(`${NS}.hero.badge`)}</span>
-            </div>
             <h1 className="font-heading text-[clamp(2.6rem,5.6vw,4.3rem)] font-light leading-[1.02] text-[#2a3a42]">
               <Trans i18nKey={`${NS}.hero.title`} components={{ accent: <em className="italic text-[#e07a6a]" /> }} />
             </h1>

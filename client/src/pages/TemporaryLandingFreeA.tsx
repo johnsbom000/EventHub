@@ -1,13 +1,13 @@
 import { useTranslation, Trans } from "react-i18next";
 import { motion, useReducedMotion } from "framer-motion";
-import { Bar, Header, Closing, Footer, Eyebrow, Stars, PrimaryButton, GhostButton } from "@/pages/landing/primitives";
+import { Bar, Header, Closing, Footer, Eyebrow, PrimaryButton, GhostButton } from "@/pages/landing/primitives";
 import { useLandingSignup } from "@/pages/landing/signup";
 import { Reveal, fadeUp, fadeUpBlur, stagger, EASE } from "@/pages/landing/motion";
 import HowItWorks from "@/pages/landing/HowItWorks";
 import Testimonials from "@/pages/landing/Testimonials";
 import FreeVsProSection from "@/pages/landing/FreeVsProSection";
 import CustomerExperienceSection from "@/pages/landing/CustomerExperienceSection";
-import ListingWizardDemo from "@/pages/landing/ListingWizardDemo";
+import VendorDashboardDemo from "@/pages/landing/VendorDashboardDemo";
 import { VARIED_STOREFRONT_IMAGES } from "@/pages/landing/BookingFlowDemo";
 
 /* Direction A — "Show, don't tell": watching the product build itself drives
@@ -53,12 +53,14 @@ export default function TemporaryLandingFreeA() {
               {...headlineProps}
               className="mt-4 font-heading text-[clamp(2.6rem,5.4vw,4.3rem)] font-light leading-[1.02] text-[#2a3a42]"
             >
-              <Trans i18nKey={`${NS}.hero.title`} components={{ accent: <em className="italic text-[#e07a6a]" /> }} />
+              <Trans i18nKey={`${NS}.hero.title`} components={{ accent: <em className="italic text-[#e07a6a]" />, br: <br /> }} />
             </motion.h1>
-            <motion.div {...itemProps} className="mt-6 flex items-center justify-center gap-2.5 lg:justify-start">
-              <Stars size="h-5 w-5" />
-              <span className="font-sans text-[0.95rem] font-medium text-[#4a6a7d]">{t(`${NS}.hero.trust`)}</span>
-            </motion.div>
+            <motion.p
+              {...itemProps}
+              className="mx-auto mt-6 max-w-[34rem] font-sans text-[1.15rem] leading-[1.55] text-[#4a6a7d] lg:mx-0"
+            >
+              {t(`${NS}.hero.subtitle`)}
+            </motion.p>
             <motion.div {...itemProps} className="mt-9 flex flex-wrap items-center justify-center gap-3 lg:justify-start">
               <motion.span
                 className="inline-flex"
@@ -86,10 +88,10 @@ export default function TemporaryLandingFreeA() {
             transition={{ duration: 0.8, ease: EASE, delay: 0.15 }}
           >
             {reduced ? (
-              <ListingWizardDemo />
+              <VendorDashboardDemo />
             ) : (
               <motion.div animate={{ y: [0, -8, 0] }} transition={{ duration: 6, repeat: Infinity, ease: "easeInOut" }}>
-                <ListingWizardDemo />
+                <VendorDashboardDemo />
               </motion.div>
             )}
           </motion.div>
