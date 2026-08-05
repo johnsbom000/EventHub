@@ -44,3 +44,7 @@ AUDIT-REPORT.md
 EVENTHUB.md
 MARKETING.md
 STRATEGY.md
+
+# design-system sync tooling + generated bundle (local only)
+.ds-sync/
+ds-bundle/
