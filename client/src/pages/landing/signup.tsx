@@ -141,6 +141,20 @@ export function useLandingSignup(_ns?: string) {
   // Fires vendor_engaged once on 25% scroll or 30s dwell.
   useEffect(() => initEngagement(), []);
 
+  // Stop the page rubber-band scrolling past the footer. On macOS/trackpad,
+  // overscroll past the bottom exposes the white <body> background below the
+  // slate footer, which reads as "scrolling past the footer into empty space".
+  // Scoped to landing pages: the previous value is restored on unmount so the
+  // rest of the app (chat, dashboards) keeps its native overscroll behaviour.
+  useEffect(() => {
+    const root = document.documentElement;
+    const prev = root.style.overscrollBehaviorY;
+    root.style.overscrollBehaviorY = "none";
+    return () => {
+      root.style.overscrollBehaviorY = prev;
+    };
+  }, []);
+
   // All signup CTAs route through here so the click is attributed
   // (PostHog signup_cta_click + Meta Lead) with a per-button cta_id + intent.
   const handleSignupCta = (ctaId: string) => {

@@ -20,7 +20,7 @@ export default function TemporaryLandingFreeD() {
   return (
     <div className="min-h-screen bg-white">
       <div className="sticky top-0 z-40">
-        <Header cta={t(`${NS}.header.getStarted`)} onSignup={() => handleSignupCta("header_get_started")} onLogin={openLogin} minimal />
+        <Header cta={t(`${NS}.header.getStarted`)} onSignup={() => handleSignupCta("header_get_started")} onLogin={openLogin} />
       </div>
 
       {/* Hero */}

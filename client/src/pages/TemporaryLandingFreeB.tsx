@@ -1,18 +1,18 @@
 import { useTranslation, Trans } from "react-i18next";
-import { Bar, Header, Closing, Footer, Eyebrow, PrimaryButton, GhostButton } from "@/pages/landing/primitives";
+import { ChevronDown } from "lucide-react";
+import { Bar, Header, Footer, Eyebrow, PrimaryButton, GhostButton } from "@/pages/landing/primitives";
 import { useLandingSignup } from "@/pages/landing/signup";
 import HowItWorks from "@/pages/landing/HowItWorks";
 import Testimonials from "@/pages/landing/Testimonials";
 import FreeVsProSection from "@/pages/landing/FreeVsProSection";
 import CustomerExperienceSection from "@/pages/landing/CustomerExperienceSection";
-import ListingWizardDemo from "@/pages/landing/ListingWizardDemo";
-import { VARIED_STOREFRONT_IMAGES } from "@/pages/landing/BookingFlowDemo";
+import BookingFlowDemo, { VARIED_STOREFRONT_IMAGES } from "@/pages/landing/BookingFlowDemo";
 
 /* Direction B — "Money & zero fees": the financial payoff (keep 100%, 0%
    commission) is the strongest driver. Dark hero + three stat cards. */
 
 const NS = "landingFreeB";
-const STAT_KEYS = ["commission", "payouts", "start"] as const;
+const FAQ_KEYS = ["q1", "q2", "q3"] as const;
 
 export default function TemporaryLandingFreeB() {
   const { t } = useTranslation();
@@ -50,16 +50,8 @@ export default function TemporaryLandingFreeB() {
             <p className="mt-6 font-sans text-[0.95rem] text-[rgba(245,240,232,0.6)]">{t(`${NS}.hero.trust`)}</p>
           </div>
           <div>
-            <ListingWizardDemo />
+            <BookingFlowDemo storefrontImages={VARIED_STOREFRONT_IMAGES} />
           </div>
-        </div>
-        <div className="mx-auto grid max-w-[1240px] gap-4 px-5 pb-20 sm:grid-cols-3 lg:px-10">
-          {STAT_KEYS.map((k) => (
-            <div key={k} className="rounded-[18px] border border-[rgba(245,240,232,0.14)] bg-[#33454f] p-6 text-center">
-              <p className="font-heading text-[2.6rem] font-light leading-none text-[#9dd4cc]">{t(`${NS}.stats.${k}.big`)}</p>
-              <p className="mt-2 font-sans text-[0.95rem] text-[rgba(245,240,232,0.75)]">{t(`${NS}.stats.${k}.label`)}</p>
-            </div>
-          ))}
         </div>
       </section>
 
@@ -71,13 +63,37 @@ export default function TemporaryLandingFreeB() {
         onTryPro={() => handleProCta("pricing_try_pro")}
       />
       <Testimonials theme="dark" layout="cards" eyebrowKey={`${NS}.testimonials.eyebrow`} />
-      <Closing
-        onSignup={() => handleSignupCta("closing_cta")}
-        onLogin={openLogin}
-        theme="dark"
-        title={<Trans i18nKey={`${NS}.closing.title`} components={{ accent: <em className="italic text-[#e07a6a]" /> }} />}
-        subtitle={t(`${NS}.closing.subtitle`)}
-      />
+
+      {/* FAQ — replaces the closing CTA band for this variant. Native <details>
+          accordion (no JS state); first item open for discoverability. */}
+      <section className="border-y border-[rgba(74,106,125,0.08)] bg-white">
+        <div className="mx-auto max-w-[820px] px-5 py-20 lg:px-10 lg:py-24">
+          <div className="mb-10 text-center">
+            <Eyebrow>{t(`${NS}.faq.eyebrow`)}</Eyebrow>
+            <h2 className="mt-3 font-heading text-[2.2rem] font-light leading-[1.1] text-[#2a3a42] lg:text-[2.9rem]">
+              {t(`${NS}.faq.title`)}
+            </h2>
+          </div>
+          <div className="space-y-3">
+            {FAQ_KEYS.map((k, i) => (
+              <details
+                key={k}
+                open={i === 0}
+                className="group rounded-[16px] border border-[rgba(74,106,125,0.14)] bg-white px-6 py-5 transition-shadow open:shadow-[0_14px_40px_rgba(74,106,125,0.08)]"
+              >
+                <summary className="flex cursor-pointer list-none items-center justify-between gap-4 font-sans text-[1.08rem] font-semibold text-[#2a3a42]">
+                  {t(`${NS}.faq.${k}.q`)}
+                  <ChevronDown className="h-5 w-5 shrink-0 text-[#4a6a7d] transition-transform duration-200 group-open:rotate-180" />
+                </summary>
+                <p className="mt-4 font-sans text-[1.02rem] leading-[1.65] text-[#4a6a7d]">
+                  {t(`${NS}.faq.${k}.a`)}
+                </p>
+              </details>
+            ))}
+          </div>
+        </div>
+      </section>
+
       <Footer />
 
       {modals}
