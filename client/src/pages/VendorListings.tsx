@@ -294,7 +294,6 @@ export default function VendorListings() {
             <span className="text-[2.3rem] shrink-0 font-heading font-bold text-[#e07a6a]">{price}</span>
           </div>
 
-          {/* TEMP: view + booking counters hidden while recording videos — restore later
           <div className="flex items-center justify-end gap-3 text-sm text-muted-foreground">
             <div className="flex items-center gap-1">
               <Eye className="w-4 h-4" />
@@ -305,7 +304,6 @@ export default function VendorListings() {
               <span>{t("vendorListings.bookings")}</span>
             </div>
           </div>
-          */}
 
           <div className="mt-4 flex gap-2 border-t border-t-[var(--dashboard-divider-blue)] pt-4">
             <Button
