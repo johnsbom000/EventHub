@@ -1327,7 +1327,7 @@
     "hero": {
       "eyebrow": "For event vendors",
       "title": "Run your event business, <accent>all in one place.</accent>",
-      "subtitle": "EventHub is the marketplace where event vendors list their services, manage bookings, message customers, and get paid securely, without spreadsheets, scattered DMs, or chasing invoices.",
+      "subtitle": "DMs, spreadsheets, quotes that go nowhere. It adds up. EventHub allows you to give customers total transparency to book you without any effort on your part.",
       "ctaVendor": "Get started as a vendor",
       "logIn": "Log in",
       "trustLine": "Free to list · Secure payouts via Stripe · Cancel anytime"
@@ -1400,6 +1400,22 @@
       "cta": "Start your 30-day free trial — $29/mo",
       "logIn": "Log in",
       "trustLine": "No vendor fees · Secure payouts via Stripe · Cancel anytime"
+    },
+    "faq": {
+      "eyebrow": "Common questions",
+      "title": "You stay in control",
+      "q1": {
+        "q": "My event business is so custom — does EventHub have flexibility for customization?",
+        "a": "Yes. Build listings your way: single items, multi-tier packages, and add-ons customers can attach — each with your own pricing, what's included, deposit, and cancellation policy. Turn on pre-booking contact and customers can message you to work out the details before they book."
+      },
+      "q2": {
+        "q": "Do I have to allow \"instant bookings\" from customers?",
+        "a": "No. Every listing has a booking type you control: Instant Book, or Request to Book — where customers submit their dates and you personally accept or decline. Outside of Rentals, listings default to Request to Book, so nothing lands on your calendar without your say-so."
+      },
+      "q3": {
+        "q": "My business is logistics-heavy. How does EventHub handle logistics?",
+        "a": "Set your service radius and offer delivery, pickup, setup, takedown, and travel — each with its own fee. Fees can be flat or vary by location, and for out-of-area or variable jobs you send the customer a custom quote to accept before the booking is final."
+      }
     },
     "footer": {
       "description": "The all-in-one platform for event vendors to list services, manage bookings, and get paid. It's also where hosts find and book the perfect vendors for any event.",
