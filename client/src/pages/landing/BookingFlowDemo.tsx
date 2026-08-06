@@ -1,4 +1,5 @@
 import { useEffect, useRef, useState, type ReactNode } from "react";
+import { useTranslation } from "react-i18next";
 import {
   Store,
   Tag,
@@ -44,10 +45,11 @@ function Shell({
 }
 
 function SampleTag() {
+  const { t } = useTranslation();
   return (
     <span className="inline-flex items-center gap-1.5 rounded-full bg-[#f5f0e8] px-2.5 py-1 font-sans text-[0.62rem] font-semibold uppercase tracking-[0.12em] text-[#9aacb4]">
       <span className="h-1.5 w-1.5 rounded-full bg-[#e07a6a]" />
-      Sample
+      {t("demoShared.sample")}
     </span>
   );
 }
@@ -101,12 +103,13 @@ export const VARIED_STOREFRONT_IMAGES = [
   U("1632765471084-9f2ab98365bf"), // Sports Arena — inflatable with a ball
 ];
 
-// The four customer screens the demo walks through.
+// The four customer screens the demo walks through. Titles/subs are resolved
+// from i18n at render (demoBooking.screens.<key>) so the demo follows the toggle.
 const SCREENS = [
-  { title: "Your storefront", sub: "Customers land on your shop and browse your rentals.", Icon: Store },
-  { title: "Listing details", sub: "They open a rental to see photos, price, and what's included.", Icon: Tag },
-  { title: "Make selections", sub: "They pick a date, add-ons, and see the price update live.", Icon: CalendarCheck },
-  { title: "Checkout", sub: "They review the order and pay securely through Stripe.", Icon: CreditCard },
+  { key: "storefront", Icon: Store },
+  { key: "listing", Icon: Tag },
+  { key: "selections", Icon: CalendarCheck },
+  { key: "checkout", Icon: CreditCard },
 ] as const;
 
 // Phases: 0..3 = the four screens, 4 = placing order, 5 = confirmed. Then loops.
@@ -134,6 +137,7 @@ const DEMO_PINNED_STEP: number | null = (() => {
 })();
 
 function Stars({ rating = "4.9", count = "24" }: { rating?: string; count?: string }) {
+  const { t } = useTranslation();
   return (
     <div className="flex items-center gap-1.5">
       <div className="flex items-center gap-0.5">
@@ -142,13 +146,14 @@ function Stars({ rating = "4.9", count = "24" }: { rating?: string; count?: stri
         ))}
       </div>
       <span className="font-sans text-[0.74rem] font-semibold text-[#2a3a42]">{rating}</span>
-      <span className="font-sans text-[0.72rem] text-[#9aacb4]">({count} reviews)</span>
+      <span className="font-sans text-[0.72rem] text-[#9aacb4]">{t("demoBooking.reviews", { count })}</span>
     </div>
   );
 }
 
 // A tiny storefront listing card (mirrors ListingCard: image, title, price/Day).
 function MiniCard({ src, title, price }: { src: string; title: string; price: string }) {
+  const { t } = useTranslation();
   return (
     <div className="overflow-hidden rounded-[10px] border border-[rgba(74,106,125,0.14)] bg-white">
       <img src={src} alt="" className="h-[3.4rem] w-full object-cover" />
@@ -156,7 +161,7 @@ function MiniCard({ src, title, price }: { src: string; title: string; price: st
         <p className="line-clamp-2 font-heading text-[0.68rem] font-semibold leading-tight text-[#2a3a42]">{title}</p>
         <p className="shrink-0 font-heading text-[0.72rem] font-bold text-[#e07a6a]">
           {price}
-          <span className="text-[0.6em] font-medium text-[#9aacb4]">/Day</span>
+          <span className="text-[0.6em] font-medium text-[#9aacb4]">{t("demoBooking.perDay")}</span>
         </p>
       </div>
     </div>
@@ -173,6 +178,7 @@ function Row({ label, value, muted = false, accent = false }: { label: string; v
 }
 
 export default function BookingFlowDemo({ storefrontImages }: { storefrontImages?: string[] } = {}) {
+  const { t } = useTranslation();
   const reduced = usePrefersReducedMotion();
   const cardImages = storefrontImages ?? DEFAULT_STOREFRONT_IMAGES;
   const [phase, setPhase] = useState(DEMO_PINNED_STEP ?? 0);
@@ -208,16 +214,16 @@ export default function BookingFlowDemo({ storefrontImages }: { storefrontImages
 
   // Footer CTA label per screen.
   const ctaLabel = confirmed
-    ? "Booked"
+    ? t("demoBooking.cta.booked")
     : placing
-      ? "Placing order…"
+      ? t("demoBooking.cta.placing")
       : active === 0
-        ? "View listing"
+        ? t("demoBooking.cta.viewListing")
         : active === 1
-          ? "Book now"
+          ? t("demoBooking.cta.bookNow")
           : active === 2
-            ? "Continue to checkout"
-            : "Place order";
+            ? t("demoBooking.cta.continueCheckout")
+            : t("demoBooking.cta.placeOrder");
 
   return (
     <Shell interactive className="w-full">
@@ -234,10 +240,10 @@ export default function BookingFlowDemo({ storefrontImages }: { storefrontImages
           <div className="flex items-start justify-between gap-3 px-5 pt-5 pb-3">
             <div className="min-w-0">
               <h3 className="font-sans text-[1.5rem] font-semibold tracking-tight text-[#2a3a42]">
-                {confirmed ? "Booking confirmed" : screen.title}
+                {confirmed ? t("demoBooking.screens.confirmed.title") : t(`demoBooking.screens.${screen.key}.title`)}
               </h3>
               <p className="mt-1 line-clamp-2 h-[2.3rem] font-sans text-[0.82rem] leading-snug text-[#9aacb4]">
-                {confirmed ? "The customer is booked and you've been notified." : screen.sub}
+                {confirmed ? t("demoBooking.screens.confirmed.sub") : t(`demoBooking.screens.${screen.key}.sub`)}
               </p>
             </div>
             <SampleTag />
@@ -273,7 +279,7 @@ export default function BookingFlowDemo({ storefrontImages }: { storefrontImages
                         <Stars />
                       </div>
                     </div>
-                    <p className="mb-2 font-heading text-[0.92rem] font-semibold text-[#2a3a42]">Available Rentals</p>
+                    <p className="mb-2 font-heading text-[0.92rem] font-semibold text-[#2a3a42]">{t("demoBooking.availableRentals")}</p>
                     <div className="grid grid-cols-3 gap-2">
                       {STOREFRONT_CARDS.map((c, i) => (
                         <MiniCard key={c.title} src={cardImages[i]} title={c.title} price={c.price} />
@@ -287,7 +293,7 @@ export default function BookingFlowDemo({ storefrontImages }: { storefrontImages
                   <div>
                     <div className="mb-2 flex items-center justify-between">
                       <span className="flex items-center font-sans text-[0.72rem] font-medium text-[#4a6a7d]">
-                        <ChevronLeft className="h-3.5 w-3.5" /> Back
+                        <ChevronLeft className="h-3.5 w-3.5" /> {t("demoShared.back")}
                       </span>
                       <Heart className="h-4 w-4 text-[#9aacb4]" />
                     </div>
@@ -324,13 +330,12 @@ export default function BookingFlowDemo({ storefrontImages }: { storefrontImages
                     </div>
                     <div className="my-2.5 border-t border-[rgba(74,106,125,0.14)]" />
                     <p className="mb-2 line-clamp-2 font-sans text-[0.74rem] leading-snug text-[#4a6a7d]">
-                      A crowd-favorite backyard bounce house — delivered, set up, and sanitized. Perfect for birthdays,
-                      block parties, and backyard bashes.
+                      {t("demoBooking.description")}
                     </p>
                     <div className="grid grid-cols-2 gap-x-3 gap-y-1">
-                      {["Bounce house", "Blower + stakes", "Delivery & setup", "Sanitized before use"].map((item) => (
-                        <span key={item} className="flex items-center gap-1.5 font-sans text-[0.72rem] text-[#2a3a42]">
-                          <Check className="h-3 w-3 shrink-0 text-[#2f7a6b]" /> {item}
+                      {(["a", "b", "c", "d"] as const).map((k) => (
+                        <span key={k} className="flex items-center gap-1.5 font-sans text-[0.72rem] text-[#2a3a42]">
+                          <Check className="h-3 w-3 shrink-0 text-[#2f7a6b]" /> {t(`demoBooking.included.${k}`)}
                         </span>
                       ))}
                     </div>
@@ -342,22 +347,22 @@ export default function BookingFlowDemo({ storefrontImages }: { storefrontImages
                   <div className="space-y-2.5">
                     <div className="flex items-baseline justify-between">
                       <p className="font-heading text-[1.15rem] font-semibold text-[#2a3a42]">
-                        $650 <span className="font-sans text-[0.72rem] font-normal text-[#9aacb4]">/ per day</span>
+                        $650 <span className="font-sans text-[0.72rem] font-normal text-[#9aacb4]">{t("demoBooking.perDayLong")}</span>
                       </p>
-                      <span className="font-sans text-[0.7rem] font-medium text-[#2f7a6b]">Available</span>
+                      <span className="font-sans text-[0.7rem] font-medium text-[#2f7a6b]">{t("demoBooking.available")}</span>
                     </div>
                     <div>
-                      <p className="mb-1 font-sans text-[0.72rem] font-medium text-[#2a3a42]">Event Date</p>
+                      <p className="mb-1 font-sans text-[0.72rem] font-medium text-[#2a3a42]">{t("demoBooking.eventDate")}</p>
                       <div className="flex h-8 items-center justify-between rounded-md border border-input bg-background px-3 font-sans text-[0.78rem] text-[#2a3a42]">
                         {DEMO_DATE}
                         <CalendarCheck className="h-3.5 w-3.5 text-[#9aacb4]" />
                       </div>
                     </div>
                     <div>
-                      <p className="mb-1 font-sans text-[0.72rem] font-medium text-[#2a3a42]">Add-ons</p>
+                      <p className="mb-1 font-sans text-[0.72rem] font-medium text-[#2a3a42]">{t("demoBooking.addOns")}</p>
                       <div className="flex items-center justify-between rounded-lg border border-primary bg-primary/5 px-2.5 py-1.5">
                         <span className="flex items-center gap-1.5 font-sans text-[0.74rem] text-[#2a3a42]">
-                          <Check className="h-3.5 w-3.5 text-[#2f7a6b]" /> Setup &amp; styling
+                          <Check className="h-3.5 w-3.5 text-[#2f7a6b]" /> {t("demoBooking.setupStyling")}
                         </span>
                         <span className="flex items-center gap-2">
                           <span className="font-sans text-[0.72rem] text-[#9aacb4]">$120</span>
@@ -374,19 +379,19 @@ export default function BookingFlowDemo({ storefrontImages }: { storefrontImages
                       </div>
                     </div>
                     <div className="space-y-1.5 rounded-xl border border-[rgba(74,106,125,0.16)] bg-[#f8fafb] p-3">
-                      <p className="font-sans text-[0.72rem] font-semibold text-[#2a3a42]">Price breakdown</p>
-                      <Row label="Base price" value="$650" />
-                      <Row label="Setup & styling ×1" value="$120" />
-                      <Row label="Security deposit (refundable)" value="$200" muted />
+                      <p className="font-sans text-[0.72rem] font-semibold text-[#2a3a42]">{t("demoBooking.priceBreakdown")}</p>
+                      <Row label={t("demoBooking.basePrice")} value="$650" />
+                      <Row label={t("demoBooking.setupStylingQty")} value="$120" />
+                      <Row label={t("demoBooking.securityDeposit")} value="$200" muted />
                       <div className="border-t border-[rgba(74,106,125,0.16)] pt-1.5">
                         <div className="flex items-center justify-between font-sans text-[0.82rem] font-bold text-[#2a3a42]">
-                          <span>Total</span>
+                          <span>{t("demoBooking.total")}</span>
                           <span>$970</span>
                         </div>
                       </div>
                     </div>
                     <div className="rounded-md bg-[#e07a6a] py-2 text-center font-sans text-[0.82rem] font-semibold text-white">
-                      Book Now
+                      {t("demoBooking.bookNowBtn")}
                     </div>
                   </div>
                 )}
@@ -394,7 +399,7 @@ export default function BookingFlowDemo({ storefrontImages }: { storefrontImages
                 {/* STAGE 3 — Checkout */}
                 {active === 3 && (
                   <div className="space-y-2">
-                    <p className="font-sans text-[0.8rem] font-semibold text-[#2a3a42]">Billing details</p>
+                    <p className="font-sans text-[0.8rem] font-semibold text-[#2a3a42]">{t("demoBooking.billingDetails")}</p>
                     <div className="grid grid-cols-2 gap-2">
                       <div className="flex h-7 items-center rounded-md border border-input bg-background px-2.5 font-sans text-[0.72rem] text-[#2a3a42]">
                         Jamie Rivera
@@ -413,31 +418,31 @@ export default function BookingFlowDemo({ storefrontImages }: { storefrontImages
                         <div className="min-w-0">
                           <p className="truncate font-sans text-[0.72rem] font-semibold text-[#2a3a42]">{DEMO_TITLE}</p>
                           <p className="flex items-center gap-1 font-sans text-[0.66rem] text-[#9aacb4]">
-                            <CalendarCheck className="h-2.5 w-2.5" /> {DEMO_DATE} · Qty 1
+                            <CalendarCheck className="h-2.5 w-2.5" /> {DEMO_DATE} · {t("demoBooking.qty", { n: 1 })}
                           </p>
                         </div>
                       </div>
                       <div className="space-y-1 border-t border-[rgba(74,106,125,0.14)] pt-1.5">
-                        <Row label="Sub total (1 × $650)" value="$650" />
-                        <Row label="Setup & styling ×1" value="$120" />
-                        <Row label="Logistics (delivery, setup)" value="$40" />
-                        <Row label="Security deposit (refundable)" value="$200" muted />
+                        <Row label={t("demoBooking.subtotal")} value="$650" />
+                        <Row label={t("demoBooking.setupStylingQty")} value="$120" />
+                        <Row label={t("demoBooking.logistics")} value="$40" />
+                        <Row label={t("demoBooking.securityDeposit")} value="$200" muted />
                         <div className="flex items-center justify-between border-t border-[rgba(74,106,125,0.16)] pt-1.5">
-                          <span className="font-sans text-[0.78rem] font-semibold text-[#2a3a42]">Total</span>
+                          <span className="font-sans text-[0.78rem] font-semibold text-[#2a3a42]">{t("demoBooking.total")}</span>
                           <span className="font-heading text-[1.15rem] font-bold text-[#2a3a42]">$1,010</span>
                         </div>
                       </div>
                     </div>
 
                     <div>
-                      <p className="mb-1 font-sans text-[0.7rem] font-medium text-[#2a3a42]">Card Number</p>
+                      <p className="mb-1 font-sans text-[0.7rem] font-medium text-[#2a3a42]">{t("demoBooking.cardNumber")}</p>
                       <div className="flex h-7 items-center justify-between rounded-md border border-input bg-background px-2.5 font-sans text-[0.72rem] text-[#2a3a42]">
                         <span>4242 4242 4242 4242</span>
                         <CreditCard className="h-3.5 w-3.5 text-[#9aacb4]" />
                       </div>
                     </div>
                     <p className="flex items-center gap-1 font-sans text-[0.64rem] text-[#9aacb4]">
-                      <ShieldCheck className="h-3 w-3 text-[#4a6a7d]" /> Deposit refunded after your event · Secured by Stripe
+                      <ShieldCheck className="h-3 w-3 text-[#4a6a7d]" /> {t("demoBooking.depositNote")}
                     </p>
                   </div>
                 )}
@@ -451,7 +456,7 @@ export default function BookingFlowDemo({ storefrontImages }: { storefrontImages
               <ChevronLeft className="h-3.5 w-3.5" /> Back
             </span>
             <div className="flex items-center gap-2.5">
-              <span className="font-sans text-[0.78rem] text-[#9aacb4]">{isLast ? "Secure checkout" : "Sample view"}</span>
+              <span className="font-sans text-[0.78rem] text-[#9aacb4]">{isLast ? t("demoBooking.secureCheckout") : t("demoBooking.sampleView")}</span>
               <span
                 className={`rounded-[10px] px-4 py-1.5 font-sans text-[0.82rem] font-semibold text-white transition-all duration-300 ${
                   isLast ? "bg-[#e07a6a]" : "bg-primary text-primary-foreground"
@@ -468,7 +473,7 @@ export default function BookingFlowDemo({ storefrontImages }: { storefrontImages
               <div className="flex h-12 w-12 items-center justify-center rounded-full bg-[#2f7a6b] text-white">
                 <Check className="h-6 w-6" />
               </div>
-              <p className="font-heading text-[1.4rem] leading-tight text-[#2a3a42]">Booking confirmed!</p>
+              <p className="font-heading text-[1.4rem] leading-tight text-[#2a3a42]">{t("demoBooking.confirmedOverlay")}</p>
               <p className="font-sans text-[0.84rem] text-[#9aacb4]">{DEMO_TITLE} · {DEMO_DATE}</p>
             </div>
           )}
@@ -478,7 +483,7 @@ export default function BookingFlowDemo({ storefrontImages }: { storefrontImages
         <div className="flex items-center justify-center gap-3 border-t border-[rgba(74,106,125,0.12)] bg-[#f8fafb] px-4 py-2.5">
           <button
             type="button"
-            aria-label="Previous screen"
+            aria-label={t("demoShared.prev")}
             onClick={() => goBy(-1)}
             className="flex h-7 w-7 items-center justify-center rounded-full border border-[rgba(74,106,125,0.2)] bg-white text-[#4a6a7d] transition hover:border-[#4a6a7d]"
           >
@@ -488,8 +493,8 @@ export default function BookingFlowDemo({ storefrontImages }: { storefrontImages
             {SCREENS.map((s, i) => (
               <button
                 type="button"
-                key={s.title}
-                aria-label={`Go to ${s.title}`}
+                key={s.key}
+                aria-label={t("demoShared.goTo", { name: t(`demoBooking.screens.${s.key}.title`) })}
                 onClick={() => goTo(i)}
                 className={`h-1.5 rounded-full transition-all duration-300 ${
                   !confirmed && i === active
@@ -503,7 +508,7 @@ export default function BookingFlowDemo({ storefrontImages }: { storefrontImages
           </div>
           <button
             type="button"
-            aria-label="Next screen"
+            aria-label={t("demoShared.next")}
             onClick={() => goBy(1)}
             className="flex h-7 w-7 items-center justify-center rounded-full border border-[rgba(74,106,125,0.2)] bg-white text-[#4a6a7d] transition hover:border-[#4a6a7d]"
           >
@@ -514,7 +519,7 @@ export default function BookingFlowDemo({ storefrontImages }: { storefrontImages
         {/* Paused indicator (press-and-hold) */}
         {paused && !reduced && (
           <div className="absolute left-1/2 top-2.5 z-20 flex -translate-x-1/2 items-center gap-1.5 rounded-full bg-[#2a3a42]/90 px-2.5 py-1 font-sans text-[0.66rem] font-semibold uppercase tracking-wide text-white">
-            <Pause className="h-3 w-3" /> Paused
+            <Pause className="h-3 w-3" /> {t("demoShared.paused")}
           </div>
         )}
       </div>
