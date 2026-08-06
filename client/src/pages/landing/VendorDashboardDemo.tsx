@@ -1,4 +1,5 @@
 import { useEffect, useRef, useState, type ReactNode } from "react";
+import { useTranslation } from "react-i18next";
 import {
   CalendarCheck,
   LayoutDashboard,
@@ -42,10 +43,11 @@ function Shell({ children, className = "" }: { children: ReactNode; className?: 
 }
 
 function SampleTag() {
+  const { t } = useTranslation();
   return (
     <span className="inline-flex items-center gap-1.5 rounded-full bg-[#f5f0e8] px-2.5 py-1 font-sans text-[0.62rem] font-semibold uppercase tracking-[0.12em] text-[#9aacb4]">
       <span className="h-1.5 w-1.5 rounded-full bg-[#e07a6a]" />
-      Sample
+      {t("demoShared.sample")}
     </span>
   );
 }
@@ -63,13 +65,15 @@ function usePrefersReducedMotion() {
   return reduced;
 }
 
-// Nav rail order == tour order, so the active highlight moves cleanly.
+// Nav rail order == tour order, so the active highlight moves cleanly. Titles/
+// subs resolve from i18n at render (demoDashboard.nav.<key>) so the demo follows
+// the language toggle.
 const NAV = [
-  { title: "Bookings", sub: "New requests and upcoming events, all in one place.", Icon: CalendarCheck },
-  { title: "Overview", sub: "See how your business is doing at a glance.", Icon: LayoutDashboard },
-  { title: "Listings", sub: "Create and manage everything you rent out.", Icon: ClipboardList },
-  { title: "Discounts & Promos", sub: "Run promo codes and public sales to fill your calendar.", Icon: TicketPercent },
-  { title: "Messages", sub: "Chat with customers about the details that matter.", Icon: MessageSquare },
+  { key: "bookings", Icon: CalendarCheck },
+  { key: "overview", Icon: LayoutDashboard },
+  { key: "listings", Icon: ClipboardList },
+  { key: "discounts", Icon: TicketPercent },
+  { key: "messages", Icon: MessageSquare },
 ] as const;
 
 const DEMO_TOTAL = NAV.length;
@@ -80,15 +84,17 @@ const LISTINGS = [
   { img: VARIED_STOREFRONT_IMAGES[3], title: "Obstacle Course", price: "From $600" },
 ] as const;
 
+// name = sample data (kept as-is); eventKey resolves via demoDashboard.events,
+// date stays literal. Rendered as "<event> · <date>".
 const CONVOS = [
-  { name: "Jordan M.", meta: "Backyard party · Jun 14", unread: "2" },
-  { name: "Priya S.", meta: "Wedding · Jun 20", unread: null },
-  { name: "Marcus L.", meta: "Company picnic · Jun 22", unread: "1" },
-  { name: "Dana W.", meta: "Birthday bash · Jun 24", unread: null },
-  { name: "Alex R.", meta: "Graduation · Jun 28", unread: null },
-  { name: "Sofia T.", meta: "Baby shower · Jul 2", unread: "3" },
-  { name: "Ethan K.", meta: "Block party · Jul 5", unread: null },
-  { name: "Maya P.", meta: "Anniversary · Jul 9", unread: null },
+  { name: "Jordan M.", eventKey: "backyardParty", date: "Jun 14", unread: "2" },
+  { name: "Priya S.", eventKey: "wedding", date: "Jun 20", unread: null },
+  { name: "Marcus L.", eventKey: "companyPicnic", date: "Jun 22", unread: "1" },
+  { name: "Dana W.", eventKey: "birthdayBash", date: "Jun 24", unread: null },
+  { name: "Alex R.", eventKey: "graduation", date: "Jun 28", unread: null },
+  { name: "Sofia T.", eventKey: "babyShower", date: "Jul 2", unread: "3" },
+  { name: "Ethan K.", eventKey: "blockParty", date: "Jul 5", unread: null },
+  { name: "Maya P.", eventKey: "anniversary", date: "Jul 9", unread: null },
 ] as const;
 
 // DEV-ONLY: pin a specific slide via ?demoStep=N for layout verification.
@@ -99,6 +105,7 @@ const DEMO_PINNED_STEP: number | null = (() => {
 })();
 
 function StatusBadge({ status }: { status: "Confirmed" | "Pending" }) {
+  const { t } = useTranslation();
   const pending = status === "Pending";
   return (
     <span
@@ -106,12 +113,13 @@ function StatusBadge({ status }: { status: "Confirmed" | "Pending" }) {
         pending ? "bg-[#faf1e2] text-[#b9822f]" : "bg-[#e8f3f0] text-[#2f7a6b]"
       }`}
     >
-      {status}
+      {t(pending ? "demoDashboard.status.pending" : "demoDashboard.status.confirmed")}
     </span>
   );
 }
 
 export default function VendorDashboardDemo({ still = false }: { still?: boolean } = {}) {
+  const { t } = useTranslation();
   const reduced = usePrefersReducedMotion();
   // `still` freezes the card on the Bookings (booking-confirmations) screen with
   // no auto-advance, controls, or nav interaction — a static hero panel.
@@ -171,8 +179,8 @@ export default function VendorDashboardDemo({ still = false }: { still?: boolean
               return (
                 <button
                   type="button"
-                  key={n.title}
-                  aria-label={`Go to ${n.title}`}
+                  key={n.key}
+                  aria-label={t("demoShared.goTo", { name: t(`demoDashboard.nav.${n.key}.title`) })}
                   onClick={() => goTo(i)}
                   className={`flex h-9 w-9 items-center justify-center rounded-2xl transition-colors ${
                     isActive ? "bg-[#4a6a7d] text-[#f5f0e8]" : "text-[#9aacb4] hover:bg-[#f0f4f7]"
@@ -189,9 +197,9 @@ export default function VendorDashboardDemo({ still = false }: { still?: boolean
             {/* Page header */}
             <div className="flex items-start justify-between gap-3 px-5 pt-5 pb-3">
               <div className="min-w-0">
-                <h3 className="font-sans text-[1.5rem] font-semibold tracking-tight text-[#2a3a42]">{nav.title}</h3>
+                <h3 className="font-sans text-[1.5rem] font-semibold tracking-tight text-[#2a3a42]">{t(`demoDashboard.nav.${nav.key}.title`)}</h3>
                 <p className="mt-1 line-clamp-2 h-[2.3rem] font-sans text-[0.82rem] leading-snug text-[#9aacb4]">
-                  {nav.sub}
+                  {t(`demoDashboard.nav.${nav.key}.sub`)}
                 </p>
               </div>
               <SampleTag />
@@ -204,29 +212,29 @@ export default function VendorDashboardDemo({ still = false }: { still?: boolean
                 {active === 0 && (
                   <div className="space-y-2.5">
                     <div className="flex gap-1.5">
-                      {["All", "Upcoming", "Pending", "Completed"].map((tab, i) => (
+                      {(["all", "upcoming", "pending", "completed"] as const).map((tab, i) => (
                         <span
                           key={tab}
                           className={`rounded-full px-3 py-1 font-sans text-[0.72rem] font-medium ${
                             i === 1 ? "bg-[#4a6a7d] text-[#f5f0e8]" : "border border-[rgba(74,106,125,0.2)] text-[#4a6a7d]"
                           }`}
                         >
-                          {tab}
+                          {t(`demoDashboard.tabs.${tab}`)}
                         </span>
                       ))}
                     </div>
                     <div className="grid grid-cols-3 gap-2">
                       {[
-                        ["Upcoming", "14"],
-                        ["This month", "$9.4k"],
-                        ["Pending", "5"],
+                        ["statUpcoming", "14"],
+                        ["statThisMonth", "$9.4k"],
+                        ["statPending", "5"],
                       ].map(([label, value]) => (
                         <div
                           key={label}
                           className="rounded-xl border border-[rgba(74,106,125,0.16)] bg-[#f8fafb] px-3 py-2 text-center"
                         >
                           <p className="font-heading text-[1.25rem] font-light leading-none text-[#2a3a42]">{value}</p>
-                          <p className="mt-1 font-sans text-[0.66rem] text-[#9aacb4]">{label}</p>
+                          <p className="mt-1 font-sans text-[0.66rem] text-[#9aacb4]">{t(`demoDashboard.bookings.${label}`)}</p>
                         </div>
                       ))}
                     </div>
@@ -236,15 +244,15 @@ export default function VendorDashboardDemo({ still = false }: { still?: boolean
                         <StatusBadge status="Pending" />
                       </div>
                       <div className="mt-0.5 flex items-center justify-between">
-                        <p className="font-sans text-[0.7rem] text-[#9aacb4]">Fri, Jun 20 · All day</p>
-                        <p className="font-sans text-[0.7rem] font-semibold text-[#4a6a7d]">Est. payout $1,240</p>
+                        <p className="font-sans text-[0.7rem] text-[#9aacb4]">Fri, Jun 20 · {t("demoDashboard.bookings.allDay")}</p>
+                        <p className="font-sans text-[0.7rem] font-semibold text-[#4a6a7d]">{t("demoDashboard.bookings.estPayout")} $1,240</p>
                       </div>
                       <div className="mt-2 flex gap-2">
                         <span className="rounded-lg bg-[#2f7a6b] px-3 py-1 font-sans text-[0.7rem] font-semibold text-white">
-                          Accept
+                          {t("demoDashboard.bookings.accept")}
                         </span>
                         <span className="rounded-lg border border-[rgba(74,106,125,0.28)] px-3 py-1 font-sans text-[0.7rem] font-medium text-[#4a6a7d]">
-                          Decline
+                          {t("demoDashboard.bookings.decline")}
                         </span>
                       </div>
                     </div>
@@ -262,7 +270,7 @@ export default function VendorDashboardDemo({ still = false }: { still?: boolean
                         </div>
                         <div className="mt-0.5 flex items-center justify-between">
                           <p className="font-sans text-[0.7rem] text-[#9aacb4]">{when}</p>
-                          <p className="font-sans text-[0.7rem] font-semibold text-[#4a6a7d]">Est. payout {payout}</p>
+                          <p className="font-sans text-[0.7rem] font-semibold text-[#4a6a7d]">{t("demoDashboard.bookings.estPayout")} {payout}</p>
                         </div>
                       </div>
                     ))}
@@ -274,13 +282,13 @@ export default function VendorDashboardDemo({ still = false }: { still?: boolean
                   <div className="space-y-3">
                     <div className="grid grid-cols-3 gap-2">
                       {[
-                        { label: "Total Bookings", value: "128", sub: "+12 this month", Icon: Calendar },
-                        { label: "Revenue", value: "$8,540", sub: "+18% mo / mo", Icon: DollarSign },
-                        { label: "Profile Views", value: "2,310", sub: "+140 this week", Icon: Users },
-                      ].map(({ label, value, sub, Icon }) => (
-                        <div key={label} className="rounded-xl border border-[rgba(74,106,125,0.16)] bg-[#f8fafb] p-3">
+                        { labelKey: "totalBookings", value: "128", subKey: "subBookings", Icon: Calendar },
+                        { labelKey: "revenue", value: "$8,540", subKey: "subRevenue", Icon: DollarSign },
+                        { labelKey: "profileViews", value: "2,310", subKey: "subViews", Icon: Users },
+                      ].map(({ labelKey, value, subKey, Icon }) => (
+                        <div key={labelKey} className="rounded-xl border border-[rgba(74,106,125,0.16)] bg-[#f8fafb] p-3">
                           <div className="flex items-center justify-between">
-                            <p className="font-sans text-[0.64rem] font-medium text-[#9aacb4]">{label}</p>
+                            <p className="font-sans text-[0.64rem] font-medium text-[#9aacb4]">{t(`demoDashboard.overview.${labelKey}`)}</p>
                             <Icon className="h-3.5 w-3.5 text-[#9aacb4]" />
                           </div>
                           <p className="mt-1.5 font-heading text-[1.5rem] font-light leading-none text-[#2a3a42]">
@@ -288,29 +296,29 @@ export default function VendorDashboardDemo({ still = false }: { still?: boolean
                           </p>
                           <p className="mt-1 flex items-center gap-1 font-sans text-[0.62rem] font-medium text-[#2f7a6b]">
                             <TrendingUp className="h-3 w-3" />
-                            {sub}
+                            {t(`demoDashboard.overview.${subKey}`)}
                           </p>
                         </div>
                       ))}
                     </div>
                     <div>
-                      <p className="mb-1.5 font-sans text-[0.72rem] font-semibold text-[#2a3a42]">Upcoming</p>
+                      <p className="mb-1.5 font-sans text-[0.72rem] font-semibold text-[#2a3a42]">{t("demoDashboard.overview.upcoming")}</p>
                       <div className="space-y-1.5">
                         {[
-                          ["Jordan M.", "Backyard party · Jun 14", "Confirmed"],
-                          ["Priya S.", "Wedding · Jun 20", "Confirmed"],
-                          ["Marcus L.", "Company picnic · Jun 22", "Pending"],
-                          ["Dana W.", "Birthday bash · Jun 24", "Confirmed"],
-                          ["Alex R.", "Graduation · Jun 28", "Confirmed"],
-                          ["Sofia T.", "Baby shower · Jul 2", "Pending"],
-                        ].map(([name, meta, status]) => (
+                          ["Jordan M.", "backyardParty", "Jun 14", "Confirmed"],
+                          ["Priya S.", "wedding", "Jun 20", "Confirmed"],
+                          ["Marcus L.", "companyPicnic", "Jun 22", "Pending"],
+                          ["Dana W.", "birthdayBash", "Jun 24", "Confirmed"],
+                          ["Alex R.", "graduation", "Jun 28", "Confirmed"],
+                          ["Sofia T.", "babyShower", "Jul 2", "Pending"],
+                        ].map(([name, eventKey, date, status]) => (
                           <div
                             key={name}
                             className="flex items-center justify-between rounded-lg border border-[rgba(74,106,125,0.14)] px-3 py-2"
                           >
                             <div>
                               <p className="font-sans text-[0.76rem] font-medium text-[#2a3a42]">{name}</p>
-                              <p className="font-sans text-[0.68rem] text-[#9aacb4]">{meta}</p>
+                              <p className="font-sans text-[0.68rem] text-[#9aacb4]">{t(`demoDashboard.events.${eventKey}`)} · {date}</p>
                             </div>
                             <StatusBadge status={status as "Confirmed" | "Pending"} />
                           </div>
@@ -324,9 +332,9 @@ export default function VendorDashboardDemo({ still = false }: { still?: boolean
                 {active === 2 && (
                   <div className="space-y-3">
                     <div className="flex items-center justify-between">
-                      <p className="font-sans text-[0.76rem] font-semibold text-[#2a3a42]">Active · 3</p>
+                      <p className="font-sans text-[0.76rem] font-semibold text-[#2a3a42]">{t("demoDashboard.listings.activeCount", { n: 3 })}</p>
                       <span className="inline-flex items-center gap-1.5 rounded-lg bg-[#e07a6a] px-3 py-1.5 font-sans text-[0.72rem] font-semibold text-white">
-                        <Plus className="h-3.5 w-3.5" /> Create Listing
+                        <Plus className="h-3.5 w-3.5" /> {t("demoDashboard.listings.createListing")}
                       </span>
                     </div>
                     <div className="grid grid-cols-3 gap-2">
@@ -335,7 +343,7 @@ export default function VendorDashboardDemo({ still = false }: { still?: boolean
                           <div className="relative h-[4.5rem] w-full bg-[#f5f0e8]">
                             <img src={img} alt="" className="h-full w-full object-cover" />
                             <span className="absolute left-1.5 top-1.5 rounded-full bg-white/90 px-1.5 py-0.5 font-sans text-[0.55rem] font-semibold uppercase tracking-wide text-[#2f7a6b]">
-                              Active
+                              {t("demoDashboard.listings.active")}
                             </span>
                           </div>
                           <div className="p-2">
@@ -351,7 +359,7 @@ export default function VendorDashboardDemo({ still = false }: { still?: boolean
                         <StatusBadge status="Confirmed" />
                       </div>
                       <span className="inline-flex items-center gap-1.5 font-sans text-[0.68rem] font-medium text-[#4a6a7d]">
-                        <Pencil className="h-3.5 w-3.5" /> Edit
+                        <Pencil className="h-3.5 w-3.5" /> {t("demoDashboard.listings.edit")}
                       </span>
                     </div>
                   </div>
@@ -362,7 +370,7 @@ export default function VendorDashboardDemo({ still = false }: { still?: boolean
                   <div className="space-y-3">
                     <div className="flex items-center justify-between">
                       <div className="flex gap-1.5">
-                        {["Active", "Scheduled", "Expired"].map((tab, i) => (
+                        {(["tabActive", "tabScheduled", "tabExpired"] as const).map((tab, i) => (
                           <span
                             key={tab}
                             className={`rounded-full px-3 py-1 font-sans text-[0.7rem] font-medium ${
@@ -371,12 +379,12 @@ export default function VendorDashboardDemo({ still = false }: { still?: boolean
                                 : "border border-[rgba(74,106,125,0.2)] text-[#4a6a7d]"
                             }`}
                           >
-                            {tab}
+                            {t(`demoDashboard.discounts.${tab}`)}
                           </span>
                         ))}
                       </div>
                       <span className="inline-flex items-center gap-1.5 rounded-lg bg-[#e07a6a] px-3 py-1.5 font-sans text-[0.72rem] font-semibold text-white">
-                        <Plus className="h-3.5 w-3.5" /> New discount
+                        <Plus className="h-3.5 w-3.5" /> {t("demoDashboard.discounts.newDiscount")}
                       </span>
                     </div>
                     <div className="flex items-center gap-3 rounded-xl border border-[rgba(74,106,125,0.16)] bg-white p-3">
@@ -390,7 +398,7 @@ export default function VendorDashboardDemo({ still = false }: { still?: boolean
                             20% OFF
                           </span>
                         </div>
-                        <p className="mt-0.5 font-sans text-[0.66rem] text-[#9aacb4]">Jun 1 – Aug 31 · 42/100 used · 4 listings</p>
+                        <p className="mt-0.5 font-sans text-[0.66rem] text-[#9aacb4]">{t("demoDashboard.discounts.summerMeta")}</p>
                       </div>
                     </div>
                     <div className="flex items-center gap-3 rounded-xl border border-[rgba(74,106,125,0.16)] bg-white p-3">
@@ -399,15 +407,15 @@ export default function VendorDashboardDemo({ still = false }: { still?: boolean
                       </span>
                       <div className="min-w-0 flex-1">
                         <div className="flex items-center gap-2">
-                          <span className="font-sans text-[0.8rem] font-semibold text-[#2a3a42]">Summer sale</span>
+                          <span className="font-sans text-[0.8rem] font-semibold text-[#2a3a42]">{t("demoDashboard.discounts.summerSale")}</span>
                           <span className="rounded-full bg-[#e07a6a] px-2 py-0.5 font-sans text-[0.6rem] font-bold text-white">
                             15% OFF
                           </span>
                           <span className="rounded-full border border-[rgba(74,106,125,0.2)] px-2 py-0.5 font-sans text-[0.58rem] font-medium text-[#9aacb4]">
-                            Sale
+                            {t("demoDashboard.discounts.saleTag")}
                           </span>
                         </div>
-                        <p className="mt-0.5 font-sans text-[0.66rem] text-[#9aacb4]">Jun 10 – Jun 17 · 6 listings</p>
+                        <p className="mt-0.5 font-sans text-[0.66rem] text-[#9aacb4]">{t("demoDashboard.discounts.summerSaleMeta")}</p>
                       </div>
                     </div>
                   </div>
@@ -428,7 +436,7 @@ export default function VendorDashboardDemo({ still = false }: { still?: boolean
                                 </span>
                               )}
                             </div>
-                            <p className="truncate font-sans text-[0.62rem] text-[#9aacb4]">{c.meta}</p>
+                            <p className="truncate font-sans text-[0.62rem] text-[#9aacb4]">{t(`demoDashboard.events.${c.eventKey}`)} · {c.date}</p>
                           </div>
                         ))}
                       </div>
@@ -440,17 +448,17 @@ export default function VendorDashboardDemo({ still = false }: { still?: boolean
                       </p>
                       <div className="flex-1 space-y-2 overflow-hidden py-2.5">
                         <div className="max-w-[88%] rounded-2xl rounded-tl-sm bg-[#f0f4f7] px-3 py-1.5 font-sans text-[0.68rem] leading-snug text-[#2a3a42]">
-                          We're in the backyard — someone will meet you at the side gate and show you exactly where we want it set up.
+                          {t("demoDashboard.messages.bubble1")}
                         </div>
                         <div className="ml-auto max-w-[88%] rounded-2xl rounded-tr-sm bg-[#e07a6a] px-3 py-1.5 font-sans text-[0.68rem] leading-snug text-white">
-                          Perfect, we'll be there by 2. Anything blocking the driveway?
+                          {t("demoDashboard.messages.bubble2")}
                         </div>
                         <div className="max-w-[88%] rounded-2xl rounded-tl-sm bg-[#f0f4f7] px-3 py-1.5 font-sans text-[0.68rem] leading-snug text-[#2a3a42]">
-                          Nope, pull all the way in. See you Saturday!
+                          {t("demoDashboard.messages.bubble3")}
                         </div>
                       </div>
                       <div className="flex items-center gap-2 rounded-full border border-[rgba(74,106,125,0.2)] px-3 py-1.5">
-                        <span className="flex-1 font-sans text-[0.66rem] text-[#9aacb4]">Message…</span>
+                        <span className="flex-1 font-sans text-[0.66rem] text-[#9aacb4]">{t("demoDashboard.messages.placeholder")}</span>
                         <span className="flex h-5 w-5 items-center justify-center rounded-full bg-[#4a6a7d] text-white">
                           <Send className="h-3 w-3" />
                         </span>
@@ -474,7 +482,7 @@ export default function VendorDashboardDemo({ still = false }: { still?: boolean
         <div className="flex items-center justify-center gap-3 border-t border-[rgba(74,106,125,0.12)] bg-[#f8fafb] px-4 py-2.5">
           <button
             type="button"
-            aria-label="Previous screen"
+            aria-label={t("demoShared.prev")}
             onClick={() => goBy(-1)}
             className="flex h-7 w-7 items-center justify-center rounded-full border border-[rgba(74,106,125,0.2)] bg-white text-[#4a6a7d] transition hover:border-[#4a6a7d]"
           >
@@ -483,7 +491,7 @@ export default function VendorDashboardDemo({ still = false }: { still?: boolean
           <div className="flex items-center gap-1.5">
             {NAV.map((n, i) => (
               <span
-                key={n.title}
+                key={n.key}
                 className={`h-1.5 rounded-full transition-all duration-300 ${
                   i === active ? "w-4 bg-[#e07a6a]" : "w-1.5 bg-[rgba(74,106,125,0.25)]"
                 }`}
@@ -492,7 +500,7 @@ export default function VendorDashboardDemo({ still = false }: { still?: boolean
           </div>
           <button
             type="button"
-            aria-label="Next screen"
+            aria-label={t("demoShared.next")}
             onClick={() => goBy(1)}
             className="flex h-7 w-7 items-center justify-center rounded-full border border-[rgba(74,106,125,0.2)] bg-white text-[#4a6a7d] transition hover:border-[#4a6a7d]"
           >
@@ -504,7 +512,7 @@ export default function VendorDashboardDemo({ still = false }: { still?: boolean
         {/* Paused indicator (press-and-hold) */}
         {paused && !reduced && !still && (
           <div className="absolute left-1/2 top-2.5 z-20 flex -translate-x-1/2 items-center gap-1.5 rounded-full bg-[#2a3a42]/90 px-2.5 py-1 font-sans text-[0.66rem] font-semibold uppercase tracking-wide text-white">
-            <Pause className="h-3 w-3" /> Paused
+            <Pause className="h-3 w-3" /> {t("demoShared.paused")}
           </div>
         )}
       </div>

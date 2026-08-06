@@ -1,7 +1,36 @@
 import { type ReactNode } from "react";
-import { ChevronRight, Star } from "lucide-react";
+import { ChevronRight, Star, Globe } from "lucide-react";
 import { useTranslation } from "react-i18next";
 import BrandWordmark from "@/components/BrandWordmark";
+import {
+  DropdownMenu,
+  DropdownMenuContent,
+  DropdownMenuTrigger,
+} from "@/components/ui/dropdown-menu";
+import { LanguageSection } from "@/components/LanguageSection";
+import { useLanguage } from "@/context/LanguageContext";
+
+// Globe dropdown that switches the site language. Reuses the app-wide
+// LanguageSection + LanguageProvider so the choice persists (localStorage +
+// server) exactly like everywhere else. Styled for the landing header.
+export function LanguageMenu() {
+  const { t } = useTranslation();
+  const { language } = useLanguage();
+  return (
+    <DropdownMenu>
+      <DropdownMenuTrigger
+        aria-label={t("nav.language.label")}
+        className="inline-flex items-center gap-1.5 rounded-full px-3 py-2 font-sans text-[0.98rem] font-semibold text-[#4a6a7d] transition-colors hover:text-[#2a3a42] focus:outline-none focus-visible:ring-2 focus-visible:ring-[#e07a6a]/40"
+      >
+        <Globe className="h-[1.15em] w-[1.15em]" />
+        <span className="uppercase">{language}</span>
+      </DropdownMenuTrigger>
+      <DropdownMenuContent align="end" className="min-w-[9rem]">
+        <LanguageSection />
+      </DropdownMenuContent>
+    </DropdownMenu>
+  );
+}
 
 /* ---------------------------------------------------------------------------
    Shared presentational primitives for the free-first landing variants (A–E).
@@ -106,6 +135,7 @@ export function Header({
           hubClassName="text-[#4a6a7d] font-normal"
         />
         <div className="flex items-center gap-2">
+          <LanguageMenu />
           {!minimal && (
             <button
               type="button"

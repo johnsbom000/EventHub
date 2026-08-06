@@ -1661,5 +1661,287 @@
       "testimonials": {
         "eyebrow": "From vendors like you"
       }
+    },
+  "demoShared": {
+    "sample": "Sample",
+    "back": "Back",
+    "paused": "Paused",
+    "prev": "Previous",
+    "next": "Next",
+    "goTo": "Go to {{name}}"
+  },
+  "demoBooking": {
+    "screens": {
+      "storefront": {
+        "title": "Your storefront",
+        "sub": "Customers land on your shop and browse your rentals."
+      },
+      "listing": {
+        "title": "Listing details",
+        "sub": "They open a rental to see photos, price, and what's included."
+      },
+      "selections": {
+        "title": "Make selections",
+        "sub": "They pick a date, add-ons, and see the price update live."
+      },
+      "checkout": {
+        "title": "Checkout",
+        "sub": "They review the order and pay securely through Stripe."
+      },
+      "confirmed": {
+        "title": "Booking confirmed",
+        "sub": "The customer is booked and you've been notified."
+      }
+    },
+    "reviews": "({{count}} reviews)",
+    "perDay": "/Day",
+    "availableRentals": "Available Rentals",
+    "cta": {
+      "booked": "Booked",
+      "placing": "Placing order…",
+      "viewListing": "View listing",
+      "bookNow": "Book now",
+      "continueCheckout": "Continue to checkout",
+      "placeOrder": "Place order"
+    },
+    "included": {
+      "a": "Bounce house",
+      "b": "Blower + stakes",
+      "c": "Delivery & setup",
+      "d": "Sanitized before use"
+    },
+    "description": "A crowd-favorite backyard bounce house — delivered, set up, and sanitized. Perfect for birthdays, block parties, and backyard bashes.",
+    "perDayLong": "/ per day",
+    "available": "Available",
+    "eventDate": "Event Date",
+    "addOns": "Add-ons",
+    "setupStyling": "Setup & styling",
+    "priceBreakdown": "Price breakdown",
+    "basePrice": "Base price",
+    "setupStylingQty": "Setup & styling ×1",
+    "securityDeposit": "Security deposit (refundable)",
+    "total": "Total",
+    "bookNowBtn": "Book Now",
+    "billingDetails": "Billing details",
+    "qty": "Qty {{n}}",
+    "subtotal": "Sub total (1 × $650)",
+    "logistics": "Logistics (delivery, setup)",
+    "cardNumber": "Card Number",
+    "depositNote": "Deposit refunded after your event · Secured by Stripe",
+    "secureCheckout": "Secure checkout",
+    "sampleView": "Sample view",
+    "confirmedOverlay": "Booking confirmed!"
+  },
+  "demoDashboard": {
+    "nav": {
+      "bookings": {
+        "title": "Bookings",
+        "sub": "New requests and upcoming events, all in one place."
+      },
+      "overview": {
+        "title": "Overview",
+        "sub": "See how your business is doing at a glance."
+      },
+      "listings": {
+        "title": "Listings",
+        "sub": "Create and manage everything you rent out."
+      },
+      "discounts": {
+        "title": "Discounts & Promos",
+        "sub": "Run promo codes and public sales to fill your calendar."
+      },
+      "messages": {
+        "title": "Messages",
+        "sub": "Chat with customers about the details that matter."
+      }
+    },
+    "status": {
+      "confirmed": "Confirmed",
+      "pending": "Pending"
+    },
+    "tabs": {
+      "all": "All",
+      "upcoming": "Upcoming",
+      "pending": "Pending",
+      "completed": "Completed"
+    },
+    "bookings": {
+      "statUpcoming": "Upcoming",
+      "statThisMonth": "This month",
+      "statPending": "Pending",
+      "allDay": "All day",
+      "estPayout": "Est. payout",
+      "accept": "Accept",
+      "decline": "Decline"
+    },
+    "overview": {
+      "totalBookings": "Total Bookings",
+      "revenue": "Revenue",
+      "profileViews": "Profile Views",
+      "subBookings": "+12 this month",
+      "subRevenue": "+18% mo / mo",
+      "subViews": "+140 this week",
+      "upcoming": "Upcoming"
+    },
+    "events": {
+      "backyardParty": "Backyard party",
+      "wedding": "Wedding",
+      "companyPicnic": "Company picnic",
+      "birthdayBash": "Birthday bash",
+      "graduation": "Graduation",
+      "babyShower": "Baby shower",
+      "blockParty": "Block party",
+      "anniversary": "Anniversary"
+    },
+    "listings": {
+      "activeCount": "Active · {{n}}",
+      "createListing": "Create Listing",
+      "active": "Active",
+      "edit": "Edit"
+    },
+    "discounts": {
+      "tabActive": "Active",
+      "tabScheduled": "Scheduled",
+      "tabExpired": "Expired",
+      "newDiscount": "New discount",
+      "summerMeta": "Jun 1 – Aug 31 · 42/100 used · 4 listings",
+      "summerSale": "Summer sale",
+      "saleTag": "Sale",
+      "summerSaleMeta": "Jun 10 – Jun 17 · 6 listings"
+    },
+    "messages": {
+      "bubble1": "We're in the backyard — someone will meet you at the side gate and show you exactly where we want it set up.",
+      "bubble2": "Perfect, we'll be there by 2. Anything blocking the driveway?",
+      "bubble3": "Nope, pull all the way in. See you Saturday!",
+      "placeholder": "Message…"
     }
+  },
+  "demoWizard": {
+    "liveTitle": "You're all set",
+    "liveSub": "Your listing is published and live.",
+    "steps": {
+      "basics": {
+        "title": "Listing Basics",
+        "sub": "Create one listing for one distinct rentable item, set, or style."
+      },
+      "perfectFor": {
+        "title": "Perfect For",
+        "sub": "Pick the events this listing is perfect for."
+      },
+      "pricing": {
+        "title": "Booking & Pricing",
+        "sub": "Set booking behavior, pricing model, and quantity."
+      },
+      "serviceArea": {
+        "title": "Service Area",
+        "sub": "Set your coverage center and radius."
+      },
+      "logistics": {
+        "title": "Logistics",
+        "sub": "Travel, delivery, and setup options."
+      },
+      "photos": {
+        "title": "Photos",
+        "sub": "Add at least 3 photos to publish."
+      },
+      "addons": {
+        "title": "Attach Add-ons",
+        "sub": "Optional upgrades customers can add."
+      }
+    },
+    "category": "Category",
+    "categories": {
+      "rental": "Rental",
+      "service": "Service",
+      "venue": "Venue",
+      "caterer": "Caterer"
+    },
+    "titleLabel": "Title",
+    "included": "What's Included",
+    "includedChips": {
+      "a": "Bounce house",
+      "b": "Blower + stakes",
+      "c": "Setup guide"
+    },
+    "includedPlaceholder": "What do you include?",
+    "notIncluded": "What's Not Included",
+    "notIncludedChips": {
+      "a": "Generator",
+      "b": "Travel over 30 mi"
+    },
+    "notIncludedPlaceholder": "What's not included?",
+    "perfectForLabel": "Perfect for",
+    "events": {
+      "weddings": "Weddings",
+      "corporate": "Corporate",
+      "babyShowers": "Baby Showers",
+      "photoshoots": "Photoshoots",
+      "birthdays": "Birthdays",
+      "bridalShowers": "Bridal Showers",
+      "graduations": "Graduations",
+      "holidayParties": "Holiday Parties",
+      "concert": "Concert",
+      "proposal": "Proposal",
+      "bachelorParty": "Bachelor Party",
+      "bacheloretteParty": "Bachelorette Party",
+      "anniversary": "Anniversary",
+      "genderReveal": "Gender Reveal",
+      "quinceanera": "Quinceañera",
+      "baptism": "Baptism",
+      "funeral": "Funeral",
+      "reunion": "Reunion",
+      "conference": "Conference",
+      "sporting": "Sporting",
+      "schoolDance": "School Dance",
+      "other": "Other"
+    },
+    "bookingType": "Booking Type",
+    "instantBook": "Instant Book",
+    "requestToBook": "Request to Book",
+    "ratePerDay": "Rate per day",
+    "requireDeposit": "Require a security deposit?",
+    "depositAmount": "Deposit Amount",
+    "location": "Location",
+    "serviceRadius": "Service radius",
+    "doYouSetup": "Do you set up?",
+    "isSetupFee": "Is there a setup fee?",
+    "yes": "Yes",
+    "no": "No",
+    "setupFee": "Setup fee",
+    "cancellationPolicy": "Cancellation Policy",
+    "policies": {
+      "anytime": {
+        "label": "Cancel anytime",
+        "desc": "Cancel more than 48 hours before the event."
+      },
+      "window": {
+        "label": "Cancel within a window",
+        "desc": "Cancel up until a set number of hours before."
+      },
+      "none": {
+        "label": "No cancellations",
+        "desc": "All sales are final once booked."
+      }
+    },
+    "addPhotos": "Add photos",
+    "photosUploaded": "{{n}} photos uploaded",
+    "attachedAddons": "Attached add-ons",
+    "addons": {
+      "setupStyling": {
+        "name": "Setup & styling",
+        "meta": "$120 · Qty: 5"
+      },
+      "extraHour": {
+        "name": "Extra hour",
+        "meta": "$60/hr · Qty: 10"
+      }
+    },
+    "attachExisting": "Attach existing add-on",
+    "createNew": "Create new add-on",
+    "draftSaved": "Draft saved",
+    "continue": "Continue",
+    "publish": "Publish",
+    "publishing": "Publishing…",
+    "liveOverlay": "Your listing is live!"
+  }
 }
