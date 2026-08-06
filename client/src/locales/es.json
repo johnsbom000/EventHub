@@ -227,7 +227,7 @@
     "analyticsUpsellDesc": "Vistas de perfil, tendencias mensuales y actividad reciente",
     "upgradeToPro": "Mejorar a Pro",
     "googleSyncProFeature": "La sincronización con Google Calendar es una función Pro. Mejora tu plan para sincronizar tus reservas automáticamente.",
-    "billingIntro": "EventHub no cobra comisiones por tus reservas. Mejora a Pro para crecer con listados ilimitados, analíticas y sincronización de calendario.",
+    "billingIntro": "Gestiona tu plan y tus pagos. Pro elimina las tarifas de proveedor en tus reservas y desbloquea listados ilimitados, analíticas y sincronización de calendario.",
     "pageTitle": "Panel",
     "noActiveProfile": "Sin perfil de proveedor activo.",
     "totalBookings": "Total de Reservas",
@@ -426,7 +426,7 @@
     "listingPrice": "Precio del listado",
     "customerServiceFee": "Tarifa de servicio al cliente",
     "customerTotal": "Total del cliente",
-    "eventhubFee": "Tarifa de EventHub (8%)",
+    "eventhubFee": "Tarifa de EventHub",
     "estimatedPayout": "Pago estimado",
     "notes": "Notas",
     "questions": "Preguntas",
@@ -843,7 +843,7 @@
     "s4Title": "4. Listados de Proveedores",
     "s4Body": "Los proveedores son los únicos responsables de la exactitud de sus listados, incluyendo precios, disponibilidad y descripciones de servicios. EventHub no verifica el contenido de los listados.",
     "s5Title": "5. Reservas y Pagos",
-    "s5Body": "Todas las reservas están sujetas a la aceptación del proveedor. Los pagos se procesan a través de Stripe. EventHub no cobra tarifas de plataforma ni de servicio en las reservas; los proveedores reciben su pago completo, menos las tarifas estándar de procesamiento de pagos.",
+    "s5Body": "Todas las reservas están sujetas a la aceptación del proveedor. Los pagos se procesan a través de Stripe. EventHub puede cobrar una tarifa de servicio a los clientes y, según el plan de suscripción del proveedor, una tarifa de plataforma a los proveedores en las reservas; los proveedores con planes de pago pueden estar exentos de la tarifa de plataforma. Todas las tarifas aplicables se muestran antes del pago y en el panel del proveedor. También pueden aplicarse las tarifas estándar de procesamiento de pagos de Stripe. Los pagos se emiten tras la finalización exitosa de la reserva, menos las tarifas aplicables. EventHub puede cambiar sus tarifas, la estructura de tarifas y los precios de suscripción en cualquier momento; cualquier cambio se aplica únicamente a las reservas y los períodos de suscripción que comiencen después de que entre en vigor, y las tarifas vigentes siempre se muestran antes del pago y en el panel del proveedor.",
     "s6Title": "6. Cancelaciones y Reembolsos",
     "s6Body": "Las políticas de cancelación las establecen los proveedores individuales y se muestran en cada listado. EventHub aplica la política declarada del proveedor. Los reembolsos se emiten según esa política.",
     "s7Title": "7. Disputas",
@@ -1296,7 +1296,7 @@
       "dialogDescription": "Oferta por tiempo limitado: comienza una prueba gratuita de 30 días de EventHub Pro.",
       "limitedTime": "Oferta por tiempo limitado",
       "title": "Prueba <pro>Pro</pro> <free>gratis por 30 días</free>",
-      "body": "Consigue todo lo que necesitas para gestionar tu negocio de eventos, por nuestra cuenta durante un mes completo. Sin comisiones de EventHub, cancela cuando quieras.",
+      "body": "Consigue todo lo que necesitas para gestionar tu negocio de eventos, por nuestra cuenta durante un mes completo. Sin tarifas de proveedor, cancela cuando quieras.",
       "monthly": "Mensual",
       "annual": "Anual",
       "then": "Después:",
@@ -1317,7 +1317,7 @@
     },
     "bar": {
       "price": "$29/mes",
-      "noFees": "Sin comisiones de EventHub, nunca.",
+      "noFees": "Sin tarifas de proveedor con Pro.",
       "cta": "Empieza gratis →"
     },
     "header": {
@@ -1390,7 +1390,7 @@
       "launchOffer": "Oferta de lanzamiento",
       "dealTitle": "Hazte Pro a nuestro precio de lanzamiento.",
       "dealPricing": "<struck>$39/mes</struck><strong> $29/mes</strong>, o <strong>$290/año</strong> <struck>$390</struck><muted> + 2 meses gratis.</muted>",
-      "deal1": "Sin comisión de EventHub — nunca nos quedamos con parte de tus reservas",
+      "deal1": "Sin tarifas de proveedor — quédate con el 100% del precio de tu reserva",
       "deal2": "Listados ilimitados + analíticas avanzadas",
       "deal3": "Asistente de respuestas con IA para mensajes de clientes",
       "deal4": "Descuentos y códigos promocionales para impulsar reservas",
@@ -1399,7 +1399,7 @@
       "deal7": "30 días gratis, cancela cuando quieras",
       "cta": "Comienza tu prueba gratuita de 30 días — $29/mes",
       "logIn": "Iniciar sesión",
-      "trustLine": "Sin comisiones de EventHub · Pagos seguros vía Stripe · Cancela cuando quieras"
+      "trustLine": "Sin tarifas de proveedor · Pagos seguros vía Stripe · Cancela cuando quieras"
     },
     "footer": {
       "description": "La plataforma todo en uno para que los proveedores de eventos publiquen servicios, gestionen reservas y cobren. También es donde los anfitriones encuentran y reservan los proveedores perfectos para cualquier evento.",
