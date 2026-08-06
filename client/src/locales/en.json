@@ -227,7 +227,7 @@
     "analyticsUpsellDesc": "Profile views, monthly trends & recent activity",
     "upgradeToPro": "Upgrade to Pro",
     "googleSyncProFeature": "Google Calendar sync is a Pro feature. Upgrade to automatically sync your bookings.",
-    "billingIntro": "EventHub charges no fees on your bookings. Upgrade to Pro to grow with unlimited listings, analytics, and calendar sync.",
+    "billingIntro": "Manage your plan and payouts. Pro removes vendor fees on your bookings and unlocks unlimited listings, analytics, and calendar sync.",
     "pageTitle": "Dashboard",
     "noActiveProfile": "No active vendor profile.",
     "totalBookings": "Total Bookings",
@@ -426,7 +426,7 @@
     "listingPrice": "Listing price",
     "customerServiceFee": "Customer service fee",
     "customerTotal": "Customer total",
-    "eventhubFee": "EventHub fee (8%)",
+    "eventhubFee": "EventHub fee",
     "estimatedPayout": "Estimated payout",
     "notes": "Notes",
     "questions": "Questions",
@@ -843,7 +843,7 @@
     "s4Title": "4. Vendor Listings",
     "s4Body": "Vendors are solely responsible for the accuracy of their listings, including pricing, availability, and service descriptions. EventHub does not verify listing content.",
     "s5Title": "5. Bookings & Payments",
-    "s5Body": "All bookings are subject to vendor acceptance. Payments are processed through Stripe. EventHub does not charge platform or service fees on bookings; vendors receive their full payout, less standard payment processing fees.",
+    "s5Body": "All bookings are subject to vendor acceptance. Payments are processed through Stripe. EventHub may charge a service fee to customers and, depending on the vendor's subscription plan, a platform fee to vendors on bookings; vendors on paid plans may be exempt from the vendor platform fee. All applicable fees are disclosed before checkout and in the vendor dashboard. Stripe's payment-processing fees may also apply. Payouts are issued after successful booking completion, less any applicable fees. EventHub may change its fees, fee structure, and subscription pricing at any time; any change applies only to bookings and subscription periods that begin after it takes effect, and current fees are always shown before checkout and in the vendor dashboard.",
     "s6Title": "6. Cancellations & Refunds",
     "s6Body": "Cancellation policies are set by individual vendors and are displayed on each listing. EventHub enforces the vendor's stated policy. Refunds are issued per that policy.",
     "s7Title": "7. Disputes",
@@ -1296,7 +1296,7 @@
       "dialogDescription": "Limited-time offer: start a 30-day free trial of EventHub Pro.",
       "limitedTime": "Limited-time offer",
       "title": "Try <pro>Pro</pro> for <free>30 days free</free>",
-      "body": "Get everything you need to run your event business, on us for a full month. No EventHub fees, cancel anytime.",
+      "body": "Get everything you need to run your event business, on us for a full month. No vendor fees, cancel anytime.",
       "monthly": "Monthly",
       "annual": "Annual",
       "then": "Then:",
@@ -1317,7 +1317,7 @@
     },
     "bar": {
       "price": "$29/mo",
-      "noFees": "No EventHub fees, ever.",
+      "noFees": "No vendor fees on Pro.",
       "cta": "Start free →"
     },
     "header": {
@@ -1390,7 +1390,7 @@
       "launchOffer": "Launch offer",
       "dealTitle": "Go Pro at our launch price.",
       "dealPricing": "<struck>$39/mo</struck><strong> $29/mo</strong>, or <strong>$290/year</strong> <struck>$390</struck><muted> + 2 months free.</muted>",
-      "deal1": "No EventHub commission — we never take a cut of your bookings",
+      "deal1": "No vendor fees — keep 100% of your booking price",
       "deal2": "Unlimited listings + advanced analytics",
       "deal3": "AI reply assistant for customer messages",
       "deal4": "Discounts & promo codes to drive bookings",
@@ -1399,7 +1399,7 @@
       "deal7": "30 days free, cancel anytime",
       "cta": "Start your 30-day free trial — $29/mo",
       "logIn": "Log in",
-      "trustLine": "No EventHub fees · Secure payouts via Stripe · Cancel anytime"
+      "trustLine": "No vendor fees · Secure payouts via Stripe · Cancel anytime"
     },
     "footer": {
       "description": "The all-in-one platform for event vendors to list services, manage bookings, and get paid. It's also where hosts find and book the perfect vendors for any event.",
