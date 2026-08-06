@@ -1415,5 +1415,527 @@
       "signupFailedTitle": "Falha no cadastro",
       "signupFailedFallback": "Algo deu errado. Tente novamente."
     }
+  },
+  "customerExp": {
+    "eyebrow": "A experiência do cliente",
+    "title": "Uma experiência de reserva em que os clientes realmente <accent>confiam</accent>.",
+    "subtitle": "",
+    "transparency": {
+      "title": "Transparência total",
+      "body": "Preços, disponibilidade e depósitos ficam à vista na própria página. Os clientes veem exatamente quanto vão pagar antes de reservar — sem taxas ocultas, sem idas e vindas."
+    },
+    "independence": {
+      "title": "Eles reservam sozinhos",
+      "body": "Os clientes navegam, escolhem uma data e finalizam a compra sozinhos, a qualquer hora. Você não precisa estar on-line para garantir a reserva."
+    },
+    "ease": {
+      "title": "Simples, sem esforço",
+      "body": "Um fluxo claro e guiado, da vitrine à confirmação. Menos etapas significam menos desistências e mais reservas concluídas."
+    }
+  },
+  "landingShared": {
+    "logIn": "Entrar",
+    "closingCta": "Crie sua conta grátis",
+    "freeToJoin": "Cadastro grátis · Sem cartão de crédito",
+    "footer": {
+      "description": "O EventHub é a forma mais fácil de gerenciar seu negócio de eventos — configure em minutos, receba reservas e seja pago, sem conhecimentos técnicos.",
+      "company": "Empresa",
+      "contact": "Contato",
+      "terms": "Termos de Serviço",
+      "privacy": "Política de Privacidade",
+      "copyright": "© {{year}} EventHub. Todos os direitos reservados."
+    }
+  },
+  "landingSignup": {
+    "dialogTitle": "Crie sua conta de fornecedor grátis",
+    "dialogDescription": "Cadastre-se para começar a anunciar seus serviços no EventHub.",
+    "title": "Crie sua conta grátis",
+    "subtitle": "Cadastre-se em segundos e deixe o assistente fazer o resto — cadastro grátis.",
+    "continueGoogle": "Continuar com o Google",
+    "or": "ou",
+    "continueEmail": "Continuar com e-mail",
+    "termsAgreement": "Ao continuar, você concorda com nossos <terms>Termos</terms> e nossa <privacy>Política de Privacidade</privacy>.",
+    "alreadyHaveAccount": "Já tem uma conta?",
+    "logIn": "Entrar",
+    "signupFailedTitle": "Falha no cadastro",
+    "signupFailedFallback": "Algo deu errado ao iniciar o cadastro. Tente novamente."
+  },
+  "howItWorks": {
+    "eyebrow": "Como funciona",
+    "title": "Quatro passos do cadastro até a <accent>reserva</accent>.",
+    "cta": "Começar",
+    "profile": {
+      "title": "Crie seu perfil de fornecedor",
+      "body": "Adicione seu nome, fotos e área de atendimento — alguns minutos, sem conhecimentos técnicos."
+    },
+    "listing": {
+      "title": "Publique seu primeiro anúncio",
+      "body": "Defina seu preço e disponibilidade e coloque no ar."
+    },
+    "share": {
+      "title": "Compartilhe o link da sua vitrine",
+      "body": "Coloque no Instagram, em anúncios do Facebook, na sua bio — onde quer que os clientes encontrem você."
+    },
+    "admin": {
+      "title": "Veja seu trabalho administrativo cair pela metade",
+      "body": "Os clientes navegam, reservam e pagam sozinhos. Você para de correr atrás de mensagens."
+    }
+  },
+  "testimonials": {
+    "title": "O que os fornecedores estão dizendo",
+    "q1": "Isto é exatamente o que eu estava procurando!",
+    "q2": "O EventHub me devolve tempo para eu encontrar mais clientes.",
+    "q3": "Mudar meu sistema para o EventHub foi mais fácil do que eu esperava."
+  },
+  "plans": {
+    "eyebrow": "Faça upgrade para o Pro",
+    "title": "Preencha mais datas. Deixe a burocracia de lado.",
+    "subtitle": "",
+    "compare": "Comparar planos",
+    "unlimited": "Ilimitado",
+    "perMonth": "/mês",
+    "perDay": "apenas ${{amount}}/dia",
+    "billedAnnual": "cobrado $290/ano",
+    "billedMonthly": "cobrado mensalmente",
+    "reassurance": "Ainda em dúvida? Comece no plano Grátis e faça upgrade assim que precisar de mais — sua vitrine vai com você.",
+    "free": {
+      "title": "Grátis",
+      "note": "grátis para sempre",
+      "cta": "Começar grátis"
+    },
+    "pro": {
+      "badge": "Mais popular",
+      "title": "Pro",
+      "cta": "Experimente o Pro grátis"
+    },
+    "toggle": {
+      "monthly": "Mensal",
+      "annual": "Anual",
+      "save": "Economize 17%"
+    },
+    "rows": {
+      "storefront": "Sua própria vitrine e link de reservas",
+      "bookings": "Receba reservas e gerencie sua agenda",
+      "messaging": "Mensagens com clientes no app",
+      "payouts": "Pagamentos seguros pelo Stripe",
+      "reminders": "Confirmações e lembretes de reservas",
+      "listings": "Anúncios ativos",
+      "ai": "Assistente de respostas com IA para mensagens",
+      "discounts": "Descontos e códigos promocionais",
+      "reputation": "Gestão de reputação",
+      "analytics": "Análises avançadas e tendências de reservas",
+      "calendar": "Sincronização com o Google Agenda"
+    },
+    "risk": {
+      "trial": "Teste grátis de 30 dias no Pro",
+      "noCard": "Sem cartão de crédito para começar",
+      "reminder": "Avisaremos antes da renovação",
+      "cancel": "Cancele quando quiser",
+      "keepFree": "Mantenha seu plano grátis para sempre"
+    }
+  },
+  "landingFreeA": {
+    "bar": {
+      "text": "Configure em minutos. Sem curva de aprendizado. Faça upgrade para o Pro quando quiser."
+    },
+    "header": {
+      "getStarted": "Criar conta grátis"
+    },
+    "hero": {
+      "eyebrow": "Veja funcionar — sem precisar pagar",
+      "title": "Seu negócio de aluguel para eventos está consumindo seu tempo.<br /><accent>Recupere-o</accent>.",
+      "subtitle": "Mensagens, planilhas, orçamentos que não dão em nada. Tudo se acumula. O EventHub permite que você dê aos clientes total transparência para reservar você sem nenhum esforço da sua parte.",
+      "trust": "Amado por fornecedores de eventos",
+      "ctaPrimary": "Experimente"
+    },
+    "testimonials": {
+      "eyebrow": "Não acredite só na nossa palavra"
+    },
+    "closing": {
+      "title": "Configurar é <accent>assim tão fácil</accent>.",
+      "subtitle": ""
+    }
+  },
+  "landingFreeB": {
+    "bar": {
+      "text": "Fique com 100% do que você reserva."
+    },
+    "header": {
+      "getStarted": "Comece a ganhar grátis"
+    },
+    "hero": {
+      "eyebrow": "Seu dinheiro, suas regras",
+      "title": "Consiga mais reservas de aluguel para eventos. <accent>Trabalhe uma fração do tempo</accent>.",
+      "subtitle": "Sua vitrine mostra tudo aos clientes de antemão: preços, disponibilidade e o que está incluído, para que mais consultas se tornem reservas pagas e menos desperdicem seu dia.",
+      "trust": "Comece grátis · Sem cartão de crédito",
+      "ctaPrimary": "Experimente"
+    },
+    "testimonials": {
+      "eyebrow": ""
+    },
+    "faq": {
+      "eyebrow": "Perguntas frequentes",
+      "title": "Você continua no controle",
+      "q1": {
+        "q": "Meu negócio de eventos é muito personalizado — o EventHub tem flexibilidade para personalização?",
+        "a": "Sim. Crie anúncios do seu jeito: itens individuais, pacotes de vários níveis e itens adicionais que os clientes podem incluir — cada um com seu próprio preço, o que está incluído, depósito e política de cancelamento. Ative o contato antes da reserva e os clientes poderão enviar mensagens para acertar os detalhes antes de reservar."
+      },
+      "q2": {
+        "q": "Preciso permitir «reservas instantâneas» dos clientes?",
+        "a": "Não. Cada anúncio tem um tipo de reserva que você controla: Reserva instantânea ou Solicitação de reserva — em que os clientes enviam as datas e você aceita ou recusa pessoalmente. Fora dos aluguéis, os anúncios usam Solicitação de reserva por padrão, então nada entra na sua agenda sem a sua aprovação."
+      },
+      "q3": {
+        "q": "Meu negócio envolve muita logística. Como o EventHub lida com logística?",
+        "a": "Defina seu raio de atendimento e ofereça entrega, retirada, montagem, desmontagem e deslocamento — cada um com sua própria taxa. As taxas podem ser fixas ou variar conforme a localização e, para trabalhos fora da área ou variáveis, você envia ao cliente um orçamento personalizado para aceitar antes de a reserva ser confirmada."
+      }
+    }
+  },
+  "landingFreeC": {
+    "bar": {
+      "lead": "Feito para fornecedores de eventos",
+      "text": "· Plano grátis para sempre, sem cartão de crédito."
+    },
+    "header": {
+      "getStarted": "Criar conta grátis"
+    },
+    "hero": {
+      "badge": "Amado por fornecedores de eventos",
+      "title": "Uma vitrine em que seus clientes podem <accent>confiar</accent>.",
+      "subtitle": "Transparência total — para os clientes reservarem com confiança. Crie sua vitrine grátis.",
+      "ctaPrimary": "Comece grátis"
+    },
+    "testimonials": {
+      "eyebrow": "Amado por profissionais de eventos"
+    },
+    "closing": {
+      "title": "Dê a eles um motivo para <accent>confiar em você</accent>.",
+      "subtitle": "Crie sua vitrine e comece a receber reservas no EventHub."
+    }
+  },
+  "landingFreeD": {
+    "header": {
+      "getStarted": "Comece grátis"
+    },
+    "hero": {
+      "eyebrow": "Para fornecedores de eventos",
+      "title": "Seja reservado do jeito <accent>fácil</accent>.",
+      "subtitle": "Uma vitrine. Um link. Configuração em dois minutos.",
+      "trust": "Grátis · Sem cartão de crédito · Cancele quando quiser",
+      "ctaPrimary": "Comece grátis"
+    },
+    "testimonials": {
+      "eyebrow": "Nas palavras deles"
+    },
+    "closing": {
+      "title": "Pronto quando <accent>você</accent> estiver.",
+      "subtitle": "Dois minutos daqui até seu primeiro link de reservas."
+    }
+  },
+  "landingFreeE": {
+    "bar": {
+      "lead": "Os clientes podem reservar sozinhos",
+      "text": "· Dê a eles uma vitrine para reservar — grátis."
+    },
+    "header": {
+      "getStarted": "Criar conta grátis"
+    },
+    "hero": {
+      "eyebrow": "A experiência do cliente",
+      "title": "Pare de responder <accent>mensagens</accent> de aluguel para eventos.",
+      "subtitle": "Cole um único link no Facebook Marketplace e nas suas redes sociais. Os clientes veem disponibilidade, logística, o que está incluído, itens adicionais e muito mais. Chega de idas e vindas que não dão em nada.",
+      "trust": "Comece grátis · Sem cartão de crédito · Faça upgrade quando quiser",
+      "ctaPrimary": "Experimente"
+    },
+    "setup": {
+      "eyebrow": "Sua parte leva minutos",
+      "title": "Dê a eles algo para reservar em <accent>dois minutos</accent>.",
+      "body": "A criação guiada de anúncios transforma suas fotos e preços em uma vitrine ao vivo. Publique, compartilhe o link e deixe as reservas começarem.",
+      "cta": "Crie sua vitrine"
+    },
+    "testimonials": {
+      "eyebrow": "De fornecedores como você"
+    }
+  },
+  "demoShared": {
+    "sample": "Exemplo",
+    "back": "Voltar",
+    "paused": "Pausado",
+    "prev": "Anterior",
+    "next": "Próximo",
+    "goTo": "Ir para {{name}}"
+  },
+  "demoBooking": {
+    "screens": {
+      "storefront": {
+        "title": "Sua vitrine",
+        "sub": "Os clientes chegam à sua loja e navegam pelos seus aluguéis."
+      },
+      "listing": {
+        "title": "Detalhes do anúncio",
+        "sub": "Eles abrem um aluguel para ver fotos, preço e o que está incluído."
+      },
+      "selections": {
+        "title": "Faça as escolhas",
+        "sub": "Eles escolhem uma data, itens adicionais e veem o preço atualizar na hora."
+      },
+      "checkout": {
+        "title": "Checkout",
+        "sub": "Eles revisam o pedido e pagam com segurança pelo Stripe."
+      },
+      "confirmed": {
+        "title": "Reserva confirmada",
+        "sub": "O cliente reservou e você foi avisado."
+      }
+    },
+    "reviews": "({{count}} avaliações)",
+    "perDay": "/dia",
+    "availableRentals": "Aluguéis disponíveis",
+    "cta": {
+      "booked": "Reservado",
+      "placing": "Finalizando o pedido…",
+      "viewListing": "Ver anúncio",
+      "bookNow": "Reservar agora",
+      "continueCheckout": "Continuar para o checkout",
+      "placeOrder": "Fazer pedido"
+    },
+    "included": {
+      "a": "Pula-pula",
+      "b": "Soprador + estacas",
+      "c": "Entrega e montagem",
+      "d": "Higienizado antes do uso"
+    },
+    "description": "Um pula-pula queridinho para o quintal — entregue, montado e higienizado. Perfeito para aniversários, festas de rua e comemorações no quintal.",
+    "perDayLong": "/ por dia",
+    "available": "Disponível",
+    "eventDate": "Data do evento",
+    "addOns": "Itens adicionais",
+    "setupStyling": "Montagem e decoração",
+    "priceBreakdown": "Detalhamento do preço",
+    "basePrice": "Preço base",
+    "setupStylingQty": "Montagem e decoração ×1",
+    "securityDeposit": "Depósito de segurança (reembolsável)",
+    "total": "Total",
+    "bookNowBtn": "Reservar agora",
+    "billingDetails": "Dados de cobrança",
+    "qty": "Qtd. {{n}}",
+    "subtotal": "Subtotal (1 × $650)",
+    "logistics": "Logística (entrega, montagem)",
+    "cardNumber": "Número do cartão",
+    "depositNote": "Depósito reembolsado após seu evento · Protegido pelo Stripe",
+    "secureCheckout": "Checkout seguro",
+    "sampleView": "Visualização de exemplo",
+    "confirmedOverlay": "Reserva confirmada!"
+  },
+  "demoDashboard": {
+    "nav": {
+      "bookings": {
+        "title": "Reservas",
+        "sub": "Novas solicitações e próximos eventos, tudo em um só lugar."
+      },
+      "overview": {
+        "title": "Visão geral",
+        "sub": "Veja como seu negócio está indo num relance."
+      },
+      "listings": {
+        "title": "Anúncios",
+        "sub": "Crie e gerencie tudo o que você aluga."
+      },
+      "discounts": {
+        "title": "Descontos e promoções",
+        "sub": "Use códigos promocionais e ofertas públicas para preencher sua agenda."
+      },
+      "messages": {
+        "title": "Mensagens",
+        "sub": "Converse com os clientes sobre os detalhes que importam."
+      }
+    },
+    "status": {
+      "confirmed": "Confirmada",
+      "pending": "Pendente"
+    },
+    "tabs": {
+      "all": "Todas",
+      "upcoming": "Próximas",
+      "pending": "Pendentes",
+      "completed": "Concluídas"
+    },
+    "bookings": {
+      "statUpcoming": "Próximas",
+      "statThisMonth": "Este mês",
+      "statPending": "Pendentes",
+      "allDay": "Dia inteiro",
+      "estPayout": "Pagamento estimado",
+      "accept": "Aceitar",
+      "decline": "Recusar"
+    },
+    "overview": {
+      "totalBookings": "Total de reservas",
+      "revenue": "Receita",
+      "profileViews": "Visitas ao perfil",
+      "subBookings": "+12 este mês",
+      "subRevenue": "+18% mês / mês",
+      "subViews": "+140 esta semana",
+      "upcoming": "Próximas"
+    },
+    "events": {
+      "backyardParty": "Festa no quintal",
+      "wedding": "Casamento",
+      "companyPicnic": "Piquenique da empresa",
+      "birthdayBash": "Festa de aniversário",
+      "graduation": "Formatura",
+      "babyShower": "Chá de bebê",
+      "blockParty": "Festa de rua",
+      "anniversary": "Aniversário de casamento"
+    },
+    "listings": {
+      "activeCount": "Ativos · {{n}}",
+      "createListing": "Criar anúncio",
+      "active": "Ativo",
+      "edit": "Editar"
+    },
+    "discounts": {
+      "tabActive": "Ativos",
+      "tabScheduled": "Agendados",
+      "tabExpired": "Expirados",
+      "newDiscount": "Novo desconto",
+      "summerMeta": "1 jun – 31 ago · 42/100 usados · 4 anúncios",
+      "summerSale": "Promoção de verão",
+      "saleTag": "Promoção",
+      "summerSaleMeta": "10 jun – 17 jun · 6 anúncios"
+    },
+    "messages": {
+      "bubble1": "Estamos no quintal — alguém vai te receber no portão lateral e mostrar exatamente onde queremos montar.",
+      "bubble2": "Perfeito, chegaremos às 2. Tem algo bloqueando a entrada da garagem?",
+      "bubble3": "Não, pode entrar até o fim. Até sábado!",
+      "placeholder": "Mensagem…"
+    }
+  },
+  "demoWizard": {
+    "liveTitle": "Tudo pronto",
+    "liveSub": "Seu anúncio está publicado e no ar.",
+    "steps": {
+      "basics": {
+        "title": "Informações do anúncio",
+        "sub": "Crie um anúncio para um item, conjunto ou estilo alugável específico."
+      },
+      "perfectFor": {
+        "title": "Perfeito para",
+        "sub": "Escolha os eventos para os quais este anúncio é perfeito."
+      },
+      "pricing": {
+        "title": "Reservas e preços",
+        "sub": "Defina o tipo de reserva, o modelo de preços e a quantidade."
+      },
+      "serviceArea": {
+        "title": "Área de atendimento",
+        "sub": "Defina o centro e o raio de cobertura."
+      },
+      "logistics": {
+        "title": "Logística",
+        "sub": "Opções de deslocamento, entrega e montagem."
+      },
+      "photos": {
+        "title": "Fotos",
+        "sub": "Adicione pelo menos 3 fotos para publicar."
+      },
+      "addons": {
+        "title": "Anexar itens adicionais",
+        "sub": "Melhorias opcionais que os clientes podem incluir."
+      }
+    },
+    "category": "Categoria",
+    "categories": {
+      "rental": "Aluguel",
+      "service": "Serviço",
+      "venue": "Espaço",
+      "caterer": "Buffet"
+    },
+    "titleLabel": "Título",
+    "included": "O que está incluído",
+    "includedChips": {
+      "a": "Pula-pula",
+      "b": "Soprador + estacas",
+      "c": "Guia de montagem"
+    },
+    "includedPlaceholder": "O que você inclui?",
+    "notIncluded": "O que não está incluído",
+    "notIncludedChips": {
+      "a": "Gerador",
+      "b": "Deslocamento acima de 30 mi"
+    },
+    "notIncludedPlaceholder": "O que não está incluído?",
+    "perfectForLabel": "Perfeito para",
+    "events": {
+      "weddings": "Casamentos",
+      "corporate": "Corporativo",
+      "babyShowers": "Chás de bebê",
+      "photoshoots": "Ensaios fotográficos",
+      "birthdays": "Aniversários",
+      "bridalShowers": "Chás de panela",
+      "graduations": "Formaturas",
+      "holidayParties": "Festas de fim de ano",
+      "concert": "Show",
+      "proposal": "Pedido de casamento",
+      "bachelorParty": "Despedida de solteiro",
+      "bacheloretteParty": "Despedida de solteira",
+      "anniversary": "Aniversário de casamento",
+      "genderReveal": "Chá revelação",
+      "quinceanera": "Quinze anos",
+      "baptism": "Batizado",
+      "funeral": "Funeral",
+      "reunion": "Reencontro",
+      "conference": "Conferência",
+      "sporting": "Esportivo",
+      "schoolDance": "Baile escolar",
+      "other": "Outro"
+    },
+    "bookingType": "Tipo de reserva",
+    "instantBook": "Reserva instantânea",
+    "requestToBook": "Solicitação de reserva",
+    "ratePerDay": "Tarifa por dia",
+    "requireDeposit": "Exigir um depósito de segurança?",
+    "depositAmount": "Valor do depósito",
+    "location": "Localização",
+    "serviceRadius": "Raio de atendimento",
+    "doYouSetup": "Você faz a montagem?",
+    "isSetupFee": "Há uma taxa de montagem?",
+    "yes": "Sim",
+    "no": "Não",
+    "setupFee": "Taxa de montagem",
+    "cancellationPolicy": "Política de cancelamento",
+    "policies": {
+      "anytime": {
+        "label": "Cancele quando quiser",
+        "desc": "Cancele com mais de 48 horas de antecedência do evento."
+      },
+      "window": {
+        "label": "Cancele dentro de um prazo",
+        "desc": "Cancele até um número definido de horas antes."
+      },
+      "none": {
+        "label": "Sem cancelamentos",
+        "desc": "Todas as vendas são finais após a reserva."
+      }
+    },
+    "addPhotos": "Adicionar fotos",
+    "photosUploaded": "{{n}} fotos enviadas",
+    "attachedAddons": "Itens adicionais anexados",
+    "addons": {
+      "setupStyling": {
+        "name": "Montagem e decoração",
+        "meta": "$120 · Qtd.: 5"
+      },
+      "extraHour": {
+        "name": "Hora extra",
+        "meta": "$60/h · Qtd.: 10"
+      }
+    },
+    "attachExisting": "Anexar item adicional existente",
+    "createNew": "Criar novo item adicional",
+    "draftSaved": "Rascunho salvo",
+    "continue": "Continuar",
+    "publish": "Publicar",
+    "publishing": "Publicando…",
+    "liveOverlay": "Seu anúncio está no ar!"
   }
 }
