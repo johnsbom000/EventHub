@@ -1,4 +1,5 @@
 import { useEffect, useState, type ReactNode } from "react";
+import { ChevronDown } from "lucide-react";
 import { useAuth0 } from "@auth0/auth0-react";
 import { useTranslation, Trans } from "react-i18next";
 import { useToast } from "@/hooks/use-toast";
@@ -7,6 +8,8 @@ import BrandWordmark from "@/components/BrandWordmark";
 import AuthModal from "@/components/AuthModal";
 import { trackBoth } from "@/lib/tracking";
 import { initEngagement } from "@/lib/engagement";
+import BookingFlowDemo from "@/pages/landing/BookingFlowDemo";
+import HowItWorks from "@/pages/landing/HowItWorks";
 
 type AuthTab = "login" | "signup";
 type SignupRole = "vendor" | "customer";
@@ -14,6 +17,7 @@ type SignupRole = "vendor" | "customer";
 const VENDOR_INTENT_RETURN_TO = "/vendor/provision";
 const SUPPORT_EMAIL = "support@eventhubglobal.com";
 const SUPPORT_PHONE = "801-410-0092";
+const FAQ_KEYS = ["q1", "q2", "q3"] as const;
 
 // All imagery + copy below is illustrative sample content for the public
 // marketing page. It never reflects real vendors, listings, bookings, or users;
@@ -247,8 +251,8 @@ function FeatureRow({
 }: {
   eyebrow: string;
   title: string;
-  body: string;
-  bullets: string[];
+  body?: string;
+  bullets?: string[];
   visual: ReactNode;
   reverse?: boolean;
 }) {
@@ -257,15 +261,17 @@ function FeatureRow({
       <div className={reverse ? "lg:order-2" : ""}>
         <Eyebrow>{eyebrow}</Eyebrow>
         <h3 className="font-heading text-[2rem] font-light leading-[1.15] text-[#2a3a42] lg:text-[2.4rem]">{title}</h3>
-        <p className="mt-4 font-sans text-[1.1rem] leading-[1.6] text-[#4a6a7d]">{body}</p>
-        <ul className="mt-5 space-y-2.5">
-          {bullets.map((b) => (
-            <li key={b} className="flex items-start gap-3 font-sans text-[1rem] text-[#2a3a42]">
-              <span className="mt-[7px] h-1.5 w-1.5 shrink-0 rounded-full bg-[#e07a6a]" />
-              {b}
-            </li>
-          ))}
-        </ul>
+        {body && <p className="mt-4 font-sans text-[1.1rem] leading-[1.6] text-[#4a6a7d]">{body}</p>}
+        {bullets && bullets.length > 0 && (
+          <ul className="mt-5 space-y-2.5">
+            {bullets.map((b) => (
+              <li key={b} className="flex items-start gap-3 font-sans text-[1rem] text-[#2a3a42]">
+                <span className="mt-[7px] h-1.5 w-1.5 shrink-0 rounded-full bg-[#e07a6a]" />
+                {b}
+              </li>
+            ))}
+          </ul>
+        )}
       </div>
       <div className={reverse ? "lg:order-1" : ""}>{visual}</div>
     </div>
@@ -621,6 +627,9 @@ export default function TemporaryLanding() {
         </div>
       </section>
 
+      {/* How it works — shared 4-step section (same as the free-first variants) */}
+      <HowItWorks onSignup={() => handleSignupCta("how_it_works", "vendor")} />
+
       {/* Vendor experience */}
       <section className="mx-auto max-w-[1320px] px-5 py-20 lg:px-10 lg:py-28">
         <div className="mx-auto mb-16 max-w-2xl text-center">
@@ -637,47 +646,23 @@ export default function TemporaryLanding() {
           <FeatureRow
             eyebrow={t("landing.vendorSection.listings.eyebrow")}
             title={t("landing.vendorSection.listings.title")}
-            body={t("landing.vendorSection.listings.body")}
-            bullets={[
-              t("landing.vendorSection.listings.bullet1"),
-              t("landing.vendorSection.listings.bullet2"),
-              t("landing.vendorSection.listings.bullet3"),
-            ]}
             visual={<ListingsMock />}
           />
           <FeatureRow
             reverse
             eyebrow={t("landing.vendorSection.bookings.eyebrow")}
             title={t("landing.vendorSection.bookings.title")}
-            body={t("landing.vendorSection.bookings.body")}
-            bullets={[
-              t("landing.vendorSection.bookings.bullet1"),
-              t("landing.vendorSection.bookings.bullet2"),
-              t("landing.vendorSection.bookings.bullet3"),
-            ]}
             visual={<BookingsMock />}
           />
           <FeatureRow
             eyebrow={t("landing.vendorSection.payments.eyebrow")}
             title={t("landing.vendorSection.payments.title")}
-            body={t("landing.vendorSection.payments.body")}
-            bullets={[
-              t("landing.vendorSection.payments.bullet1"),
-              t("landing.vendorSection.payments.bullet2"),
-              t("landing.vendorSection.payments.bullet3"),
-            ]}
             visual={<PayoutsMock />}
           />
           <FeatureRow
             reverse
             eyebrow={t("landing.vendorSection.messaging.eyebrow")}
             title={t("landing.vendorSection.messaging.title")}
-            body={t("landing.vendorSection.messaging.body")}
-            bullets={[
-              t("landing.vendorSection.messaging.bullet1"),
-              t("landing.vendorSection.messaging.bullet2"),
-              t("landing.vendorSection.messaging.bullet3"),
-            ]}
             visual={<ChatMock />}
           />
         </div>
@@ -686,39 +671,52 @@ export default function TemporaryLanding() {
       {/* Customer experience */}
       <section className="border-y border-[rgba(74,106,125,0.08)] bg-[#f8fafb]">
         <div className="mx-auto max-w-[1320px] px-5 py-20 lg:px-10 lg:py-28">
-          <div className="mx-auto mb-14 max-w-2xl text-center">
-            <Eyebrow>{t("landing.customerSection.eyebrow")}</Eyebrow>
-            <h2 className="font-heading text-[2.4rem] font-light leading-[1.1] text-[#2a3a42] lg:text-[3rem]">
-              {t("landing.customerSection.title")}
-            </h2>
-            <p className="mt-4 font-sans text-[1.15rem] leading-[1.6] text-[#4a6a7d]">
-              {t("landing.customerSection.subtitle")}
-            </p>
+          <div className="grid items-center gap-10 lg:grid-cols-2 lg:gap-16">
+            <div>
+              <Eyebrow>{t("landing.customerSection.eyebrow")}</Eyebrow>
+              <h2 className="font-heading text-[2.4rem] font-light leading-[1.1] text-[#2a3a42] lg:text-[3rem]">
+                {t("landing.customerSection.title")}
+              </h2>
+              <PrimaryButton
+                onClick={() => handleSignupCta("customer_section", "vendor")}
+                className="mt-7 !px-7 !py-3.5 !text-[1.1rem]"
+              >
+                {t("landing.header.getStarted")}
+              </PrimaryButton>
+            </div>
+            <div className="mx-auto w-full max-w-[520px]">
+              <BookingFlowDemo />
+            </div>
           </div>
-          <CustomerPreview />
         </div>
       </section>
 
-      {/* How it works */}
-      <section className="mx-auto max-w-[1320px] px-5 py-20 lg:px-10 lg:py-24">
-        <div className="mx-auto mb-14 max-w-2xl text-center">
-          <Eyebrow>{t("landing.howItWorks.eyebrow")}</Eyebrow>
-          <h2 className="font-heading text-[2.4rem] font-light leading-[1.1] text-[#2a3a42] lg:text-[3rem]">{t("landing.howItWorks.title")}</h2>
-        </div>
-        <div className="grid gap-8 md:grid-cols-3">
-          {[
-            { n: "1", t: t("landing.howItWorks.step1Title"), d: t("landing.howItWorks.step1Body") },
-            { n: "2", t: t("landing.howItWorks.step2Title"), d: t("landing.howItWorks.step2Body") },
-            { n: "3", t: t("landing.howItWorks.step3Title"), d: t("landing.howItWorks.step3Body") },
-          ].map((s) => (
-            <div key={s.n} className="rounded-[18px] border border-[rgba(74,106,125,0.12)] bg-white p-8 text-center">
-              <div className="mx-auto mb-5 flex h-12 w-12 items-center justify-center rounded-full bg-[#f5f0e8] font-heading text-[1.4rem] text-[#e07a6a]">
-                {s.n}
-              </div>
-              <h3 className="font-heading text-[1.5rem] font-normal text-[#2a3a42]">{s.t}</h3>
-              <p className="mt-3 font-sans text-[1.02rem] leading-[1.55] text-[#4a6a7d]">{s.d}</p>
-            </div>
-          ))}
+      {/* FAQ — native <details> accordion (no JS state); first item open. */}
+      <section className="border-t border-[rgba(74,106,125,0.08)] bg-white">
+        <div className="mx-auto max-w-[820px] px-5 py-20 lg:px-10 lg:py-24">
+          <div className="mb-10 text-center">
+            <Eyebrow>{t("landing.faq.eyebrow")}</Eyebrow>
+            <h2 className="mt-3 font-heading text-[2.2rem] font-light leading-[1.1] text-[#2a3a42] lg:text-[2.9rem]">
+              {t("landing.faq.title")}
+            </h2>
+          </div>
+          <div className="space-y-3">
+            {FAQ_KEYS.map((k, i) => (
+              <details
+                key={k}
+                open={i === 0}
+                className="group rounded-[16px] border border-[rgba(74,106,125,0.14)] bg-white px-6 py-5 transition-shadow open:shadow-[0_14px_40px_rgba(74,106,125,0.08)]"
+              >
+                <summary className="flex cursor-pointer list-none items-center justify-between gap-4 font-sans text-[1.08rem] font-semibold text-[#2a3a42]">
+                  {t(`landing.faq.${k}.q`)}
+                  <ChevronDown className="h-5 w-5 shrink-0 text-[#4a6a7d] transition-transform duration-200 group-open:rotate-180" />
+                </summary>
+                <p className="mt-4 font-sans text-[1.02rem] leading-[1.65] text-[#4a6a7d]">
+                  {t(`landing.faq.${k}.a`)}
+                </p>
+              </details>
+            ))}
+          </div>
         </div>
       </section>
 
