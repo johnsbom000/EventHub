@@ -98,7 +98,7 @@ export default function TermsOfService() {
                 Vendors may not solicit off-platform bookings, payments, or communications from Customers they meet through EventHub. Violations are subject to account suspension or permanent ban under the Anti-Circumvention Policy (Section 10).
               </p>
               <p>
-                EventHub does not charge a commission on bookings. Vendors keep their full booking amount, less only the standard payment-processing fee charged by our third-party payment processor (Stripe) to handle the card transaction. Payout schedules and the applicable processing fee are disclosed in the vendor dashboard. Payouts are processed after successful booking completion.
+                EventHub may charge a service fee to customers and, depending on the vendor's subscription plan, a platform fee to vendors on bookings. Vendors on paid plans may be exempt from the vendor platform fee. All applicable fees are disclosed before checkout and in the vendor dashboard. Payments are processed by our third-party payment processor (Stripe), whose standard payment-processing fees may also apply. Payout schedules and the applicable fees are disclosed in the vendor dashboard. Payouts are processed after successful booking completion, less any applicable fees. EventHub may change its fees, fee structure, and subscription pricing at any time; any change applies only to bookings and subscription periods that begin after it takes effect, and current fees are always shown before checkout and in the vendor dashboard.
               </p>
             </section>
 
