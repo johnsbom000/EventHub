@@ -242,7 +242,10 @@ export default function VendorBillingPanel() {
     if (reason === "trialing") {
       // Reverse-trial vendor with NO card yet: nothing will be charged at day 30 —
       // they'll simply downgrade unless they add a card. Prompt them to keep Pro.
-      if (me?.reverseTrial && !me.reverseTrial.cardCaptured) {
+      // Gated on showUpgradePrompts: a commission vendor has nothing to "keep" by
+      // adding a card, so this upsell must not render for one even if their
+      // subscriptionStatus happens to read "trialing".
+      if (showUpgradePrompts && me?.reverseTrial && !me.reverseTrial.cardCaptured) {
         const daysLeft = me.reverseTrial.daysLeft ?? 0;
         return (
           <Banner tone="info" icon={<Sparkles className="h-5 w-5" />}>

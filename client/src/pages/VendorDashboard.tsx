@@ -64,6 +64,7 @@ type VendorMe = {
  } | null;
  shopActive?: boolean | null;
  isPro?: boolean | null;
+ showUpgradePrompts?: boolean | null;
  canUseAnalytics?: boolean | null;
  canUseGoogleSync?: boolean | null;
 };
@@ -1401,7 +1402,7 @@ export default function VendorDashboard() {
  trialEndsAt={vendorAccount?.reverseTrial?.trialEndsAt ?? null}
  />
 
- {vendorAccount?.reverseTrial?.active ? (
+ {vendorAccount?.showUpgradePrompts !== false && vendorAccount?.reverseTrial?.active ? (
  <div
  className="rounded-xl border border-[#4a6a7d]/40 bg-[#4a6a7d]/10 p-6"
  data-testid="section-reverse-trial-card-prompt"
