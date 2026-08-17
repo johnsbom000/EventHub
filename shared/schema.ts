@@ -395,6 +395,16 @@ export const vendorAccounts = pgTable(
     // this vendor was shown, assigned independently of the landing variant via a
     // PostHog flag and persisted (sticky) for the admin per-variant breakdown.
     paywallVariant: text("paywall_variant"),
+    // Commission pricing test — set once at provision, never mutated. See
+    // migration 0163. 'subscription' | 'commission'.
+    pricingModel: text("pricing_model").notNull().default("subscription"),
+    // Meta ad attribution, captured on first touch at the landing page.
+    landingStyle: text("landing_style"),
+    utmSource: text("utm_source"),
+    utmMedium: text("utm_medium"),
+    utmCampaign: text("utm_campaign"),
+    utmContent: text("utm_content"),
+    fbclid: text("fbclid"),
     // AI reply assistant (Pro-gated, metered — migration 0136). Feature toggle is
     // opt-in (default off); overage auto-billing is opt-out (default on). When the
     // included monthly allowance is exhausted: overage on → meter to Stripe, overage
