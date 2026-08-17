@@ -41,6 +41,7 @@ import { UpgradeModal } from "@/components/UpgradeModal";
 import { StripeSetupModal } from "@/components/StripeSetupModal";
 import { OnboardingRequiredModal } from "@/components/OnboardingRequiredModal";
 import { apiRequest, getApiErrorStatus, queryClient } from "@/lib/queryClient";
+import { trackListingPublishedOnce } from "@/lib/tracking";
 import { cn } from "@/lib/utils";
 import type { LocationResult } from "@/types/location";
 import { POPULAR_FOR_OPTIONS } from "@/constants/eventTypes";
@@ -1904,8 +1905,14 @@ export function CreateListingWizard({ onClose, initialListingType, parentListing
  }
 
  await queryClient.invalidateQueries({ queryKey: ["/api/vendor/listings"] });
- // Meta Pixel conversion: vendor successfully published a new listing.
- window.fbq?.("track", "CompleteRegistration");
+ // Conversion: vendor successfully published a listing. This is a distinct
+ // activation milestone from account signup (never CompleteRegistration) —
+ // routed through trackBoth (PostHog + Meta CAPI, shared event_id) via a
+ // per-listing dedupe guard. Best-effort/non-throwing; never blocks publish.
+ trackListingPublishedOnce(id, {
+   listing_type: listingType,
+   is_addon: Boolean(parentListingId),
+ });
  if (parentListingId) {
    try {
      await apiRequest("POST", `/api/vendor/listings/${parentListingId}/addon-links`, { addonListingId: id });
