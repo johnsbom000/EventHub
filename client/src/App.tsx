@@ -8,7 +8,7 @@ import { Toaster } from "@/components/ui/toaster";
 import { ScrollToTop } from "@/components/ScrollToTop";
 import { TooltipProvider } from "@/components/ui/tooltip";
 import { useTrackPageView } from "@/hooks/useTrackPageView";
-import { useLandingVariant, readLandingVariant, useLandingStyle } from "@/hooks/useLandingVariant";
+import { readLandingVariant, useLandingStyle } from "@/hooks/useLandingVariant";
 import { phCapture } from "@/lib/posthog";
 import { trackSignupCompletedOnce } from "@/lib/tracking";
 import EmailVerificationGate from "@/components/EmailVerificationGate";
