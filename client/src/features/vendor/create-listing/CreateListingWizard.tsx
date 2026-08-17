@@ -588,7 +588,7 @@ export function CreateListingWizard({ onClose, initialListingType, parentListing
  const { data: vendorProfile } = useQuery({ queryKey: ["/api/vendor/profile"] });
 
  const vendorType = ((me as any)?.vendorType || "unspecified") as string;
- const isPro = Boolean((me as any)?.isPro);
+ const hasProFeatures = Boolean((me as any)?.hasProFeatures);
  const [showUpgradeForAddon, setShowUpgradeForAddon] = useState(false);
 
  const [currentStep, setCurrentStep] = useState<StepId>("basics");
@@ -1977,9 +1977,9 @@ export function CreateListingWizard({ onClose, initialListingType, parentListing
  />
  <div className="min-h-0 flex-1 overflow-y-auto">
  <ListingTypeSelector
- isPro={isPro}
+ hasProFeatures={hasProFeatures}
  onSelect={(type) => {
- if (type === "addon" && !isPro) {
+ if (type === "addon" && !hasProFeatures) {
  setShowUpgradeForAddon(true);
  return;
  }

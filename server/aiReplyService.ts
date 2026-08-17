@@ -322,9 +322,10 @@ export async function generateSuggestedReplies(params: {
 }): Promise<GenerateResult> {
   const { account } = params;
 
-  // Gate: Pro + feature toggle + monthly credit allowance.
+  // Gate: Pro features (subscription OR commission model) + feature toggle +
+  // monthly credit allowance.
   const entitlements = getVendorEntitlements(account);
-  if (!entitlements.isPro) {
+  if (!entitlements.hasProFeatures) {
     throw new AiReplyError("ai_pro_required", 403, "AI replies are a Pro feature");
   }
   if (account.aiRepliesEnabled !== true) {

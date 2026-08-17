@@ -75,7 +75,7 @@ export default function VendorListings() {
     queryKey: ["/api/vendor/me"],
     enabled: isAuthenticated && !isAuthLoading,
   });
-  const isPro = Boolean(me?.isPro);
+  const hasProFeatures = Boolean(me?.hasProFeatures);
 
   const allListingRows: AnyListing[] = (Array.isArray(listings) ? listings : []).filter(
     (l) => l?.listingType !== "package_item"
@@ -83,8 +83,9 @@ export default function VendorListings() {
   const activeListingRows = allListingRows.filter(
     (listing) => String(listing?.status || "").toLowerCase() === "active"
   );
-  // Free tier may keep only 1 active listing at a time.
-  const atFreeListingCap = !isPro && activeListingRows.length >= 1;
+  // Free tier may keep only 1 active listing at a time. Pro subscribers and
+  // commission-model vendors both get unlimited listings.
+  const atFreeListingCap = !hasProFeatures && activeListingRows.length >= 1;
   const draftListingRows = allListingRows.filter(
     (listing) => String(listing?.status || "").toLowerCase() === "draft"
   );

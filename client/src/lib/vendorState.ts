@@ -16,8 +16,14 @@ export type VendorMeState = {
   vendorOnlySignup?: boolean | null;
   dashboardTourCompletedAt?: string | null;
   // Vendor Pro subscription entitlements (from /api/vendor/me).
+  // isPro: has a paid/trialing/comp SUBSCRIPTION — billing/fee-waiver display only.
+  // hasProFeatures: capability access (Pro subscribers AND commission-model
+  // vendors) — every feature gate should read this, not isPro.
+  // showUpgradePrompts: false for commission vendors — nothing to upgrade to.
   isPro?: boolean | null;
-  subscriptionPlan?: "free" | "pro" | null;
+  hasProFeatures?: boolean | null;
+  showUpgradePrompts?: boolean | null;
+  subscriptionPlan?: "free" | "pro" | "commission" | null;
   subscriptionStatus?: string | null;
   subscriptionReason?: string | null;
   maxActiveListings?: number | null; // null = unlimited (Pro)

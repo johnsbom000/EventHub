@@ -915,13 +915,19 @@ export function registerVendorRoutes(app: Express): void {
         shopSlug: account.shopSlug || null,
         referralCode: account.referralCode ?? null,
         // Vendor Pro subscription entitlements (drives client gating + billing UI).
+        // isPro = has a paid/trialing/comp SUBSCRIPTION (billing/fee-waiver display
+        // only). hasProFeatures = capability access (Pro subscribers AND commission
+        // vendors). showUpgradePrompts = false for commission vendors, who have
+        // nothing to upgrade to. Keep all three — client gates must not read isPro.
         isPro: entitlements.isPro,
+        hasProFeatures: entitlements.hasProFeatures,
+        showUpgradePrompts: entitlements.showUpgradePrompts,
         subscriptionPlan: entitlements.plan,
         subscriptionStatus: entitlements.status,
         subscriptionReason: entitlements.reason,
         maxActiveListings: Number.isFinite(entitlements.maxActiveListings)
           ? entitlements.maxActiveListings
-          : null, // null = unlimited (Pro)
+          : null, // null = unlimited (Pro or commission)
         canUseAnalytics: entitlements.canUseAnalytics,
         canUseGoogleSync: entitlements.canUseGoogleSync,
         subscriptionCurrentPeriodEnd: account.subscriptionCurrentPeriodEnd ?? null,
@@ -2583,7 +2589,7 @@ export function registerVendorRoutes(app: Express): void {
           upgradeUrl: "/vendor/dashboard#vendor-billing",
         });
       }
-      if (!entitlements.isPro) {
+      if (!entitlements.hasProFeatures) {
         const isAlreadyActive = (existing[0]?.status || "").toLowerCase() === "active";
         if (!isAlreadyActive) {
           const [{ activeCount }] = await db

@@ -234,7 +234,7 @@ function TravelFeePaymentModal({
 }
 
 type AiSettings = {
-  isPro: boolean;
+  hasProFeatures: boolean;
   enabled: boolean;
   overageEnabled: boolean;
   includedPerPeriod: number;
@@ -582,7 +582,7 @@ export function BookingChatWorkspace({ role, initialBookingId, initialVendorId }
     enabled: role === "vendor",
     staleTime: 30_000,
   });
-  const aiEnabled = role === "vendor" && Boolean(aiSettings?.isPro) && Boolean(aiSettings?.enabled);
+  const aiEnabled = role === "vendor" && Boolean(aiSettings?.hasProFeatures) && Boolean(aiSettings?.enabled);
 
   // Most-recent vendor proposal that was declined and has no newer pending/accepted proposal
   const declinedVendorProposal = (() => {

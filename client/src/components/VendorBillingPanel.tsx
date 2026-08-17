@@ -29,7 +29,7 @@ import {
 } from "lucide-react";
 
 type AiSettings = {
-  isPro: boolean;
+  hasProFeatures: boolean;
   enabled: boolean;
   overageEnabled: boolean;
   includedPerPeriod: number;
@@ -85,7 +85,15 @@ export default function VendorBillingPanel() {
     enabled: isAuthenticated,
   });
 
+  // isPro reflects an actual paid/trialing/comp SUBSCRIPTION — this panel is the
+  // subscription/billing UI, so its plan cards, banners, and manage-subscription
+  // actions correctly stay keyed on isPro throughout. hasProFeatures gates the AI
+  // Assistant capability card below (available to commission vendors too), and
+  // showUpgradePrompts hides the Free/Pro comparison + upsell for commission
+  // vendors, who have no subscription to buy.
   const isPro = Boolean(me?.isPro);
+  const hasProFeatures = Boolean(me?.hasProFeatures);
+  const showUpgradePrompts = me?.showUpgradePrompts !== false;
   const status = me?.subscriptionStatus ?? "none";
   const reason = me?.subscriptionReason ?? "free";
   const hasStripeSub = status === "active" || status === "trialing" || status === "past_due";
@@ -318,7 +326,7 @@ export default function VendorBillingPanel() {
         </div>
       ) : null}
 
-      {(!isPro && !confirming) ? (
+      {(showUpgradePrompts && !isPro && !confirming) ? (
       <div className="grid gap-5 md:grid-cols-2">
         {/* Free plan */}
         <div className="rounded-2xl border border-border bg-card p-6 flex flex-col">
@@ -431,12 +439,12 @@ export default function VendorBillingPanel() {
       </div>
       ) : null}
 
-      <AiAssistantCard isPro={isPro} />
+      <AiAssistantCard hasProFeatures={hasProFeatures} />
     </div>
   );
 }
 
-function AiAssistantCard({ isPro }: { isPro: boolean }) {
+function AiAssistantCard({ hasProFeatures }: { hasProFeatures: boolean }) {
   const { t } = useTranslation();
   const { getAccessTokenSilently } = useAuth0();
   const fileRef = useRef<HTMLInputElement>(null);
@@ -446,14 +454,14 @@ function AiAssistantCard({ isPro }: { isPro: boolean }) {
 
   const { data: ai, refetch: refetchAi } = useQuery<AiSettings>({
     queryKey: ["/api/vendor/ai/settings"],
-    enabled: isPro,
+    enabled: hasProFeatures,
   });
   const { data: faq, refetch: refetchFaq } = useQuery<FaqMeta>({
     queryKey: ["/api/vendor/ai/faq"],
-    enabled: isPro,
+    enabled: hasProFeatures,
   });
 
-  if (!isPro) return null;
+  if (!hasProFeatures) return null;
 
   const saveSetting = async (
     patch: { enabled?: boolean; overageEnabled?: boolean },
