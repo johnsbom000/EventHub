@@ -1,3 +1,5 @@
+import { vendorAccounts } from "@shared/schema";
+
 import { FREE_TIER_MAX_ACTIVE_LISTINGS } from "../lib/constants";
 
 /**
@@ -34,10 +36,45 @@ export interface VendorSubscriptionFields {
   pricingModel?: string | null;
 }
 
+/**
+ * The EXACT set of vendor_accounts columns that getVendorEntitlements() and
+ * resolveFeeRates() read. Spread this into any partial `db.select({...})` whose
+ * row is then passed to either function:
+ *
+ *   .select({ id: vendorAccounts.id, ...vendorEntitlementColumns })
+ *
+ * WHY THIS EXISTS: a partial select that omits a column does not fail — it
+ * yields `undefined`, which both functions silently normalize to the safe-looking
+ * default. Omitting `pricingModel` normalizes a commission vendor to
+ * "subscription", which strips their feature access (they get 403s they cannot
+ * act on, since every billing route rejects them) and, in fee code, would waive
+ * or impose the wrong rate. Two such bugs shipped before this helper existed.
+ * Adding a column to this object automatically fixes every call site at once.
+ */
+export const vendorEntitlementColumns = {
+  subscriptionPlan: vendorAccounts.subscriptionPlan,
+  subscriptionStatus: vendorAccounts.subscriptionStatus,
+  compEndsAt: vendorAccounts.compEndsAt,
+  pricingModel: vendorAccounts.pricingModel,
+} as const;
+
 export type VendorPricingModel = "subscription" | "commission";
 
 function normalizePricingModel(value: string | null | undefined): VendorPricingModel {
   return value === "commission" ? "commission" : "subscription";
+}
+
+/**
+ * True when this vendor is on the commission pricing model. Commission and
+ * subscription are mutually exclusive by design: a commission vendor is never
+ * offered Pro and every subscription route must reject them, otherwise vendors
+ * self-select the cheaper model and the pricing test measures nothing.
+ *
+ * This is the ONE definition — feeRatesService re-exports it. Drift between two
+ * copies of this predicate is a revenue bug.
+ */
+export function isCommissionVendor(account: { pricingModel?: string | null }): boolean {
+  return normalizePricingModel(account.pricingModel) === "commission";
 }
 
 export interface VendorEntitlements {

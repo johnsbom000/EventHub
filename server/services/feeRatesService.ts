@@ -1,8 +1,14 @@
 import { VENDOR_FEE_RATE, CUSTOMER_FEE_RATE } from "../lib/constants";
 import {
   getVendorEntitlements,
+  isCommissionVendor,
   type VendorSubscriptionFields,
 } from "./entitlementsService";
+
+// Defined once in entitlementsService and re-exported here so the many existing
+// `from "./feeRatesService"` importers keep working. Two copies of this predicate
+// could drift, and drift in "does this vendor pay commission" is a revenue bug.
+export { isCommissionVendor };
 
 /**
  * Single source of truth for "what fee rates apply to this vendor".
@@ -40,16 +46,6 @@ export interface VendorFeeAccount extends VendorSubscriptionFields {
   isMarqueeVendor?: boolean | null;
   marqueeRateEndsAt?: Date | string | null;
   marqueeCustomerFeeEndsAt?: Date | string | null;
-}
-
-/**
- * True when this vendor is on the commission pricing model. Commission and
- * subscription are mutually exclusive by design: a commission vendor is never
- * offered Pro and every subscription route must reject them, otherwise vendors
- * self-select the cheaper model and the pricing test measures nothing.
- */
-export function isCommissionVendor(account: { pricingModel?: string | null }): boolean {
-  return account.pricingModel === "commission";
 }
 
 export function resolveFeeRates(account: VendorFeeAccount, now: Date = new Date()): FeeRates {

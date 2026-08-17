@@ -287,9 +287,8 @@ import {
   toConversationPayload,
   deriveVendorSlug,
 } from "../lib/routeUtils";
+import { isCommissionVendor } from "../services/entitlementsService";
 import {
-  VENDOR_FEE_RATE,
-  CUSTOMER_FEE_RATE,
   STRIPE_FEE_ESTIMATE_PERCENT,
   STRIPE_FEE_ESTIMATE_FIXED_CENTS,
   VENDOR_ABSORBS_STRIPE_FEES,
@@ -2202,6 +2201,26 @@ export function registerAdminRoutes(app: Express): void {
       if (!vendorId) return res.status(400).json({ error: "Vendor id required" });
       const days = Math.max(1, Math.min(365, parseIntegerValue(req.body?.days) ?? 30));
       const compEndsAt = new Date(Date.now() + days * 24 * 60 * 60 * 1000);
+
+      // Commission vendors have no subscription to comp. Granting one buys them
+      // nothing (they already have full feature access and still pay the
+      // commission — resolveFeeRates checks the pricing model BEFORE isPro), but
+      // when it EXPIRES, reconcileVendorSubscriptionState drops them to "free"
+      // and tears down listings + Google sync for an account whose entitlements
+      // say unlimited. deactivateExtraActiveListingsForFreeTier is now a no-op
+      // for them as a backstop; this rejects the mistake at the source.
+      const [target] = await db
+        .select({ pricingModel: vendorAccounts.pricingModel })
+        .from(vendorAccounts)
+        .where(and(eq(vendorAccounts.id, vendorId), isNull(vendorAccounts.deletedAt)))
+        .limit(1);
+      if (!target) return res.status(404).json({ error: "Vendor not found" });
+      if (isCommissionVendor(target)) {
+        return res.status(403).json({
+          error: "Complimentary Pro does not apply to commission-model vendors — they already have full feature access.",
+          code: "commission_pricing_model",
+        });
+      }
 
       const [updated] = await db
         .update(vendorAccounts)

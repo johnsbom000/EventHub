@@ -99,7 +99,7 @@ import {
   checkListingAvailabilityForBookingRequest,
   sendCancellationEmailsAsync,
 } from "../services/bookingService";
-import { getVendorEntitlements } from "../services/entitlementsService";
+import { getVendorEntitlements, vendorEntitlementColumns } from "../services/entitlementsService";
 import { resolveFeeRates } from "../services/feeRatesService";
 import { reconcileVendorSubscriptionState, startReverseTrialForVendor } from "./billing";
 import { registerGoogleRoutes } from "../routers/google";
@@ -2635,9 +2635,11 @@ export function registerVendorRoutes(app: Express): void {
           stripeConnectId: vendorAccounts.stripeConnectId,
           stripeOnboardingComplete: vendorAccounts.stripeOnboardingComplete,
           onboardingCompletedAt: vendorAccounts.onboardingCompletedAt,
-          subscriptionPlan: vendorAccounts.subscriptionPlan,
-          subscriptionStatus: vendorAccounts.subscriptionStatus,
-          compEndsAt: vendorAccounts.compEndsAt,
+          // Feeds getVendorEntitlements() below. Must be the shared column set —
+          // omitting pricingModel here previously normalized commission vendors
+          // to "subscription", 403'ing their add-ons and capping them at the
+          // free-tier single active listing with no way to upgrade.
+          ...vendorEntitlementColumns,
         })
         .from(vendorAccounts)
         .where(eq(vendorAccounts.id, vendorAuth.id))
@@ -5629,10 +5631,7 @@ export function registerVendorRoutes(app: Express): void {
       const [feeRateVendorAccount] = await db
         .select({
           id: vendorAccounts.id,
-          subscriptionPlan: vendorAccounts.subscriptionPlan,
-          subscriptionStatus: vendorAccounts.subscriptionStatus,
-          compEndsAt: vendorAccounts.compEndsAt,
-          pricingModel: vendorAccounts.pricingModel,
+          ...vendorEntitlementColumns,
         })
         .from(vendorAccounts)
         .where(eq(vendorAccounts.id, vendorAccountId))

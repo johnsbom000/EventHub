@@ -136,17 +136,16 @@ import { requireAuth0, verifyAuth0Token, resolveEmailVerified, EMAIL_NOT_VERIFIE
 import { z } from "zod";
 import { db } from "../db";
 import { eq, and, or, ne, not, isNull, inArray, sql as drizzleSql, count, sum, gte, lte, desc, asc } from "drizzle-orm";
-import { getVendorEntitlements } from "../services/entitlementsService";
+import { getVendorEntitlements, vendorEntitlementColumns } from "../services/entitlementsService";
 
 // Google Calendar sync is a Pro-tier feature. Returns true if the vendor may use
 // it; otherwise sends a 403 and returns false (caller should stop).
 async function ensureGoogleSyncEntitlement(vendorAccountId: string, res: any): Promise<boolean> {
   const [row] = await db
-    .select({
-      subscriptionPlan: vendorAccounts.subscriptionPlan,
-      subscriptionStatus: vendorAccounts.subscriptionStatus,
-      compEndsAt: vendorAccounts.compEndsAt,
-    })
+    // Shared column set — omitting pricingModel would normalize a commission
+    // vendor to "subscription" and 403 them with "Upgrade to Pro", advice they
+    // cannot act on because every billing route rejects commission vendors.
+    .select({ ...vendorEntitlementColumns })
     .from(vendorAccounts)
     .where(eq(vendorAccounts.id, vendorAccountId))
     .limit(1);
@@ -332,8 +331,6 @@ import {
   deriveVendorSlug,
 } from "../lib/routeUtils";
 import {
-  VENDOR_FEE_RATE,
-  CUSTOMER_FEE_RATE,
   STRIPE_FEE_ESTIMATE_PERCENT,
   STRIPE_FEE_ESTIMATE_FIXED_CENTS,
   VENDOR_ABSORBS_STRIPE_FEES,

@@ -96,6 +96,7 @@ import {
   exceedsCapacity,
 } from "../services/bookingService";
 import { resolveFeeRates } from "../services/feeRatesService";
+import { vendorEntitlementColumns } from "../services/entitlementsService";
 import { registerGoogleRoutes } from "../routers/google";
 import { registerBoardRoutes } from "../routers/boards";
 import { registerCircumventionRoutes } from "../routers/circumvention";
@@ -1281,10 +1282,8 @@ export function registerBookingRoutes(app: Express): void {
           googleConnectionStatus: vendorAccounts.googleConnectionStatus,
           googleCalendarId: vendorAccounts.googleCalendarId,
           shopActive: vendorAccounts.shopActive,
-          subscriptionPlan: vendorAccounts.subscriptionPlan,
-          subscriptionStatus: vendorAccounts.subscriptionStatus,
-          compEndsAt: vendorAccounts.compEndsAt,
-          pricingModel: vendorAccounts.pricingModel,
+          // Feeds resolveFeeRates() — shared column set, see entitlementsService.
+          ...vendorEntitlementColumns,
         })
         .from(vendorAccounts)
         .where(and(eq(vendorAccounts.id, vendorIdToLoad), eq(vendorAccounts.active, true)))
@@ -2706,10 +2705,8 @@ export function registerBookingRoutes(app: Express): void {
                 id: vendorAccounts.id,
                 stripeConnectId: vendorAccounts.stripeConnectId,
                 stripeOnboardingComplete: vendorAccounts.stripeOnboardingComplete,
-                subscriptionPlan: vendorAccounts.subscriptionPlan,
-                subscriptionStatus: vendorAccounts.subscriptionStatus,
-                compEndsAt: vendorAccounts.compEndsAt,
-                pricingModel: vendorAccounts.pricingModel,
+                // Feeds resolveFeeRates() — shared column set, see entitlementsService.
+                ...vendorEntitlementColumns,
               })
               .from(vendorAccounts)
               .where(eq(vendorAccounts.id, booking.vendorAccountId))
