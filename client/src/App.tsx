@@ -8,7 +8,7 @@ import { Toaster } from "@/components/ui/toaster";
 import { ScrollToTop } from "@/components/ScrollToTop";
 import { TooltipProvider } from "@/components/ui/tooltip";
 import { useTrackPageView } from "@/hooks/useTrackPageView";
-import { useLandingVariant, readLandingVariant } from "@/hooks/useLandingVariant";
+import { useLandingVariant, readLandingVariant, useLandingStyle } from "@/hooks/useLandingVariant";
 import { phCapture } from "@/lib/posthog";
 import { trackSignupCompletedOnce } from "@/lib/tracking";
 import EmailVerificationGate from "@/components/EmailVerificationGate";
@@ -184,23 +184,23 @@ function PostLogin() {
   );
 }
 
-// Renders the landing page for the PostHog "landing-free-first-test" experiment.
-// Reading the flag here (via useLandingVariant) records the experiment exposure
-// for every public visitor to "/". Falls back to the control page until flags
-// resolve and for any variant value PostHog doesn't recognise (e.g. an arm at
-// 0%), so the split is controlled entirely from the dashboard.
+// Renders the landing page for the six /for-vendors ad routes (and "/").
+// Style is derived deterministically from the URL (useLandingStyle) — each
+// Meta ad links to its own route, so which design a visitor sees is controlled
+// by ad spend, not randomised. Falls back to the control page for "/" and for
+// any unrecognised style segment, so a mistyped ad URL still converts.
 function LandingForVariant() {
-  const variant = useLandingVariant();
-  switch (variant) {
-    case "direction-a":
+  const style = useLandingStyle();
+  switch (style) {
+    case "a":
       return <TemporaryLandingFreeA />;
-    case "direction-b":
+    case "b":
       return <TemporaryLandingFreeB />;
-    case "direction-c":
+    case "c":
       return <TemporaryLandingFreeC />;
-    case "direction-d":
+    case "d":
       return <TemporaryLandingFreeD />;
-    case "direction-e":
+    case "e":
       return <TemporaryLandingFreeE />;
     default:
       return <TemporaryLanding />;
@@ -371,6 +371,8 @@ function Router() {
       <VendorIntentRedirect />
       <Switch>
         <Route path="/" component={RootEntry} />
+        <Route path="/for-vendors" component={RootEntry} />
+        <Route path="/for-vendors/:style" component={RootEntry} />
         {import.meta.env.DEV && <Route path="/demo/slideshows" component={DemoPreview} />}
         <Route path="/post-login" component={PostLogin} />
         {/* [vendor-only restrictions] unwrap VendorOnlyGuard from all routes below that have it */}
@@ -475,6 +477,7 @@ function AppContent() {
     const pathname = location.split("?")[0] || "/";
     const isExcludedRoute =
       pathname === "/" ||
+      pathname.startsWith("/for-vendors") ||
       pathname.startsWith("/browse") ||
       pathname === "/dashboard" ||
       pathname.startsWith("/dashboard/") ||
