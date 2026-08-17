@@ -32,7 +32,6 @@ import {
   bookingRowMatchesActiveProfile,
   listVendorProfilesForAccount,
   normalizeProfileNamesForAccount,
-  getVendorAccountFromRequest,
   requireVendorAccountAuth0,
   requireVendorAuth0,
   resolveActiveVendorProfile,
@@ -469,14 +468,32 @@ app.post(
   // actual rates when authenticated, or the default (unwaived) rates otherwise.
   // Must never 401/500 for an anonymous visitor: this is called from public pages.
   //
-  // NOTE: this route has no auth middleware, so req.vendorAuth is never populated
-  // here and getVendorAccountFromRequest always resolves undefined — the
-  // vendor-aware branch below is correct but currently dead in practice. Wiring a
-  // real (optional) auth resolution step for this route is out of scope for this
-  // change; see task-5 report.
-  app.get("/api/config/fees", async (req, res) => {
+  // attachAuth0IfPresent is fail-open (established pattern already used on public
+  // routes in this file — see /api/users/me/location above): it populates req.auth0
+  // only when a valid Bearer token is present, so an anonymous caller falls straight
+  // through to the default rates below with no 401. We resolve the vendor account
+  // directly from the auth0 identity (same resolver requireVendorAccountAuth0 uses)
+  // rather than via getVendorAccountFromRequest, since nothing else on this route
+  // populates req.vendorAuth.
+  app.get("/api/config/fees", attachAuth0IfPresent, async (req, res) => {
+    // The response is caller-specific once authenticated (a Pro vendor's waived
+    // rate must never be served to — or cached in front of — anyone else).
+    res.set("Cache-Control", "private, max-age=0, no-cache");
+    res.set("Vary", "Authorization");
     try {
-      const account = await getVendorAccountFromRequest(req);
+      const auth0 = (req as any).auth0 as { sub?: string; email?: string; email_verified?: boolean } | undefined;
+      const resolution = auth0?.sub
+        ? await resolveVendorAccountForAuth0Identity({
+            auth0Sub: auth0.sub,
+            email: auth0.email,
+            context: "config-fees",
+            emailVerified: auth0?.email_verified === true,
+          })
+        : null;
+      const account =
+        resolution?.account && !resolution.account.deletedAt && resolution.account.active !== false
+          ? resolution.account
+          : null;
       const rates = account
         ? resolveFeeRates(account)
         : { vendorFeeRate: VENDOR_FEE_RATE, customerFeeRate: CUSTOMER_FEE_RATE };

@@ -632,7 +632,7 @@ export const bookings = pgTable("bookings", {
   instantBookSnapshot: boolean("instant_book_snapshot"),
   totalAmount: integer("total_amount").notNull(), // in cents
   platformFee: integer("platform_fee").notNull(), // vendor fee portion in cents
-  vendorPayout: integer("vendor_payout").notNull(), // totalAmount - securityDepositCents (the deposit is refundable, not payout; platform fee is deducted later at transfer time)
+  vendorPayout: integer("vendor_payout").notNull(), // discountedSubtotal - platformFee, i.e. totalAmount - customerFee - securityDepositCents - platformFee (the deposit is refundable, not payout; the customer fee never reaches the vendor; the vendor fee is already deducted here, not later at transfer time)
   depositAmount: integer("deposit_amount").notNull(), // down payment
   depositPaidAt: timestamp("deposit_paid_at"), // track when deposit was paid for 72hr refund policy
   finalPaymentStrategy: text("final_payment_strategy"), // 'immediately', '2_weeks_prior', 'day_of_event'

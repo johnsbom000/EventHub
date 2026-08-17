@@ -25,7 +25,6 @@ import {
 } from "../payoutEligibility";
 import { createNotification } from "../lib/notificationHelpers";
 import { sendPayoutProcessedEmail } from "../email";
-import { resolveFeeRates } from "./feeRatesService";
 
 
 /**
@@ -826,33 +825,17 @@ export async function ensurePaymentRecordForIntentInTx(
     parseIntegerValue(bookingRow.totalAmount) ??
     parseIntegerValue(params.fallbackTotalAmount) ??
     amount;
-  // This runs from Stripe webhook processing (applyPaymentIntentSuccess/FailureInTx)
-  // for a payment intent that already has money moving on it, so it must never throw —
-  // unlike initializeBookingPayment below, refusing to write a payments row here would
-  // strand an already-collected customer charge with no payout tracking. Both the
-  // booking row and the intent metadata predate this reconciliation running, so when
-  // neither has a stored fee (legacy intents from before fee-policy metadata existed),
-  // reconstruct an estimate from the vendor's fee rate instead of a raw global constant.
-  const [fallbackFeeVendorAccount] =
-    parseIntegerValue(bookingRow.platformFee) === null &&
-    parseIntegerValue(params.fallbackPlatformFeeAmount) === null &&
-    bookingRow.vendorAccountId
-      ? await tx
-          .select({
-            id: vendorAccounts.id,
-            subscriptionPlan: vendorAccounts.subscriptionPlan,
-            subscriptionStatus: vendorAccounts.subscriptionStatus,
-            compEndsAt: vendorAccounts.compEndsAt,
-            pricingModel: vendorAccounts.pricingModel,
-          })
-          .from(vendorAccounts)
-          .where(eq(vendorAccounts.id, bookingRow.vendorAccountId))
-          .limit(1)
-      : [null];
+  // bookings.platformFee is NOT NULL (shared/schema.ts) — every booking row has a
+  // real, persisted fee, so the first arm below always wins in practice. The `?? 0`
+  // tail exists only to satisfy the type (parseIntegerValue can return null) without
+  // guessing a rate if it were ever reached; it deliberately does NOT recompute from
+  // any fee rate (raw constant or resolveFeeRates), since this runs from Stripe
+  // webhook processing (applyPaymentIntentSuccess/FailureInTx) after money has
+  // already moved — a wrong guess here cannot be corrected by simply retrying.
   const platformFeeAmount =
     parseIntegerValue(bookingRow.platformFee) ??
     parseIntegerValue(params.fallbackPlatformFeeAmount) ??
-    Math.round(amount * (fallbackFeeVendorAccount ? resolveFeeRates(fallbackFeeVendorAccount).vendorFeeRate : 0));
+    0;
   const vendorGrossAmount =
     parseIntegerValue(bookingRow.subtotalAmountCents) ??
     parseIntegerValue(params.fallbackVendorGrossAmount) ??

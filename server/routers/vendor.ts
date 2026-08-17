@@ -5553,9 +5553,19 @@ export function registerVendorRoutes(app: Express): void {
         .from(vendorAccounts)
         .where(eq(vendorAccounts.id, vendorAccountId))
         .limit(1);
-      const legacyEstimateFeeRates = feeRateVendorAccount
-        ? resolveFeeRates(feeRateVendorAccount)
-        : { vendorFeeRate: 0, customerFeeRate: 0 };
+      if (!feeRateVendorAccount) {
+        // vendorAccountId came from req.vendorAuth.id (already-verified Auth0
+        // identity), so a missing row here means the request itself is invalid
+        // (e.g. the account was deleted mid-session) — not a legacy-data gap.
+        // Don't guess a rate; return the same empty rollup used above for a
+        // missing vendorAccountId.
+        return res.json({
+          totalNetEarned: 0,
+          upcomingNetPayout: 0,
+          history: [],
+        });
+      }
+      const legacyEstimateFeeRates = resolveFeeRates(feeRateVendorAccount);
       const profileContext = await resolveActiveVendorProfile(req);
       const activeProfileId = profileContext?.activeProfileId;
       if (!activeProfileId) {

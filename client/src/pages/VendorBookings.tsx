@@ -292,9 +292,13 @@ export default function VendorBookings() {
   const parsedBookings = useMemo(() => {
     const normalizeStatus = (s: any) => String(s || "").toLowerCase();
 
-    // Fee rates haven't loaded yet — don't render fee/payout figures derived
-    // from a guessed rate. The list reappears as soon as the rates resolve.
-    if (!feeRates) return [];
+    // Fee rates may not have loaded yet. Computing here with a 0 placeholder is
+    // safe: the CardContent render gate below (isLoading || !feeRates) keeps this
+    // list off-screen until feeRates is actually loaded, so no fee figure derived
+    // from the placeholder is ever shown to the vendor. Don't gate here too — an
+    // empty return would tell the vendor "you have no bookings", which is a false
+    // and stronger claim than simply deferring the fee number.
+    const vendorFeeRate = feeRates?.vendorFeeRate ?? 0;
 
     return (bookings || [])
       .map((b) => {
@@ -318,7 +322,7 @@ export default function VendorBookings() {
           id: b.id,
           date: d,
           amount: normalizeAmountToCents(b.totalAmount ?? 0),
-          ...deriveBookingAmounts(b, feeRates.vendorFeeRate),
+          ...deriveBookingAmounts(b, vendorFeeRate),
           googleSyncLabel: isGoogleSynced ? "synced" : "unsynced",
           status: normalizeStatus(b.status),
           isPast: isEventEnded(b.eventDate, b.eventEndTime),
@@ -703,7 +707,7 @@ export default function VendorBookings() {
           </CardHeader>
 
           <CardContent>
-            {isLoading ? (
+            {isLoading || !feeRates ? (
               <div className="text-center py-12 text-muted-foreground">{t("vendorBookings.loading")}</div>
             ) : isError ? (
               <div className="text-center py-10 text-muted-foreground">
