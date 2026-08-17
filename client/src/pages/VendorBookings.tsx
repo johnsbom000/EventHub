@@ -1045,8 +1045,11 @@ export default function VendorBookings() {
                           <MapPin className="h-4 w-4 text-emerald-600 mt-0.5 shrink-0" />
                           <div>
                             <div className="text-sm font-medium text-emerald-800">Travel/delivery fee paid</div>
+                            {/* `amountCents` is the vendor-side fee. The customer
+                                also pays the service fee on top, so this line
+                                states the fee, not the customer's total. */}
                             <div className="text-xs text-emerald-700">
-                              The customer paid {formatUsd(item.raw.travelFeeProposal.amountCents)} for the travel/delivery fee.
+                              The {formatUsd(item.raw.travelFeeProposal.amountCents)} travel/delivery fee has been paid.
                             </div>
                           </div>
                         </div>

@@ -34,7 +34,17 @@ export interface TravelFeeRespondedParams {
   customerName: string;
   listingTitle: string;
   eventDate: string;
+  /** The vendor's travel/delivery fee itself (excludes the customer service fee). */
   amountCents: number;
+  /**
+   * Customer service fee the customer paid on top, and the total charged to
+   * their card. Present on the "accepted" path so this email never tells the
+   * vendor the customer paid less than they actually did. The vendor's own
+   * earnings are still `amountCents` minus commission — the service fee is
+   * never part of the vendor's side.
+   */
+  customerFeeCents?: number | null;
+  chargedAmountCents?: number | null;
   /** Whether the customer paid or declined the fee. */
   action: "accepted" | "declined";
   feeLabel: "travel fee" | "delivery fee";
@@ -46,13 +56,30 @@ export function travelFeeRespondedTemplate(params: TravelFeeRespondedParams): {
   html: string;
   text: string;
 } {
-  const { recipientName, customerName, listingTitle, eventDate, amountCents, action, feeLabel, serverUrl } = params;
+  const {
+    recipientName,
+    customerName,
+    listingTitle,
+    eventDate,
+    amountCents,
+    customerFeeCents,
+    chargedAmountCents,
+    action,
+    feeLabel,
+    serverUrl,
+  } = params;
 
   const feeLabelCap = feeLabel.charAt(0).toUpperCase() + feeLabel.slice(1);
   const amountFmt = formatCents(amountCents);
   const dashboardUrl = `${serverUrl}/vendor/bookings`;
 
   const isPaid = action === "accepted";
+  const serviceFeeCents = Math.max(0, Math.round(customerFeeCents ?? 0));
+  const totalCents = Math.max(0, Math.round(chargedAmountCents ?? amountCents + serviceFeeCents));
+  const hasServiceFee = isPaid && serviceFeeCents > 0;
+  const serviceFeeFmt = formatCents(serviceFeeCents);
+  const totalFmt = formatCents(totalCents);
+  const paidQuoteFmt = hasServiceFee ? `${amountFmt} (${totalFmt} with the ${serviceFeeFmt} service fee)` : amountFmt;
 
   const subject = isPaid
     ? `EventHub: ${feeLabelCap} paid — booking confirmed`
@@ -61,7 +88,7 @@ export function travelFeeRespondedTemplate(params: TravelFeeRespondedParams): {
   const heading = isPaid ? `${feeLabelCap} Paid` : `${feeLabelCap} Declined`;
 
   const intro = isPaid
-    ? `<strong>${customerName}</strong> paid the ${feeLabel} of <strong>${amountFmt}</strong> for the booking on ${eventDate}. The booking is now confirmed.`
+    ? `<strong>${customerName}</strong> paid the ${feeLabel} of <strong>${paidQuoteFmt}</strong> for the booking on ${eventDate}. The booking is now confirmed.`
     : `<strong>${customerName}</strong> declined the ${feeLabel} of <strong>${amountFmt}</strong> for the booking on ${eventDate}. You can propose a revised amount or cancel the booking.`;
 
   const banner = isPaid
@@ -80,13 +107,16 @@ export function travelFeeRespondedTemplate(params: TravelFeeRespondedParams): {
     <table style="width:100%;border-collapse:collapse;margin-bottom:24px;">
       <tr><td style="padding:8px 0;border-bottom:1px solid #f0eeec;font-size:14px;color:#666;">Service</td><td style="padding:8px 0;border-bottom:1px solid #f0eeec;font-size:14px;font-weight:600;text-align:right;">${listingTitle}</td></tr>
       <tr><td style="padding:8px 0;border-bottom:1px solid #f0eeec;font-size:14px;color:#666;">Event Date</td><td style="padding:8px 0;border-bottom:1px solid #f0eeec;font-size:14px;font-weight:600;text-align:right;">${eventDate}</td></tr>
-      <tr><td style="padding:8px 0;font-size:14px;color:#666;">${feeLabelCap}</td><td style="padding:8px 0;font-size:14px;font-weight:700;text-align:right;color:${isPaid ? "#16a34a" : CORAL};">${amountFmt}</td></tr>
+      <tr><td style="padding:8px 0;${hasServiceFee ? "border-bottom:1px solid #f0eeec;" : ""}font-size:14px;color:#666;">${feeLabelCap}</td><td style="padding:8px 0;${hasServiceFee ? "border-bottom:1px solid #f0eeec;" : ""}font-size:14px;font-weight:700;text-align:right;color:${isPaid ? "#16a34a" : CORAL};">${amountFmt}</td></tr>
+      ${hasServiceFee ? `
+      <tr><td style="padding:8px 0;border-bottom:1px solid #f0eeec;font-size:14px;color:#666;">Customer service fee</td><td style="padding:8px 0;border-bottom:1px solid #f0eeec;font-size:14px;font-weight:600;text-align:right;">${serviceFeeFmt}</td></tr>
+      <tr><td style="padding:8px 0;font-size:14px;color:#666;">Customer charged</td><td style="padding:8px 0;font-size:14px;font-weight:600;text-align:right;">${totalFmt}</td></tr>` : ""}
     </table>
     <a href="${dashboardUrl}" style="display:inline-block;background:${CORAL};color:#fff;text-decoration:none;padding:12px 28px;border-radius:6px;font-size:14px;font-weight:600;">View Booking</a>
   `;
 
   const textIntro = isPaid
-    ? `${customerName} paid the ${feeLabel} of ${amountFmt} for the booking on ${eventDate}. The booking is now confirmed.`
+    ? `${customerName} paid the ${feeLabel} of ${paidQuoteFmt} for the booking on ${eventDate}. The booking is now confirmed.`
     : `${customerName} declined the ${feeLabel} of ${amountFmt} for the booking on ${eventDate}. You can propose a revised amount or cancel the booking.`;
 
   const text = [
@@ -99,6 +129,7 @@ export function travelFeeRespondedTemplate(params: TravelFeeRespondedParams): {
     `Service: ${listingTitle}`,
     `Event Date: ${eventDate}`,
     `${feeLabelCap}: ${amountFmt}`,
+    ...(hasServiceFee ? [`Customer service fee: ${serviceFeeFmt}`, `Customer charged: ${totalFmt}`] : []),
     ``,
     `View booking: ${dashboardUrl}`,
   ].join("\n");

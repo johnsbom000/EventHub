@@ -96,6 +96,7 @@ import {
   exceedsCapacity,
 } from "../services/bookingService";
 import { resolveFeeRates } from "../services/feeRatesService";
+import { computeTravelFeeCharge } from "../lib/travelFeeCharge";
 import { vendorEntitlementColumns } from "../services/entitlementsService";
 import { registerGoogleRoutes } from "../routers/google";
 import { registerBoardRoutes } from "../routers/boards";
@@ -2464,6 +2465,47 @@ export function registerBookingRoutes(app: Express): void {
     reason: z.string().max(500).optional(),
   });
 
+  /** Load the fee-rate inputs for a vendor account. Returns null if not found. */
+  async function loadTravelFeeVendorRates(vendorAccountId: string) {
+    const [account] = await db
+      .select({ ...vendorEntitlementColumns })
+      .from(vendorAccounts)
+      .where(eq(vendorAccounts.id, vendorAccountId))
+      .limit(1);
+    return account ? resolveFeeRates(account) : null;
+  }
+
+  /**
+   * Attach the customer-facing charge breakdown to travel-fee proposal rows.
+   *
+   * Every read surface that quotes a proposal must be able to quote the amount
+   * the card is actually charged (fee + service fee), not the vendor-side fee
+   * alone — otherwise the UI under-states the charge. The proposal row itself
+   * stores only the vendor-side fee, so the breakdown is derived on read from
+   * the vendor's LIVE rates; the authoritative, persisted numbers are captured
+   * at charge time on the payments row in the accept handler.
+   */
+  async function withTravelFeeChargeBreakdown<
+    T extends { amountCents: number; vendorAccountId: string }
+  >(rows: T[]) {
+    if (rows.length === 0) return [] as Array<T & ReturnType<typeof computeTravelFeeCharge>>;
+    const ratesByVendor = new Map<string, Awaited<ReturnType<typeof loadTravelFeeVendorRates>>>();
+    for (const vendorAccountId of Array.from(new Set(rows.map((r) => r.vendorAccountId)))) {
+      ratesByVendor.set(vendorAccountId, await loadTravelFeeVendorRates(vendorAccountId));
+    }
+    return rows.map((row) => {
+      const rates = ratesByVendor.get(row.vendorAccountId);
+      // No resolvable vendor (deleted account) → no rates to apply, so the
+      // breakdown collapses to the bare fee. Harmless: accept requires a live
+      // connected account, so such a proposal can never be charged at all.
+      const charge = computeTravelFeeCharge(
+        row.amountCents,
+        rates ?? { vendorFeeRate: 0, customerFeeRate: 0 }
+      );
+      return { ...row, ...charge };
+    });
+  }
+
   app.post(
     "/api/bookings/:bookingId/travel-fee-proposals",
     mutationRateLimiter,
@@ -2529,18 +2571,41 @@ export function registerBookingRoutes(app: Express): void {
           .returning();
 
         const [vendorRow] = await db
-          .select({ businessName: vendorAccounts.businessName })
+          .select({
+            businessName: vendorAccounts.businessName,
+            // Feeds resolveFeeRates() — the customer service fee must be
+            // disclosed in every message that quotes this proposal.
+            ...vendorEntitlementColumns,
+          })
           .from(vendorAccounts)
           .where(eq(vendorAccounts.id, vendorId))
           .limit(1);
 
-        const amountFormatted = new Intl.NumberFormat("en-US", { style: "currency", currency: "USD" })
-          .format(data.amountCents / 100);
+        const proposalCharge = computeTravelFeeCharge(
+          data.amountCents,
+          vendorRow ? resolveFeeRates(vendorRow) : { vendorFeeRate: 0, customerFeeRate: 0 }
+        );
+        const fmtCents = (cents: number) =>
+          new Intl.NumberFormat("en-US", { style: "currency", currency: "USD" }).format(cents / 100);
+        const amountFormatted = fmtCents(proposalCharge.travelFeeCents);
+        const chargedFormatted = fmtCents(proposalCharge.chargedAmountCents);
+        // DISCLOSURE: the customer's card is charged fee + service fee, so every
+        // customer-visible quote states the total, never the bare fee.
+        const quoteWithFees =
+          proposalCharge.customerFeeCents > 0
+            ? `${amountFormatted} plus a ${fmtCents(proposalCharge.customerFeeCents)} service fee — ${chargedFormatted} total`
+            : chargedFormatted;
 
         await sendBookingSystemMessage({
           bookingId,
-          text: `${vendorRow?.businessName ?? "Vendor"} has proposed a travel/delivery fee of ${amountFormatted}${data.reason ? ` — "${data.reason}"` : ""}. Please review and respond below.`,
-          metadata: { proposal_id: proposal.id, proposal_status: "pending", amount_cents: data.amountCents },
+          text: `${vendorRow?.businessName ?? "Vendor"} has proposed a travel/delivery fee of ${quoteWithFees}${data.reason ? ` — "${data.reason}"` : ""}. Please review and respond below.`,
+          metadata: {
+            proposal_id: proposal.id,
+            proposal_status: "pending",
+            amount_cents: data.amountCents,
+            charged_amount_cents: proposalCharge.chargedAmountCents,
+            customer_fee_cents: proposalCharge.customerFeeCents,
+          },
         });
 
         if (booking.customerId) {
@@ -2549,7 +2614,7 @@ export function registerBookingRoutes(app: Express): void {
             recipientType: "customer",
             type: "travel_fee_proposed" as any,
             title: "Travel fee proposed",
-            message: `${vendorRow?.businessName ?? "Your vendor"} proposed a travel/delivery fee of ${amountFormatted} for your booking on ${booking.eventDate}.`,
+            message: `${vendorRow?.businessName ?? "Your vendor"} proposed a travel/delivery fee of ${quoteWithFees} for your booking on ${booking.eventDate}.`,
             link: `/dashboard/messages?bookingId=${encodeURIComponent(bookingId)}`,
             read: false,
           }).catch(() => {});
@@ -2581,7 +2646,10 @@ export function registerBookingRoutes(app: Express): void {
               vendorName: vendorRow?.businessName || "Vendor",
               listingTitle: info.listingTitle || "your booking",
               eventDate: booking.eventDate ?? "",
-              amountCents: data.amountCents,
+              amountCents: proposalCharge.travelFeeCents,
+              // The email is a pre-payment quote — it must show the charge.
+              customerFeeCents: proposalCharge.customerFeeCents,
+              chargedAmountCents: proposalCharge.chargedAmountCents,
               reason: data.reason ?? null,
               feeLabel,
               serverUrl: appUrl(),
@@ -2621,7 +2689,9 @@ export function registerBookingRoutes(app: Express): void {
           .where(eq(travelFeeProposals.bookingId, bookingId))
           .orderBy(desc(travelFeeProposals.createdAt));
 
-        return res.json(proposals);
+        // Customer-facing: must carry the charge breakdown so the chat banner
+        // quotes the charged total, not the bare vendor-side fee.
+        return res.json(await withTravelFeeChargeBreakdown(proposals));
       } catch {
         return res.status(500).json({ error: "Failed to load proposals" });
       }
@@ -2652,7 +2722,9 @@ export function registerBookingRoutes(app: Express): void {
           .where(eq(travelFeeProposals.bookingId, bookingId))
           .orderBy(desc(travelFeeProposals.createdAt));
 
-        return res.json(proposals);
+        // Vendors see the same breakdown so their view of "what the customer
+        // pays" matches the customer's.
+        return res.json(await withTravelFeeChargeBreakdown(proposals));
       } catch {
         return res.status(500).json({ error: "Failed to load proposals" });
       }
@@ -2718,20 +2790,27 @@ export function registerBookingRoutes(app: Express): void {
         }
 
         const { createBookingPaymentIntent } = await import("../stripe");
-        const stripeProcessingFeeEstimate = estimateStripeProcessingFeeCents(proposal.amountCents);
+        // Travel fees carry the customer service fee like every other booking
+        // payment: the fee is added ON TOP of the proposed amount, and the
+        // vendor's side (gross, commission, net payout) is untouched by it.
         const proposalFeeRates = resolveFeeRates(vendorAccount);
-        const platformFeeAmount = Math.round(proposal.amountCents * proposalFeeRates.vendorFeeRate);
-        const vendorNetPayoutAmount = Math.max(0, proposal.amountCents - platformFeeAmount);
+        const charge = computeTravelFeeCharge(proposal.amountCents, proposalFeeRates);
+        const platformFeeAmount = charge.platformFeeCents;
+        const vendorNetPayoutAmount = charge.vendorNetPayoutCents;
+        // Stripe levies its processing fee on the ACTUAL charge, so estimate
+        // against the customer-facing total, not the vendor-side amount.
+        const stripeProcessingFeeEstimate = estimateStripeProcessingFeeCents(charge.chargedAmountCents);
 
         const paymentIntent = await createBookingPaymentIntent({
-          amount: proposal.amountCents,
+          amount: charge.chargedAmountCents,
           platformFeeAmount,
           vendorNetPayoutAmount,
-          vendorGrossAmount: proposal.amountCents,
+          vendorGrossAmount: charge.vendorGrossCents,
           stripeProcessingFeeEstimate,
           vendorAbsorbsStripeFees: VENDOR_ABSORBS_STRIPE_FEES,
           vendorStripeAccountId: vendorAccount.stripeConnectId,
           vendorAccountId: booking.vendorAccountId ?? undefined,
+          totalAmount: charge.chargedAmountCents,
           description: `Travel fee – booking ${bookingId}`,
           bookingId,
           paymentType: "travel_fee",
@@ -2743,10 +2822,18 @@ export function registerBookingRoutes(app: Express): void {
           customerId: booking.customerId,
           vendorAccountId: booking.vendorAccountId ?? undefined,
           stripePaymentIntentId: paymentIntent.id,
-          amount: proposal.amountCents,
-          totalAmount: proposal.amountCents,
+          // amount / totalAmount are the CUSTOMER-side charge (same contract as
+          // the booking row, where amount = subtotal + customerFee). Refund
+          // apportionment in payoutEligibility divides by this, so it must be
+          // the charged total or the vendor gets short-paid on partial refunds.
+          amount: charge.chargedAmountCents,
+          totalAmount: charge.chargedAmountCents,
           platformFeeAmount,
-          vendorGrossAmount: proposal.amountCents,
+          // Vendor-side gross stays the travel fee itself — the customer fee is
+          // never part of the vendor's side. The customer fee is recoverable as
+          // (amount − vendorGrossAmount); `payments` has no customer-fee column
+          // (the booking path's customerFeeAmountCents lives on `bookings`).
+          vendorGrossAmount: charge.vendorGrossCents,
           vendorNetPayoutAmount,
           stripeProcessingFeeEstimate,
           // Snapshot the fee policy at booking time (same contract as booking
@@ -2763,7 +2850,13 @@ export function registerBookingRoutes(app: Express): void {
         // chat from showing "Payment is being processed" if the user cancels.
         return res.json({
           clientSecret: paymentIntent.client_secret,
-          amountCents: proposal.amountCents,
+          // `amountCents` is the CHARGED total (fee + service fee). The payment
+          // sheet renders this verbatim, so it must never be the bare fee — that
+          // would quote less than the card is charged.
+          amountCents: charge.chargedAmountCents,
+          travelFeeCents: charge.travelFeeCents,
+          customerFeeCents: charge.customerFeeCents,
+          chargedAmountCents: charge.chargedAmountCents,
           proposalId: proposal.id,
         });
       } catch {
@@ -2809,9 +2902,16 @@ export function registerBookingRoutes(app: Express): void {
         if (proposal.status === "accepted") return res.json({ proposal });
         if (proposal.status !== "pending") return res.status(409).json({ error: "Proposal is not in a payable state" });
 
-        // Look up the travel fee payment record to get the Stripe PaymentIntent ID
+        // Look up the travel fee payment record to get the Stripe PaymentIntent ID.
+        // `amount` / `vendorGrossAmount` are the values PERSISTED at charge time —
+        // authoritative for the receipt copy below, so the confirmation can never
+        // quote a different number than the card was charged.
         const [travelPayment] = await db
-          .select({ stripePaymentIntentId: payments.stripePaymentIntentId })
+          .select({
+            stripePaymentIntentId: payments.stripePaymentIntentId,
+            amount: payments.amount,
+            vendorGrossAmount: payments.vendorGrossAmount,
+          })
           .from(payments)
           .where(
             and(
@@ -2842,13 +2942,29 @@ export function registerBookingRoutes(app: Express): void {
         // Payment record status is updated by the Stripe webhook when the
         // PaymentIntent fires payment_intent.succeeded — no manual update needed here.
 
-        const amountFormatted = new Intl.NumberFormat("en-US", { style: "currency", currency: "USD" })
-          .format(proposal.amountCents / 100);
+        const fmtPaidCents = (cents: number) =>
+          new Intl.NumberFormat("en-US", { style: "currency", currency: "USD" }).format(cents / 100);
+        // Persisted charge-time values win; fall back to the proposal amount only
+        // for rows written before the payments row carried the breakdown.
+        const paidTravelFeeCents = travelPayment.vendorGrossAmount ?? proposal.amountCents;
+        const paidChargedCents = travelPayment.amount ?? proposal.amountCents;
+        const paidCustomerFeeCents = Math.max(0, paidChargedCents - paidTravelFeeCents);
+        const amountFormatted = fmtPaidCents(paidTravelFeeCents);
+        const paidQuote =
+          paidCustomerFeeCents > 0
+            ? `${amountFormatted} plus a ${fmtPaidCents(paidCustomerFeeCents)} service fee — ${fmtPaidCents(paidChargedCents)} total`
+            : amountFormatted;
 
         await sendBookingSystemMessage({
           bookingId,
-          text: `The travel/delivery fee of ${amountFormatted} has been paid.`,
-          metadata: { proposal_id: proposalId, proposal_status: "accepted" },
+          text: `The travel/delivery fee of ${paidQuote} has been paid.`,
+          metadata: {
+            proposal_id: proposalId,
+            proposal_status: "accepted",
+            amount_cents: paidTravelFeeCents,
+            charged_amount_cents: paidChargedCents,
+            customer_fee_cents: paidCustomerFeeCents,
+          },
         });
 
         if (booking.vendorAccountId) {
@@ -2857,7 +2973,7 @@ export function registerBookingRoutes(app: Express): void {
             recipientType: "vendor",
             type: "travel_fee_accepted" as any,
             title: "Travel fee paid",
-            message: `The customer paid the travel/delivery fee of ${amountFormatted} for the booking on ${booking.eventDate}.`,
+            message: `The customer paid the travel/delivery fee of ${paidQuote} for the booking on ${booking.eventDate}.`,
             link: `/vendor/bookings?bookingId=${encodeURIComponent(bookingId)}`,
             read: false,
           }).catch(() => {});
@@ -2892,7 +3008,9 @@ export function registerBookingRoutes(app: Express): void {
               customerName: info.customerName || "Customer",
               listingTitle: info.listingTitle || "your booking",
               eventDate: booking.eventDate ?? "",
-              amountCents: proposal.amountCents,
+              amountCents: paidTravelFeeCents,
+              customerFeeCents: paidCustomerFeeCents,
+              chargedAmountCents: paidChargedCents,
               action: "accepted",
               feeLabel,
               serverUrl: appUrl(),

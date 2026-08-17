@@ -5729,16 +5729,24 @@ export function registerVendorRoutes(app: Express): void {
         -- Aggregated (a booking can have multiple accepted travel-fee proposals)
         -- so the booking row never duplicates. Only successfully-charged travel
         -- fees count; refunded ones drop out via the status filter.
+        --
+        -- ACCOUNTING NOTE: tf_gross is a VENDOR-side figure — the vendor's
+        -- gross-of-Stripe-fee travel earnings (fee minus commission), matching
+        -- how grossPayoutAmount is vendor-side for the booking itself. It is
+        -- deliberately NOT "what the customer paid": since travel fees carry the
+        -- customer service fee, the amount column is the CUSTOMER-side charge and would
+        -- overstate vendor earnings, so it is the last-resort fallback only,
+        -- behind vendor_gross_amount (the fee before commission).
         left join (
           select
             booking_id,
-            sum(coalesce(vendor_net_payout_amount, amount, 0)) as tf_gross,
+            sum(coalesce(vendor_net_payout_amount, vendor_gross_amount, amount, 0)) as tf_gross,
             sum(case when vendor_absorbs_stripe_fees
                      then coalesce(actual_stripe_fee_amount, stripe_processing_fee_estimate, 0)
                      else 0 end) as tf_stripe_fee,
             sum(coalesce(
               payout_adjusted_amount,
-              greatest(0, coalesce(vendor_net_payout_amount, amount, 0)
+              greatest(0, coalesce(vendor_net_payout_amount, vendor_gross_amount, amount, 0)
                 - case when vendor_absorbs_stripe_fees
                        then coalesce(actual_stripe_fee_amount, stripe_processing_fee_estimate, 0)
                        else 0 end)

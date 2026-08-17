@@ -610,6 +610,9 @@ export function registerAdminRoutes(app: Express): void {
           stripeChargeId: payments.stripeChargeId,
           stripeConnectedAccountId: payments.stripeConnectedAccountId,
           amount: payments.amount,
+          // Vendor-side gross (the travel fee itself, excluding the customer
+          // service fee that rides on `amount`). Caps the vendor's award below.
+          vendorGrossAmount: payments.vendorGrossAmount,
           refundAmount: payments.refundAmount,
           status: payments.status,
         })
@@ -630,15 +633,27 @@ export function registerAdminRoutes(app: Express): void {
           return res.status(400).json({ error: "Held travel fee is not in a settleable state" });
         }
         const alreadyRefunded = heldTravel.refundAmount ?? 0;
+        // What is left on the CHARGE (travel fee + customer service fee).
         const heldRemaining = Math.max(0, heldTravel.amount - alreadyRefunded);
+        // What the vendor may be awarded: the travel fee itself, never the
+        // customer service fee. Without this cap the vendor's ceiling would have
+        // silently risen by the service fee the moment travel fees started
+        // carrying it. Legacy rows (no vendor gross recorded) fall back to the
+        // charge, which for them WAS the fee.
+        const travelAwardCeiling = Math.min(
+          heldRemaining,
+          Math.max(0, (heldTravel.vendorGrossAmount ?? heldTravel.amount) - alreadyRefunded)
+        );
 
         const requestedAward =
           typeof payload.travelAwardCents === "number"
             ? payload.travelAwardCents
             : payload.decision === "payout"
-              ? heldRemaining
+              ? travelAwardCeiling
               : 0;
-        const travelAward = Math.min(Math.max(0, requestedAward), heldRemaining);
+        const travelAward = Math.min(Math.max(0, requestedAward), travelAwardCeiling);
+        // The remainder of the charge — including the customer service fee —
+        // goes back to the customer, so the charge always fully settles.
         const travelRefundToCustomer = heldRemaining - travelAward;
 
         // Vendor connected account is required to pay an award.

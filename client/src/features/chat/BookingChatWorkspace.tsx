@@ -123,7 +123,15 @@ function getConversationEventKey(conversation: Conversation) {
 type PendingTravelFeePayment = {
   clientSecret: string;
   proposalId: string;
+  /**
+   * The amount the card is CHARGED (travel fee + customer service fee). The
+   * server returns the charged total in `amountCents` precisely so this sheet
+   * can never quote less than the PaymentIntent.
+   */
   amountCents: number;
+  /** Breakdown for disclosure; absent on legacy responses. */
+  travelFeeCents?: number;
+  customerFeeCents?: number;
   bookingId: string;
 };
 
@@ -182,10 +190,27 @@ function TravelFeePaymentForm({
 
   return (
     <div className="space-y-4">
+      {/* The total must match the PaymentIntent exactly — the service fee is
+          disclosed as its own line so the headline number is never a surprise. */}
       <p className="text-sm text-muted-foreground">
         You are paying a travel / delivery fee of{" "}
-        <span className="font-semibold text-foreground">{fmt(pending.amountCents)}</span>.
+        <span className="font-semibold text-foreground">
+          {fmt(pending.travelFeeCents ?? pending.amountCents)}
+        </span>
+        {pending.customerFeeCents ? (
+          <>
+            {" "}plus a {fmt(pending.customerFeeCents)} service fee.
+          </>
+        ) : (
+          "."
+        )}
       </p>
+      {pending.customerFeeCents ? (
+        <div className="flex items-center justify-between rounded-md bg-muted/60 px-3 py-2 text-sm">
+          <span className="text-muted-foreground">Total charged today</span>
+          <span className="font-semibold text-foreground">{fmt(pending.amountCents)}</span>
+        </div>
+      ) : null}
       <div className="rounded-md border p-3">
         <CardElement
           options={{
@@ -538,7 +563,16 @@ export function BookingChatWorkspace({ role, initialBookingId, initialVendorId }
   type TravelFeeProposal = {
     id: string;
     bookingId: string;
+    /** Vendor-side travel/delivery fee — NOT what the customer is charged. */
     amountCents: number;
+    /**
+     * Charge breakdown attached by the server. `chargedAmountCents` is what the
+     * card is charged (fee + customer service fee) and is the number that must
+     * be shown to the customer.
+     */
+    travelFeeCents?: number;
+    customerFeeCents?: number;
+    chargedAmountCents?: number;
     reason: string | null;
     status: "pending" | "accepted" | "declined" | "cancelled";
     paymentScheduleId: string | null;
@@ -664,7 +698,10 @@ export function BookingChatWorkspace({ role, initialBookingId, initialVendorId }
         setPendingTravelFeePayment({
           clientSecret: data.clientSecret,
           proposalId: variables.proposalId,
+          // Server-authoritative charged total — same number as the PaymentIntent.
           amountCents: data.amountCents,
+          travelFeeCents: data.travelFeeCents,
+          customerFeeCents: data.customerFeeCents,
           bookingId: variables.bookingId,
         });
       }
@@ -1172,10 +1209,18 @@ export function BookingChatWorkspace({ role, initialBookingId, initialVendorId }
                   {pendingProposal ? (
                     <div>
                       <p className="text-sm font-semibold text-amber-900">Travel / delivery fee proposed</p>
+                      {/* Always lead with the CHARGED total. Quoting the bare fee
+                          here would show less than the card is charged. */}
                       <p className="mt-0.5 text-sm text-amber-800">
-                        {fmt(pendingProposal.amountCents)}
+                        {fmt(pendingProposal.chargedAmountCents ?? pendingProposal.amountCents)}
                         {pendingProposal.reason ? ` — ${pendingProposal.reason}` : ""}
                       </p>
+                      {pendingProposal.customerFeeCents ? (
+                        <p className="mt-0.5 text-xs text-amber-700">
+                          {fmt(pendingProposal.travelFeeCents ?? pendingProposal.amountCents)} fee +{" "}
+                          {fmt(pendingProposal.customerFeeCents)} service fee
+                        </p>
+                      ) : null}
                       <div className="mt-2 flex items-center gap-2">
                         <button
                           type="button"
@@ -1220,8 +1265,9 @@ export function BookingChatWorkspace({ role, initialBookingId, initialVendorId }
                       </p>
                       {pastProposals.map((p) => (
                         <div key={p.id} className="flex items-center justify-between gap-2 text-xs text-amber-800">
+                          {/* Charged total, so an accepted row matches the receipt. */}
                           <span>
-                            {fmt(p.amountCents)}
+                            {fmt(p.chargedAmountCents ?? p.amountCents)}
                             {p.reason ? ` — ${p.reason}` : ""}
                           </span>
                           <span
