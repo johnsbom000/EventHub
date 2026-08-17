@@ -8,6 +8,7 @@ import AuthModal from "@/components/AuthModal";
 import { trackBoth } from "@/lib/tracking";
 import { initEngagement } from "@/lib/engagement";
 import { readLandingVariant, type LandingVariant } from "@/hooks/useLandingVariant";
+import { captureAttribution } from "@/lib/landingAttribution";
 
 /* ---------------------------------------------------------------------------
    Shared sign-up flow for the free-first landing variants (A–E).
@@ -141,6 +142,11 @@ export function useLandingSignup(_ns?: string) {
   // Fires vendor_engaged once on 25% scroll or 30s dwell.
   useEffect(() => initEngagement(), []);
 
+  // First-touch ad attribution: capture on mount so a visitor who navigates
+  // around before clicking a CTA is still attributed to the ad that brought
+  // them (no-op if already captured this session).
+  useEffect(() => captureAttribution(), []);
+
   // Stop the page rubber-band scrolling past the footer. On macOS/trackpad,
   // overscroll past the bottom exposes the white <body> background below the
   // slate footer, which reads as "scrolling past the footer into empty space".
@@ -175,6 +181,11 @@ export function useLandingSignup(_ns?: string) {
   // Free-first pages are vendor-only: always carry vendor intent and land on
   // /vendor/provision so the existing provisioning flow runs unchanged.
   const startSignup = async (method: "google" | "email") => {
+    // Belt-and-suspenders: the mount-time effect above already captures
+    // first-touch attribution, but this is a no-op if it already ran, so
+    // capturing again here costs nothing and covers any caller of startSignup
+    // that renders this hook without ever mounting the effect.
+    captureAttribution();
     sessionStorage.setItem("eh:after-auth-intent", "vendor");
     // Pro-trial A/B: a "Try Pro free" click (intent === "pro") starts a trial
     // after the account is created; the treatment is tied to the landing variant.

@@ -1269,6 +1269,18 @@ export function registerVendorRoutes(app: Express): void {
 
       const shopSlug = await allocateUniqueVendorSlug(normalizedName);
 
+      // Ad attribution / pricing assignment from the landing page. Client-supplied
+      // and therefore untrusted: a visitor can claim any pricing model. That is
+      // bounded by the exclusivity guards (a false 'commission' claim yields Pro
+      // features at 8% with no ability to buy out), and we record the claim so
+      // admin can audit divergence from the PostHog assignment.
+      const claimedPricingModel = req.body?.pricingModel === "commission" ? "commission" : "subscription";
+      const claimedLandingStyle = ["control", "a", "b", "c", "d", "e"].includes(req.body?.landingStyle)
+        ? String(req.body.landingStyle)
+        : null;
+      const trimmed = (value: unknown): string | null =>
+        typeof value === "string" && value.trim() ? value.trim().slice(0, 255) : null;
+
       // All provisioning writes run in ONE transaction so a failure can never
       // leave a half-provisioned vendor (an orphan account with no profile row).
       // Either the whole vendor — account + users link + stub profile — commits,
@@ -1283,6 +1295,13 @@ export function registerVendorRoutes(app: Express): void {
             businessName: normalizedName,
             shopSlug,
             profileComplete: false,
+            pricingModel: claimedPricingModel,
+            landingStyle: claimedLandingStyle,
+            utmSource: trimmed(req.body?.utmSource),
+            utmMedium: trimmed(req.body?.utmMedium),
+            utmCampaign: trimmed(req.body?.utmCampaign),
+            utmContent: trimmed(req.body?.utmContent),
+            fbclid: trimmed(req.body?.fbclid),
           })
           .returning();
 
@@ -1345,6 +1364,16 @@ export function registerVendorRoutes(app: Express): void {
       // grant here anymore; existing comp grants ride out on their own schedule.)
       const trialResult = await startReverseTrialForVendor(created);
       const reverseTrial = trialResult.status === "started";
+
+      // Audit trail for the commission-pricing test: records the claimed
+      // assignment (client-supplied, see sanitization above) alongside the
+      // landing style and UTM campaign so admin can spot divergence from the
+      // PostHog-side assignment.
+      logEvent("vendor_pricing_model_assigned", "vendor", created.id, {
+        pricingModel: claimedPricingModel,
+        landingStyle: claimedLandingStyle,
+        utmCampaign: trimmed(req.body?.utmCampaign),
+      });
 
       // Fire-and-forget: send vendor welcome email on first account creation.
       void (async () => {
@@ -1443,6 +1472,19 @@ export function registerVendorRoutes(app: Express): void {
           }
 
           const shopSlug = await allocateUniqueVendorSlug(normalizedProfileName);
+
+          // Same untrusted-client attribution stamping as /api/vendor/provision —
+          // this insert path exists so a vendor who reaches onboarding without
+          // ever calling provision (e.g. a healed/legacy flow) still gets a
+          // pricing_model row instead of silently defaulting every such vendor
+          // to subscription.
+          const claimedPricingModel = req.body?.pricingModel === "commission" ? "commission" : "subscription";
+          const claimedLandingStyle = ["control", "a", "b", "c", "d", "e"].includes(req.body?.landingStyle)
+            ? String(req.body.landingStyle)
+            : null;
+          const trimmed = (value: unknown): string | null =>
+            typeof value === "string" && value.trim() ? value.trim().slice(0, 255) : null;
+
           const [created] = await db
             .insert(vendorAccounts)
             .values({
@@ -1452,6 +1494,13 @@ export function registerVendorRoutes(app: Express): void {
               businessName: normalizedProfileName,
               shopSlug,
               profileComplete: false,
+              pricingModel: claimedPricingModel,
+              landingStyle: claimedLandingStyle,
+              utmSource: trimmed(req.body?.utmSource),
+              utmMedium: trimmed(req.body?.utmMedium),
+              utmCampaign: trimmed(req.body?.utmCampaign),
+              utmContent: trimmed(req.body?.utmContent),
+              fbclid: trimmed(req.body?.fbclid),
             })
             .returning();
           account = created;

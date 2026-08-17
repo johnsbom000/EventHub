@@ -7,6 +7,7 @@ import { apiRequest, notifyEmailUnverified } from "@/lib/queryClient";
 import { phCapture } from "@/lib/posthog";
 import { trackSignupCompletedOnce } from "@/lib/tracking";
 import { readLandingVariant } from "@/hooks/useLandingVariant";
+import { readAttribution, clearAttribution } from "@/lib/landingAttribution";
 import { useToast } from "@/hooks/use-toast";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
@@ -84,13 +85,24 @@ export default function VendorProvision() {
       const token = await getFreshAccessToken();
       if (!token) throw new Error("auth_required");
 
+      const attribution = readAttribution();
+
       const res = await fetch("/api/vendor/provision", {
         method: "POST",
         headers: {
           "Content-Type": "application/json",
           Authorization: `Bearer ${token}`,
         },
-        body: JSON.stringify({ businessName: trimmed }),
+        body: JSON.stringify({
+          businessName: trimmed,
+          pricingModel: attribution?.pricingModel,
+          landingStyle: attribution?.landingStyle,
+          utmSource: attribution?.utmSource,
+          utmMedium: attribution?.utmMedium,
+          utmCampaign: attribution?.utmCampaign,
+          utmContent: attribution?.utmContent,
+          fbclid: attribution?.fbclid,
+        }),
       });
 
       if (!res.ok) {
@@ -137,6 +149,9 @@ export default function VendorProvision() {
       sessionStorage.removeItem("eh:pro-trial-intent");
       sessionStorage.removeItem("eh:pro-trial-interval");
       sessionStorage.removeItem("eh:pro-trial-mode");
+      // Only clear attribution once the provision request has actually
+      // succeeded — clearing it on failure would lose the attribution on retry.
+      clearAttribution();
 
       await qc.invalidateQueries({ queryKey: ["/api/vendor/me"] });
       await qc.invalidateQueries({ queryKey: ["/api/customer/me"] });
