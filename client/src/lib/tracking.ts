@@ -1,4 +1,6 @@
 import posthog from "posthog-js";
+import { readAttribution } from "@/lib/landingAttribution";
+import { readPricingModel } from "@/hooks/usePricingModel";
 
 declare global {
   interface Window {
@@ -86,5 +88,21 @@ export function trackSignupCompletedOnce(props: Record<string, any> = {}, email?
     // sessionStorage unavailable (private mode / disabled) — fall through and
     // fire; a rare double-count is better than dropping the conversion.
   }
-  trackBoth("signup_completed", props, { event: "CompleteRegistration", standard: true }, email);
+  // Experiment arm rides along on the conversion so CPA can be split by
+  // pricing model in Meta and by any property in PostHog. Sourced here (once,
+  // for every caller of this helper) rather than per call site, so there is a
+  // single place that decides how these two properties are read:
+  //  - pricing_model is read LIVE via readPricingModel() — it is a PostHog
+  //    feature flag, not stored attribution, because flags are guaranteed to
+  //    have resolved by the time an account-creation conversion fires (unlike
+  //    at landing-mount, where the /decide round trip may still be pending).
+  //  - landing_style comes from the first-touch attribution captured on
+  //    landing; it is null for organic "/" traffic, which is deliberate.
+  const attribution = readAttribution();
+  const enrichedProps = {
+    ...props,
+    pricing_model: readPricingModel(),
+    landing_style: attribution?.landingStyle ?? null,
+  };
+  trackBoth("signup_completed", enrichedProps, { event: "CompleteRegistration", standard: true }, email);
 }

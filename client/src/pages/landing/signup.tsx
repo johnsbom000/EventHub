@@ -8,7 +8,8 @@ import AuthModal from "@/components/AuthModal";
 import { trackBoth } from "@/lib/tracking";
 import { initEngagement } from "@/lib/engagement";
 import { readLandingVariant, type LandingVariant } from "@/hooks/useLandingVariant";
-import { captureAttribution } from "@/lib/landingAttribution";
+import { captureAttribution, readAttribution } from "@/lib/landingAttribution";
+import { readPricingModel } from "@/hooks/usePricingModel";
 
 /* ---------------------------------------------------------------------------
    Shared sign-up flow for the free-first landing variants (A–E).
@@ -161,18 +162,35 @@ export function useLandingSignup(_ns?: string) {
     };
   }, []);
 
+  // Mid-funnel signal for Meta ad-set learning: completed signups alone are
+  // too sparse pre-launch to exit the learning phase (~50 conversions/week
+  // needed), so the dialog-open moment (a proxy for "opens the signup
+  // dialog" — every CTA here opens it immediately after this fires) also
+  // reports as a Lead. pricing_model is read LIVE (PostHog flag, resolved by
+  // the time a visitor reaches a CTA click) rather than stored, matching the
+  // single source of truth used at the signup_completed conversion in
+  // tracking.ts. landing_style is the first-touch value captured on landing
+  // mount (null for organic "/" traffic, by design).
+  const leadProps = (ctaId: string, intentValue: SignupIntent) => ({
+    cta_id: ctaId,
+    intent: intentValue,
+    pricing_model: readPricingModel(),
+    landing_style: readAttribution()?.landingStyle ?? null,
+    source: ctaId,
+  });
+
   // All signup CTAs route through here so the click is attributed
   // (PostHog signup_cta_click + Meta Lead) with a per-button cta_id + intent.
   const handleSignupCta = (ctaId: string) => {
     setIntent("free");
-    trackBoth("signup_cta_click", { cta_id: ctaId, intent: "free" }, { event: "Lead", standard: true });
+    trackBoth("signup_cta_click", leadProps(ctaId, "free"), { event: "Lead", standard: true });
     setSignupOpen(true);
   };
 
   // "Try Pro free" — deferred: opens the same vendor signup, tagged pro.
   const handleProCta = (ctaId: string) => {
     setIntent("pro");
-    trackBoth("signup_cta_click", { cta_id: ctaId, intent: "pro" }, { event: "Lead", standard: true });
+    trackBoth("signup_cta_click", leadProps(ctaId, "pro"), { event: "Lead", standard: true });
     setSignupOpen(true);
   };
 
