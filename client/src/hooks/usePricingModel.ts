@@ -27,6 +27,52 @@ export function readPricingModel(): PricingModel {
   return normalize(phFeatureFlag(PRICING_FLAG_KEY));
 }
 
+/** How long to wait for PostHog flags before provisioning anyway. */
+export const PRICING_FLAG_RESOLVE_TIMEOUT_MS = 2500;
+
+/**
+ * Resolves the pricing model for a WRITE — specifically the one that stamps the
+ * immutable `vendor_accounts.pricing_model` column at provision.
+ *
+ * readPricingModel() cannot distinguish "PostHog assigned subscription" from
+ * "flags have not resolved yet" or "/decide failed" — all three return
+ * "subscription". At read time that is a harmless safe default, but at provision
+ * it is written to a column that is never mutated again, so a slow flag load
+ * silently mis-assigns the vendor into the control arm for the life of the
+ * account and quietly biases the experiment toward subscription.
+ *
+ * So for the write we WAIT for `onFeatureFlags` to fire, with a short timeout so
+ * a PostHog outage degrades to today's behaviour (safe default) instead of
+ * blocking signup. `resolved` reports which happened, for observability.
+ *
+ * NOTE (owner action, not code): PostHog must also be configured to persist this
+ * flag across authentication, so the anonymous pre-signup assignment and the
+ * identified post-signup user get the same variant. That is a dashboard setting.
+ */
+export function resolvePricingModelForWrite(
+  timeoutMs: number = PRICING_FLAG_RESOLVE_TIMEOUT_MS,
+): Promise<{ model: PricingModel; resolved: boolean }> {
+  if (typeof window === "undefined") {
+    return Promise.resolve({ model: readPricingModel(), resolved: false });
+  }
+  const override = devPreviewOverride();
+  if (override) return Promise.resolve({ model: override, resolved: true });
+
+  return new Promise((resolve) => {
+    let settled = false;
+    const finish = (resolved: boolean) => {
+      if (settled) return;
+      settled = true;
+      window.clearTimeout(timer);
+      unsubscribe();
+      resolve({ model: readPricingModel(), resolved });
+    };
+    // Fires immediately if flags are already loaded, so the common case adds no delay.
+    const unsubscribe = phOnFeatureFlags(() => finish(true));
+    const timer = window.setTimeout(() => finish(false), timeoutMs);
+  });
+}
+
 /** DEV-ONLY preview: `?pm=commission` pins a model locally. Dead-code-eliminated
  *  from production builds, so it can never influence the live experiment. */
 const PREVIEW_STORAGE_KEY = "eh:pricing-preview";

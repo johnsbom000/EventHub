@@ -885,15 +885,31 @@ app.post(
 
       const whereClause = and(...(conditions as any[]));
 
-      // Sort order — the default "recommended" sort applies a light Pro search
-      // boost: vendors with Pro in effect rank above free vendors, then newest
-      // first within each group. This is a soft tiebreak, NOT a hard top
-      // placement — a separate paid "Featured" slot is reserved for the future.
-      // The Pro condition mirrors getVendorEntitlements()'s `isPro` exactly
-      // (active/trialing/past_due, or an unexpired comp grant); keep them in sync.
-      // To disable the boost, drop `desc(proBoostExpr)` from the recommended case.
+      // Sort order — the default "recommended" sort applies a light boost:
+      // boosted vendors rank above the rest, then newest first within each group.
+      // This is a soft tiebreak, NOT a hard top placement — a separate paid
+      // "Featured" slot is reserved for the future. To disable the boost, drop
+      // `desc(proBoostExpr)` from the recommended case.
+      //
+      // WHO IS BOOSTED: any vendor who is PAYING for placement, by either route.
+      //   - Subscription vendors with Pro in effect — mirrors
+      //     getVendorEntitlements()'s `isPro` exactly (active/trialing/past_due,
+      //     or an unexpired comp grant); keep the two in sync.
+      //   - Commission vendors, ALWAYS. They earn the boost by paying the very
+      //     per-booking commission that Pro waives — a boosted Pro vendor pays 0%
+      //     while a commission vendor pays the full rate on the same booking, so
+      //     excluding them would charge more for less.
+      //
+      // This clause is also load-bearing for the pricing EXPERIMENT: every new
+      // subscription-arm vendor is auto-enrolled as `trialing` at provision, so
+      // without the commission term 100% of one arm would be boosted for their
+      // first 30 days while 0% of the other ever was — precisely the activation
+      // window the test measures. Bookings-per-vendor would then be partly
+      // measuring search rank instead of pricing preference. Do not remove this
+      // term while the pricing test is running.
       const proBoostExpr = drizzleSql`(
         ${vendorAccounts.subscriptionStatus} IN ('active', 'trialing', 'past_due')
+        OR ${vendorAccounts.pricingModel} = 'commission'
         OR (
           ${vendorAccounts.subscriptionStatus} = 'comp'
           AND (${vendorAccounts.compEndsAt} IS NULL OR ${vendorAccounts.compEndsAt} > now())

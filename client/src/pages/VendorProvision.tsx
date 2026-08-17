@@ -7,7 +7,7 @@ import { apiRequest, notifyEmailUnverified } from "@/lib/queryClient";
 import { phCapture } from "@/lib/posthog";
 import { trackSignupCompletedOnce } from "@/lib/tracking";
 import { readLandingVariant } from "@/hooks/useLandingVariant";
-import { readPricingModel } from "@/hooks/usePricingModel";
+import { resolvePricingModelForWrite } from "@/hooks/usePricingModel";
 import { readAttribution, clearAttribution } from "@/lib/landingAttribution";
 import { useToast } from "@/hooks/use-toast";
 import { Button } from "@/components/ui/button";
@@ -88,6 +88,14 @@ export default function VendorProvision() {
 
       const attribution = readAttribution();
 
+      // Wait for PostHog flags before stamping the immutable pricing_model
+      // column. readPricingModel() alone returns "subscription" for a real
+      // assignment, an unresolved flag, AND a failed /decide — indistinguishable,
+      // and unrecoverable because the column is never mutated. Times out quickly
+      // so a PostHog outage degrades to the safe default rather than blocking signup.
+      const { model: pricingModel, resolved: pricingModelResolved } =
+        await resolvePricingModelForWrite();
+
       const res = await fetch("/api/vendor/provision", {
         method: "POST",
         headers: {
@@ -96,13 +104,12 @@ export default function VendorProvision() {
         },
         body: JSON.stringify({
           businessName: trimmed,
-          // Read live, not from the first-touch sessionStorage record: on paid
-          // traffic's first visit the PostHog /decide round trip is very
-          // likely still in flight, so a value captured at landing would be
-          // the "subscription" pre-resolution placeholder, frozen forever by
-          // first-touch. By provision time flags have resolved — same
-          // live-read pattern as readLandingVariant() below.
-          pricingModel: readPricingModel(),
+          // Read live (and flag-gated above), not from the first-touch
+          // sessionStorage record: on paid traffic's first visit the PostHog
+          // /decide round trip is very likely still in flight, so a value
+          // captured at landing would be the "subscription" pre-resolution
+          // placeholder, frozen forever by first-touch.
+          pricingModel,
           landingStyle: attribution?.landingStyle,
           utmSource: attribution?.utmSource,
           utmMedium: attribution?.utmMedium,
@@ -135,7 +142,13 @@ export default function VendorProvision() {
       // Primary conversion event for the landing A/B/n experiment: a brand-new
       // vendor account was just created. Tagged with the sticky landing variant
       // so PostHog can attribute the conversion back to the arm the visitor saw.
-      phCapture("vendor_provisioned", { variant: readLandingVariant() });
+      // pricing_model_resolved=false means the flag never loaded and this vendor
+      // was stamped with the safe default — filter those out when analysing the
+      // pricing experiment, they are not a real assignment.
+      phCapture("vendor_provisioned", {
+        variant: readLandingVariant(),
+        pricing_model_resolved: pricingModelResolved,
+      });
       // Reverse-trial cohort marker (server also logs reverse_trial_started to
       // event_log). Captured here with the landing variant for PostHog attribution.
       if (reverseTrial) {

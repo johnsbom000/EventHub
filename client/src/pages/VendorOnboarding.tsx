@@ -13,7 +13,7 @@ import { cn } from "@/lib/utils";
 import { getFreshAccessToken } from "@/lib/authToken";
 import { trackEvent, trackEventBeacon } from "@/lib/analytics";
 import { readAttribution } from "@/lib/landingAttribution";
-import { readPricingModel } from "@/hooks/usePricingModel";
+import { resolvePricingModelForWrite } from "@/hooks/usePricingModel";
 
 // Step components (Prop/Decor-only flow)
 import Step2_BusinessDetails from "@/features/vendor/onboarding/Step2_BusinessDetails";
@@ -435,10 +435,14 @@ export default function VendorOnboarding() {
  // when a vendor reaches onboarding without ever calling
  // /api/vendor/provision. The server only stamps this into a brand-new
  // account; it's a no-op on the far more common existing-account path.
- // pricingModel is read live (flags are long since resolved by now), same
- // rule as VendorProvision.tsx — not from the first-touch attribution record,
- // which deliberately never carries pricing_model.
+ // pricingModel is read live, same rule as VendorProvision.tsx — not from the
+ // first-touch attribution record, which deliberately never carries
+ // pricing_model. Gated on PostHog flags having actually resolved: this insert
+ // path stamps the immutable pricing_model column, and an unresolved flag is
+ // indistinguishable from a real "subscription" assignment, so writing it
+ // unguarded would silently mis-assign the vendor for the life of the account.
  const attribution = readAttribution();
+ const { model: pricingModel } = await resolvePricingModelForWrite();
  const res = await fetch("/api/vendor/onboarding/complete", {
  method: "POST",
  headers: {
@@ -449,7 +453,7 @@ export default function VendorOnboarding() {
  ...data,
  operatingTimezone: data.operatingTimezone || detectBrowserTimezone(),
  createNewProfile: isCreatingAdditionalProfile,
- pricingModel: readPricingModel(),
+ pricingModel,
  landingStyle: attribution?.landingStyle,
  utmSource: attribution?.utmSource,
  utmMedium: attribution?.utmMedium,

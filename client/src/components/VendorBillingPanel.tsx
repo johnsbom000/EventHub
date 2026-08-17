@@ -11,6 +11,7 @@ import { Switch } from "@/components/ui/switch";
 import { apiRequest } from "@/lib/queryClient";
 import type { VendorMeState } from "@/lib/vendorState";
 import KeepProModal from "@/components/KeepProModal";
+import { useFeeRates } from "@/hooks/useFeeRates";
 import {
   Check,
   Sparkles,
@@ -48,6 +49,16 @@ const PRO_ANNUAL_LABEL = "$290";
 const PRO_MONTHLY_STRUCK = "$39";
 const PRO_ANNUAL_STRUCK = "$390";
 
+/**
+ * Renders a fee rate (0.08) as a percent string ("8%"). `fallbackPct` is used
+ * while the live rate is still loading — never 0, because a momentary "0%"
+ * on a pricing card is a false claim about what the vendor pays.
+ */
+function formatRatePct(rate: number | null | undefined, fallbackPct: number): string {
+  const pct = typeof rate === "number" && Number.isFinite(rate) ? rate * 100 : fallbackPct;
+  return `${pct % 1 === 0 ? pct.toFixed(0) : pct.toFixed(1)}%`;
+}
+
 function formatDate(value?: string | null): string | null {
   if (!value) return null;
   const d = new Date(value);
@@ -77,6 +88,15 @@ export default function VendorBillingPanel() {
   const [busy, setBusy] = useState<null | "checkout" | "portal">(null);
   const [error, setError] = useState<string | null>(null);
   const [keepProOpen, setKeepProOpen] = useState(false);
+
+  // Live fee rates. These plan cards are only rendered for a non-Pro subscription
+  // vendor (see the showUpgradePrompts && !isPro gate below), so the vendor fee
+  // returned here IS the standard commission Pro would waive. Falls back to the
+  // current published rates while the request is in flight so the cards never
+  // render a fee-free claim.
+  const feeRates = useFeeRates();
+  const commissionPct = formatRatePct(feeRates?.vendorFeeRate, 8);
+  const customerFeePct = formatRatePct(feeRates?.customerFeeRate, 5);
 
   const checkoutResult = new URLSearchParams(location.split("?")[1] ?? "").get("checkout");
 
@@ -340,7 +360,8 @@ export default function VendorBillingPanel() {
           <p className="mt-1 text-3xl font-bold">$0</p>
           <p className="text-sm text-muted-foreground">Everything you need to get started.</p>
           <ul className="mt-5 space-y-2.5 text-sm">
-            <Feature ok>List, take bookings, and get paid — no EventHub commission</Feature>
+            <Feature ok>List, take bookings, and get paid</Feature>
+            <Feature>{commissionPct} EventHub commission on every booking</Feature>
             <Feature ok>1 active listing at a time</Feature>
             <Feature ok>Lifetime totals (bookings &amp; revenue)</Feature>
             <Feature>Add-on listings (bookable upgrades)</Feature>
@@ -350,6 +371,9 @@ export default function VendorBillingPanel() {
             <Feature>Advanced analytics &amp; trends</Feature>
             <Feature>Google Calendar sync</Feature>
           </ul>
+          <p className="mt-4 text-xs text-muted-foreground">
+            Customers pay a {customerFeePct} service fee on every booking, on both plans.
+          </p>
         </div>
 
         {/* Pro plan */}
@@ -399,6 +423,9 @@ export default function VendorBillingPanel() {
 
           <ul className="mt-5 space-y-2.5 text-sm">
             <Feature ok>Everything in Free</Feature>
+            <Feature ok icon={<Sparkles className="h-4 w-4" />}>
+              <strong>No EventHub commission</strong> — Pro waives the {commissionPct} per-booking fee
+            </Feature>
             <Feature ok icon={<LayoutGrid className="h-4 w-4" />}>Unlimited active listings</Feature>
             <Feature ok icon={<Plus className="h-4 w-4" />}>Add-on listings (bookable upgrades)</Feature>
             <Feature ok icon={<MessageSquareText className="h-4 w-4" />}>AI reply assistant for messages</Feature>
@@ -407,6 +434,9 @@ export default function VendorBillingPanel() {
             <Feature ok icon={<BarChart3 className="h-4 w-4" />}>Advanced analytics &amp; trends</Feature>
             <Feature ok icon={<CalendarClock className="h-4 w-4" />}>Google Calendar sync</Feature>
           </ul>
+          <p className="mt-4 text-xs text-muted-foreground">
+            The {customerFeePct} customer service fee still applies — Pro waives your commission, not theirs.
+          </p>
 
           <div className="mt-6 mt-auto pt-6">
             {isPro ? (
