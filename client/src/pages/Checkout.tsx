@@ -26,6 +26,7 @@ import type { LocationResult } from "@/types/location";
 import { resolveAssetUrl } from "@/lib/runtimeUrls";
 import { isEventOutsideServiceRadius } from "@/lib/serviceRadius";
 import { TimeInput } from "@/components/ui/TimeInput";
+import { useFeeRates } from "@/hooks/useFeeRates";
 
 type CheckoutRouteParams = { listingId: string };
 type SavedCustomerLocation = {
@@ -287,6 +288,10 @@ function CheckoutContent({
   stripeConfigError: string | null;
 }) {
   const { t } = useTranslation();
+  // Customer service fee rate. `null` until it loads — the order summary is gated
+  // on it rather than defaulting to 0, so we never print a total that is lower
+  // than what the server will actually charge.
+  const feeRates = useFeeRates();
   const [path, setLocation] = useLocation();
   const [, params] = useRoute<CheckoutRouteParams>("/checkout/:listingId");
   const listingId =
@@ -1082,7 +1087,18 @@ function CheckoutContent({
       ? Math.round((baseSubtotal + addonSubtotalCents + logisticsSubtotal) * activeDiscountPercent / 100)
       : 0;
   const discountedSubtotal = Math.max(0, baseSubtotal + addonSubtotalCents + logisticsSubtotal - discountAmountCents);
-  const customerTotal = discountedSubtotal;
+  // Customer service fee — mirrors the server's authoritative calculation in
+  // POST /api/bookings (`Math.round(discountedSubtotal * feeRates.customerFeeRate)`).
+  // Null until the rate loads; the summary renders a skeleton in that window
+  // rather than substituting 0, which would understate the charge.
+  const customerFee =
+    feeRates === null ? null : Math.round(discountedSubtotal * feeRates.customerFeeRate);
+  // Service total (what the vendor's work + platform fee costs).
+  const customerTotal = customerFee === null ? null : discountedSubtotal + customerFee;
+  // What the card is actually charged today. The server collects the service
+  // total AND the refundable security deposit in ONE PaymentIntent, so the
+  // headline total must include the deposit or the page under-states the charge.
+  const chargedTodayTotal = customerTotal === null ? null : customerTotal + securityDepositCents;
 
   async function handleSubmitOrder() {
     setSubmitError(null);
@@ -2016,6 +2032,21 @@ function CheckoutContent({
                 </div>
               ) : null}
 
+              {/* Customer service fee. Always disclosed before the total — the
+                  server adds it to the PaymentIntent, so hiding it would charge
+                  the card more than this page says. */}
+              <div className="flex items-center justify-between">
+                <span className="text-sm text-muted-foreground">
+                  Service fee
+                  {feeRates ? ` (${(feeRates.customerFeeRate * 100).toFixed(feeRates.customerFeeRate * 100 % 1 === 0 ? 0 : 1)}%)` : ""}
+                </span>
+                {customerFee === null ? (
+                  <span className="h-4 w-16 animate-pulse rounded bg-muted" aria-hidden="true" />
+                ) : (
+                  <span className="font-medium">{formatUsdFromCents(customerFee)}</span>
+                )}
+              </div>
+
               {securityDepositCents > 0 ? (
                 <div className="flex items-center justify-between">
                   <span className="text-sm text-muted-foreground">
@@ -2027,12 +2058,16 @@ function CheckoutContent({
 
               <div className="border-t border-[rgba(74,106,125,0.22)] pt-4 flex items-center justify-between">
                 <div className="text-xl font-semibold">{t("checkout.orderSummaryTotal")}</div>
-                <div className="text-3xl font-bold">{formatUsdFromCents(customerTotal)}</div>
+                {chargedTodayTotal === null ? (
+                  <div className="h-8 w-28 animate-pulse rounded bg-muted" aria-hidden="true" />
+                ) : (
+                  <div className="text-3xl font-bold">{formatUsdFromCents(chargedTodayTotal)}</div>
+                )}
               </div>
 
               {securityDepositCents > 0 ? (
                 <p className="text-xs text-muted-foreground">
-                  Security deposit of {formatUsdFromCents(securityDepositCents)} is charged separately after booking confirmation and refunded after your event.
+                  Includes a refundable security deposit of {formatUsdFromCents(securityDepositCents)}, charged with your booking today and refunded after your event.
                 </p>
               ) : null}
 
@@ -2106,7 +2141,9 @@ function CheckoutContent({
 
               <Button
                 className="w-full h-12 text-base"
-                disabled={isSubmitting || blockedOutsideRadius}
+                /* Rates unresolved → the total on screen is a skeleton, so there is
+                   no disclosed price to consent to. Block submit until it loads. */
+                disabled={isSubmitting || blockedOutsideRadius || chargedTodayTotal === null}
                 onClick={handleSubmitOrder}
                 data-testid="button-place-order"
               >
@@ -2117,7 +2154,7 @@ function CheckoutContent({
                       ? t("checkout.placeOrderLoading.preparingPayment")
                       : t("checkout.placeOrderLoading.confirmingPayment")
                   : pendingPaymentDraft
-                    ? t("checkout.placeOrderResume", { total: formatUsdFromCents(customerTotal) })
+                    ? t("checkout.placeOrderResume", { total: formatUsdFromCents(chargedTodayTotal ?? 0) })
                     : data?.instantBookEnabled === false
                       ? t("checkout.requestToBook")
                       : t("checkout.bookNow")}

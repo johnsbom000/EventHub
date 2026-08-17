@@ -145,7 +145,7 @@ function run() {
   );
   assert.equal(customerRetainedElapsed.eligible, true, "customer retained → eligible");
   assert.equal(customerRetainedElapsed.payoutStatus, "eligible");
-  assert.equal(customerRetainedElapsed.adjustedPayoutAmount, 9200, "vendorNet − refunded");
+  assert.equal(customerRetainedElapsed.adjustedPayoutAmount, 9200, "no refund → full vendorNet");
 
   // Same, but the 72h hold has NOT elapsed yet → not_ready (still held for vendor).
   const customerRetainedHeld = computePayoutEligibility(
@@ -175,7 +175,19 @@ function run() {
     now
   );
   assert.equal(customerRetainedPartialRefund.eligible, true);
-  assert.equal(customerRetainedPartialRefund.adjustedPayoutAmount, 7200, "9200 − 2000 refunded");
+  // The payout is APPORTIONED, not reduced 1:1 by the refund. A refund is a
+  // fraction of the customer-side payment amount (12000, which includes the
+  // customer fee); the vendor's net (9200) is a different, smaller base. The
+  // vendor keeps (1 − 2000/12000) of their net:
+  //   round(9200 × 5/6) = 7667.
+  // The old 1:1 rule gave 7200, silently taking the customer fee and the full
+  // commission out of the vendor's retained share. This assertion was updated
+  // deliberately as part of that fix — see deriveAdjustedVendorPayoutAmount.
+  assert.equal(
+    customerRetainedPartialRefund.adjustedPayoutAmount,
+    7667,
+    "vendorNet apportioned by the retained fraction"
+  );
 
   // Non-customer cancel reasons stay a HARD cancel (no retained payout).
   for (const reason of [
