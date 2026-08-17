@@ -1423,6 +1423,7 @@ export function registerAdminRoutes(app: Express): void {
           WHERE va.deleted_at IS NULL
             AND va.active = true
             AND va.reverse_trial_started_at IS NOT NULL
+            AND va.pricing_model <> 'commission'
         )
         SELECT
           COUNT(*)::int AS cohort_total,
@@ -1455,6 +1456,7 @@ export function registerAdminRoutes(app: Express): void {
           AND va.active = true
           AND va.reverse_trial_started_at IS NOT NULL
           AND va.reverse_trial_started_at <= NOW() - INTERVAL '21 days'
+          AND va.pricing_model <> 'commission'
         GROUP BY COALESCE(va.paywall_variant, 'unassigned')
         ORDER BY variant
       `);

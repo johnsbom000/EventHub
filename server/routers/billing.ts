@@ -186,6 +186,13 @@ export function registerBillingRoutes(app: Express) {
         case "disabled":
         case "already_subscribed":
           return res.status(409).json({ error: "trial_not_available", message: "A free trial is only available on a new account. Please upgrade to Pro instead." });
+        case "commission_pricing_model":
+          // Unreachable in practice — rejectCommissionVendor already returned above —
+          // but kept in sync with that 403 shape as defense in depth.
+          return res.status(403).json({
+            error: "Subscriptions are not available on this account's pricing model.",
+            code: "commission_pricing_model",
+          });
         default:
           return res.status(500).json({ error: "Unable to start trial" });
       }
@@ -463,6 +470,7 @@ export type ReverseTrialResult =
   | { status: "disabled" } // REVERSE_TRIAL_ENABLED kill switch is off
   | { status: "missing_identity" } // no userId/email to bill
   | { status: "not_configured" } // Pro price IDs not set in env
+  | { status: "commission_pricing_model" } // commission vendors have no subscription/trial — skip
   | { status: "error"; error: unknown };
 
 /**
@@ -483,10 +491,17 @@ export async function startReverseTrialForVendor(
     stripeSubscriptionId?: string | null;
     subscriptionStatus?: string | null;
     compEndsAt?: Date | string | null;
+    pricingModel?: string | null;
   },
   opts: { interval?: string; treatment?: string; variant?: string } = {}
 ): Promise<ReverseTrialResult> {
   try {
+    // Commission vendors have no subscription and no trial clock — they already
+    // have full feature access permanently. Enrolling them would create a Stripe
+    // subscription that later downgrades features they are entitled to keep.
+    // Checked first (mirrors resolveFeeRates) so this stays load-bearing even if
+    // an upstream caller ever forgets its own commission guard.
+    if (isCommissionVendor(account)) return { status: "commission_pricing_model" };
     if (!REVERSE_TRIAL_ENABLED) return { status: "disabled" };
     if (!account?.id) return { status: "error", error: new Error("missing account id") };
     if (!account.userId || !account.email) return { status: "missing_identity" };

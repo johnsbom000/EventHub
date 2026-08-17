@@ -1,4 +1,4 @@
-import { and, eq, isNull, lte } from "drizzle-orm";
+import { and, eq, isNull, lte, ne } from "drizzle-orm";
 import { db } from "../db";
 import { vendorAccounts } from "@shared/schema";
 import { sendProTrialEndingEmail } from "../email";
@@ -47,7 +47,12 @@ export async function runReverseTrialCardPromptJob(opts: {
         // …still on the trial, no card added yet, and not already prompted.
         eq(vendorAccounts.subscriptionStatus, "trialing"),
         isNull(vendorAccounts.reverseTrialCardCapturedAt),
-        isNull(vendorAccounts.reverseTrialCardPromptSentAt)
+        isNull(vendorAccounts.reverseTrialCardPromptSentAt),
+        // Commission vendors have no trial/subscription and are never enrolled by
+        // startReverseTrialForVendor, but excluding them here too keeps this cohort
+        // query correct on its own terms (pricing_model is NOT NULL, so `ne` never
+        // silently drops legitimate subscription-model rows).
+        ne(vendorAccounts.pricingModel, "commission")
       )
     );
 
