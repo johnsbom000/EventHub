@@ -60,16 +60,20 @@ export function resolvePricingModelForWrite(
 
   return new Promise((resolve) => {
     let settled = false;
+    let timer: number | undefined;
+    let unsubscribe: (() => void) | undefined;
     const finish = (resolved: boolean) => {
       if (settled) return;
       settled = true;
-      window.clearTimeout(timer);
-      unsubscribe();
+      if (timer !== undefined) window.clearTimeout(timer);
+      unsubscribe?.();
       resolve({ model: readPricingModel(), resolved });
     };
     // Fires immediately if flags are already loaded, so the common case adds no delay.
-    const unsubscribe = phOnFeatureFlags(() => finish(true));
-    const timer = window.setTimeout(() => finish(false), timeoutMs);
+    // A failed `/flags` load invokes this with errorsLoading: true — that is not a
+    // resolve, it is the same "we don't actually know the flag" state as a timeout.
+    unsubscribe = phOnFeatureFlags((errorsLoading) => finish(!errorsLoading));
+    timer = window.setTimeout(() => finish(false), timeoutMs);
   });
 }
 

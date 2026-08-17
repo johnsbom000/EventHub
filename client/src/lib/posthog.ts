@@ -97,11 +97,19 @@ export function phFeatureFlag(key: string): string | boolean | undefined {
  * Subscribe to feature-flag readiness/changes. posthog-js loads flags
  * asynchronously after init, so first-time visitors get a callback once the
  * flags resolve. Returns an unsubscribe function (a no-op when disabled).
+ *
+ * posthog-js invokes the callback with `{ errorsLoading: true }` when the
+ * underlying `/flags` request failed, rather than raising. The optional
+ * second callback argument passes that through so callers that care about a
+ * failed load (vs. a genuine resolve) can distinguish the two; existing
+ * callers that only declare `() => void` keep working unchanged.
  */
-export function phOnFeatureFlags(cb: () => void): () => void {
+export function phOnFeatureFlags(
+  cb: (errorsLoading?: boolean) => void,
+): () => void {
   if (!initialized) return () => {};
   try {
-    return posthog.onFeatureFlags(() => cb());
+    return posthog.onFeatureFlags((_flags, _variants, context) => cb(context?.errorsLoading));
   } catch {
     return () => {};
   }
