@@ -6,9 +6,10 @@ import { FREE_TIER_MAX_ACTIVE_LISTINGS } from "../lib/constants";
  * returns capability flags. No I/O, so it's cheap to call on every request and
  * trivially unit-testable.
  *
- * SECURITY: every paywall gate (listing cap, analytics, Google sync) trusts the
- * `isPro` flag computed here. A wrong value is a paywall bypass — keep this the
- * ONLY place `isPro` is derived.
+ * SECURITY: `isPro` drives FEE WAIVER (a Pro subscription is the only thing that
+ * removes the vendor commission) and `hasProFeatures` drives PAYWALL GATES. Keep
+ * this the ONLY place either is derived. Never set isPro true for a commission
+ * vendor: that waives their commission and Modal B earns nothing.
  */
 
 export type VendorSubscriptionStatus =
@@ -26,10 +27,30 @@ export interface VendorSubscriptionFields {
   compEndsAt?: Date | string | null;
   subscriptionCurrentPeriodEnd?: Date | string | null;
   subscriptionCancelAtPeriodEnd?: boolean | null;
+  /**
+   * Commission pricing test. Optional so every existing caller compiles
+   * unchanged; absent or unrecognised means 'subscription'.
+   */
+  pricingModel?: string | null;
+}
+
+export type VendorPricingModel = "subscription" | "commission";
+
+function normalizePricingModel(value: string | null | undefined): VendorPricingModel {
+  return value === "commission" ? "commission" : "subscription";
 }
 
 export interface VendorEntitlements {
+  /**
+   * Has a paid/trialing/comp Pro SUBSCRIPTION. Drives FEE WAIVER only.
+   * Commission vendors are deliberately false here — see hasProFeatures.
+   */
   isPro: boolean;
+  /**
+   * Can use Pro FEATURES. True for Pro subscribers AND for commission vendors,
+   * who pay per booking instead of per month. Every feature gate uses this.
+   */
+  hasProFeatures: boolean;
   /** Max simultaneously-active listings. Infinity for Pro, FREE_TIER cap for Free. */
   maxActiveListings: number;
   canUseAnalytics: boolean;
@@ -40,7 +61,9 @@ export interface VendorEntitlements {
   canManageReviews: boolean;
   /** Create add-on listings (standalone bookable upgrades). Pro only. */
   canCreateAddons: boolean;
-  plan: "free" | "pro";
+  /** False for commission vendors — there is nothing to upgrade to. */
+  showUpgradePrompts: boolean;
+  plan: "free" | "pro" | "commission";
   status: VendorSubscriptionStatus;
   /**
    * Why the vendor is in this state — drives client banners. One of:
@@ -116,15 +139,21 @@ export function getVendorEntitlements(
     reason = "free";
   }
 
+  const pricingModel = normalizePricingModel(account.pricingModel);
+  const isCommission = pricingModel === "commission";
+  const hasProFeatures = isPro || isCommission;
+
   return {
     isPro,
-    maxActiveListings: isPro ? Infinity : FREE_TIER_MAX_ACTIVE_LISTINGS,
-    canUseAnalytics: isPro,
-    canUseGoogleSync: isPro,
-    canUseDiscounts: isPro,
-    canManageReviews: isPro,
-    canCreateAddons: isPro,
-    plan: isPro ? "pro" : "free",
+    hasProFeatures,
+    maxActiveListings: hasProFeatures ? Infinity : FREE_TIER_MAX_ACTIVE_LISTINGS,
+    canUseAnalytics: hasProFeatures,
+    canUseGoogleSync: hasProFeatures,
+    canUseDiscounts: hasProFeatures,
+    canManageReviews: hasProFeatures,
+    canCreateAddons: hasProFeatures,
+    showUpgradePrompts: !isCommission,
+    plan: isCommission ? "commission" : isPro ? "pro" : "free",
     status,
     reason,
   };
