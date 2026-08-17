@@ -8,6 +8,7 @@ import BrandWordmark from "@/components/BrandWordmark";
 import AuthModal from "@/components/AuthModal";
 import { trackBoth } from "@/lib/tracking";
 import { initEngagement } from "@/lib/engagement";
+import { captureAttribution } from "@/lib/landingAttribution";
 import BookingFlowDemo from "@/pages/landing/BookingFlowDemo";
 import HowItWorks from "@/pages/landing/HowItWorks";
 
@@ -502,6 +503,14 @@ export default function TemporaryLanding() {
   // Engagement detector: fires vendor_engaged once when the visitor scrolls 25%
   // or dwells 30s. Returns cleanup so the listeners/timer are torn down on unmount.
   useEffect(() => initEngagement(), []);
+
+  // First-touch ad attribution: this is the "control" landing style (served at
+  // `/for-vendors` and `/`), so it needs the same capture-on-mount the A–E
+  // free-first pages get via useLandingSignup — otherwise every control-style
+  // signup silently defaults to pricingModel "subscription" regardless of the
+  // visitor's actual PostHog assignment. No-op if already captured this
+  // session (first-touch wins).
+  useEffect(() => captureAttribution(), []);
 
   // role = null opens the dialog on the "vendor or customer?" choice step;
   // a role pre-selects it and jumps straight to the sign-up methods.
