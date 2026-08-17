@@ -8,7 +8,8 @@ import BrandWordmark from "@/components/BrandWordmark";
 import AuthModal from "@/components/AuthModal";
 import { trackBoth } from "@/lib/tracking";
 import { initEngagement } from "@/lib/engagement";
-import { captureAttribution } from "@/lib/landingAttribution";
+import { captureAttribution, readAttribution } from "@/lib/landingAttribution";
+import { readPricingModel } from "@/hooks/usePricingModel";
 import BookingFlowDemo from "@/pages/landing/BookingFlowDemo";
 import HowItWorks from "@/pages/landing/HowItWorks";
 
@@ -522,8 +523,25 @@ export default function TemporaryLanding() {
   // Every above/below-the-fold signup CTA routes through here so the click is
   // attributed (PostHog signup_cta_click + Meta Lead) with a per-button cta_id
   // before the signup dialog opens.
+  //
+  // This is the CONTROL style, served at both `/for-vendors` (a launch ad) and
+  // `/` (organic) — it is the arm the pricing-model test actually launches
+  // with first, so pricing_model/landing_style are enriched here the same way
+  // as the A–E free-first pages (client/src/pages/landing/signup.tsx),
+  // sourced identically: pricing_model read LIVE via readPricingModel()
+  // (PostHog flag, not stored), landing_style from the first-touch
+  // readAttribution() (null on organic "/").
   const handleSignupCta = (ctaId: string, role: SignupRole | null = null) => {
-    trackBoth("signup_cta_click", { cta_id: ctaId }, { event: "Lead", standard: true });
+    trackBoth(
+      "signup_cta_click",
+      {
+        cta_id: ctaId,
+        pricing_model: readPricingModel(),
+        landing_style: readAttribution()?.landingStyle ?? null,
+        source: ctaId,
+      },
+      { event: "Lead", standard: true },
+    );
     openSignup(role);
   };
   const openLogin = () => {
