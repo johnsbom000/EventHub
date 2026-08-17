@@ -6,14 +6,13 @@ interface FeeRates {
   customerFeeRate: number;
 }
 
-// EventHub charges no platform or service fees.
-const FALLBACK: FeeRates = { vendorFeeRate: 0, customerFeeRate: 0 };
-
-export function useFeeRates(): FeeRates {
+// Fee rates are vendor-specific and resolved server-side. Until the real rates
+// load we return null so callers can render a skeleton rather than a false 0%.
+export function useFeeRates(): FeeRates | null {
   const { data } = useQuery<FeeRates>({
     queryKey: ["/api/config/fees"],
     queryFn: () => apiRequest("GET", "/api/config/fees").then((r) => r.json()),
     staleTime: 5 * 60 * 1000,
   });
-  return data ?? FALLBACK;
+  return data ?? null;
 }

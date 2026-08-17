@@ -37,6 +37,7 @@ import {
   requireVendorAuth0,
   resolveActiveVendorProfile,
 } from "../services/vendorAuth";
+import { resolveFeeRates } from "../services/feeRatesService";
 import {
   requireCustomerAnyAuth,
   isMachineGeneratedCustomerName,
@@ -464,9 +465,26 @@ app.post(
     }
   );
 
-  // Public fee rate config — lets the frontend stay in sync with env-driven rates
-  app.get("/api/config/fees", (_req, res) => {
-    res.json({ vendorFeeRate: VENDOR_FEE_RATE, customerFeeRate: CUSTOMER_FEE_RATE });
+  // Public fee rate config — lets the frontend stay in sync with the caller's
+  // actual rates when authenticated, or the default (unwaived) rates otherwise.
+  // Must never 401/500 for an anonymous visitor: this is called from public pages.
+  //
+  // NOTE: this route has no auth middleware, so req.vendorAuth is never populated
+  // here and getVendorAccountFromRequest always resolves undefined — the
+  // vendor-aware branch below is correct but currently dead in practice. Wiring a
+  // real (optional) auth resolution step for this route is out of scope for this
+  // change; see task-5 report.
+  app.get("/api/config/fees", async (req, res) => {
+    try {
+      const account = await getVendorAccountFromRequest(req);
+      const rates = account
+        ? resolveFeeRates(account)
+        : { vendorFeeRate: VENDOR_FEE_RATE, customerFeeRate: CUSTOMER_FEE_RATE };
+      res.json(rates);
+    } catch (error) {
+      logRouteError("/api/config/fees", error as any);
+      res.json({ vendorFeeRate: VENDOR_FEE_RATE, customerFeeRate: CUSTOMER_FEE_RATE });
+    }
   });
 
   // Location search (used by LocationPicker autocomplete)

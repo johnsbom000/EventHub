@@ -147,7 +147,7 @@ export default function VendorBookings() {
   const { isAuthenticated, getAccessTokenSilently } = useAuth0();
   const queryClient = useQueryClient();
   const { toast } = useToast();
-  const { vendorFeeRate } = useFeeRates();
+  const feeRates = useFeeRates();
 
   const { data: vendorAccount } = useQuery<VendorMe>({
     queryKey: ["/api/vendor/me"],
@@ -292,6 +292,10 @@ export default function VendorBookings() {
   const parsedBookings = useMemo(() => {
     const normalizeStatus = (s: any) => String(s || "").toLowerCase();
 
+    // Fee rates haven't loaded yet — don't render fee/payout figures derived
+    // from a guessed rate. The list reappears as soon as the rates resolve.
+    if (!feeRates) return [];
+
     return (bookings || [])
       .map((b) => {
         let d: Date | null = null;
@@ -314,7 +318,7 @@ export default function VendorBookings() {
           id: b.id,
           date: d,
           amount: normalizeAmountToCents(b.totalAmount ?? 0),
-          ...deriveBookingAmounts(b, vendorFeeRate),
+          ...deriveBookingAmounts(b, feeRates.vendorFeeRate),
           googleSyncLabel: isGoogleSynced ? "synced" : "unsynced",
           status: normalizeStatus(b.status),
           isPast: isEventEnded(b.eventDate, b.eventEndTime),
@@ -335,7 +339,7 @@ export default function VendorBookings() {
         isPast: boolean;
         raw: VendorBooking;
       }>;
-  }, [bookings]);
+  }, [bookings, feeRates]);
 
   const tabFilteredItems = useMemo(() => {
     const matchesTab = (x: { date: Date; status: string; isPast: boolean }) => {

@@ -95,6 +95,7 @@ import {
   sumReservedUnits,
   exceedsCapacity,
 } from "../services/bookingService";
+import { resolveFeeRates } from "../services/feeRatesService";
 import { registerGoogleRoutes } from "../routers/google";
 import { registerBoardRoutes } from "../routers/boards";
 import { registerCircumventionRoutes } from "../routers/circumvention";
@@ -293,8 +294,6 @@ import {
   deriveVendorSlug,
 } from "../lib/routeUtils";
 import {
-  VENDOR_FEE_RATE,
-  CUSTOMER_FEE_RATE,
   STRIPE_FEE_ESTIMATE_PERCENT,
   STRIPE_FEE_ESTIMATE_FIXED_CENTS,
   VENDOR_ABSORBS_STRIPE_FEES,
@@ -1282,6 +1281,10 @@ export function registerBookingRoutes(app: Express): void {
           googleConnectionStatus: vendorAccounts.googleConnectionStatus,
           googleCalendarId: vendorAccounts.googleCalendarId,
           shopActive: vendorAccounts.shopActive,
+          subscriptionPlan: vendorAccounts.subscriptionPlan,
+          subscriptionStatus: vendorAccounts.subscriptionStatus,
+          compEndsAt: vendorAccounts.compEndsAt,
+          pricingModel: vendorAccounts.pricingModel,
         })
         .from(vendorAccounts)
         .where(and(eq(vendorAccounts.id, vendorIdToLoad), eq(vendorAccounts.active, true)))
@@ -1675,12 +1678,11 @@ export function registerBookingRoutes(app: Express): void {
       // ── End discount resolution ────────────────────────────────────────────
 
       // ── Fees ───────────────────────────────────────────────────────────────
-      // EventHub charges no platform or service fees. The customer pays exactly
-      // the (discounted) listing price plus any security deposit, and the vendor
-      // receives the full service subtotal. customerFee / platformFee remain as
-      // zeroed values so downstream snapshot/payout fields stay populated.
-      const customerFee = 0;
-      const platformFee = 0;
+      // Rates are resolved per-vendor (pricing model + Pro status) and PERSISTED
+      // on the booking below, so later rate changes never rewrite this booking.
+      const feeRates = resolveFeeRates(vendorAccount);
+      const customerFee = Math.round(discountedSubtotal * feeRates.customerFeeRate);
+      const platformFee = Math.round(discountedSubtotal * feeRates.vendorFeeRate);
       // Security deposit: collected from customer on top of the service total but never
       // paid out to the vendor. Refunded to the customer after the dispute window closes
       // with no open vendor claim, or held by admin until a dispute is resolved.
@@ -1691,8 +1693,11 @@ export function registerBookingRoutes(app: Express): void {
       // Collect the full amount up-front at booking time — service total + security deposit
       // in a single Stripe PaymentIntent. The security deposit is tracked separately in the
       // payments table so it can be partially refunded without touching the service amount.
-      const enforcedTotalAmount = discountedSubtotal + securityDepositCents;
-      const vendorPayout = discountedSubtotal;
+      // The customer pays the listing price plus the service fee, plus any
+      // deposit. The vendor's payout is the subtotal minus the vendor fee; the
+      // customer fee never touches the vendor's side.
+      const enforcedTotalAmount = discountedSubtotal + customerFee + securityDepositCents;
+      const vendorPayout = discountedSubtotal - platformFee;
       const enforcedDepositAmount = enforcedTotalAmount;
       const bookingLifecycle = resolveBookingLifecycleMode({
         listingCategory: listingRow?.category ?? null,
@@ -2107,8 +2112,8 @@ export function registerBookingRoutes(app: Express): void {
                 customerNotes,
                 customerQuestions,
                 feePolicy: {
-                  vendorFeeRate: VENDOR_FEE_RATE,
-                  customerFeeRate: CUSTOMER_FEE_RATE,
+                  vendorFeeRate: feeRates.vendorFeeRate,
+                  customerFeeRate: feeRates.customerFeeRate,
                   customerFeeCents: customerFee,
                 },
                 logisticsFees: {
@@ -2701,6 +2706,10 @@ export function registerBookingRoutes(app: Express): void {
                 id: vendorAccounts.id,
                 stripeConnectId: vendorAccounts.stripeConnectId,
                 stripeOnboardingComplete: vendorAccounts.stripeOnboardingComplete,
+                subscriptionPlan: vendorAccounts.subscriptionPlan,
+                subscriptionStatus: vendorAccounts.subscriptionStatus,
+                compEndsAt: vendorAccounts.compEndsAt,
+                pricingModel: vendorAccounts.pricingModel,
               })
               .from(vendorAccounts)
               .where(eq(vendorAccounts.id, booking.vendorAccountId))
@@ -2713,7 +2722,8 @@ export function registerBookingRoutes(app: Express): void {
 
         const { createBookingPaymentIntent } = await import("../stripe");
         const stripeProcessingFeeEstimate = estimateStripeProcessingFeeCents(proposal.amountCents);
-        const platformFeeAmount = Math.round(proposal.amountCents * VENDOR_FEE_RATE);
+        const proposalFeeRates = resolveFeeRates(vendorAccount);
+        const platformFeeAmount = Math.round(proposal.amountCents * proposalFeeRates.vendorFeeRate);
         const vendorNetPayoutAmount = Math.max(0, proposal.amountCents - platformFeeAmount);
 
         const paymentIntent = await createBookingPaymentIntent({

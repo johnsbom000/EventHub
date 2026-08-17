@@ -17,7 +17,6 @@ import {
   resolvePaymentInitAction,
 } from "../lib/routeUtils";
 import {
-  VENDOR_FEE_RATE,
   VENDOR_ABSORBS_STRIPE_FEES,
 } from "../lib/constants";
 import {
@@ -26,6 +25,7 @@ import {
 } from "../payoutEligibility";
 import { createNotification } from "../lib/notificationHelpers";
 import { sendPayoutProcessedEmail } from "../email";
+import { resolveFeeRates } from "./feeRatesService";
 
 
 /**
@@ -826,10 +826,33 @@ export async function ensurePaymentRecordForIntentInTx(
     parseIntegerValue(bookingRow.totalAmount) ??
     parseIntegerValue(params.fallbackTotalAmount) ??
     amount;
+  // This runs from Stripe webhook processing (applyPaymentIntentSuccess/FailureInTx)
+  // for a payment intent that already has money moving on it, so it must never throw —
+  // unlike initializeBookingPayment below, refusing to write a payments row here would
+  // strand an already-collected customer charge with no payout tracking. Both the
+  // booking row and the intent metadata predate this reconciliation running, so when
+  // neither has a stored fee (legacy intents from before fee-policy metadata existed),
+  // reconstruct an estimate from the vendor's fee rate instead of a raw global constant.
+  const [fallbackFeeVendorAccount] =
+    parseIntegerValue(bookingRow.platformFee) === null &&
+    parseIntegerValue(params.fallbackPlatformFeeAmount) === null &&
+    bookingRow.vendorAccountId
+      ? await tx
+          .select({
+            id: vendorAccounts.id,
+            subscriptionPlan: vendorAccounts.subscriptionPlan,
+            subscriptionStatus: vendorAccounts.subscriptionStatus,
+            compEndsAt: vendorAccounts.compEndsAt,
+            pricingModel: vendorAccounts.pricingModel,
+          })
+          .from(vendorAccounts)
+          .where(eq(vendorAccounts.id, bookingRow.vendorAccountId))
+          .limit(1)
+      : [null];
   const platformFeeAmount =
     parseIntegerValue(bookingRow.platformFee) ??
     parseIntegerValue(params.fallbackPlatformFeeAmount) ??
-    Math.round(amount * VENDOR_FEE_RATE);
+    Math.round(amount * (fallbackFeeVendorAccount ? resolveFeeRates(fallbackFeeVendorAccount).vendorFeeRate : 0));
   const vendorGrossAmount =
     parseIntegerValue(bookingRow.subtotalAmountCents) ??
     parseIntegerValue(params.fallbackVendorGrossAmount) ??
@@ -1277,7 +1300,14 @@ export async function initializeBookingPayment(input: {
   // Service-only total = full booking charge minus the security deposit portion.
   // Used for payout/fee calculations so the deposit never reaches the vendor.
   const serviceOnlyTotal = Math.max(0, totalAmountCents - securityDepositCents);
-  const platformFeeAmount = parseIntegerValue(booking.platformFee) ?? Math.round(serviceOnlyTotal * VENDOR_FEE_RATE);
+  const storedPlatformFee = parseIntegerValue(booking.platformFee);
+  if (storedPlatformFee === null || storedPlatformFee === undefined) {
+    throw new Error(
+      `Booking ${booking.id} has no stored platformFee — refusing to guess a fee rate. ` +
+        `Fee rates are resolved and persisted at booking creation.`,
+    );
+  }
+  const platformFeeAmount = storedPlatformFee;
   const vendorGrossAmount = parseIntegerValue(booking.subtotalAmountCents) ?? Math.max(0, serviceOnlyTotal - platformFeeAmount);
   const vendorNetPayoutAmount = parseIntegerValue(booking.vendorPayout) ?? Math.max(0, serviceOnlyTotal - platformFeeAmount);
   const stripeProcessingFeeEstimate = estimateStripeProcessingFeeCents(totalAmountCents);

@@ -100,6 +100,7 @@ import {
   sendCancellationEmailsAsync,
 } from "../services/bookingService";
 import { getVendorEntitlements } from "../services/entitlementsService";
+import { resolveFeeRates } from "../services/feeRatesService";
 import { reconcileVendorSubscriptionState, startReverseTrialForVendor } from "./billing";
 import { registerGoogleRoutes } from "../routers/google";
 import { registerBoardRoutes } from "../routers/boards";
@@ -315,8 +316,6 @@ import {
   deriveVendorSlug,
 } from "../lib/routeUtils";
 import {
-  VENDOR_FEE_RATE,
-  CUSTOMER_FEE_RATE,
   STRIPE_FEE_ESTIMATE_PERCENT,
   STRIPE_FEE_ESTIMATE_FIXED_CENTS,
   VENDOR_ABSORBS_STRIPE_FEES,
@@ -5539,6 +5538,24 @@ export function registerVendorRoutes(app: Express): void {
           history: [],
         });
       }
+      // Used below ONLY as a display-estimate fallback for legacy booking rows
+      // that predate the stored platformFee/customerFeeAmountCents columns —
+      // never to recompute a stored, already-charged booking's real fee. Loaded
+      // once for the whole rollup rather than per-row.
+      const [feeRateVendorAccount] = await db
+        .select({
+          id: vendorAccounts.id,
+          subscriptionPlan: vendorAccounts.subscriptionPlan,
+          subscriptionStatus: vendorAccounts.subscriptionStatus,
+          compEndsAt: vendorAccounts.compEndsAt,
+          pricingModel: vendorAccounts.pricingModel,
+        })
+        .from(vendorAccounts)
+        .where(eq(vendorAccounts.id, vendorAccountId))
+        .limit(1);
+      const legacyEstimateFeeRates = feeRateVendorAccount
+        ? resolveFeeRates(feeRateVendorAccount)
+        : { vendorFeeRate: 0, customerFeeRate: 0 };
       const profileContext = await resolveActiveVendorProfile(req);
       const activeProfileId = profileContext?.activeProfileId;
       if (!activeProfileId) {
@@ -5701,7 +5718,7 @@ export function registerVendorRoutes(app: Express): void {
 
         const baseAmountCents = baseAmountByBookingId.get(r.id) ?? 0;
         if (!baseAmountCents) return 0;
-        const vendorFee = Math.round(baseAmountCents * VENDOR_FEE_RATE);
+        const vendorFee = Math.round(baseAmountCents * legacyEstimateFeeRates.vendorFeeRate);
         return Math.max(0, baseAmountCents - vendorFee);
       };
 
@@ -5742,7 +5759,7 @@ export function registerVendorRoutes(app: Express): void {
         const typed = normalizeAmountToCents(r.platformFee);
         if (typed > 0) return typed;
         const baseAmountCents = baseAmountByBookingId.get(r.id) ?? 0;
-        return Math.round(baseAmountCents * VENDOR_FEE_RATE);
+        return Math.round(baseAmountCents * legacyEstimateFeeRates.vendorFeeRate);
       };
 
       const toRowPayoutStatus = (r: { payoutStatus?: string | null }) =>
@@ -5769,7 +5786,7 @@ export function registerVendorRoutes(app: Express): void {
         const grossCents =
           grossCentsFromTypedTotal > 0
             ? grossCentsFromTypedTotal
-            : baseAmountCents + (typedCustomerFeeCents > 0 ? typedCustomerFeeCents : Math.round(baseAmountCents * CUSTOMER_FEE_RATE));
+            : baseAmountCents + (typedCustomerFeeCents > 0 ? typedCustomerFeeCents : Math.round(baseAmountCents * legacyEstimateFeeRates.customerFeeRate));
         const travelFeeGrossCents = Math.max(0, normalizeAmountToCents(r.travelFeeGrossAmount));
         const travelFeeStripeFeeCents = Math.max(0, normalizeAmountToCents(r.travelFeeStripeFeeAmount));
         const travelFeeNetCents = toTravelFeeNetCents(r);
