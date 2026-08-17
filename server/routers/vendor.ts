@@ -450,6 +450,46 @@ function insertListingSoftFlags(params: {
   return softFlagged;
 }
 
+// Landing-style values must match LandingStyle in
+// client/src/hooks/useLandingVariant.ts.
+const ALLOWED_LANDING_STYLES = ["control", "a", "b", "c", "d", "e"] as const;
+
+/**
+ * Ad attribution / pricing assignment from the landing page, sanitized against
+ * an untrusted client. This is the security boundary for both vendor-account
+ * insert paths (/api/vendor/provision and /api/vendor/onboarding/complete) —
+ * kept as a single module-level helper so the allow-lists only need to be
+ * edited in one place to stay in sync across both call sites.
+ *
+ * A visitor can claim any pricing model; that is bounded by the exclusivity
+ * guards elsewhere (a false 'commission' claim yields Pro features at 8% with
+ * no ability to buy out), and the claim is recorded via logEvent so admin can
+ * audit divergence from the real PostHog assignment.
+ */
+function sanitizeAttributionFields(body: any): {
+  pricingModel: "commission" | "subscription";
+  landingStyle: string | null;
+  utmSource: string | null;
+  utmMedium: string | null;
+  utmCampaign: string | null;
+  utmContent: string | null;
+  fbclid: string | null;
+} {
+  const trimmed = (value: unknown): string | null =>
+    typeof value === "string" && value.trim() ? value.trim().slice(0, 255) : null;
+  return {
+    pricingModel: body?.pricingModel === "commission" ? "commission" : "subscription",
+    landingStyle: (ALLOWED_LANDING_STYLES as readonly string[]).includes(body?.landingStyle)
+      ? String(body.landingStyle)
+      : null,
+    utmSource: trimmed(body?.utmSource),
+    utmMedium: trimmed(body?.utmMedium),
+    utmCampaign: trimmed(body?.utmCampaign),
+    utmContent: trimmed(body?.utmContent),
+    fbclid: trimmed(body?.fbclid),
+  };
+}
+
 export function registerVendorRoutes(app: Express): void {
   const vendorShopUploadsDir = path.join(process.cwd(), "server/uploads/vendor-shops");
 
@@ -1269,17 +1309,9 @@ export function registerVendorRoutes(app: Express): void {
 
       const shopSlug = await allocateUniqueVendorSlug(normalizedName);
 
-      // Ad attribution / pricing assignment from the landing page. Client-supplied
-      // and therefore untrusted: a visitor can claim any pricing model. That is
-      // bounded by the exclusivity guards (a false 'commission' claim yields Pro
-      // features at 8% with no ability to buy out), and we record the claim so
-      // admin can audit divergence from the PostHog assignment.
-      const claimedPricingModel = req.body?.pricingModel === "commission" ? "commission" : "subscription";
-      const claimedLandingStyle = ["control", "a", "b", "c", "d", "e"].includes(req.body?.landingStyle)
-        ? String(req.body.landingStyle)
-        : null;
-      const trimmed = (value: unknown): string | null =>
-        typeof value === "string" && value.trim() ? value.trim().slice(0, 255) : null;
+      // See sanitizeAttributionFields() above — this is the untrusted-client
+      // security boundary for the pricing/landing/UTM columns.
+      const attribution = sanitizeAttributionFields(req.body);
 
       // All provisioning writes run in ONE transaction so a failure can never
       // leave a half-provisioned vendor (an orphan account with no profile row).
@@ -1295,13 +1327,13 @@ export function registerVendorRoutes(app: Express): void {
             businessName: normalizedName,
             shopSlug,
             profileComplete: false,
-            pricingModel: claimedPricingModel,
-            landingStyle: claimedLandingStyle,
-            utmSource: trimmed(req.body?.utmSource),
-            utmMedium: trimmed(req.body?.utmMedium),
-            utmCampaign: trimmed(req.body?.utmCampaign),
-            utmContent: trimmed(req.body?.utmContent),
-            fbclid: trimmed(req.body?.fbclid),
+            pricingModel: attribution.pricingModel,
+            landingStyle: attribution.landingStyle,
+            utmSource: attribution.utmSource,
+            utmMedium: attribution.utmMedium,
+            utmCampaign: attribution.utmCampaign,
+            utmContent: attribution.utmContent,
+            fbclid: attribution.fbclid,
           })
           .returning();
 
@@ -1370,9 +1402,9 @@ export function registerVendorRoutes(app: Express): void {
       // landing style and UTM campaign so admin can spot divergence from the
       // PostHog-side assignment.
       logEvent("vendor_pricing_model_assigned", "vendor", created.id, {
-        pricingModel: claimedPricingModel,
-        landingStyle: claimedLandingStyle,
-        utmCampaign: trimmed(req.body?.utmCampaign),
+        pricingModel: attribution.pricingModel,
+        landingStyle: attribution.landingStyle,
+        utmCampaign: attribution.utmCampaign,
       });
 
       // Fire-and-forget: send vendor welcome email on first account creation.
@@ -1477,13 +1509,8 @@ export function registerVendorRoutes(app: Express): void {
           // this insert path exists so a vendor who reaches onboarding without
           // ever calling provision (e.g. a healed/legacy flow) still gets a
           // pricing_model row instead of silently defaulting every such vendor
-          // to subscription.
-          const claimedPricingModel = req.body?.pricingModel === "commission" ? "commission" : "subscription";
-          const claimedLandingStyle = ["control", "a", "b", "c", "d", "e"].includes(req.body?.landingStyle)
-            ? String(req.body.landingStyle)
-            : null;
-          const trimmed = (value: unknown): string | null =>
-            typeof value === "string" && value.trim() ? value.trim().slice(0, 255) : null;
+          // to subscription. See sanitizeAttributionFields() above.
+          const attribution = sanitizeAttributionFields(req.body);
 
           const [created] = await db
             .insert(vendorAccounts)
@@ -1494,16 +1521,24 @@ export function registerVendorRoutes(app: Express): void {
               businessName: normalizedProfileName,
               shopSlug,
               profileComplete: false,
-              pricingModel: claimedPricingModel,
-              landingStyle: claimedLandingStyle,
-              utmSource: trimmed(req.body?.utmSource),
-              utmMedium: trimmed(req.body?.utmMedium),
-              utmCampaign: trimmed(req.body?.utmCampaign),
-              utmContent: trimmed(req.body?.utmContent),
-              fbclid: trimmed(req.body?.fbclid),
+              pricingModel: attribution.pricingModel,
+              landingStyle: attribution.landingStyle,
+              utmSource: attribution.utmSource,
+              utmMedium: attribution.utmMedium,
+              utmCampaign: attribution.utmCampaign,
+              utmContent: attribution.utmContent,
+              fbclid: attribution.fbclid,
             })
             .returning();
           account = created;
+
+          // Audit trail, mirroring /api/vendor/provision — this insert path
+          // previously stamped the column with no audit row at all.
+          logEvent("vendor_pricing_model_assigned", "vendor", created.id, {
+            pricingModel: attribution.pricingModel,
+            landingStyle: attribution.landingStyle,
+            utmCampaign: attribution.utmCampaign,
+          });
         }
       } else {
         const currentBusinessName = asTrimmedString(account.businessName);

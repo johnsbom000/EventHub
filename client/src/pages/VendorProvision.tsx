@@ -7,6 +7,7 @@ import { apiRequest, notifyEmailUnverified } from "@/lib/queryClient";
 import { phCapture } from "@/lib/posthog";
 import { trackSignupCompletedOnce } from "@/lib/tracking";
 import { readLandingVariant } from "@/hooks/useLandingVariant";
+import { readPricingModel } from "@/hooks/usePricingModel";
 import { readAttribution, clearAttribution } from "@/lib/landingAttribution";
 import { useToast } from "@/hooks/use-toast";
 import { Button } from "@/components/ui/button";
@@ -95,7 +96,13 @@ export default function VendorProvision() {
         },
         body: JSON.stringify({
           businessName: trimmed,
-          pricingModel: attribution?.pricingModel,
+          // Read live, not from the first-touch sessionStorage record: on paid
+          // traffic's first visit the PostHog /decide round trip is very
+          // likely still in flight, so a value captured at landing would be
+          // the "subscription" pre-resolution placeholder, frozen forever by
+          // first-touch. By provision time flags have resolved — same
+          // live-read pattern as readLandingVariant() below.
+          pricingModel: readPricingModel(),
           landingStyle: attribution?.landingStyle,
           utmSource: attribution?.utmSource,
           utmMedium: attribution?.utmMedium,

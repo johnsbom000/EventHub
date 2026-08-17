@@ -181,10 +181,11 @@ export function useLandingSignup(_ns?: string) {
   // Free-first pages are vendor-only: always carry vendor intent and land on
   // /vendor/provision so the existing provisioning flow runs unchanged.
   const startSignup = async (method: "google" | "email") => {
-    // Belt-and-suspenders: the mount-time effect above already captures
-    // first-touch attribution, but this is a no-op if it already ran, so
-    // capturing again here costs nothing and covers any caller of startSignup
-    // that renders this hook without ever mounting the effect.
+    // captureAttribution() is a no-op by the time this runs — the mount
+    // effect above lives in this same hook instance, so it has already fired
+    // for any caller reachable here. Kept as a cheap, harmless safety net
+    // only in case a future refactor exposes startSignup without mounting
+    // the effect first; it is not doing real work today.
     captureAttribution();
     sessionStorage.setItem("eh:after-auth-intent", "vendor");
     // Pro-trial A/B: a "Try Pro free" click (intent === "pro") starts a trial
