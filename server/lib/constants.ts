@@ -1,10 +1,11 @@
 // ─── Platform fee rates ───────────────────────────────────────────────────────
-// EventHub charges NO platform or service fees. These remain as named constants
-// (always 0) so the payment math and any callers still resolve cleanly. The env
-// overrides are intentionally ignored — fees are off by design, not config.
-// Future monetization is a vendor subscription, not per-transaction fees.
-export const VENDOR_FEE_RATE = 0;
-export const CUSTOMER_FEE_RATE = 0;
+// Platform take rate. The customer service fee applies to every booking on both
+// pricing models. The vendor commission applies to everyone EXCEPT a
+// subscription-model vendor holding an active Pro subscription — buying Pro is
+// the only thing that waives it. Resolution lives in feeRatesService.ts; never
+// compute a fee from these constants directly.
+export const VENDOR_FEE_RATE = 0.08;
+export const CUSTOMER_FEE_RATE = 0.05;
 
 // ─── Vendor Pro subscription ──────────────────────────────────────────────────
 // Free tier = this many active listings at once, no analytics, no Google sync.
