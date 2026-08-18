@@ -47,11 +47,26 @@ export function Reveal({
   className,
   y = 20,
   delay = 0,
+  duration = 0.7,
+  strict = false,
 }: {
   children: ReactNode;
   className?: string;
   y?: number;
   delay?: number;
+  duration?: number;
+  /**
+   * Wait for the element to genuinely enter the viewport before revealing,
+   * via IntersectionObserver and with no blind timer.
+   *
+   * The default (non-strict) path force-shows everything 1.2s after mount, which
+   * is right for whole page sections — they're off-screen, so there's no pop, and
+   * nothing can be stranded invisible. But it means an element far down the page
+   * is already visible by the time the reader scrolls to it, so it never animates.
+   * Use `strict` when the animation itself is the point (e.g. rows that should
+   * fade up one at a time as the reader moves down the page).
+   */
+  strict?: boolean;
 }) {
   const reduced = useReducedMotion();
   const ref = useRef<HTMLDivElement>(null);
@@ -66,6 +81,28 @@ export function Reveal({
     if (!el) {
       setShown(true);
       return;
+    }
+
+    if (strict) {
+      // IntersectionObserver fires reliably on fast/jump scrolls, so no timer
+      // fallback is needed. If it's unavailable, show rather than risk hiding.
+      if (typeof IntersectionObserver === "undefined") {
+        setShown(true);
+        return;
+      }
+      const io = new IntersectionObserver(
+        (entries) => {
+          if (entries.some((e) => e.isIntersecting)) {
+            setShown(true);
+            io.disconnect();
+          }
+        },
+        // Trigger once the row is a little way into the viewport, not the instant
+        // its top edge crosses the fold.
+        { rootMargin: "0px 0px -28% 0px" },
+      );
+      io.observe(el);
+      return () => io.disconnect();
     }
     // Reveal once any part of the element enters the viewport.
     const check = () => {
@@ -90,7 +127,7 @@ export function Reveal({
     };
     window.addEventListener("scroll", onScroll, { passive: true });
     return cleanup;
-  }, [reduced]);
+  }, [reduced, strict]);
 
   return (
     <motion.div
@@ -98,7 +135,7 @@ export function Reveal({
       className={className}
       initial={false}
       animate={{ opacity: shown ? 1 : 0, y: shown || reduced ? 0 : y }}
-      transition={reduced ? { duration: 0 } : { duration: 0.7, ease: EASE, delay }}
+      transition={reduced ? { duration: 0 } : { duration, ease: EASE, delay }}
     >
       {children}
     </motion.div>
