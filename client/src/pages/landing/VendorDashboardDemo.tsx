@@ -104,7 +104,9 @@ const DEMO_PINNED_STEP: number | null = (() => {
   return raw != null && /^[0-4]$/.test(raw) ? Number(raw) : null;
 })();
 
-function StatusBadge({ status }: { status: "Confirmed" | "Pending" }) {
+// Exported so decorative reuses of the booking row (e.g. ScatteredBookings on
+// Direction D) share this pill rather than duplicating it.
+export function StatusBadge({ status }: { status: "Confirmed" | "Pending" }) {
   const { t } = useTranslation();
   const pending = status === "Pending";
   return (

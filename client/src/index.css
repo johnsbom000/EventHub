@@ -949,3 +949,18 @@
 @media (prefers-reduced-motion: reduce) {
   .deal-fill { animation: none; }
 }
+
+/* Decorative booking cards scattered around the Direction D landing hero.
+   Rotation/scale live on a parent wrapper, so this keyframe owns translateY
+   only and the two transforms can't fight. */
+@keyframes booking-card-drift {
+  0%, 100% { transform: translateY(0); }
+  50% { transform: translateY(-10px); }
+}
+.landing-card-drift {
+  animation: booking-card-drift 8s ease-in-out infinite;
+  will-change: transform;
+}
+@media (prefers-reduced-motion: reduce) {
+  .landing-card-drift { animation: none; }
+}
