@@ -58,7 +58,7 @@ for (const locale of LOCALES.slice(1)) {
   );
 }
 
-// ── Every locale must have all fifteen sections, in order ───────────────────
+// ── Every locale must have all sixteen sections, in order ───────────────────
 const EXPECTED_SECTIONS = [
   "information-we-collect",
   "how-we-use",
@@ -67,6 +67,7 @@ const EXPECTED_SECTIONS = [
   "maps-location",
   "messaging",
   "google-calendar",
+  "analytics-cookies",
   "how-we-share",
   "data-retention",
   "security",
@@ -80,7 +81,7 @@ for (const locale of LOCALES) {
   assert.deepEqual(
     privacy[locale].sections.map((s) => s.id),
     EXPECTED_SECTIONS,
-    `${locale} has the canonical fifteen sections in order`,
+    `${locale} has the canonical sixteen sections in order`,
   );
   // Non-empty label/heading on every section, or the TOC renders blanks.
   for (const s of privacy[locale].sections) {
@@ -113,6 +114,10 @@ const FACTS: Array<{ label: string; pattern: RegExp }> = [
   { label: "PCI-DSS Level 1", pattern: /PCI-DSS/g },
   { label: "CCPA", pattern: /CCPA/g },
   { label: "CPRA", pattern: /CPRA/g },
+  // PostHog receives personal data (pseudonymous IDs, product events, UTM
+  // parameters) and assigns pricing-experiment variants. It must be disclosed
+  // as a sub-processor in every locale, exactly like Stripe/Auth0/Mapbox/Stream.
+  { label: "PostHog sub-processor disclosure", pattern: /PostHog/g },
 ];
 
 for (const { label, pattern } of FACTS) {
@@ -214,3 +219,39 @@ assert.ok(
 );
 
 console.log("privacy-locale-parity.test.ts: all assertions passed");
+
+// ── Section headings must be numbered sequentially from 1 ───────────────────
+// Inserting a section renumbers everything after it. If a heading number is
+// skipped or duplicated, an internal "see Section N" reference silently points
+// at the wrong clause — the same defect the Terms cross-reference check exists
+// to catch.
+for (const locale of LOCALES) {
+  const nums = privacy[locale].sections.map((s) => {
+    const m = /^(\d+)\./.exec(s.heading);
+    assert.ok(m, `${locale}: heading is not numbered: "${s.heading}"`);
+    return Number(m![1]);
+  });
+  assert.deepEqual(
+    nums,
+    nums.map((_, i) => i + 1),
+    `${locale} headings must run 1..${nums.length} with no gaps or repeats`,
+  );
+}
+
+// ── Every sub-processor named anywhere must also appear in the sharing clause ─
+// Describing a processor in its own section but omitting it from "How We Share"
+// is how PostHog went undisclosed while already receiving personal data.
+for (const locale of LOCALES) {
+  const share = privacy[locale].sections.find((s) => s.id === "how-we-share");
+  assert.ok(share, `${locale} has a how-we-share section`);
+  const shareText = share!.blocks
+    .map((b) => (b.type === "ul" ? b.items.join(" ") : b.text))
+    .join(" ");
+  for (const proc of ["Stripe", "Auth0", "Mapbox", "Stream", "PostHog"]) {
+    assert.ok(
+      shareText.includes(proc),
+      `${locale}: ${proc} is named in the policy but missing from the sharing clause`,
+    );
+  }
+}
+

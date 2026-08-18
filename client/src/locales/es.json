@@ -1055,9 +1055,45 @@
         ]
       },
       {
+        "id": "analytics-cookies",
+        "label": "Análisis y cookies",
+        "heading": "8. Análisis, cookies y tecnologías similares",
+        "blocks": [
+          {
+            "type": "p",
+            "text": "Utilizamos cookies y almacenamiento del navegador para operar la Plataforma, recordar tus preferencias y entender cómo se usa la Plataforma. Estas tecnologías son el medio por el cual se recopila realmente la información de uso y de dispositivo descrita en la Sección 1."
+          },
+          {
+            "type": "p",
+            "text": "Los análisis de producto los proporciona **PostHog, Inc.** PostHog almacena un identificador de visitante seudonimizado en una cookie y en el almacenamiento local del navegador, y registra las páginas que visitas y eventos de producto como crear una cuenta o publicar un anuncio. PostHog crea un perfil tanto para visitantes anónimos como para usuarios con sesión iniciada, y registra los parámetros de campaña publicitaria contenidos en el enlace por el que llegaste. Esto está sujeto a la Política de Privacidad de PostHog (https://posthog.com/privacy)."
+          },
+          {
+            "type": "p",
+            "text": "Las tecnologías que utilizamos se dividen en estas categorías:"
+          },
+          {
+            "type": "ul",
+            "items": [
+              "**Estrictamente necesarias:** tokens de autenticación que Auth0 guarda en el almacenamiento local de tu navegador para mantener tu sesión iniciada entre visitas. Sin ellos no puedes iniciar sesión ni completar una reserva.",
+              "**Preferencias:** una cookie propia que recuerda si el panel de navegación está desplegado, y almacenamiento del navegador que recuerda el idioma que seleccionaste.",
+              "**Análisis y experimentos:** el almacenamiento de PostHog descrito arriba. PostHog también determina a qué variante de una función o de un experimento de precios se asigna tu visita y guarda esa asignación, de modo que las condiciones que se te mostraron se mantengan constantes en lugar de cambiar entre visitas.",
+              "**Atribución:** almacenamiento de sesión que registra qué página de destino y qué anuncio te trajeron a la Plataforma, para poder medir qué campañas funcionan. Se borra al cerrar el navegador."
+            ]
+          },
+          {
+            "type": "p",
+            "text": "No utilizamos cookies ni tecnologías similares para publicidad de terceros, y no permitimos que terceros las usen en la Plataforma para crear perfiles publicitarios sobre ti. No vendemos la información que recopilan."
+          },
+          {
+            "type": "p",
+            "text": "La mayoría de los navegadores permiten bloquear o eliminar cookies y borrar el almacenamiento del sitio desde su configuración. Bloquear el almacenamiento estrictamente necesario te impedirá iniciar sesión o reservar. Bloquear el almacenamiento de análisis no afecta tu capacidad de usar la Plataforma."
+          }
+        ]
+      },
+      {
         "id": "how-we-share",
         "label": "Cómo compartimos la información",
-        "heading": "8. Cómo compartimos tu información",
+        "heading": "9. Cómo compartimos tu información",
         "blocks": [
           {
             "type": "p",
@@ -1067,7 +1103,7 @@
             "type": "ul",
             "items": [
               "**Entre clientes y proveedores:** cuando se crea una reserva, compartimos con el proveedor el nombre del cliente, los detalles del evento y la dirección de entrega. El nombre comercial, la ubicación y la información de contacto del proveedor se comparten con el cliente.",
-              "**Proveedores de servicios:** compartimos datos con Stripe, Auth0, Mapbox, Stream y otros subencargados descritos anteriormente, así como con proveedores de infraestructura en la nube (como Railway y Neon), únicamente para operar y mejorar la Plataforma.",
+              "**Proveedores de servicios:** compartimos datos con Stripe, Auth0, Mapbox, Stream, PostHog y otros subencargados descritos anteriormente, así como con proveedores de infraestructura en la nube (como Railway y Neon), únicamente para operar y mejorar la Plataforma.",
               "**Obligaciones legales:** podemos divulgar información si lo exige la ley, una orden judicial o una autoridad gubernamental, o si creemos que la divulgación es necesaria para proteger los derechos, la propiedad o la seguridad de EventHub, de nuestros usuarios o del público.",
               "**Transferencias empresariales:** si EventHub es adquirida, se fusiona o participa en una transacción corporativa similar, tu información podrá transferirse como parte de esa transacción. Te lo notificaremos por correo electrónico o mediante un aviso destacado en la Plataforma antes de que se transfiera tu información."
             ]
@@ -1081,7 +1117,7 @@
       {
         "id": "data-retention",
         "label": "Conservación de datos",
-        "heading": "9. Conservación de datos",
+        "heading": "10. Conservación de datos",
         "blocks": [
           {
             "type": "p",
@@ -1096,7 +1132,7 @@
       {
         "id": "security",
         "label": "Seguridad",
-        "heading": "10. Seguridad",
+        "heading": "11. Seguridad",
         "blocks": [
           {
             "type": "p",
@@ -1111,7 +1147,7 @@
       {
         "id": "your-rights",
         "label": "Tus derechos",
-        "heading": "11. Tus derechos",
+        "heading": "12. Tus derechos",
         "blocks": [
           {
             "type": "p",
@@ -1137,7 +1173,7 @@
       {
         "id": "california",
         "label": "Residentes de California",
-        "heading": "12. Residentes de California (CCPA / CPRA)",
+        "heading": "13. Residentes de California (CCPA / CPRA)",
         "blocks": [
           {
             "type": "p",
@@ -1162,7 +1198,7 @@
       {
         "id": "children",
         "label": "Privacidad de menores",
-        "heading": "13. Privacidad de menores",
+        "heading": "14. Privacidad de menores",
         "blocks": [
           {
             "type": "p",
@@ -1173,7 +1209,7 @@
       {
         "id": "changes",
         "label": "Cambios a esta Política",
-        "heading": "14. Cambios a esta Política",
+        "heading": "15. Cambios a esta Política",
         "blocks": [
           {
             "type": "p",
@@ -1188,7 +1224,7 @@
       {
         "id": "contact",
         "label": "Contáctanos",
-        "heading": "15. Contáctanos",
+        "heading": "16. Contáctanos",
         "blocks": [
           {
             "type": "p",

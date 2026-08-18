@@ -1055,9 +1055,45 @@
         ]
       },
       {
+        "id": "analytics-cookies",
+        "label": "Analytics & Cookies",
+        "heading": "8. Analytics, Cookies & Similar Technologies",
+        "blocks": [
+          {
+            "type": "p",
+            "text": "We use cookies and browser storage to operate the Platform, remember your preferences, and understand how the Platform is used. These technologies are how the usage and device information described in Section 1 is actually collected."
+          },
+          {
+            "type": "p",
+            "text": "Product analytics are provided by **PostHog, Inc.** PostHog stores a pseudonymous visitor identifier in a cookie and in browser local storage, and records the pages you visit and product events such as creating an account or publishing a listing. PostHog creates a profile for anonymous visitors as well as signed-in users, and records the advertising campaign parameters contained in the link you arrived from. This is subject to PostHog's Privacy Policy (https://posthog.com/privacy)."
+          },
+          {
+            "type": "p",
+            "text": "The technologies we use fall into these categories:"
+          },
+          {
+            "type": "ul",
+            "items": [
+              "**Strictly necessary:** authentication tokens stored in your browser's local storage by Auth0 to keep you signed in between visits. You cannot sign in or complete a booking without these.",
+              "**Preferences:** a first-party cookie that remembers whether the navigation panel is expanded, and browser storage that remembers your selected language.",
+              "**Analytics and experiments:** PostHog storage, described above. PostHog also determines which variant of a feature or pricing experiment your visit is assigned to and stores that assignment, so that the terms you were shown remain consistent rather than changing between visits.",
+              "**Attribution:** session storage recording which landing page and advertisement brought you to the Platform, so we can measure which campaigns are effective. This is cleared when you close your browser."
+            ]
+          },
+          {
+            "type": "p",
+            "text": "We do not use cookies or similar technologies for third-party advertising, and we do not allow third parties to use them on the Platform to build advertising profiles about you. We do not sell the information they collect."
+          },
+          {
+            "type": "p",
+            "text": "Most browsers let you block or delete cookies and clear site storage through their settings. Blocking strictly necessary storage will prevent you from signing in or booking. Blocking analytics storage does not affect your ability to use the Platform."
+          }
+        ]
+      },
+      {
         "id": "how-we-share",
         "label": "How We Share Information",
-        "heading": "8. How We Share Your Information",
+        "heading": "9. How We Share Your Information",
         "blocks": [
           {
             "type": "p",
@@ -1067,7 +1103,7 @@
             "type": "ul",
             "items": [
               "**Between customers and vendors:** When a booking is created, we share the customer's name, event details, and delivery address with the vendor. The vendor's business name, location, and contact information are shared with the customer.",
-              "**Service providers:** We share data with Stripe, Auth0, Mapbox, Stream, and other sub-processors as described above, and with cloud infrastructure providers (such as Railway and Neon), solely to operate and improve the Platform.",
+              "**Service providers:** We share data with Stripe, Auth0, Mapbox, Stream, PostHog, and other sub-processors as described above, and with cloud infrastructure providers (such as Railway and Neon), solely to operate and improve the Platform.",
               "**Legal obligations:** We may disclose information if required by law, court order, or government authority, or if we believe disclosure is necessary to protect the rights, property, or safety of EventHub, our users, or the public.",
               "**Business transfers:** If EventHub is acquired, merged, or undergoes a similar corporate transaction, your information may be transferred as part of that transaction. We will notify you via email and/or a prominent notice on the Platform before your information is transferred."
             ]
@@ -1081,7 +1117,7 @@
       {
         "id": "data-retention",
         "label": "Data Retention",
-        "heading": "9. Data Retention",
+        "heading": "10. Data Retention",
         "blocks": [
           {
             "type": "p",
@@ -1096,7 +1132,7 @@
       {
         "id": "security",
         "label": "Security",
-        "heading": "10. Security",
+        "heading": "11. Security",
         "blocks": [
           {
             "type": "p",
@@ -1111,7 +1147,7 @@
       {
         "id": "your-rights",
         "label": "Your Rights",
-        "heading": "11. Your Rights",
+        "heading": "12. Your Rights",
         "blocks": [
           {
             "type": "p",
@@ -1137,7 +1173,7 @@
       {
         "id": "california",
         "label": "California Residents",
-        "heading": "12. California Residents (CCPA / CPRA)",
+        "heading": "13. California Residents (CCPA / CPRA)",
         "blocks": [
           {
             "type": "p",
@@ -1162,7 +1198,7 @@
       {
         "id": "children",
         "label": "Children's Privacy",
-        "heading": "13. Children's Privacy",
+        "heading": "14. Children's Privacy",
         "blocks": [
           {
             "type": "p",
@@ -1173,7 +1209,7 @@
       {
         "id": "changes",
         "label": "Changes to This Policy",
-        "heading": "14. Changes to This Policy",
+        "heading": "15. Changes to This Policy",
         "blocks": [
           {
             "type": "p",
@@ -1188,7 +1224,7 @@
       {
         "id": "contact",
         "label": "Contact Us",
-        "heading": "15. Contact Us",
+        "heading": "16. Contact Us",
         "blocks": [
           {
             "type": "p",
