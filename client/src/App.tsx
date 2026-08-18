@@ -54,7 +54,6 @@ import { deriveVendorDetection, type VendorMeState } from "@/lib/vendorState";
 import { useIsVendorOnly } from "@/hooks/useIsVendorOnly";
 import { useToast } from "@/hooks/use-toast";
 import Privacy from "@/pages/Privacy";
-import LinkExpired from "@/pages/LinkExpired";
 import VendorProvision from "@/pages/VendorProvision";
 import { UpgradeModalProvider } from "@/components/UpgradeModal";
 
@@ -464,9 +463,6 @@ function Router() {
         <Route path="/vendor/my-hub" component={MyHub} />
         <Route path="/my-hub" component={MyHub} />
 
-        {/* Retired vendor programs — old invite links now show an expired notice */}
-        <Route path="/vendor/marquee" component={LinkExpired} />
-        <Route path="/vendor/founding" component={LinkExpired} />
 
         {/* Legal */}
         <Route path="/terms" component={Terms} />

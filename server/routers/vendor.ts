@@ -1189,14 +1189,6 @@ export function registerVendorRoutes(app: Express): void {
     // record reflects what we actually served.
     acceptedTerms: z.boolean().optional(),
     referralCode: z.string().max(20).optional(),
-    foundingInviteToken: z.string().max(64).optional(),
-    marqueeInviteToken: z.string().max(64).optional(),
-  });
-
-  // Founding / Marquee vendor programs have been retired. Any old invite token is
-  // now treated as expired so the client can surface a "link has expired" page.
-  app.get("/api/invite/validate", async (_req, res) => {
-    return res.json({ valid: false, expired: true });
   });
 
   // Provision a minimal vendor account immediately after auth.
@@ -1802,10 +1794,6 @@ export function registerVendorRoutes(app: Express): void {
       const isUpgrade = Boolean(customerAuth || vendorAuth);
 
       const isFirstTimeOnboarding = existingProfiles.length === 0;
-
-      // Founding / Marquee vendor programs have been retired. Invite tokens and
-      // vendor-referral rewards are no longer processed. Monetization is moving to
-      // a vendor subscription model.
 
       logEvent("vendor_signup_completed", "vendor", account.id, {
         is_new: isFirstTimeOnboarding,

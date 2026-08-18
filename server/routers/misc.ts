@@ -131,7 +131,6 @@ import {
   type TravelFeeProposal,
   listingReviews,
   reviewReplies,
-  vendorReferrals,
   vendorInquiries,
 } from "@shared/schema";
 import {

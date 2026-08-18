@@ -81,5 +81,5 @@ Requires a `.env` file with Neon DB URL, Auth0, Stripe, Mapbox, and S3 credentia
 - **Google tokens are encrypted** at rest (migration 0093) — don't log or expose them.
 - **Vendor slugs are unique** (migration 0088 + unique constraint). Slug generation must handle collisions gracefully.
 - **Stripe Connect** uses the separate charges & transfers model (not direct charges). Payout eligibility logic lives in `server/payoutEligibility.ts`.
-- **Founding/Marquee vendor programs** are live (migrations 0089, 0090). Fee tiers differ from standard vendors — check before any payment flow changes.
+- **Founding/Marquee vendor programs are REMOVED** (retired; schema + routes + scripts deleted, migration 0166 drops the columns and tables). Migrations 0089–0118 still create/alter them and must be left alone — they are history, and 0115/0118 are unguarded `ALTER TABLE`s that depend on those tables existing at their point in the sequence. Nothing grants special fee tiers any more: **all fee rates come solely from `server/services/feeRatesService.ts`** (`resolveFeeRates()`, which checks `vendor_accounts.fee_exempt` first — see migration 0164).
 - The build script in `package.json` bundles migrations via a glob (`esbuild migrations/[0-9]*.ts`) — new migration files are picked up automatically; no build-script edit is needed.

@@ -125,7 +125,6 @@ import {
   type TravelFeeProposal,
   listingReviews,
   reviewReplies,
-  vendorReferrals,
 } from "@shared/schema";
 import {
   requireDualAuthAuth0,
