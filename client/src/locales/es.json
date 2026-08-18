@@ -1325,7 +1325,6 @@
       "getStarted": "Empezar"
     },
     "hero": {
-      "eyebrow": "Para proveedores de eventos",
       "title": "Gestiona tu negocio de eventos, <accent>todo en un solo lugar.</accent>",
       "subtitle": "EventHub es el marketplace donde los proveedores de eventos publican sus servicios, gestionan reservas, se comunican con los clientes y cobran de forma segura, sin hojas de cálculo, mensajes dispersos ni facturas por cobrar.",
       "ctaVendor": "Empieza como proveedor",
@@ -1434,6 +1433,28 @@
     }
   },
   "landingShared": {
+    "faq": {
+      "eyebrow": "Preguntas frecuentes",
+      "title": "Tú tienes el control",
+      "q1": {
+        "q": "Mi negocio de eventos es muy personalizado: ¿EventHub ofrece flexibilidad para personalizar?",
+        "a": "Sí. Crea tus anuncios a tu manera: artículos individuales, paquetes de varios niveles y extras que los clientes pueden añadir, cada uno con tu propio precio, lo que incluye, depósito y política de cancelación. Activa el contacto previo a la reserva y los clientes podrán escribirte para acordar los detalles antes de reservar."
+      },
+      "q2": {
+        "q": "¿Tengo que permitir «reservas instantáneas» de los clientes?",
+        "a": "No. Cada anuncio tiene un tipo de reserva que tú controlas: Reserva instantánea o Solicitud de reserva, donde los clientes envían sus fechas y tú aceptas o rechazas personalmente. Fuera de los alquileres, los anuncios usan Solicitud de reserva por defecto, así que nada llega a tu calendario sin tu aprobación."
+      },
+      "q3": {
+        "q": "Mi negocio tiene mucha logística. ¿Cómo gestiona EventHub la logística?",
+        "a": "Define tu radio de servicio y ofrece entrega, recogida, montaje, desmontaje y desplazamiento, cada uno con su propia tarifa. Las tarifas pueden ser fijas o variar según la ubicación, y para trabajos fuera de zona o variables envías al cliente un presupuesto personalizado para que lo acepte antes de confirmar la reserva."
+      }
+    },
+    "customerBullets": {
+      "transparent": "Transparente",
+      "professional": "Profesional",
+      "easy": "Fácil de usar",
+      "noBackAndForth": "Sin idas y venidas"
+    },
     "logIn": "Iniciar sesión",
     "closingCta": "Crea tu cuenta gratis",
     "freeToJoin": "Registro gratis · Sin tarjeta de crédito",
@@ -1542,7 +1563,6 @@
       "getStarted": "Crear cuenta gratis"
     },
     "hero": {
-      "eyebrow": "Míralo funcionar, sin pagar nada",
       "title": "Tu negocio de alquiler para eventos te está consumiendo el tiempo.<br /><accent>Recupéralo</accent>.",
       "subtitle": "Mensajes, hojas de cálculo, presupuestos que no llevan a nada. Todo suma. EventHub te permite dar a los clientes total transparencia para que te reserven sin ningún esfuerzo de tu parte.",
       "trust": "Los proveedores de eventos lo adoran",
@@ -1564,7 +1584,6 @@
       "getStarted": "Empieza a ganar gratis"
     },
     "hero": {
-      "eyebrow": "Tu dinero, tus reglas",
       "title": "Consigue más reservas de alquiler para eventos. <accent>Trabaja una fracción del tiempo</accent>.",
       "subtitle": "Tu tienda muestra a los clientes todo desde el principio: precios, disponibilidad y lo que incluye, para que más consultas se conviertan en reservas pagadas y menos te hagan perder el día.",
       "trust": "Empezar gratis · Sin tarjeta de crédito",
@@ -1572,22 +1591,6 @@
     },
     "testimonials": {
       "eyebrow": ""
-    },
-    "faq": {
-      "eyebrow": "Preguntas frecuentes",
-      "title": "Tú tienes el control",
-      "q1": {
-        "q": "Mi negocio de eventos es muy personalizado: ¿EventHub ofrece flexibilidad para personalizar?",
-        "a": "Sí. Crea tus anuncios a tu manera: artículos individuales, paquetes de varios niveles y extras que los clientes pueden añadir, cada uno con tu propio precio, lo que incluye, depósito y política de cancelación. Activa el contacto previo a la reserva y los clientes podrán escribirte para acordar los detalles antes de reservar."
-      },
-      "q2": {
-        "q": "¿Tengo que permitir «reservas instantáneas» de los clientes?",
-        "a": "No. Cada anuncio tiene un tipo de reserva que tú controlas: Reserva instantánea o Solicitud de reserva, donde los clientes envían sus fechas y tú aceptas o rechazas personalmente. Fuera de los alquileres, los anuncios usan Solicitud de reserva por defecto, así que nada llega a tu calendario sin tu aprobación."
-      },
-      "q3": {
-        "q": "Mi negocio tiene mucha logística. ¿Cómo gestiona EventHub la logística?",
-        "a": "Define tu radio de servicio y ofrece entrega, recogida, montaje, desmontaje y desplazamiento, cada uno con su propia tarifa. Las tarifas pueden ser fijas o variar según la ubicación, y para trabajos fuera de zona o variables envías al cliente un presupuesto personalizado para que lo acepte antes de confirmar la reserva."
-      }
     }
   },
   "landingFreeC": {
@@ -1617,7 +1620,6 @@
       "getStarted": "Empezar gratis"
     },
     "hero": {
-      "eyebrow": "Para proveedores de eventos",
       "title": "Consigue reservas de la forma <accent>fácil</accent>.",
       "subtitle": "Una tienda. Un enlace. Configuración en dos minutos.",
       "trust": "Gratis · Sin tarjeta de crédito · Cancela cuando quieras",
@@ -1640,17 +1642,10 @@
       "getStarted": "Crear cuenta gratis"
     },
     "hero": {
-      "eyebrow": "La experiencia del cliente",
       "title": "Deja de responder <accent>mensajes</accent> de alquiler para eventos.",
       "subtitle": "Pega un enlace en Facebook Marketplace y en tus redes sociales. Los clientes ven disponibilidad, logística, lo que se incluye, extras y más. Se acabaron las idas y venidas que no llevan a nada.",
       "trust": "Empezar gratis · Sin tarjeta de crédito · Mejora cuando quieras",
       "ctaPrimary": "Pruébalo"
-    },
-    "setup": {
-      "eyebrow": "Tu parte lleva minutos",
-      "title": "Dales algo que reservar en <accent>dos minutos</accent>.",
-      "body": "La creación guiada de anuncios convierte tus fotos y precios en una tienda en vivo. Publica, comparte el enlace y que empiecen las reservas.",
-      "cta": "Crea tu tienda"
     },
     "testimonials": {
       "eyebrow": "De proveedores como tú"

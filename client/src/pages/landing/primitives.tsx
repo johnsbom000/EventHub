@@ -1,7 +1,8 @@
 import { type ReactNode } from "react";
-import { ChevronRight, Star, Globe } from "lucide-react";
+import { ChevronRight, Star, Globe, Check } from "lucide-react";
 import { useTranslation } from "react-i18next";
 import BrandWordmark from "@/components/BrandWordmark";
+import { cn } from "@/lib/utils";
 import {
   DropdownMenu,
   DropdownMenuContent,
@@ -41,6 +42,24 @@ export function LanguageMenu() {
 export function Eyebrow({ children, className = "text-[#e07a6a]" }: { children: ReactNode; className?: string }) {
   return (
     <p className={`font-sans text-[0.75rem] font-semibold uppercase tracking-[0.22em] ${className}`}>{children}</p>
+  );
+}
+
+// The four customer-side proof points shown under the customer-experience
+// heading. Shared so the control page and Direction E render one implementation.
+const CUSTOMER_BULLET_KEYS = ["transparent", "professional", "easy", "noBackAndForth"] as const;
+
+export function CustomerBullets({ className = "" }: { className?: string }) {
+  const { t } = useTranslation();
+  return (
+    <ul className={`space-y-2.5 ${className}`}>
+      {CUSTOMER_BULLET_KEYS.map((k) => (
+        <li key={k} className="flex items-center gap-2.5 font-sans text-[1.05rem] text-[#2a3a42]">
+          <Check className="h-[1.05rem] w-[1.05rem] shrink-0 text-[#e07a6a]" />
+          {t(`landingShared.customerBullets.${k}`)}
+        </li>
+      ))}
+    </ul>
   );
 }
 
@@ -119,15 +138,20 @@ export function Header({
   onLogin,
   cta,
   minimal = false,
+  className,
 }: {
   onSignup: () => void;
   onLogin: () => void;
   cta: string;
   minimal?: boolean;
+  // Per-variant bar styling (e.g. a landing page that wants the header to melt
+  // into its hero background instead of the default white). Merged last, so
+  // bg/border utilities here win over the defaults.
+  className?: string;
 }) {
   const { t } = useTranslation();
   return (
-    <header className="border-b border-[rgba(74,106,125,0.1)] bg-white/95 backdrop-blur">
+    <header className={cn("border-b border-[rgba(74,106,125,0.1)] bg-white/95 backdrop-blur", className)}>
       <div className="mx-auto flex max-w-[1320px] items-center justify-between px-5 py-3.5 lg:px-10">
         <BrandWordmark
           className="text-[1.9rem] leading-none lg:text-[2.2rem]"
@@ -241,13 +265,11 @@ export function Footer() {
 // Shared closing band. theme = dark (slate) or cream.
 export function Closing({
   onSignup,
-  onLogin,
   theme = "dark",
   title,
   subtitle,
 }: {
   onSignup: () => void;
-  onLogin: () => void;
   theme?: "dark" | "cream";
   title: ReactNode;
   subtitle: ReactNode;
@@ -277,12 +299,6 @@ export function Closing({
           <PrimaryButton onClick={onSignup} className="!px-8 !py-4 !text-[1.1rem]">
             {t("landingShared.closingCta")}
           </PrimaryButton>
-          <GhostButton
-            onClick={onLogin}
-            className={dark ? "!py-4 text-[#f5f0e8] hover:text-white" : "!py-4 text-[#4a6a7d] hover:text-[#2a3a42]"}
-          >
-            {t("landingShared.logIn")}
-          </GhostButton>
         </div>
         <p className={`mt-6 font-sans text-[0.9rem] ${dark ? "text-[rgba(245,240,232,0.6)]" : "text-[#9aacb4]"}`}>
           {t("landingShared.freeToJoin")}

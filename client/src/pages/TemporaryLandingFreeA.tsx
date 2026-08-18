@@ -1,14 +1,14 @@
 import { useTranslation, Trans } from "react-i18next";
 import { motion, useReducedMotion } from "framer-motion";
-import { Bar, Header, Closing, Footer, Eyebrow, PrimaryButton, GhostButton } from "@/pages/landing/primitives";
+import { Bar, Header, Closing, Footer, PrimaryButton } from "@/pages/landing/primitives";
 import { useLandingSignup } from "@/pages/landing/signup";
 import { Reveal, fadeUp, fadeUpBlur, stagger, EASE } from "@/pages/landing/motion";
 import HowItWorks from "@/pages/landing/HowItWorks";
 import Testimonials from "@/pages/landing/Testimonials";
 import FreeVsProSection from "@/pages/landing/FreeVsProSection";
+import FaqSection from "@/pages/landing/FaqSection";
 import CustomerExperienceSection from "@/pages/landing/CustomerExperienceSection";
 import VendorDashboardDemo from "@/pages/landing/VendorDashboardDemo";
-import { VARIED_STOREFRONT_IMAGES } from "@/pages/landing/BookingFlowDemo";
 
 /* Direction A — "Show, don't tell": watching the product build itself drives
    signups. Two-column hero with the live listing wizard beside the headline.
@@ -44,14 +44,11 @@ export default function TemporaryLandingFreeA() {
 
       {/* Hero */}
       <section>
-        <div className="mx-auto grid max-w-[1320px] items-center gap-12 px-5 py-16 lg:grid-cols-[1fr_1.05fr] lg:gap-16 lg:px-10 lg:py-24">
+        <div className="mx-auto grid min-h-[calc(100svh-90px)] max-w-[1320px] items-center gap-12 px-5 py-16 lg:grid-cols-[1fr_1.05fr] lg:gap-16 lg:px-10 lg:py-24">
           <motion.div className="text-center lg:text-left" {...containerProps}>
-            <motion.div {...itemProps}>
-              <Eyebrow>{t(`${NS}.hero.eyebrow`)}</Eyebrow>
-            </motion.div>
             <motion.h1
               {...headlineProps}
-              className="mt-4 font-heading text-[clamp(2.6rem,5.4vw,4.3rem)] font-light leading-[1.02] text-[#2a3a42]"
+              className="font-heading text-[clamp(2.6rem,5.4vw,4.3rem)] font-light leading-[1.02] text-[#2a3a42]"
             >
               <Trans i18nKey={`${NS}.hero.title`} components={{ accent: <em className="italic text-[#e07a6a]" />, br: <br /> }} />
             </motion.h1>
@@ -61,7 +58,7 @@ export default function TemporaryLandingFreeA() {
             >
               {t(`${NS}.hero.subtitle`)}
             </motion.p>
-            <motion.div {...itemProps} className="mt-9 flex flex-wrap items-center justify-center gap-3 lg:justify-start">
+            <motion.div {...itemProps} className="mt-9 flex max-w-[34rem] flex-wrap items-center justify-center gap-3">
               <motion.span
                 className="inline-flex"
                 whileHover={reduced ? undefined : { y: -2 }}
@@ -75,9 +72,6 @@ export default function TemporaryLandingFreeA() {
                   {t(`${NS}.hero.ctaPrimary`)}
                 </PrimaryButton>
               </motion.span>
-              <GhostButton onClick={openLogin} className="!py-4 text-[#4a6a7d] hover:text-[#2a3a42]">
-                {t("landingShared.logIn")}
-              </GhostButton>
             </motion.div>
           </motion.div>
 
@@ -99,13 +93,13 @@ export default function TemporaryLandingFreeA() {
       </section>
 
       <Reveal>
-        <HowItWorks onSignup={() => handleSignupCta("how_it_works")} />
+        <HowItWorks onSignup={() => handleSignupCta("how_it_works")} className="border-t-transparent" />
       </Reveal>
       <Reveal>
         <Testimonials theme="light" layout="cards" eyebrowKey={`${NS}.testimonials.eyebrow`} />
       </Reveal>
       <Reveal>
-        <CustomerExperienceSection storefrontImages={VARIED_STOREFRONT_IMAGES} />
+        <CustomerExperienceSection visual="hub" />
       </Reveal>
       <Reveal>
         <FreeVsProSection
@@ -115,9 +109,11 @@ export default function TemporaryLandingFreeA() {
         />
       </Reveal>
       <Reveal>
+        <FaqSection />
+      </Reveal>
+      <Reveal>
         <Closing
           onSignup={() => handleSignupCta("closing_cta")}
-          onLogin={openLogin}
           theme="dark"
           title={<Trans i18nKey={`${NS}.closing.title`} components={{ accent: <em className="italic text-[#e07a6a]" /> }} />}
           subtitle={t(`${NS}.closing.subtitle`)}
