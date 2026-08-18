@@ -45,9 +45,8 @@ export default function TemporaryLandingFreeB({ model }: { model: PricingModel }
             <h1 className="font-heading text-[clamp(2.7rem,5.8vw,4.5rem)] font-light leading-[1.02] text-[#f5f0e8]">
               <Trans i18nKey={k("hero.title")} components={{ accent: <em className="italic text-[#e07a6a]" /> }} />
             </h1>
-            <p className="mt-6 max-w-lg font-sans text-[1.2rem] leading-[1.6] text-[rgba(245,240,232,0.82)]">
-              {t(k("hero.subtitle"))}
-            </p>
+            {/* No hero subtitle on direction B — removed on staging (d8393bb).
+                The matching landingFreeB.hero.subtitle locale key is deleted too. */}
             {/* CTA is centered on the trust line beneath it */}
             <div className="mt-9 inline-flex flex-col items-center">
               <PrimaryButton onClick={() => handleSignupCta("hero_primary")} className="!text-[1.1rem]">

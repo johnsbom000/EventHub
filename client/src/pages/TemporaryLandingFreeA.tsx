@@ -131,6 +131,9 @@ export default function TemporaryLandingFreeA({ model }: { model: PricingModel }
         <FaqSection />
       </Reveal>
       <Reveal>
+        <FaqSection />
+      </Reveal>
+      <Reveal>
         <Closing
           onSignup={() => handleSignupCta("closing_cta")}
           theme="dark"
