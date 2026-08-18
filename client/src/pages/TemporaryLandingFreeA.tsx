@@ -9,6 +9,7 @@ import FreeVsProSection from "@/pages/landing/FreeVsProSection";
 import FaqSection from "@/pages/landing/FaqSection";
 import CustomerExperienceSection from "@/pages/landing/CustomerExperienceSection";
 import VendorDashboardDemo from "@/pages/landing/VendorDashboardDemo";
+import type { PricingModel } from "@/hooks/usePricingModel";
 
 /* Direction A — "Show, don't tell": watching the product build itself drives
    signups. Two-column hero with the live listing wizard beside the headline.
@@ -19,9 +20,15 @@ import VendorDashboardDemo from "@/pages/landing/VendorDashboardDemo";
 
 const NS = "landingFreeA";
 
-export default function TemporaryLandingFreeA() {
+export default function TemporaryLandingFreeA({ model }: { model: PricingModel }) {
   const { t } = useTranslation();
-  const { handleSignupCta, handleProCta, openLogin, modals } = useLandingSignup(NS);
+  const { handleSignupCta, handleProCta, openLogin, modals } = useLandingSignup(NS, model);
+  // Commission copy lives in the `…Comm` sibling namespace, which holds ONLY the
+  // strings that differ (top bar, trust line, Pro-flavoured CTAs). Everything it
+  // omits falls back to the base namespace, so the two arms stay identical
+  // apart from the money story.
+  const k = (key: string): string[] =>
+    model === "commission" ? [`${NS}Comm.${key}`, `${NS}.${key}`] : [`${NS}.${key}`];
   const reduced = useReducedMotion();
 
   // Hero entrance: a stagger container whose children rise + fade in sequence.
@@ -36,10 +43,10 @@ export default function TemporaryLandingFreeA() {
         <Bar theme="blue">
           <span className="inline-flex items-center gap-2">
             <span className="h-1.5 w-1.5 rounded-full bg-[#9dd4cc]" />
-            {t(`${NS}.bar.text`)}
+            {t(k("bar.text"))}
           </span>
         </Bar>
-        <Header cta={t(`${NS}.header.getStarted`)} onSignup={() => handleSignupCta("header_get_started")} onLogin={openLogin} />
+        <Header cta={t(k("header.getStarted"))} onSignup={() => handleSignupCta("header_get_started")} onLogin={openLogin} />
       </div>
 
       {/* Hero */}
@@ -50,13 +57,13 @@ export default function TemporaryLandingFreeA() {
               {...headlineProps}
               className="font-heading text-[clamp(2.6rem,5.4vw,4.3rem)] font-light leading-[1.02] text-[#2a3a42]"
             >
-              <Trans i18nKey={`${NS}.hero.title`} components={{ accent: <em className="italic text-[#e07a6a]" />, br: <br /> }} />
+              <Trans i18nKey={k("hero.title")} components={{ accent: <em className="italic text-[#e07a6a]" />, br: <br /> }} />
             </motion.h1>
             <motion.p
               {...itemProps}
               className="mx-auto mt-6 max-w-[34rem] font-sans text-[1.15rem] leading-[1.55] text-[#4a6a7d] lg:mx-0"
             >
-              {t(`${NS}.hero.subtitle`)}
+              {t(k("hero.subtitle"))}
             </motion.p>
             <motion.div {...itemProps} className="mt-9 flex max-w-[34rem] flex-wrap items-center justify-center gap-3">
               <motion.span
@@ -69,7 +76,7 @@ export default function TemporaryLandingFreeA() {
                   onClick={() => handleSignupCta("hero_primary")}
                   className="!px-8 !py-4 !text-[1.1rem] shadow-[0_12px_34px_-12px_rgba(224,122,106,0.65)]"
                 >
-                  {t(`${NS}.hero.ctaPrimary`)}
+                  {t(k("hero.ctaPrimary"))}
                 </PrimaryButton>
               </motion.span>
             </motion.div>
@@ -101,13 +108,17 @@ export default function TemporaryLandingFreeA() {
       <Reveal>
         <CustomerExperienceSection visual="hub" />
       </Reveal>
-      <Reveal>
-        <FreeVsProSection
-          animated
-          onStartFree={() => handleSignupCta("pricing_start_free")}
-          onTryPro={() => handleProCta("pricing_try_pro")}
-        />
-      </Reveal>
+      {/* Free-vs-Pro pricing has no meaning under the commission model: there is
+          one tier, so the section is omitted rather than restated. */}
+      {model === "subscription" && handleProCta && (
+        <Reveal>
+          <FreeVsProSection
+            animated
+            onStartFree={() => handleSignupCta("pricing_start_free")}
+            onTryPro={() => handleProCta("pricing_try_pro")}
+          />
+        </Reveal>
+      )}
       <Reveal>
         <FaqSection />
       </Reveal>
@@ -115,8 +126,8 @@ export default function TemporaryLandingFreeA() {
         <Closing
           onSignup={() => handleSignupCta("closing_cta")}
           theme="dark"
-          title={<Trans i18nKey={`${NS}.closing.title`} components={{ accent: <em className="italic text-[#e07a6a]" /> }} />}
-          subtitle={t(`${NS}.closing.subtitle`)}
+          title={<Trans i18nKey={k("closing.title")} components={{ accent: <em className="italic text-[#e07a6a]" /> }} />}
+          subtitle={t(k("closing.subtitle"))}
         />
       </Reveal>
       <Footer />

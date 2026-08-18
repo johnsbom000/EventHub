@@ -9,6 +9,7 @@ import { ScrollToTop } from "@/components/ScrollToTop";
 import { TooltipProvider } from "@/components/ui/tooltip";
 import { useTrackPageView } from "@/hooks/useTrackPageView";
 import { readLandingVariant, useLandingStyle } from "@/hooks/useLandingVariant";
+import { usePricingModel } from "@/hooks/usePricingModel";
 import { phCapture } from "@/lib/posthog";
 import { trackSignupCompletedOnce } from "@/lib/tracking";
 import EmailVerificationGate from "@/components/EmailVerificationGate";
@@ -189,21 +190,25 @@ function PostLogin() {
 // Meta ad links to its own route, so which design a visitor sees is controlled
 // by ad spend, not randomised. Falls back to the control page for "/" and for
 // any unrecognised style segment, so a mistyped ad URL still converts.
+// The pricing MODEL is orthogonal: it is randomised after the click by the
+// PostHog `pricing-model-test` flag, so both arms are drawn from the same ad and
+// audience. Each page renders the same layout with only the money story swapped.
 function LandingForVariant() {
   const style = useLandingStyle();
+  const model = usePricingModel();
   switch (style) {
     case "a":
-      return <TemporaryLandingFreeA />;
+      return <TemporaryLandingFreeA model={model} />;
     case "b":
-      return <TemporaryLandingFreeB />;
+      return <TemporaryLandingFreeB model={model} />;
     case "c":
-      return <TemporaryLandingFreeC />;
+      return <TemporaryLandingFreeC model={model} />;
     case "d":
-      return <TemporaryLandingFreeD />;
+      return <TemporaryLandingFreeD model={model} />;
     case "e":
-      return <TemporaryLandingFreeE />;
+      return <TemporaryLandingFreeE model={model} />;
     default:
-      return <TemporaryLanding />;
+      return <TemporaryLanding model={model} />;
   }
 }
 
@@ -213,6 +218,7 @@ function RootEntry() {
   const { toast } = useToast();
   const hasShownToastRef = useRef(false);
   const { isVendorOnly, isLoading: isVendorOnlyLoading } = useIsVendorOnly();
+  const pricingModel = usePricingModel();
 
   // "Become a Vendor" flow — check vendor status and redirect to dashboard/onboarding.
   const [vendorIntent] = useState(() => {
@@ -295,7 +301,7 @@ function RootEntry() {
   }
   // Vendor-only signups don't get the customer marketplace; the effect above
   // redirects them to /vendor/dashboard.
-  if (isVendorOnly) return <TemporaryLanding />; // [vendor-only restrictions]
+  if (isVendorOnly) return <TemporaryLanding model={pricingModel} />; // [vendor-only restrictions]
 
   // Authenticated customers with a profile get the vendor marketplace.
   return <Home />;

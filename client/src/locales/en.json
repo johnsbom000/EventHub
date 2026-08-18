@@ -1431,6 +1431,22 @@
       "signupFailedFallback": "Something went wrong. Please try again."
     }
   },
+  "landingComm": {
+    "bar": {
+      "text": "Free to join. We only make money when you do."
+    },
+    "hero": {
+      "trustLine": "Free to list · Secure payouts via Stripe · No monthly fee"
+    },
+    "closing": {
+      "launchOffer": "Everything included",
+      "dealTitle": "Every feature, from day one.",
+      "deal1": "Every feature included — no tiers, no add-ons",
+      "deal7": "No contracts — leave whenever you want",
+      "cta": "Create your free account",
+      "trustLine": "Free to join · Secure payouts via Stripe"
+    }
+  },
     "customerExp": {
       "eyebrow": "The customer experience",
       "title": "A booking experience customers actually <accent>trust</accent>.",
@@ -1594,6 +1610,11 @@
         "subtitle": ""
       }
     },
+    "landingFreeAComm": {
+      "bar": {
+        "text": "Set up in minutes. No learning curve. No monthly fee, ever."
+      }
+    },
 
     "landingFreeB": {
       "bar": {
@@ -1610,6 +1631,17 @@
       },
       "testimonials": {
         "eyebrow": ""
+      }
+    },
+    "landingFreeBComm": {
+      "bar": {
+        "text": "Free to join. We only make money when you do."
+      },
+      "header": {
+        "getStarted": "Start free"
+      },
+      "hero": {
+        "trust": "No monthly fee. No subscription. Ever."
       }
     },
 
@@ -1635,6 +1667,11 @@
         "subtitle": "Set up your storefront and start taking bookings on EventHub."
       }
     },
+    "landingFreeCComm": {
+      "bar": {
+        "text": "· No subscription, no monthly fee, no credit card."
+      }
+    },
 
     "landingFreeD": {
       "header": {
@@ -1654,6 +1691,11 @@
         "subtitle": "Two minutes from here to your first booking link."
       }
     },
+    "landingFreeDComm": {
+      "hero": {
+        "trust": "Free to join · No credit card · No monthly fee"
+      }
+    },
 
     "landingFreeE": {
       "bar": {
@@ -1671,6 +1713,11 @@
       },
       "testimonials": {
         "eyebrow": "From vendors like you"
+      }
+    },
+    "landingFreeEComm": {
+      "hero": {
+        "trust": "Free to join · No credit card · No subscription, ever"
       }
     },
   "demoShared": {

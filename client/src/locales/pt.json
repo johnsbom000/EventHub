@@ -1415,6 +1415,22 @@
       "signupFailedFallback": "Algo deu errado. Tente novamente."
     }
   },
+  "landingComm": {
+    "bar": {
+      "text": "Entre grátis. Só ganhamos quando você ganha."
+    },
+    "hero": {
+      "trustLine": "Anunciar é grátis · Pagamentos seguros via Stripe · Sem mensalidade"
+    },
+    "closing": {
+      "launchOffer": "Tudo incluído",
+      "dealTitle": "Todos os recursos, desde o primeiro dia.",
+      "deal1": "Todos os recursos incluídos — sem níveis nem adicionais",
+      "deal7": "Sem contratos — saia quando quiser",
+      "cta": "Crie sua conta grátis",
+      "trustLine": "Entre grátis · Pagamentos seguros via Stripe"
+    }
+  },
   "customerExp": {
     "eyebrow": "A experiência do cliente",
     "title": "Uma experiência de reserva em que os clientes realmente <accent>confiam</accent>.",
@@ -1576,6 +1592,11 @@
       "subtitle": ""
     }
   },
+  "landingFreeAComm": {
+    "bar": {
+      "text": "Configure em minutos. Sem curva de aprendizado. Sem mensalidade, nunca."
+    }
+  },
   "landingFreeB": {
     "bar": {
       "text": "Fique com 100% do que você reserva."
@@ -1591,6 +1612,17 @@
     },
     "testimonials": {
       "eyebrow": ""
+    }
+  },
+  "landingFreeBComm": {
+    "bar": {
+      "text": "Entre grátis. Só ganhamos quando você ganha."
+    },
+    "header": {
+      "getStarted": "Comece grátis"
+    },
+    "hero": {
+      "trust": "Sem mensalidade. Sem assinatura. Nunca."
     }
   },
   "landingFreeC": {
@@ -1615,6 +1647,11 @@
       "subtitle": "Crie sua vitrine e comece a receber reservas no EventHub."
     }
   },
+  "landingFreeCComm": {
+    "bar": {
+      "text": "· Sem assinatura, sem mensalidade, sem cartão de crédito."
+    }
+  },
   "landingFreeD": {
     "header": {
       "getStarted": "Comece grátis"
@@ -1633,6 +1670,11 @@
       "subtitle": "Dois minutos daqui até seu primeiro link de reservas."
     }
   },
+  "landingFreeDComm": {
+    "hero": {
+      "trust": "Entre grátis · Sem cartão de crédito · Sem mensalidade"
+    }
+  },
   "landingFreeE": {
     "bar": {
       "lead": "Os clientes podem reservar sozinhos",
@@ -1649,6 +1691,11 @@
     },
     "testimonials": {
       "eyebrow": "De fornecedores como você"
+    }
+  },
+  "landingFreeEComm": {
+    "hero": {
+      "trust": "Entre grátis · Sem cartão de crédito · Sem assinatura, nunca"
     }
   },
   "demoShared": {

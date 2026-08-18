@@ -9,7 +9,7 @@ import { trackBoth } from "@/lib/tracking";
 import { initEngagement } from "@/lib/engagement";
 import { readLandingVariant, type LandingVariant } from "@/hooks/useLandingVariant";
 import { captureAttribution, readAttribution } from "@/lib/landingAttribution";
-import { readPricingModel } from "@/hooks/usePricingModel";
+import { readPricingModel, type PricingModel } from "@/hooks/usePricingModel";
 
 /* ---------------------------------------------------------------------------
    Shared sign-up flow for the free-first landing variants (A–E).
@@ -117,7 +117,12 @@ function SignupDialog({
 // Central controller for a landing page's signup + login flow. `ns` is the
 // page's i18n namespace (e.g. "landingFreeA"). Returns CTA handlers plus the
 // modal element to render once near the page root.
-export function useLandingSignup(_ns?: string) {
+//
+// `model` is the pricing-model arm the visitor was randomised into. Under
+// "commission" there is no Pro tier at all, so this hook withholds the Pro CTA
+// (typed optional, so calling it on a commission page is a compile error) and
+// never stamps a Pro-trial treatment.
+export function useLandingSignup(_ns: string, model: PricingModel) {
   const { t } = useTranslation();
   const { loginWithRedirect } = useAuth0();
   const { toast } = useToast();
@@ -210,7 +215,10 @@ export function useLandingSignup(_ns?: string) {
     // after the account is created; the treatment is tied to the landing variant.
     // A plain "Start free" click clears any stale flags so it can never inherit a
     // Pro trial. These are read (and cleared) by VendorProvision post-provision.
-    if (intent === "pro") {
+    // A commission vendor never starts a Pro trial (there is no Pro tier), so
+    // the trial flags are cleared rather than written even if `intent` were
+    // somehow "pro" — belt-and-braces alongside the withheld handleProCta.
+    if (intent === "pro" && model === "subscription") {
       sessionStorage.setItem("eh:pro-trial-intent", "1");
       sessionStorage.setItem("eh:pro-trial-interval", "monthly");
       sessionStorage.setItem("eh:pro-trial-mode", treatmentForVariant(readLandingVariant()));
@@ -256,5 +264,12 @@ export function useLandingSignup(_ns?: string) {
     </>
   );
 
-  return { handleSignupCta, handleProCta, openLogin, modals, intent };
+  return {
+    handleSignupCta,
+    // Commission pages have no Pro tier, so no Pro CTA exists to click.
+    handleProCta: model === "subscription" ? handleProCta : undefined,
+    openLogin,
+    modals,
+    intent,
+  };
 }
