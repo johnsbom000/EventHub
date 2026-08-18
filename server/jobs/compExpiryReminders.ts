@@ -1,4 +1,4 @@
-import { and, eq, gt, isNull, lte } from "drizzle-orm";
+import { and, eq, gt, isNull, lte, ne } from "drizzle-orm";
 import { db } from "../db";
 import { vendorAccounts } from "@shared/schema";
 import { sendCompExpiryReminderEmail } from "../email";
@@ -48,6 +48,10 @@ export async function runCompExpiryReminderJob(opts: {
     .where(
       and(
         eq(vendorAccounts.subscriptionStatus, "comp"),
+        // Commission vendors have no plan to fall back to — the reminder tells
+        // them they "move to the Free plan" and keep "1 listing", both false for
+        // a model with no tiers. A stray comp row must not trigger it.
+        ne(vendorAccounts.pricingModel, "commission"),
         isNull(vendorAccounts.compReminder1dSentAt),
         gt(vendorAccounts.compEndsAt, now),
         lte(vendorAccounts.compEndsAt, in1d)
@@ -79,6 +83,8 @@ export async function runCompExpiryReminderJob(opts: {
     .where(
       and(
         eq(vendorAccounts.subscriptionStatus, "comp"),
+        // See the 1-day window above.
+        ne(vendorAccounts.pricingModel, "commission"),
         isNull(vendorAccounts.compReminder7dSentAt),
         gt(vendorAccounts.compEndsAt, in1d),
         lte(vendorAccounts.compEndsAt, in7d)

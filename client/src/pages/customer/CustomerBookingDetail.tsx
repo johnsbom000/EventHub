@@ -1,4 +1,5 @@
 import React, { useEffect, useState } from "react";
+import { useTranslation } from "react-i18next";
 import { useLocation, useRoute } from "wouter";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { apiRequest } from "@/lib/queryClient";
@@ -207,6 +208,7 @@ function BookingCard({
   booking: BookingDetail;
   bookedPackage?: { title: string | null; priceCents: number | null } | null;
 }) {
+  const { t } = useTranslation();
   const startFmt = formatTime(booking.eventStartTime);
   const endFmt = formatTime(booking.eventEndTime);
   const hasTime = startFmt || endFmt;
@@ -234,11 +236,13 @@ function BookingCard({
       rows.push({ label: addon.title || "Add-on", value: money(addon.priceCents) ?? "—" });
     }
   }
-  if (deliveryFee) rows.push({ label: "Delivery fee", value: money(deliveryFee) ?? "—" });
-  if (setupFee) rows.push({ label: "Setup fee", value: money(setupFee) ?? "—" });
-  if (travelFee) rows.push({ label: "Travel fee", value: money(travelFee) ?? "—" });
-  if (customerFee) rows.push({ label: "Service fee", value: money(customerFee) ?? "—" });
-  if (booking.securityDepositCents) rows.push({ label: "Security deposit (refundable)", value: money(booking.securityDepositCents) ?? "—" });
+  // Fee labels come from locale keys — this breakdown is a customer-facing money
+  // disclosure and was rendering in English for es/pt customers.
+  if (deliveryFee) rows.push({ label: t("checkout.orderSummaryDeliveryFee"), value: money(deliveryFee) ?? "—" });
+  if (setupFee) rows.push({ label: t("checkout.orderSummarySetupFee"), value: money(setupFee) ?? "—" });
+  if (travelFee) rows.push({ label: t("checkout.orderSummaryTravelFee"), value: money(travelFee) ?? "—" });
+  if (customerFee) rows.push({ label: t("checkout.serviceFee"), value: money(customerFee) ?? "—" });
+  if (booking.securityDepositCents) rows.push({ label: t("checkout.securityDepositRefundable"), value: money(booking.securityDepositCents) ?? "—" });
 
   return (
     <div className="rounded-2xl border border-border bg-background shadow-sm p-5 space-y-5">

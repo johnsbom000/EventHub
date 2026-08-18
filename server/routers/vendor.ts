@@ -1,6 +1,7 @@
 import type { Express } from "express";
 import { createServer, type Server } from "http";
 import { logger } from "../lib/logger";
+import { TERMS_VERSION } from "@shared/termsVersion";
 import {
   safeGoogleErrorMessage,
   logRouteError,
@@ -99,7 +100,8 @@ import {
   checkListingAvailabilityForBookingRequest,
   sendCancellationEmailsAsync,
 } from "../services/bookingService";
-import { getVendorEntitlements } from "../services/entitlementsService";
+import { getVendorEntitlements, vendorEntitlementColumns } from "../services/entitlementsService";
+import { resolveFeeRates } from "../services/feeRatesService";
 import { reconcileVendorSubscriptionState, startReverseTrialForVendor } from "./billing";
 import { registerGoogleRoutes } from "../routers/google";
 import { registerBoardRoutes } from "../routers/boards";
@@ -315,8 +317,6 @@ import {
   deriveVendorSlug,
 } from "../lib/routeUtils";
 import {
-  VENDOR_FEE_RATE,
-  CUSTOMER_FEE_RATE,
   STRIPE_FEE_ESTIMATE_PERCENT,
   STRIPE_FEE_ESTIMATE_FIXED_CENTS,
   VENDOR_ABSORBS_STRIPE_FEES,
@@ -449,6 +449,46 @@ function insertListingSoftFlags(params: {
     }).catch((err: any) => logger.warn("[circumvention] soft flag insert failed:", err?.message));
   }
   return softFlagged;
+}
+
+// Landing-style values must match LandingStyle in
+// client/src/hooks/useLandingVariant.ts.
+const ALLOWED_LANDING_STYLES = ["control", "a", "b", "c", "d", "e"] as const;
+
+/**
+ * Ad attribution / pricing assignment from the landing page, sanitized against
+ * an untrusted client. This is the security boundary for both vendor-account
+ * insert paths (/api/vendor/provision and /api/vendor/onboarding/complete) —
+ * kept as a single module-level helper so the allow-lists only need to be
+ * edited in one place to stay in sync across both call sites.
+ *
+ * A visitor can claim any pricing model; that is bounded by the exclusivity
+ * guards elsewhere (a false 'commission' claim yields Pro features at 8% with
+ * no ability to buy out), and the claim is recorded via logEvent so admin can
+ * audit divergence from the real PostHog assignment.
+ */
+function sanitizeAttributionFields(body: any): {
+  pricingModel: "commission" | "subscription";
+  landingStyle: string | null;
+  utmSource: string | null;
+  utmMedium: string | null;
+  utmCampaign: string | null;
+  utmContent: string | null;
+  fbclid: string | null;
+} {
+  const trimmed = (value: unknown): string | null =>
+    typeof value === "string" && value.trim() ? value.trim().slice(0, 255) : null;
+  return {
+    pricingModel: body?.pricingModel === "commission" ? "commission" : "subscription",
+    landingStyle: (ALLOWED_LANDING_STYLES as readonly string[]).includes(body?.landingStyle)
+      ? String(body.landingStyle)
+      : null,
+    utmSource: trimmed(body?.utmSource),
+    utmMedium: trimmed(body?.utmMedium),
+    utmCampaign: trimmed(body?.utmCampaign),
+    utmContent: trimmed(body?.utmContent),
+    fbclid: trimmed(body?.fbclid),
+  };
 }
 
 export function registerVendorRoutes(app: Express): void {
@@ -915,13 +955,19 @@ export function registerVendorRoutes(app: Express): void {
         shopSlug: account.shopSlug || null,
         referralCode: account.referralCode ?? null,
         // Vendor Pro subscription entitlements (drives client gating + billing UI).
+        // isPro = has a paid/trialing/comp SUBSCRIPTION (billing/fee-waiver display
+        // only). hasProFeatures = capability access (Pro subscribers AND commission
+        // vendors). showUpgradePrompts = false for commission vendors, who have
+        // nothing to upgrade to. Keep all three — client gates must not read isPro.
         isPro: entitlements.isPro,
+        hasProFeatures: entitlements.hasProFeatures,
+        showUpgradePrompts: entitlements.showUpgradePrompts,
         subscriptionPlan: entitlements.plan,
         subscriptionStatus: entitlements.status,
         subscriptionReason: entitlements.reason,
         maxActiveListings: Number.isFinite(entitlements.maxActiveListings)
           ? entitlements.maxActiveListings
-          : null, // null = unlimited (Pro)
+          : null, // null = unlimited (Pro or commission)
         canUseAnalytics: entitlements.canUseAnalytics,
         canUseGoogleSync: entitlements.canUseGoogleSync,
         subscriptionCurrentPeriodEnd: account.subscriptionCurrentPeriodEnd ?? null,
@@ -1138,15 +1184,11 @@ export function registerVendorRoutes(app: Express): void {
       .optional(),
 
     createNewProfile: z.boolean().optional(),
+    // Client asserts the vendor ticked the agreement checkbox. The VERSION is
+    // never taken from the client — the server stamps TERMS_VERSION, so the
+    // record reflects what we actually served.
+    acceptedTerms: z.boolean().optional(),
     referralCode: z.string().max(20).optional(),
-    foundingInviteToken: z.string().max(64).optional(),
-    marqueeInviteToken: z.string().max(64).optional(),
-  });
-
-  // Founding / Marquee vendor programs have been retired. Any old invite token is
-  // now treated as expired so the client can surface a "link has expired" page.
-  app.get("/api/invite/validate", async (_req, res) => {
-    return res.json({ valid: false, expired: true });
   });
 
   // Provision a minimal vendor account immediately after auth.
@@ -1264,6 +1306,10 @@ export function registerVendorRoutes(app: Express): void {
 
       const shopSlug = await allocateUniqueVendorSlug(normalizedName);
 
+      // See sanitizeAttributionFields() above — this is the untrusted-client
+      // security boundary for the pricing/landing/UTM columns.
+      const attribution = sanitizeAttributionFields(req.body);
+
       // All provisioning writes run in ONE transaction so a failure can never
       // leave a half-provisioned vendor (an orphan account with no profile row).
       // Either the whole vendor — account + users link + stub profile — commits,
@@ -1278,6 +1324,13 @@ export function registerVendorRoutes(app: Express): void {
             businessName: normalizedName,
             shopSlug,
             profileComplete: false,
+            pricingModel: attribution.pricingModel,
+            landingStyle: attribution.landingStyle,
+            utmSource: attribution.utmSource,
+            utmMedium: attribution.utmMedium,
+            utmCampaign: attribution.utmCampaign,
+            utmContent: attribution.utmContent,
+            fbclid: attribution.fbclid,
           })
           .returning();
 
@@ -1340,6 +1393,16 @@ export function registerVendorRoutes(app: Express): void {
       // grant here anymore; existing comp grants ride out on their own schedule.)
       const trialResult = await startReverseTrialForVendor(created);
       const reverseTrial = trialResult.status === "started";
+
+      // Audit trail for the commission-pricing test: records the claimed
+      // assignment (client-supplied, see sanitization above) alongside the
+      // landing style and UTM campaign so admin can spot divergence from the
+      // PostHog-side assignment.
+      logEvent("vendor_pricing_model_assigned", "vendor", created.id, {
+        pricingModel: attribution.pricingModel,
+        landingStyle: attribution.landingStyle,
+        utmCampaign: attribution.utmCampaign,
+      });
 
       // Fire-and-forget: send vendor welcome email on first account creation.
       void (async () => {
@@ -1438,6 +1501,14 @@ export function registerVendorRoutes(app: Express): void {
           }
 
           const shopSlug = await allocateUniqueVendorSlug(normalizedProfileName);
+
+          // Same untrusted-client attribution stamping as /api/vendor/provision —
+          // this insert path exists so a vendor who reaches onboarding without
+          // ever calling provision (e.g. a healed/legacy flow) still gets a
+          // pricing_model row instead of silently defaulting every such vendor
+          // to subscription. See sanitizeAttributionFields() above.
+          const attribution = sanitizeAttributionFields(req.body);
+
           const [created] = await db
             .insert(vendorAccounts)
             .values({
@@ -1447,9 +1518,24 @@ export function registerVendorRoutes(app: Express): void {
               businessName: normalizedProfileName,
               shopSlug,
               profileComplete: false,
+              pricingModel: attribution.pricingModel,
+              landingStyle: attribution.landingStyle,
+              utmSource: attribution.utmSource,
+              utmMedium: attribution.utmMedium,
+              utmCampaign: attribution.utmCampaign,
+              utmContent: attribution.utmContent,
+              fbclid: attribution.fbclid,
             })
             .returning();
           account = created;
+
+          // Audit trail, mirroring /api/vendor/provision — this insert path
+          // previously stamped the column with no audit row at all.
+          logEvent("vendor_pricing_model_assigned", "vendor", created.id, {
+            pricingModel: attribution.pricingModel,
+            landingStyle: attribution.landingStyle,
+            utmCampaign: attribution.utmCampaign,
+          });
         }
       } else {
         const currentBusinessName = asTrimmedString(account.businessName);
@@ -1489,9 +1575,19 @@ export function registerVendorRoutes(app: Express): void {
       const ownerFirstName = asTrimmedString(onboardingData.ownerFirstName) || null;
       const ownerLastName  = asTrimmedString(onboardingData.ownerLastName)  || null;
       const ownerPhone     = asTrimmedString(onboardingData.ownerPhone)     || null;
+      // Record Terms acceptance. The VERSION is the server's TERMS_VERSION, never
+      // a value from the request — the record has to state what we served. Only
+      // stamped when the client asserts the agreement checkbox was ticked, and
+      // never overwritten with an older version, so re-running onboarding cannot
+      // walk an acceptance backwards.
+      const termsAcceptance =
+        onboardingData.acceptedTerms === true && account.termsVersionAccepted !== TERMS_VERSION
+          ? { termsVersionAccepted: TERMS_VERSION, termsAcceptedAt: new Date() }
+          : {};
+
       await db
         .update(vendorAccounts)
-        .set({ ownerFirstName, ownerLastName, ownerPhone })
+        .set({ ownerFirstName, ownerLastName, ownerPhone, ...termsAcceptance })
         .where(eq(vendorAccounts.id, account.id));
 
       const existingProfiles = await db.select().from(vendorProfiles).where(and(eq(vendorProfiles.accountId, account.id), eq(vendorProfiles.active, true)));
@@ -1698,10 +1794,6 @@ export function registerVendorRoutes(app: Express): void {
       const isUpgrade = Boolean(customerAuth || vendorAuth);
 
       const isFirstTimeOnboarding = existingProfiles.length === 0;
-
-      // Founding / Marquee vendor programs have been retired. Invite tokens and
-      // vendor-referral rewards are no longer processed. Monetization is moving to
-      // a vendor subscription model.
 
       logEvent("vendor_signup_completed", "vendor", account.id, {
         is_new: isFirstTimeOnboarding,
@@ -2546,9 +2638,11 @@ export function registerVendorRoutes(app: Express): void {
           stripeConnectId: vendorAccounts.stripeConnectId,
           stripeOnboardingComplete: vendorAccounts.stripeOnboardingComplete,
           onboardingCompletedAt: vendorAccounts.onboardingCompletedAt,
-          subscriptionPlan: vendorAccounts.subscriptionPlan,
-          subscriptionStatus: vendorAccounts.subscriptionStatus,
-          compEndsAt: vendorAccounts.compEndsAt,
+          // Feeds getVendorEntitlements() below. Must be the shared column set —
+          // omitting pricingModel here previously normalized commission vendors
+          // to "subscription", 403'ing their add-ons and capping them at the
+          // free-tier single active listing with no way to upgrade.
+          ...vendorEntitlementColumns,
         })
         .from(vendorAccounts)
         .where(eq(vendorAccounts.id, vendorAuth.id))
@@ -2583,7 +2677,7 @@ export function registerVendorRoutes(app: Express): void {
           upgradeUrl: "/vendor/dashboard#vendor-billing",
         });
       }
-      if (!entitlements.isPro) {
+      if (!entitlements.hasProFeatures) {
         const isAlreadyActive = (existing[0]?.status || "").toLowerCase() === "active";
         if (!isAlreadyActive) {
           const [{ activeCount }] = await db
@@ -5533,6 +5627,31 @@ export function registerVendorRoutes(app: Express): void {
           history: [],
         });
       }
+      // Used below ONLY as a display-estimate fallback for legacy booking rows
+      // that predate the stored platformFee/customerFeeAmountCents columns —
+      // never to recompute a stored, already-charged booking's real fee. Loaded
+      // once for the whole rollup rather than per-row.
+      const [feeRateVendorAccount] = await db
+        .select({
+          id: vendorAccounts.id,
+          ...vendorEntitlementColumns,
+        })
+        .from(vendorAccounts)
+        .where(eq(vendorAccounts.id, vendorAccountId))
+        .limit(1);
+      if (!feeRateVendorAccount) {
+        // vendorAccountId came from req.vendorAuth.id (already-verified Auth0
+        // identity), so a missing row here means the request itself is invalid
+        // (e.g. the account was deleted mid-session) — not a legacy-data gap.
+        // Don't guess a rate; return the same empty rollup used above for a
+        // missing vendorAccountId.
+        return res.json({
+          totalNetEarned: 0,
+          upcomingNetPayout: 0,
+          history: [],
+        });
+      }
+      const legacyEstimateFeeRates = resolveFeeRates(feeRateVendorAccount);
       const profileContext = await resolveActiveVendorProfile(req);
       const activeProfileId = profileContext?.activeProfileId;
       if (!activeProfileId) {
@@ -5613,16 +5732,24 @@ export function registerVendorRoutes(app: Express): void {
         -- Aggregated (a booking can have multiple accepted travel-fee proposals)
         -- so the booking row never duplicates. Only successfully-charged travel
         -- fees count; refunded ones drop out via the status filter.
+        --
+        -- ACCOUNTING NOTE: tf_gross is a VENDOR-side figure — the vendor's
+        -- gross-of-Stripe-fee travel earnings (fee minus commission), matching
+        -- how grossPayoutAmount is vendor-side for the booking itself. It is
+        -- deliberately NOT "what the customer paid": since travel fees carry the
+        -- customer service fee, the amount column is the CUSTOMER-side charge and would
+        -- overstate vendor earnings, so it is the last-resort fallback only,
+        -- behind vendor_gross_amount (the fee before commission).
         left join (
           select
             booking_id,
-            sum(coalesce(vendor_net_payout_amount, amount, 0)) as tf_gross,
+            sum(coalesce(vendor_net_payout_amount, vendor_gross_amount, amount, 0)) as tf_gross,
             sum(case when vendor_absorbs_stripe_fees
                      then coalesce(actual_stripe_fee_amount, stripe_processing_fee_estimate, 0)
                      else 0 end) as tf_stripe_fee,
             sum(coalesce(
               payout_adjusted_amount,
-              greatest(0, coalesce(vendor_net_payout_amount, amount, 0)
+              greatest(0, coalesce(vendor_net_payout_amount, vendor_gross_amount, amount, 0)
                 - case when vendor_absorbs_stripe_fees
                        then coalesce(actual_stripe_fee_amount, stripe_processing_fee_estimate, 0)
                        else 0 end)
@@ -5695,7 +5822,7 @@ export function registerVendorRoutes(app: Express): void {
 
         const baseAmountCents = baseAmountByBookingId.get(r.id) ?? 0;
         if (!baseAmountCents) return 0;
-        const vendorFee = Math.round(baseAmountCents * VENDOR_FEE_RATE);
+        const vendorFee = Math.round(baseAmountCents * legacyEstimateFeeRates.vendorFeeRate);
         return Math.max(0, baseAmountCents - vendorFee);
       };
 
@@ -5736,7 +5863,7 @@ export function registerVendorRoutes(app: Express): void {
         const typed = normalizeAmountToCents(r.platformFee);
         if (typed > 0) return typed;
         const baseAmountCents = baseAmountByBookingId.get(r.id) ?? 0;
-        return Math.round(baseAmountCents * VENDOR_FEE_RATE);
+        return Math.round(baseAmountCents * legacyEstimateFeeRates.vendorFeeRate);
       };
 
       const toRowPayoutStatus = (r: { payoutStatus?: string | null }) =>
@@ -5763,7 +5890,7 @@ export function registerVendorRoutes(app: Express): void {
         const grossCents =
           grossCentsFromTypedTotal > 0
             ? grossCentsFromTypedTotal
-            : baseAmountCents + (typedCustomerFeeCents > 0 ? typedCustomerFeeCents : Math.round(baseAmountCents * CUSTOMER_FEE_RATE));
+            : baseAmountCents + (typedCustomerFeeCents > 0 ? typedCustomerFeeCents : Math.round(baseAmountCents * legacyEstimateFeeRates.customerFeeRate));
         const travelFeeGrossCents = Math.max(0, normalizeAmountToCents(r.travelFeeGrossAmount));
         const travelFeeStripeFeeCents = Math.max(0, normalizeAmountToCents(r.travelFeeStripeFeeAmount));
         const travelFeeNetCents = toTravelFeeNetCents(r);
@@ -5786,9 +5913,11 @@ export function registerVendorRoutes(app: Express): void {
           listingTitleSnapshot: r.listingTitleSnapshot ?? null,
           netAmount: netCents,
           grossAmount: grossCents,
-          // Vendor payout breakdown: gross service earnings, Stripe's processing
-          // fee deducted, and the resulting take-home (netAmount). EventHub still
-          // takes no commission (platformFeeAmount stays 0).
+          // Vendor payout breakdown. NOTE: grossPayoutAmount is already NET of
+          // the vendor commission (platformFeeAmount), so a client rendering a
+          // breakdown must add the commission back to show the vendor's actual
+          // earnings and then deduct it as its own line — otherwise the
+          // commission is invisible and the rows do not reconcile to netAmount.
           grossPayoutAmount: grossPayoutCents,
           stripeProcessingFeeAmount: stripeProcessingFeeCents,
           // Travel fee earned on this booking (0 when none) — its own breakdown

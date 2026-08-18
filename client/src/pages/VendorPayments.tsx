@@ -12,9 +12,13 @@ type VendorPaymentHistoryItem = {
   id: string;
   netAmount?: number | null;
   grossAmount?: number | null;
+  // Already net of the vendor commission — see the breakdown below.
   grossPayoutAmount?: number | null;
   stripeProcessingFeeAmount?: number | null;
   travelFeeAmount?: number | null;
+  // EventHub's vendor commission on this booking, in cents. 0 for Pro
+  // subscribers and grandfathered vendors.
+  platformFeeAmount?: number | null;
   status?: string | null;
   eventDate?: string | null;
   createdAt?: string | null;
@@ -222,10 +226,18 @@ export default function VendorPayments() {
               {history.map((payment) => {
                 const stripeFeeCents = Number(payment.stripeProcessingFeeAmount ?? 0);
                 const travelFeeCents = Number(payment.travelFeeAmount ?? 0);
+                const commissionCents = Number(payment.platformFeeAmount ?? 0);
+                // grossPayoutAmount is ALREADY net of the vendor commission, so
+                // showing it under a "Booking total" label understated the sale
+                // and made the commission invisible. Add it back to get the
+                // vendor's actual earnings, then deduct it as its own line so the
+                // breakdown reconciles to netAmount.
                 const grossPayoutCents = Number(
                   payment.grossPayoutAmount ?? payment.netAmount ?? 0
                 );
-                const showBreakdown = stripeFeeCents > 0 || travelFeeCents > 0;
+                const earningsCents = grossPayoutCents + commissionCents;
+                const showBreakdown =
+                  stripeFeeCents > 0 || travelFeeCents > 0 || commissionCents > 0;
                 return (
                   <div key={payment.id} className="flex items-start justify-between gap-3 rounded-lg border p-4">
                     <div>
@@ -240,8 +252,14 @@ export default function VendorPayments() {
                         <div className="mt-1 space-y-0.5 text-xs text-muted-foreground">
                           <div className="flex justify-between gap-4">
                             <span>{t("vendorPayments.bookingTotal")}</span>
-                            <span>{formatUsdFromCents(grossPayoutCents)}</span>
+                            <span>{formatUsdFromCents(earningsCents)}</span>
                           </div>
+                          {commissionCents > 0 && (
+                            <div className="flex justify-between gap-4">
+                              <span>{t("vendorPayments.eventhubCommission")}</span>
+                              <span>− {formatUsdFromCents(commissionCents)}</span>
+                            </div>
+                          )}
                           {travelFeeCents > 0 && (
                             <div className="flex justify-between gap-4">
                               <span>{t("vendorPayments.travelFee")}</span>

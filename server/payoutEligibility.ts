@@ -114,19 +114,67 @@ export function isDisputeWindowOpen(eventEndedAt: unknown, now = new Date()): bo
   return now >= endedAt && now < closesAt;
 }
 
+/**
+ * The vendor's payout after refunds.
+ *
+ * A refund is a fraction of the CUSTOMER-side payment row amount
+ * (`payments.amount` = serviceOnlyTotal = discountedSubtotal + customerFee),
+ * while the vendor's net is a different, smaller number
+ * (`vendorNet` = discountedSubtotal − platformFee). Deducting the refund from
+ * the payout 1:1 therefore charges the vendor for money that was never theirs —
+ * the customer fee and the platform's own commission — so the platform's take on
+ * the retained portion balloons as the refund fraction grows.
+ *
+ * The rule (documented in lib/calculateRefund.ts) is that commission is retained
+ * only on the NON-REFUNDED portion, i.e. the vendor keeps `(1 − p)` of their net
+ * for refund fraction `p`. So we apportion rather than subtract.
+ *
+ * Worked example ($1000 subtotal, 8% vendor / 5% customer, 50% cancellation tier):
+ *   payment amount = 1000 + 50 = $1050; vendorNet = 1000 − 80 = $920
+ *   refund = 50% of $1050 = $525  →  p = 0.5
+ *   apportioned payout = 920 × 0.5 = $460   (old 1:1 code gave $920 − $525 = $395,
+ *   which quietly lifted the platform's take on the retained half from 13% to ~25%)
+ *
+ * This was arithmetically invisible while both fee rates were 0 (payment amount
+ * == vendorNet, so subtraction and apportionment agreed exactly). It became a
+ * real mis-payment the moment the rates went non-zero.
+ *
+ * The Stripe processing fee is deducted in FULL (not apportioned) when the vendor
+ * absorbs it: Stripe does not return processing fees on refunds, so the cost is
+ * incurred whole regardless of how much of the charge was refunded.
+ */
 function deriveAdjustedVendorPayoutAmount(
   input: Pick<
     PayoutEligibilityInput,
-    "vendorNetPayoutAmount" | "actualStripeFeeAmount" | "refundedAmount" | "vendorAbsorbsStripeFees"
+    | "vendorNetPayoutAmount"
+    | "actualStripeFeeAmount"
+    | "refundedAmount"
+    | "vendorAbsorbsStripeFees"
+    | "totalAmount"
   >
 ) {
   const baseVendorNet = Math.max(0, parseIntegerValue(input.vendorNetPayoutAmount) ?? 0);
   const actualStripeFee = Math.max(0, parseIntegerValue(input.actualStripeFeeAmount) ?? 0);
   const refundedAmount = Math.max(0, parseIntegerValue(input.refundedAmount) ?? 0);
-  const vendorNetAfterFeeModel = input.vendorAbsorbsStripeFees
-    ? Math.max(0, baseVendorNet - actualStripeFee)
-    : baseVendorNet;
-  return Math.max(0, vendorNetAfterFeeModel - refundedAmount);
+  const paymentAmount = Math.max(0, parseIntegerValue(input.totalAmount) ?? 0);
+
+  // Fraction of the vendor's net they keep. A refund at or beyond the full
+  // payment amount floors the payout at 0; a refund with no known payment
+  // amount to apportion against is treated as a full refund (fail safe — never
+  // pay out against an amount we cannot verify).
+  let retainedFraction: number;
+  if (refundedAmount <= 0) {
+    retainedFraction = 1;
+  } else if (paymentAmount <= 0 || refundedAmount >= paymentAmount) {
+    retainedFraction = 0;
+  } else {
+    retainedFraction = 1 - refundedAmount / paymentAmount;
+  }
+
+  const retainedVendorNet = Math.round(baseVendorNet * retainedFraction);
+  return input.vendorAbsorbsStripeFees
+    ? Math.max(0, retainedVendorNet - actualStripeFee)
+    : Math.max(0, retainedVendorNet);
 }
 
 export function computePayoutEligibility(input: PayoutEligibilityInput, now = new Date()): PayoutEligibilityResult {

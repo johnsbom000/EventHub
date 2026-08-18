@@ -126,7 +126,6 @@ import {
   type TravelFeeProposal,
   listingReviews,
   reviewReplies,
-  vendorReferrals,
 } from "@shared/schema";
 import {
   requireDualAuthAuth0,
@@ -282,8 +281,6 @@ import {
   deriveVendorSlug,
 } from "../lib/routeUtils";
 import {
-  VENDOR_FEE_RATE,
-  CUSTOMER_FEE_RATE,
   STRIPE_FEE_ESTIMATE_PERCENT,
   STRIPE_FEE_ESTIMATE_FIXED_CENTS,
   VENDOR_ABSORBS_STRIPE_FEES,

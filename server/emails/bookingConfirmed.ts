@@ -41,6 +41,19 @@ export interface BookingConfirmedParams {
   // deduction transparently. Omitted (or fee <= 0) => no breakdown is rendered.
   stripeProcessingFeeCents?: number;
   vendorNetPayoutCents?: number;
+  /**
+   * The EventHub vendor commission on this booking, in cents (bookings.platform_fee).
+   *
+   * REQUIRED for the breakdown to be honest. This email used to hardcode
+   * "EventHub takes no commission", which was true only while VENDOR_FEE_RATE was
+   * 0. It is now 8% for everyone except Pro subscribers and grandfathered
+   * vendors, so the claim — and the arithmetic — has to follow the real number.
+   *
+   * Absent is treated as 0, which is the honest default only because a missing
+   * value means the caller had no commission to report. Callers that CAN know it
+   * must pass it.
+   */
+  platformFeeCents?: number;
 }
 
 export function bookingConfirmedTemplate(params: BookingConfirmedParams): {
@@ -70,15 +83,38 @@ export function bookingConfirmedTemplate(params: BookingConfirmedParams): {
     role === "vendor" && feeCents > 0 && typeof params.vendorNetPayoutCents === "number";
   const netPayoutCents = Math.max(0, Math.round(params.vendorNetPayoutCents ?? 0));
 
+  // The vendor commission on this booking. Drives both the breakdown row and the
+  // note below — the two must never disagree.
+  const commissionCents = Math.max(0, Math.round(params.platformFeeCents ?? 0));
+
+  // The vendor's own earnings line, derived so the rows ALWAYS sum:
+  //   earnings − commission − Stripe fee = net payout.
+  // Deliberately NOT `totalAmountCents`, which is what the customer paid: that
+  // includes the 5% customer service fee, which never reaches the vendor. Showing
+  // it as the opening line of a payout breakdown makes the column look short by
+  // the customer fee as well as the commission.
+  const vendorEarningsCents = netPayoutCents + feeCents + commissionCents;
+
+  const commissionRow = commissionCents > 0
+    ? `\n      <tr><td style="padding:8px 0;border-bottom:1px solid #f0eeec;font-size:14px;color:#666;">EventHub commission</td><td style="padding:8px 0;border-bottom:1px solid #f0eeec;font-size:14px;text-align:right;color:#666;">− ${formatCents(commissionCents)}</td></tr>`
+    : "";
+
   const totalsRows = showVendorPayout
     ? `
-      <tr><td style="padding:8px 0;border-bottom:1px solid #f0eeec;font-size:14px;color:#666;">Booking total</td><td style="padding:8px 0;border-bottom:1px solid #f0eeec;font-size:14px;font-weight:600;text-align:right;">${formatCents(totalAmountCents)}</td></tr>
+      <tr><td style="padding:8px 0;border-bottom:1px solid #f0eeec;font-size:14px;color:#666;">Your booking earnings</td><td style="padding:8px 0;border-bottom:1px solid #f0eeec;font-size:14px;font-weight:600;text-align:right;">${formatCents(vendorEarningsCents)}</td></tr>${commissionRow}
       <tr><td style="padding:8px 0;border-bottom:1px solid #f0eeec;font-size:14px;color:#666;">Stripe Processing Fee</td><td style="padding:8px 0;border-bottom:1px solid #f0eeec;font-size:14px;text-align:right;color:#666;">− ${formatCents(feeCents)}</td></tr>
       <tr><td style="padding:8px 0;font-size:14px;color:#666;">Your net payout</td><td style="padding:8px 0;font-size:14px;font-weight:700;text-align:right;color:${CORAL};">${formatCents(netPayoutCents)}</td></tr>`
     : `<tr><td style="padding:8px 0;font-size:14px;color:#666;">Total</td><td style="padding:8px 0;font-size:14px;font-weight:700;text-align:right;color:${CORAL};">${formatCents(totalAmountCents)}</td></tr>`;
 
+  // The note follows the real number. "EventHub takes no commission" is TRUE for
+  // Pro subscribers and grandfathered vendors, and FALSE for everyone else — so
+  // it is said only when the commission is actually zero.
+  const noteText = commissionCents > 0
+    ? `Deductions are EventHub's commission and Stripe's standard payment-processing fee (2.9% + $0.30) for handling the card payment. The Stripe amount is an estimate — your final payout reflects their actual fee.`
+    : `EventHub takes no commission on your bookings. The only deduction is Stripe's standard payment-processing fee (2.9% + $0.30) for handling the card payment. This is an estimate — your final payout reflects Stripe's actual fee.`;
+
   const payoutNote = showVendorPayout
-    ? `<p style="margin:0 0 20px;font-size:12px;line-height:1.6;color:#999;">EventHub takes no commission. The only deduction is Stripe's standard payment-processing fee (2.9% + $0.30) for handling the card payment. This is an estimate — your final payout reflects Stripe's actual fee.</p>`
+    ? `<p style="margin:0 0 20px;font-size:12px;line-height:1.6;color:#999;">${noteText}</p>`
     : "";
 
   const body = `
@@ -97,7 +133,7 @@ export function bookingConfirmedTemplate(params: BookingConfirmedParams): {
 
   const addonLines = (addOns ?? []).map(a => `${a.title}: ${formatCents(a.priceCents)}`).join("\n");
   const totalsText = showVendorPayout
-    ? `Booking total: ${formatCents(totalAmountCents)}\nStripe Processing Fee: - ${formatCents(feeCents)}\nYour net payout: ${formatCents(netPayoutCents)}\n\nEventHub takes no commission. The only deduction is Stripe's standard payment-processing fee (2.9% + $0.30). This is an estimate — your final payout reflects Stripe's actual fee.`
+    ? `Your booking earnings: ${formatCents(vendorEarningsCents)}${commissionCents > 0 ? `\nEventHub commission: - ${formatCents(commissionCents)}` : ""}\nStripe Processing Fee: - ${formatCents(feeCents)}\nYour net payout: ${formatCents(netPayoutCents)}\n\n${noteText}`
     : `Total: ${formatCents(totalAmountCents)}`;
   const text = `Booking Confirmed\n\nHi ${recipientName},\n\n${role === "customer" ? `Your booking with ${counterpartName} has been confirmed.` : `You confirmed a booking from ${counterpartName}.`}\n\nService: ${listingTitle}${addonLines ? "\n" + addonLines : ""}\nEvent Date: ${eventDate}\n${totalsText}\n\nView your booking: ${dashboardUrl}`;
 

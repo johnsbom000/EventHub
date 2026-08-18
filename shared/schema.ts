@@ -119,6 +119,11 @@ export const users = pgTable(
     // (migration 0159 + backfill_customer_photos_to_s3.ts).
     profilePhotoUrl: text("profile_photo_url"),
     preferredLanguage: varchar("preferred_language", { length: 10 }).notNull().default("en"),
+    // Terms acceptance (migration 0165). NULL = never accepted on record; see
+    // shared/termsVersion.ts. Stamped when a customer confirms a booking, which
+    // is where the UI states that continuing constitutes agreement.
+    termsVersionAccepted: text("terms_version_accepted"),
+    termsAcceptedAt: timestamp("terms_accepted_at", { withTimezone: true }),
     stripeCustomerId: text("stripe_customer_id"),
     vendorOnlySignup: boolean("vendor_only_signup").notNull().default(false),
     // One-shot re-engagement flag: redirect to /vendor/provision on next
@@ -321,26 +326,7 @@ export const vendorAccounts = pgTable(
     ownerPhone: text("owner_phone"),
     deletedAt: timestamp("deleted_at"),
     createdAt: timestamp("created_at").defaultNow().notNull(),
-    isMarqueeVendor: boolean("is_marquee_vendor").notNull().default(false),
-    marqueeVendorNumber: integer("marquee_vendor_number"),
-    marqueeHolidayBookingsUsed: integer("marquee_holiday_bookings_used").notNull().default(0),
-    marqueeHolidayBonusBookings: integer("marquee_holiday_bonus_bookings").notNull().default(0),
-    marqueeActivatedAt: timestamp("marquee_activated_at"),
-    marqueeHolidayEndsAt: timestamp("marquee_holiday_ends_at"),
-    marqueeRateEndsAt: timestamp("marquee_rate_ends_at"),
-    marqueeCustomerFeeEndsAt: timestamp("marquee_customer_fee_ends_at"),
-    marqueeVisibilityEndsAt: timestamp("marquee_visibility_ends_at"),
-    marqueeConsecutiveInactiveMonths: integer("marquee_consecutive_inactive_months").notNull().default(0),
     referralCode: varchar("referral_code", { length: 20 }),
-    // Founding Vendor program (migration 0089 + 0099)
-    isFoundingVendor: boolean("is_founding_vendor").notNull().default(false),
-    foundingVendorNumber: integer("founding_vendor_number"),
-    foundingBenefitBookingsUsed: integer("founding_benefit_bookings_used").notNull().default(0),
-    foundingBenefitsActivatedAt: timestamp("founding_benefits_activated_at"),
-    foundingHolidayEndsAt: timestamp("founding_holiday_ends_at"),
-    foundingRateEndsAt: timestamp("founding_rate_ends_at"),
-    foundingVisibilityEndsAt: timestamp("founding_visibility_ends_at"),
-    foundingReferralBonusBookingsRemaining: integer("founding_referral_bonus_bookings_remaining").notNull().default(0),
     // When the vendor finished/dismissed the one-time onboarding tour shown on
     // their first dashboard visit (migration 0133). NULL = not completed yet.
     dashboardTourCompletedAt: timestamp("dashboard_tour_completed_at"),
@@ -395,6 +381,27 @@ export const vendorAccounts = pgTable(
     // this vendor was shown, assigned independently of the landing variant via a
     // PostHog flag and persisted (sticky) for the admin per-variant breakdown.
     paywallVariant: text("paywall_variant"),
+    // Commission pricing test — set once at provision, never mutated. See
+    // migration 0163. 'subscription' | 'commission'.
+    pricingModel: text("pricing_model").notNull().default("subscription"),
+    // Grandfathering (migration 0164). True for every vendor that existed when
+    // the 8% vendor commission went live — they were onboarded on the promise
+    // that EventHub is free, so their VENDOR fee is permanently waived. The 5%
+    // customer service fee still applies to their bookings. Defaults to false
+    // for all new signups. Read by resolveFeeRates() BEFORE anything else.
+    feeExempt: boolean("fee_exempt").notNull().default(false),
+    // Terms acceptance (migration 0165). NULL = never accepted on record — true
+    // for every vendor who predates this, deliberately not backfilled. Stamped
+    // at provision. See shared/termsVersion.ts.
+    termsVersionAccepted: text("terms_version_accepted"),
+    termsAcceptedAt: timestamp("terms_accepted_at", { withTimezone: true }),
+    // Meta ad attribution, captured on first touch at the landing page.
+    landingStyle: text("landing_style"),
+    utmSource: text("utm_source"),
+    utmMedium: text("utm_medium"),
+    utmCampaign: text("utm_campaign"),
+    utmContent: text("utm_content"),
+    fbclid: text("fbclid"),
     // AI reply assistant (Pro-gated, metered — migration 0136). Feature toggle is
     // opt-in (default off); overage auto-billing is opt-out (default on). When the
     // included monthly allowance is exhausted: overage on → meter to Stripe, overage
@@ -414,9 +421,6 @@ export const vendorAccounts = pgTable(
       .where(
         sql`${table.auth0Sub} is not null and btrim(${table.auth0Sub}) <> '' and ${table.deletedAt} is null`
       ),
-    marqueeVendorNumberUniqueIdx: uniqueIndex("vendor_accounts_marquee_vendor_number_unique_idx")
-      .on(table.marqueeVendorNumber)
-      .where(sql`${table.marqueeVendorNumber} is not null`),
     referralCodeUniqueIdx: uniqueIndex("vendor_accounts_referral_code_unique_idx")
       .on(table.referralCode)
       .where(sql`${table.referralCode} is not null`),
@@ -622,7 +626,7 @@ export const bookings = pgTable("bookings", {
   instantBookSnapshot: boolean("instant_book_snapshot"),
   totalAmount: integer("total_amount").notNull(), // in cents
   platformFee: integer("platform_fee").notNull(), // vendor fee portion in cents
-  vendorPayout: integer("vendor_payout").notNull(), // totalAmount - securityDepositCents (the deposit is refundable, not payout; platform fee is deducted later at transfer time)
+  vendorPayout: integer("vendor_payout").notNull(), // discountedSubtotal - platformFee, i.e. totalAmount - customerFee - securityDepositCents - platformFee (the deposit is refundable, not payout; the customer fee never reaches the vendor; the vendor fee is already deducted here, not later at transfer time)
   depositAmount: integer("deposit_amount").notNull(), // down payment
   depositPaidAt: timestamp("deposit_paid_at"), // track when deposit was paid for 72hr refund policy
   finalPaymentStrategy: text("final_payment_strategy"), // 'immediately', '2_weeks_prior', 'day_of_event'
@@ -1546,81 +1550,6 @@ export type DisputeCase = typeof disputeCases.$inferSelect;
 export type InsertDisputeCase = typeof disputeCases.$inferInsert;
 export type DisputeFiling = typeof disputeFilings.$inferSelect;
 export type InsertDisputeFiling = typeof disputeFilings.$inferInsert;
-
-// Vendor Referrals — tracks when a founding vendor refers a new vendor to the platform
-export const vendorReferralStatusEnum = pgEnum("vendor_referral_status", [
-  "pending",
-  "completed",
-  "rewarded",
-]);
-
-export const vendorReferrals = pgTable(
-  "vendor_referrals",
-  {
-    id: varchar("id").primaryKey().default(sql`gen_random_uuid()`),
-    referrerVendorId: varchar("referrer_vendor_id")
-      .notNull()
-      .references(() => vendorAccounts.id),
-    referredVendorId: varchar("referred_vendor_id")
-      .notNull()
-      .references(() => vendorAccounts.id),
-    status: vendorReferralStatusEnum("status").notNull().default("pending"),
-    createdAt: timestamp("created_at").notNull().defaultNow(),
-    completedAt: timestamp("completed_at"),
-  },
-  (table) => ({
-    referrerIdx: index("vendor_referrals_referrer_idx").on(table.referrerVendorId),
-    referredIdx: index("vendor_referrals_referred_idx").on(table.referredVendorId),
-    uniquePair: uniqueIndex("vendor_referrals_unique_pair").on(table.referrerVendorId, table.referredVendorId),
-  })
-);
-
-export type VendorReferral = typeof vendorReferrals.$inferSelect;
-export type InsertVendorReferral = typeof vendorReferrals.$inferInsert;
-
-// Founding Vendor Invite Tokens — global links admin shares to grant founding status
-export const foundingVendorInvites = pgTable("founding_vendor_invites", {
-  id: varchar("id").primaryKey().default(sql`gen_random_uuid()`),
-  token: varchar("token", { length: 32 }).notNull().unique(),
-  active: boolean("active").notNull().default(true),
-  redemptionCount: integer("redemption_count").notNull().default(0),
-  createdAt: timestamp("created_at").notNull().defaultNow(),
-});
-
-export type FoundingVendorInvite = typeof foundingVendorInvites.$inferSelect;
-
-// Marquee Vendor Invite Tokens — global links admin shares to grant marquee status
-export const marqueeVendorInvites = pgTable("marquee_vendor_invites", {
-  id: varchar("id").primaryKey().default(sql`gen_random_uuid()`),
-  token: varchar("token", { length: 32 }).notNull().unique(),
-  active: boolean("active").notNull().default(true),
-  redemptionCount: integer("redemption_count").notNull().default(0),
-  createdAt: timestamp("created_at").notNull().defaultNow(),
-});
-
-export type MarqueeVendorInvite = typeof marqueeVendorInvites.$inferSelect;
-
-// Marquee Email Invites — log of every invitation email the admin sends
-export const marqueeEmailInvites = pgTable("marquee_email_invites", {
-  id: varchar("id").primaryKey().default(sql`gen_random_uuid()`),
-  email: varchar("email", { length: 255 }).notNull(),
-  sentAt: timestamp("sent_at", { withTimezone: true }).notNull().defaultNow(),
-  sentBy: varchar("sent_by", { length: 255 }),
-  sentSuccessfully: boolean("sent_successfully").notNull().default(false),
-});
-
-export type MarqueeEmailInvite = typeof marqueeEmailInvites.$inferSelect;
-
-// Founding Vendor Email Invites — log of every invitation email the admin sends
-export const foundingEmailInvites = pgTable("founding_email_invites", {
-  id: varchar("id").primaryKey().default(sql`gen_random_uuid()`),
-  email: varchar("email", { length: 255 }).notNull(),
-  sentAt: timestamp("sent_at", { withTimezone: true }).notNull().defaultNow(),
-  sentBy: varchar("sent_by", { length: 255 }),
-  sentSuccessfully: boolean("sent_successfully").notNull().default(false),
-});
-
-export type FoundingEmailInvite = typeof foundingEmailInvites.$inferSelect;
 
 // Vendor Inquiries — tracks pre-booking inquiry channels (one per vendor+customer pair)
 export const vendorInquiries = pgTable(

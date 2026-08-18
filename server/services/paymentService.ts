@@ -17,7 +17,6 @@ import {
   resolvePaymentInitAction,
 } from "../lib/routeUtils";
 import {
-  VENDOR_FEE_RATE,
   VENDOR_ABSORBS_STRIPE_FEES,
 } from "../lib/constants";
 import {
@@ -826,10 +825,17 @@ export async function ensurePaymentRecordForIntentInTx(
     parseIntegerValue(bookingRow.totalAmount) ??
     parseIntegerValue(params.fallbackTotalAmount) ??
     amount;
+  // bookings.platformFee is NOT NULL (shared/schema.ts) — every booking row has a
+  // real, persisted fee, so the first arm below always wins in practice. The `?? 0`
+  // tail exists only to satisfy the type (parseIntegerValue can return null) without
+  // guessing a rate if it were ever reached; it deliberately does NOT recompute from
+  // any fee rate (raw constant or resolveFeeRates), since this runs from Stripe
+  // webhook processing (applyPaymentIntentSuccess/FailureInTx) after money has
+  // already moved — a wrong guess here cannot be corrected by simply retrying.
   const platformFeeAmount =
     parseIntegerValue(bookingRow.platformFee) ??
     parseIntegerValue(params.fallbackPlatformFeeAmount) ??
-    Math.round(amount * VENDOR_FEE_RATE);
+    0;
   const vendorGrossAmount =
     parseIntegerValue(bookingRow.subtotalAmountCents) ??
     parseIntegerValue(params.fallbackVendorGrossAmount) ??
@@ -1277,7 +1283,14 @@ export async function initializeBookingPayment(input: {
   // Service-only total = full booking charge minus the security deposit portion.
   // Used for payout/fee calculations so the deposit never reaches the vendor.
   const serviceOnlyTotal = Math.max(0, totalAmountCents - securityDepositCents);
-  const platformFeeAmount = parseIntegerValue(booking.platformFee) ?? Math.round(serviceOnlyTotal * VENDOR_FEE_RATE);
+  const storedPlatformFee = parseIntegerValue(booking.platformFee);
+  if (storedPlatformFee === null || storedPlatformFee === undefined) {
+    throw new Error(
+      `Booking ${booking.id} has no stored platformFee — refusing to guess a fee rate. ` +
+        `Fee rates are resolved and persisted at booking creation.`,
+    );
+  }
+  const platformFeeAmount = storedPlatformFee;
   const vendorGrossAmount = parseIntegerValue(booking.subtotalAmountCents) ?? Math.max(0, serviceOnlyTotal - platformFeeAmount);
   const vendorNetPayoutAmount = parseIntegerValue(booking.vendorPayout) ?? Math.max(0, serviceOnlyTotal - platformFeeAmount);
   const stripeProcessingFeeEstimate = estimateStripeProcessingFeeCents(totalAmountCents);

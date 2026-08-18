@@ -18,6 +18,11 @@ import { Eyebrow } from "@/pages/landing/primitives";
 type CellValue = boolean | string;
 
 const ROWS: { key: string; free: CellValue; pro: CellValue }[] = [
+  // Money first. This table used to list eleven features and no fee at all,
+  // beside a "$0 / free forever" header — so a visitor could read the whole
+  // section and never learn that the free tier pays a per-booking commission.
+  // Waiving it is what Pro actually sells; omitting it hid both halves.
+  { key: "commission", free: "applies", pro: "0%" },
   { key: "storefront", free: true, pro: true },
   { key: "bookings", free: true, pro: true },
   { key: "messaging", free: true, pro: true },
@@ -71,7 +76,13 @@ export default function FreeVsProSection({
         </span>
       );
     if (v === false) return <span className="font-sans text-[1.1rem] text-[#c3cfd6]">–</span>;
-    const label = v === "unlimited" ? t("plans.unlimited") : v;
+    // Cell values that are words rather than figures must be translatable.
+    // Figures ("1", "0%") are language-neutral and pass through unchanged.
+    const TOKENS: Record<string, string> = {
+      unlimited: "plans.unlimited",
+      applies: "plans.values.applies",
+    };
+    const label = TOKENS[v] ? t(TOKENS[v]) : v;
     return (
       <span className={`font-sans text-[0.95rem] font-semibold ${pro ? "text-[#2a3a42]" : "text-[#4a6a7d]"}`}>
         {label}
@@ -178,6 +189,26 @@ export default function FreeVsProSection({
                 </span>
               </div>
             ))}
+          </div>
+
+          {/* Fee footnote. The commission row above says a commission applies to
+              Free and is waived on Pro, but deliberately does not print the rate;
+              this points at Terms, which states every rate exactly. Without it
+              the table names no fee figure anywhere and a visitor has no route
+              to one before signing up. */}
+          <div className="border-t border-[rgba(74,106,125,0.1)] px-5 pt-3 sm:px-8">
+            <p className="font-sans text-[0.78rem] leading-snug text-[#9aacb4]">
+              {t("plans.feeNote")}{" "}
+              <a
+                href="/terms"
+                target="_blank"
+                rel="noopener noreferrer"
+                className="underline underline-offset-2 hover:text-[#4a6a7d]"
+              >
+                {t("plans.feeNoteLink")}
+              </a>
+              .
+            </p>
           </div>
 
           {/* CTA row */}

@@ -147,7 +147,7 @@ export default function VendorBookings() {
   const { isAuthenticated, getAccessTokenSilently } = useAuth0();
   const queryClient = useQueryClient();
   const { toast } = useToast();
-  const { vendorFeeRate } = useFeeRates();
+  const feeRates = useFeeRates();
 
   const { data: vendorAccount } = useQuery<VendorMe>({
     queryKey: ["/api/vendor/me"],
@@ -292,6 +292,14 @@ export default function VendorBookings() {
   const parsedBookings = useMemo(() => {
     const normalizeStatus = (s: any) => String(s || "").toLowerCase();
 
+    // Fee rates may not have loaded yet. Computing here with a 0 placeholder is
+    // safe: the CardContent render gate below (isLoading || !feeRates) keeps this
+    // list off-screen until feeRates is actually loaded, so no fee figure derived
+    // from the placeholder is ever shown to the vendor. Don't gate here too — an
+    // empty return would tell the vendor "you have no bookings", which is a false
+    // and stronger claim than simply deferring the fee number.
+    const vendorFeeRate = feeRates?.vendorFeeRate ?? 0;
+
     return (bookings || [])
       .map((b) => {
         let d: Date | null = null;
@@ -335,7 +343,7 @@ export default function VendorBookings() {
         isPast: boolean;
         raw: VendorBooking;
       }>;
-  }, [bookings]);
+  }, [bookings, feeRates]);
 
   const tabFilteredItems = useMemo(() => {
     const matchesTab = (x: { date: Date; status: string; isPast: boolean }) => {
@@ -699,7 +707,7 @@ export default function VendorBookings() {
           </CardHeader>
 
           <CardContent>
-            {isLoading ? (
+            {isLoading || !feeRates ? (
               <div className="text-center py-12 text-muted-foreground">{t("vendorBookings.loading")}</div>
             ) : isError ? (
               <div className="text-center py-10 text-muted-foreground">
@@ -1037,8 +1045,11 @@ export default function VendorBookings() {
                           <MapPin className="h-4 w-4 text-emerald-600 mt-0.5 shrink-0" />
                           <div>
                             <div className="text-sm font-medium text-emerald-800">Travel/delivery fee paid</div>
+                            {/* `amountCents` is the vendor-side fee. The customer
+                                also pays the service fee on top, so this line
+                                states the fee, not the customer's total. */}
                             <div className="text-xs text-emerald-700">
-                              The customer paid {formatUsd(item.raw.travelFeeProposal.amountCents)} for the travel/delivery fee.
+                              The {formatUsd(item.raw.travelFeeProposal.amountCents)} travel/delivery fee has been paid.
                             </div>
                           </div>
                         </div>
