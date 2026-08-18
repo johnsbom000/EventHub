@@ -30,6 +30,7 @@
     "test:pricing-exclusivity": "node --import tsx ./tests/pricing-model-exclusivity.test.ts",
     "test:fee-rates": "node --import tsx ./tests/fee-rates-resolution.test.ts",
     "test:travel-fee-customer-fee": "node --import tsx ./tests/travel-fee-customer-fee.test.ts",
+    "test:pricing-flag-gate": "node --import tsx ./tests/pricing-flag-gate.test.ts",
     "migrate": "tsx --env-file .env server/scripts/validate_migrations.ts && tsx --env-file .env server/migrate.ts",
     "validate:migrations": "tsx --env-file .env server/scripts/validate_migrations.ts",
     "start": "NODE_ENV=production node dist/index.js",

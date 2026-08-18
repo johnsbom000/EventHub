@@ -743,18 +743,20 @@ export default function TemporaryLanding({ model }: { model: PricingModel }) {
             </h2>
           </div>
           <div className="space-y-3">
-            {FAQ_KEYS.map((k, i) => (
+            {/* Param is `key`, not `k` — `k` is the namespace helper above and
+                shadowing it here would silently make it unreachable. */}
+            {FAQ_KEYS.map((key, i) => (
               <details
-                key={k}
+                key={key}
                 open={i === 0}
                 className="group rounded-[16px] border border-[rgba(74,106,125,0.14)] bg-white px-6 py-5 transition-shadow open:shadow-[0_14px_40px_rgba(74,106,125,0.08)]"
               >
                 <summary className="flex cursor-pointer list-none items-center justify-between gap-4 font-sans text-[1.08rem] font-semibold text-[#2a3a42]">
-                  {t(`landing.faq.${k}.q`)}
+                  {t(`landing.faq.${key}.q`)}
                   <ChevronDown className="h-5 w-5 shrink-0 text-[#4a6a7d] transition-transform duration-200 group-open:rotate-180" />
                 </summary>
                 <p className="mt-4 font-sans text-[1.02rem] leading-[1.65] text-[#4a6a7d]">
-                  {t(`landing.faq.${k}.a`)}
+                  {t(`landing.faq.${key}.a`)}
                 </p>
               </details>
             ))}

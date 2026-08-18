@@ -9,7 +9,7 @@ import { ScrollToTop } from "@/components/ScrollToTop";
 import { TooltipProvider } from "@/components/ui/tooltip";
 import { useTrackPageView } from "@/hooks/useTrackPageView";
 import { readLandingVariant, useLandingStyle } from "@/hooks/useLandingVariant";
-import { usePricingModel } from "@/hooks/usePricingModel";
+import { usePricingModelResolution } from "@/hooks/usePricingModel";
 import { phCapture } from "@/lib/posthog";
 import { trackSignupCompletedOnce } from "@/lib/tracking";
 import EmailVerificationGate from "@/components/EmailVerificationGate";
@@ -185,6 +185,24 @@ function PostLogin() {
   );
 }
 
+// Neutral hold shown while the pricing flag resolves. Deliberately contains no
+// product copy at all — no headline, no price, no fee claim — so it is identical
+// for both arms and cannot leak either money story. Same white ground as every
+// landing page so the real page swaps in without a flash. Typically visible for
+// the flag round-trip only (~100–300ms), capped by
+// PRICING_FLAG_RESOLVE_TIMEOUT_MS.
+function LandingPlaceholder() {
+  return (
+    <div className="min-h-screen bg-white flex items-center justify-center" role="status" aria-busy="true">
+      <span
+        aria-hidden="true"
+        className="h-8 w-8 animate-spin rounded-full border-2 border-[rgba(74,106,125,0.18)] border-t-[#4a6a7d]"
+      />
+      <span className="sr-only">Loading</span>
+    </div>
+  );
+}
+
 // Renders the landing page for the six /for-vendors ad routes (and "/").
 // Style is derived deterministically from the URL (useLandingStyle) — each
 // Meta ad links to its own route, so which design a visitor sees is controlled
@@ -193,9 +211,15 @@ function PostLogin() {
 // The pricing MODEL is orthogonal: it is randomised after the click by the
 // PostHog `pricing-model-test` flag, so both arms are drawn from the same ad and
 // audience. Each page renders the same layout with only the money story swapped.
+//
+// The pricing flag resolves asynchronously, so the page is HELD behind an
+// arm-agnostic placeholder until it does (see usePricingModelResolution).
+// Painting first and swapping later would show commission visitors subscription
+// copy above the fold, then reflow — contaminating the arm.
 function LandingForVariant() {
   const style = useLandingStyle();
-  const model = usePricingModel();
+  const { model, ready } = usePricingModelResolution();
+  if (!ready) return <LandingPlaceholder />;
   switch (style) {
     case "a":
       return <TemporaryLandingFreeA model={model} />;
@@ -212,13 +236,31 @@ function LandingForVariant() {
   }
 }
 
+// [vendor-only restrictions] remove this entire component
+// Landing shown to an ALREADY-PROVISIONED vendor-only account (the effect above
+// is redirecting them to /vendor/dashboard). Their pricing model is whatever
+// vendor_accounts.pricing_model was stamped with at provision — an immutable
+// column — so the experiment flag must not be consulted here: it could
+// re-randomise a paying Pro vendor into the commission arm and tell them
+// "Free to join". Hard-coded to "subscription", the model every existing vendor
+// account predates the experiment on. (Their stored model is not exposed to this
+// route; /api/customer/me returns only vendorOnlySignup.)
+function VendorOnlyLanding() {
+  return <TemporaryLanding model="subscription" />;
+}
+
 function RootEntry() {
   const [location, setLocation] = useLocation();
   const { isAuthenticated, isLoading: isAuthLoading } = useAuth0();
   const { toast } = useToast();
   const hasShownToastRef = useRef(false);
   const { isVendorOnly, isLoading: isVendorOnlyLoading } = useIsVendorOnly();
-  const pricingModel = usePricingModel();
+  // NOTE: the pricing flag is deliberately NOT read here. RootEntry also serves
+  // authenticated customers and vendors who never see a landing page, and
+  // reading the flag records a $feature_flag_called exposure — enrolling users
+  // who can never convert and diluting both arms' denominators. The flag is
+  // evaluated only inside LandingForVariant, which is where a landing page
+  // actually renders.
 
   // "Become a Vendor" flow — check vendor status and redirect to dashboard/onboarding.
   const [vendorIntent] = useState(() => {
@@ -301,7 +343,7 @@ function RootEntry() {
   }
   // Vendor-only signups don't get the customer marketplace; the effect above
   // redirects them to /vendor/dashboard.
-  if (isVendorOnly) return <TemporaryLanding model={pricingModel} />; // [vendor-only restrictions]
+  if (isVendorOnly) return <VendorOnlyLanding />; // [vendor-only restrictions]
 
   // Authenticated customers with a profile get the vendor marketplace.
   return <Home />;
