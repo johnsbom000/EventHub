@@ -85,6 +85,7 @@ type VendorHeaderAccount = {
   onboardingCompleted?: boolean;
   dashboardTourCompletedAt?: string | null;
   isPro?: boolean | null;
+  showUpgradePrompts?: boolean | null;
 };
 
 const VENDOR_ME_SHELL_QUERY_KEY = ["/api/vendor/me", "shell-header"] as const;
@@ -417,7 +418,7 @@ export default function VendorShell({ children, onOpenAccountSettings }: VendorS
               <Badge className="bg-[#4a6a7d] text-[#f5f0e8] gap-1" data-testid="badge-vendor-pro">
                 <Sparkles className="h-3 w-3" /> Pro
               </Badge>
-            ) : vendorAccount?.id ? (
+            ) : vendorAccount?.id && vendorAccount?.showUpgradePrompts !== false ? (
               <button
                 type="button"
                 onClick={() => upgrade.open()}

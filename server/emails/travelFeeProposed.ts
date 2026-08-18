@@ -34,7 +34,16 @@ export interface TravelFeeProposedParams {
   vendorName: string;
   listingTitle: string;
   eventDate: string;
+  /** The vendor's travel/delivery fee itself (vendor-side, excludes the service fee). */
   amountCents: number;
+  /**
+   * Customer service fee added on top of `amountCents`, and the resulting total
+   * the customer's card will be charged. This email is a PRE-PAYMENT quote, so
+   * it must state the charged total — quoting `amountCents` alone would
+   * under-state the charge. Omitted/0 renders the single-line legacy layout.
+   */
+  customerFeeCents?: number | null;
+  chargedAmountCents?: number | null;
   /** Optional explanation the vendor provided with the proposal. */
   reason?: string | null;
   feeLabel: "travel fee" | "delivery fee";
@@ -46,10 +55,28 @@ export function travelFeeProposedTemplate(params: TravelFeeProposedParams): {
   html: string;
   text: string;
 } {
-  const { recipientName, vendorName, listingTitle, eventDate, amountCents, reason, feeLabel, serverUrl } = params;
+  const {
+    recipientName,
+    vendorName,
+    listingTitle,
+    eventDate,
+    amountCents,
+    customerFeeCents,
+    chargedAmountCents,
+    reason,
+    feeLabel,
+    serverUrl,
+  } = params;
 
   const feeLabelCap = feeLabel.charAt(0).toUpperCase() + feeLabel.slice(1);
   const amountFmt = formatCents(amountCents);
+  const serviceFeeCents = Math.max(0, Math.round(customerFeeCents ?? 0));
+  const totalCents = Math.max(0, Math.round(chargedAmountCents ?? amountCents + serviceFeeCents));
+  const hasServiceFee = serviceFeeCents > 0;
+  const totalFmt = formatCents(totalCents);
+  const serviceFeeFmt = formatCents(serviceFeeCents);
+  // What the customer is told they will pay. Must equal the PaymentIntent amount.
+  const quoteFmt = hasServiceFee ? `${amountFmt} plus a ${serviceFeeFmt} service fee (${totalFmt} total)` : amountFmt;
   const dashboardUrl = `${serverUrl}/dashboard/events`;
 
   const subject = `EventHub: ${feeLabelCap} proposed for your booking`;
@@ -58,7 +85,7 @@ export function travelFeeProposedTemplate(params: TravelFeeProposedParams): {
     <h2 style="margin:0 0 16px;font-family:'Playfair Display',Georgia,serif;font-size:22px;color:${SLATE};">${feeLabelCap} Proposed</h2>
     <p style="margin:0 0 12px;font-size:15px;line-height:1.6;">Hi ${recipientName},</p>
     <p style="margin:0 0 20px;font-size:15px;line-height:1.6;">
-      <strong>${vendorName}</strong> has proposed a ${feeLabel} of <strong>${amountFmt}</strong> for your booking on ${eventDate}.
+      <strong>${vendorName}</strong> has proposed a ${feeLabel} of <strong>${quoteFmt}</strong> for your booking on ${eventDate}.
       Please review and accept or decline from your booking page.
     </p>
     ${reason ? `
@@ -71,7 +98,10 @@ export function travelFeeProposedTemplate(params: TravelFeeProposedParams): {
     <table style="width:100%;border-collapse:collapse;margin-bottom:24px;">
       <tr><td style="padding:8px 0;border-bottom:1px solid #f0eeec;font-size:14px;color:#666;">Service</td><td style="padding:8px 0;border-bottom:1px solid #f0eeec;font-size:14px;font-weight:600;text-align:right;">${listingTitle}</td></tr>
       <tr><td style="padding:8px 0;border-bottom:1px solid #f0eeec;font-size:14px;color:#666;">Event Date</td><td style="padding:8px 0;border-bottom:1px solid #f0eeec;font-size:14px;font-weight:600;text-align:right;">${eventDate}</td></tr>
-      <tr><td style="padding:8px 0;font-size:14px;color:#666;">${feeLabelCap}</td><td style="padding:8px 0;font-size:14px;font-weight:700;text-align:right;color:${CORAL};">${amountFmt}</td></tr>
+      <tr><td style="padding:8px 0;${hasServiceFee ? "border-bottom:1px solid #f0eeec;" : ""}font-size:14px;color:#666;">${feeLabelCap}</td><td style="padding:8px 0;${hasServiceFee ? "border-bottom:1px solid #f0eeec;" : ""}font-size:14px;font-weight:600;text-align:right;">${amountFmt}</td></tr>
+      ${hasServiceFee ? `
+      <tr><td style="padding:8px 0;border-bottom:1px solid #f0eeec;font-size:14px;color:#666;">Service fee</td><td style="padding:8px 0;border-bottom:1px solid #f0eeec;font-size:14px;font-weight:600;text-align:right;">${serviceFeeFmt}</td></tr>
+      <tr><td style="padding:8px 0;font-size:14px;color:#666;">Total due</td><td style="padding:8px 0;font-size:14px;font-weight:700;text-align:right;color:${CORAL};">${totalFmt}</td></tr>` : ""}
     </table>
     <a href="${dashboardUrl}" style="display:inline-block;background:${CORAL};color:#fff;text-decoration:none;padding:12px 28px;border-radius:6px;font-size:14px;font-weight:600;">Review Fee</a>
   `;
@@ -81,12 +111,13 @@ export function travelFeeProposedTemplate(params: TravelFeeProposedParams): {
     ``,
     `Hi ${recipientName},`,
     ``,
-    `${vendorName} has proposed a ${feeLabel} of ${amountFmt} for your booking on ${eventDate}.`,
+    `${vendorName} has proposed a ${feeLabel} of ${quoteFmt} for your booking on ${eventDate}.`,
     ...(reason ? [``, `Vendor note: "${reason}"`] : []),
     ``,
     `Service: ${listingTitle}`,
     `Event Date: ${eventDate}`,
     `${feeLabelCap}: ${amountFmt}`,
+    ...(hasServiceFee ? [`Service fee: ${serviceFeeFmt}`, `Total due: ${totalFmt}`] : []),
     ``,
     `Review your booking: ${dashboardUrl}`,
   ].join("\n");

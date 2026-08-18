@@ -11,6 +11,7 @@ import { Switch } from "@/components/ui/switch";
 import { apiRequest } from "@/lib/queryClient";
 import type { VendorMeState } from "@/lib/vendorState";
 import KeepProModal from "@/components/KeepProModal";
+import { useFeeRates } from "@/hooks/useFeeRates";
 import {
   Check,
   Sparkles,
@@ -29,9 +30,11 @@ import {
 } from "lucide-react";
 
 type AiSettings = {
-  isPro: boolean;
+  hasProFeatures: boolean;
   enabled: boolean;
   overageEnabled: boolean;
+  /** False for commission vendors — pay-as-you-go does not exist for them. */
+  overageAvailable?: boolean;
   includedPerPeriod: number;
   used: number;
   remaining: number;
@@ -47,6 +50,16 @@ const PRO_MONTHLY_LABEL = "$29";
 const PRO_ANNUAL_LABEL = "$290";
 const PRO_MONTHLY_STRUCK = "$39";
 const PRO_ANNUAL_STRUCK = "$390";
+
+/**
+ * Renders a fee rate (0.08) as a percent string ("8%"). `fallbackPct` is used
+ * while the live rate is still loading — never 0, because a momentary "0%"
+ * on a pricing card is a false claim about what the vendor pays.
+ */
+function formatRatePct(rate: number | null | undefined, fallbackPct: number): string {
+  const pct = typeof rate === "number" && Number.isFinite(rate) ? rate * 100 : fallbackPct;
+  return `${pct % 1 === 0 ? pct.toFixed(0) : pct.toFixed(1)}%`;
+}
 
 function formatDate(value?: string | null): string | null {
   if (!value) return null;
@@ -78,6 +91,15 @@ export default function VendorBillingPanel() {
   const [error, setError] = useState<string | null>(null);
   const [keepProOpen, setKeepProOpen] = useState(false);
 
+  // Live fee rates. These plan cards are only rendered for a non-Pro subscription
+  // vendor (see the showUpgradePrompts && !isPro gate below), so the vendor fee
+  // returned here IS the standard commission Pro would waive. Falls back to the
+  // current published rates while the request is in flight so the cards never
+  // render a fee-free claim.
+  const feeRates = useFeeRates();
+  const commissionPct = formatRatePct(feeRates?.vendorFeeRate, 8);
+  const customerFeePct = formatRatePct(feeRates?.customerFeeRate, 5);
+
   const checkoutResult = new URLSearchParams(location.split("?")[1] ?? "").get("checkout");
 
   const { data: me } = useQuery<VendorMeState>({
@@ -85,7 +107,15 @@ export default function VendorBillingPanel() {
     enabled: isAuthenticated,
   });
 
+  // isPro reflects an actual paid/trialing/comp SUBSCRIPTION — this panel is the
+  // subscription/billing UI, so its plan cards, banners, and manage-subscription
+  // actions correctly stay keyed on isPro throughout. hasProFeatures gates the AI
+  // Assistant capability card below (available to commission vendors too), and
+  // showUpgradePrompts hides the Free/Pro comparison + upsell for commission
+  // vendors, who have no subscription to buy.
   const isPro = Boolean(me?.isPro);
+  const hasProFeatures = Boolean(me?.hasProFeatures);
+  const showUpgradePrompts = me?.showUpgradePrompts !== false;
   const status = me?.subscriptionStatus ?? "none";
   const reason = me?.subscriptionReason ?? "free";
   const hasStripeSub = status === "active" || status === "trialing" || status === "past_due";
@@ -234,7 +264,10 @@ export default function VendorBillingPanel() {
     if (reason === "trialing") {
       // Reverse-trial vendor with NO card yet: nothing will be charged at day 30 —
       // they'll simply downgrade unless they add a card. Prompt them to keep Pro.
-      if (me?.reverseTrial && !me.reverseTrial.cardCaptured) {
+      // Gated on showUpgradePrompts: a commission vendor has nothing to "keep" by
+      // adding a card, so this upsell must not render for one even if their
+      // subscriptionStatus happens to read "trialing".
+      if (showUpgradePrompts && me?.reverseTrial && !me.reverseTrial.cardCaptured) {
         const daysLeft = me.reverseTrial.daysLeft ?? 0;
         return (
           <Banner tone="info" icon={<Sparkles className="h-5 w-5" />}>
@@ -305,8 +338,15 @@ export default function VendorBillingPanel() {
       />
       <div>
         <h2 className="font-heading text-[20px] leading-none tracking-tight mb-2">Billing &amp; Plan</h2>
+        {/* Arm-aware: the default intro sells Pro ("Pro removes vendor fees…"),
+            which is false for a commission vendor — no Pro exists for them, their
+            commission never goes away, and they already have unlimited listings,
+            analytics and calendar sync. This sits ABOVE the showUpgradePrompts
+            gate below, so it needs its own check. */}
         <p className="text-sm text-muted-foreground">
-          {t("vendorDashboard.billingIntro")}
+          {showUpgradePrompts
+            ? t("vendorDashboard.billingIntro")
+            : t("vendorDashboard.billingIntroCommission")}
         </p>
       </div>
 
@@ -318,7 +358,7 @@ export default function VendorBillingPanel() {
         </div>
       ) : null}
 
-      {(!isPro && !confirming) ? (
+      {(showUpgradePrompts && !isPro && !confirming) ? (
       <div className="grid gap-5 md:grid-cols-2">
         {/* Free plan */}
         <div className="rounded-2xl border border-border bg-card p-6 flex flex-col">
@@ -329,7 +369,8 @@ export default function VendorBillingPanel() {
           <p className="mt-1 text-3xl font-bold">$0</p>
           <p className="text-sm text-muted-foreground">Everything you need to get started.</p>
           <ul className="mt-5 space-y-2.5 text-sm">
-            <Feature ok>List, take bookings, and get paid — no EventHub commission</Feature>
+            <Feature ok>List, take bookings, and get paid</Feature>
+            <Feature>{commissionPct} EventHub commission on every booking</Feature>
             <Feature ok>1 active listing at a time</Feature>
             <Feature ok>Lifetime totals (bookings &amp; revenue)</Feature>
             <Feature>Add-on listings (bookable upgrades)</Feature>
@@ -339,6 +380,9 @@ export default function VendorBillingPanel() {
             <Feature>Advanced analytics &amp; trends</Feature>
             <Feature>Google Calendar sync</Feature>
           </ul>
+          <p className="mt-4 text-xs text-muted-foreground">
+            Customers pay a {customerFeePct} service fee on every booking, on both plans.
+          </p>
         </div>
 
         {/* Pro plan */}
@@ -388,6 +432,9 @@ export default function VendorBillingPanel() {
 
           <ul className="mt-5 space-y-2.5 text-sm">
             <Feature ok>Everything in Free</Feature>
+            <Feature ok icon={<Sparkles className="h-4 w-4" />}>
+              <strong>No EventHub commission</strong> — Pro waives the {commissionPct} per-booking fee
+            </Feature>
             <Feature ok icon={<LayoutGrid className="h-4 w-4" />}>Unlimited active listings</Feature>
             <Feature ok icon={<Plus className="h-4 w-4" />}>Add-on listings (bookable upgrades)</Feature>
             <Feature ok icon={<MessageSquareText className="h-4 w-4" />}>AI reply assistant for messages</Feature>
@@ -396,6 +443,9 @@ export default function VendorBillingPanel() {
             <Feature ok icon={<BarChart3 className="h-4 w-4" />}>Advanced analytics &amp; trends</Feature>
             <Feature ok icon={<CalendarClock className="h-4 w-4" />}>Google Calendar sync</Feature>
           </ul>
+          <p className="mt-4 text-xs text-muted-foreground">
+            The {customerFeePct} customer service fee still applies — Pro waives your commission, not theirs.
+          </p>
 
           <div className="mt-6 mt-auto pt-6">
             {isPro ? (
@@ -431,12 +481,12 @@ export default function VendorBillingPanel() {
       </div>
       ) : null}
 
-      <AiAssistantCard isPro={isPro} />
+      <AiAssistantCard hasProFeatures={hasProFeatures} />
     </div>
   );
 }
 
-function AiAssistantCard({ isPro }: { isPro: boolean }) {
+function AiAssistantCard({ hasProFeatures }: { hasProFeatures: boolean }) {
   const { t } = useTranslation();
   const { getAccessTokenSilently } = useAuth0();
   const fileRef = useRef<HTMLInputElement>(null);
@@ -446,14 +496,14 @@ function AiAssistantCard({ isPro }: { isPro: boolean }) {
 
   const { data: ai, refetch: refetchAi } = useQuery<AiSettings>({
     queryKey: ["/api/vendor/ai/settings"],
-    enabled: isPro,
+    enabled: hasProFeatures,
   });
   const { data: faq, refetch: refetchFaq } = useQuery<FaqMeta>({
     queryKey: ["/api/vendor/ai/faq"],
-    enabled: isPro,
+    enabled: hasProFeatures,
   });
 
-  if (!isPro) return null;
+  if (!hasProFeatures) return null;
 
   const saveSetting = async (
     patch: { enabled?: boolean; overageEnabled?: boolean },
@@ -554,23 +604,34 @@ function AiAssistantCard({ isPro }: { isPro: boolean }) {
             </div>
           </div>
 
-          {/* Pay-as-you-go overage */}
-          <div className="flex items-start justify-between gap-4">
-            <div>
-              <p className="text-sm font-medium">{t("ai.assistant.overageLabel")}</p>
-              <p className="mt-0.5 text-xs text-muted-foreground">
-                {overageEnabled
-                  ? t("ai.assistant.overageHint", { price })
-                  : t("ai.assistant.hardStopHint", { included })}
-              </p>
+          {/* Pay-as-you-go overage.
+              Hidden for commission vendors: aiReplyService force-disables overage
+              for them (getAiCreditState pins overageEnabled to false), so the
+              toggle POSTed true, refetched false and visibly snapped back — while
+              the hint offered a remedy they can never enable. They get a plain
+              hard-stop statement instead. */}
+          {ai?.overageAvailable !== false ? (
+            <div className="flex items-start justify-between gap-4">
+              <div>
+                <p className="text-sm font-medium">{t("ai.assistant.overageLabel")}</p>
+                <p className="mt-0.5 text-xs text-muted-foreground">
+                  {overageEnabled
+                    ? t("ai.assistant.overageHint", { price })
+                    : t("ai.assistant.hardStopHint", { included })}
+                </p>
+              </div>
+              <Switch
+                checked={overageEnabled}
+                onCheckedChange={(v) => saveSetting({ overageEnabled: v }, "overage")}
+                disabled={savingToggle !== null}
+                aria-label={t("ai.assistant.overageLabel")}
+              />
             </div>
-            <Switch
-              checked={overageEnabled}
-              onCheckedChange={(v) => saveSetting({ overageEnabled: v }, "overage")}
-              disabled={savingToggle !== null}
-              aria-label={t("ai.assistant.overageLabel")}
-            />
-          </div>
+          ) : (
+            <p className="text-xs text-muted-foreground">
+              {t("ai.assistant.hardStopCommission", { included })}
+            </p>
+          )}
 
           {/* FAQ document */}
           <div className="rounded-xl border border-border bg-background/50 p-4">

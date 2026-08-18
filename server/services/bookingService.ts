@@ -1,8 +1,9 @@
 import { db } from "../db";
 import { eq, and, ne, desc } from "drizzle-orm";
-import { vendorListings } from "@shared/schema";
+import { vendorListings, vendorAccounts } from "@shared/schema";
 import { logger } from "../lib/logger";
 import { FREE_TIER_MAX_ACTIVE_LISTINGS } from "../lib/constants";
+import { isCommissionVendor } from "./entitlementsService";
 import {
   asTrimmedString,
   parseIntegerValue,
@@ -91,10 +92,32 @@ export async function deactivateActiveListingsViolatingPublishGate(accountId?: s
  *
  * package_item rows are excluded (managed by their parent container's lifecycle),
  * matching deactivateActiveListingsViolatingPublishGate and the publish-cap gate.
+ *
+ * NO-OP FOR COMMISSION VENDORS. There is no free tier on the commission model —
+ * those vendors have unlimited listings permanently and pay per booking instead
+ * of per month, so "dropping to Free" is not a state they can be in. The guard
+ * lives HERE rather than at the call sites because all three paths that can put
+ * a commission vendor into a comp and then expire it (admin grant-comp,
+ * admin cancel-comp, scripts/grant_comp_pro.ts) funnel through
+ * reconcileVendorSubscriptionState → here. Without it, comp expiry would trim a
+ * commission vendor to one active listing and nothing would ever restore them.
  */
 export async function deactivateExtraActiveListingsForFreeTier(accountId: string): Promise<number> {
   const trimmed = asTrimmedString(accountId);
   if (!trimmed) return 0;
+
+  const [account] = await db
+    .select({ pricingModel: vendorAccounts.pricingModel })
+    .from(vendorAccounts)
+    .where(eq(vendorAccounts.id, trimmed))
+    .limit(1);
+  if (account && isCommissionVendor(account)) {
+    logger.info(
+      { accountId: trimmed },
+      "[free tier] skipped listing trim — commission vendors have no free tier"
+    );
+    return 0;
+  }
 
   const activeListings = await db
     .select({ id: vendorListings.id })

@@ -10,7 +10,7 @@ import {
   AI_INCLUDED_RESPONSES_PER_PERIOD,
   AI_OVERAGE_PRICE_CENTS,
 } from "./lib/constants";
-import { getVendorEntitlements } from "./services/entitlementsService";
+import { getVendorEntitlements, isCommissionVendor } from "./services/entitlementsService";
 import {
   getBookingChatContextById,
   listVendorInquiryChannels,
@@ -182,7 +182,15 @@ export async function getAiSettings(account: VendorAccount) {
   const credits = await getAiCreditState(account);
   return {
     enabled: account.aiRepliesEnabled === true,
-    overageEnabled: account.aiOverageEnabled === true,
+    // Mirrors the enforcement in generateSuggestedReplies: commission vendors
+    // have no subscription to meter overage against, so the UI must not show
+    // overage as on when generation will hard-stop at the allowance.
+    overageEnabled: account.aiOverageEnabled === true && !isCommissionVendor(account),
+    // Whether pay-as-you-go can be turned on AT ALL. False for commission
+    // vendors, who hard-stop at the allowance. The client needs this to avoid
+    // telling them to "turn on pay-as-you-go in Billing" — a remedy that does
+    // not exist for them, and whose toggle would visibly snap back.
+    overageAvailable: !isCommissionVendor(account),
     ...credits,
   };
 }
@@ -322,9 +330,10 @@ export async function generateSuggestedReplies(params: {
 }): Promise<GenerateResult> {
   const { account } = params;
 
-  // Gate: Pro + feature toggle + monthly credit allowance.
+  // Gate: Pro features (subscription OR commission model) + feature toggle +
+  // monthly credit allowance.
   const entitlements = getVendorEntitlements(account);
-  if (!entitlements.isPro) {
+  if (!entitlements.hasProFeatures) {
     throw new AiReplyError("ai_pro_required", 403, "AI replies are a Pro feature");
   }
   if (account.aiRepliesEnabled !== true) {
@@ -332,9 +341,16 @@ export async function generateSuggestedReplies(params: {
   }
 
   const credits = await getAiCreditState(account);
+  // Overage billing requires a Stripe SUBSCRIPTION to attach the metered item to.
+  // Commission vendors have none (every billing route 403s them), so
+  // reportAiReplyOverage would push meter events at a customer with no metered
+  // subscription item — usage recorded, never invoiced, cost uncapped. Hard-stop
+  // them at the included allowance instead of metering into the void. Metering
+  // commission vendors properly is separate, larger work.
+  const overageEnabled = account.aiOverageEnabled === true && !isCommissionVendor(account);
   let isOverage = false;
   if (credits.remaining <= 0) {
-    if (account.aiOverageEnabled !== true) {
+    if (!overageEnabled) {
       throw new AiReplyError("ai_limit_reached", 429, "Monthly AI reply limit reached");
     }
     isOverage = true;

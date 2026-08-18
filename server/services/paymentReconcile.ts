@@ -146,6 +146,7 @@ export async function firePaymentSucceededSideEffects(args: {
           b.listing_title_snapshot as "listingTitle",
           b.subtotal_amount_cents   as "subtotalCents",
           b.customer_fee_amount_cents as "feeCents",
+          b.platform_fee            as "platformFeeCents",
           (b.total_amount - coalesce(b.security_deposit_cents, 0)) as "totalCents",
           p.stripe_payment_intent_id as "paymentIntentId",
           p.vendor_absorbs_stripe_fees as "vendorAbsorbsStripeFees",
@@ -168,6 +169,7 @@ export async function firePaymentSucceededSideEffects(args: {
         listingTitle: string | null;
         subtotalCents: number | null;
         feeCents: number | null;
+        platformFeeCents: number | null;
         totalCents: number;
         paymentIntentId: string;
         vendorAbsorbsStripeFees: boolean | null;
@@ -230,6 +232,10 @@ export async function firePaymentSucceededSideEffects(args: {
               ? {
                   stripeProcessingFeeCents: feeEstimateCents,
                   vendorNetPayoutCents: Math.max(0, vendorGrossCents - feeEstimateCents),
+                  // The real commission on THIS booking, persisted at creation
+                  // time. Drives both the breakdown row and whether the email is
+                  // allowed to say EventHub takes no commission.
+                  platformFeeCents: Math.max(0, Math.round(receipt.platformFeeCents ?? 0)),
                 }
               : {}),
           })

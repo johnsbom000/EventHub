@@ -196,7 +196,7 @@ export default function VendorNotifications() {
   const { isAuthenticated } = useAuth0();
   const queryClient = useQueryClient();
   const { toast } = useToast();
-  const { vendorFeeRate } = useFeeRates();
+  const feeRates = useFeeRates();
 
   const [activeBookingNotificationId, setActiveBookingNotificationId] = useState<string | null>(null);
   const [readTab, setReadTab] = useState<"unread" | "read">("unread");
@@ -377,7 +377,8 @@ export default function VendorNotifications() {
   );
 
   const activeBooking = activeBookingNotification?.booking ?? null;
-  const activeBookingAmounts = activeBooking ? deriveBookingAmounts(activeBooking, vendorFeeRate) : null;
+  const activeBookingAmounts =
+    activeBooking && feeRates ? deriveBookingAmounts(activeBooking, feeRates.vendorFeeRate) : null;
   const activeIncludedItems = Array.isArray(activeBooking?.includedItems)
     ? activeBooking.includedItems.filter((item) => typeof item === "string" && item.trim().length > 0)
     : [];
