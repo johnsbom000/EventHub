@@ -1,6 +1,7 @@
 import type { Express } from "express";
 import { createServer, type Server } from "http";
 import { logger } from "../lib/logger";
+import { isCommissionVendor } from "../services/entitlementsService";
 import { captureJobError } from "../lib/jobAlerts";
 import {
   safeGoogleErrorMessage,
@@ -1176,6 +1177,7 @@ export function registerPaymentRoutes(app: Express): void {
                   businessName: vendorAccounts.businessName,
                   subscriptionStatus: vendorAccounts.subscriptionStatus,
                   compEndsAt: vendorAccounts.compEndsAt,
+                  pricingModel: vendorAccounts.pricingModel,
                 })
                 .from(vendorAccounts)
                 .where(
@@ -1191,7 +1193,11 @@ export function registerPaymentRoutes(app: Express): void {
                 vendor?.subscriptionStatus === "comp" &&
                 vendor.compEndsAt != null &&
                 new Date(vendor.compEndsAt).getTime() > Date.now();
-              if (vendor && !compActive) {
+              // Commission vendors have no subscription and no Pro to keep, so a
+              // "your Pro trial ends soon — add a card" nudge is meaningless to
+              // them. A stray Stripe trial on such an account must not produce it.
+              // Mirrors the guard in jobs/reverseTrialCardPrompt.ts.
+              if (vendor && !compActive && !isCommissionVendor(vendor)) {
                 const trialEndMs =
                   typeof fresh?.trial_end === "number" ? fresh.trial_end * 1000 : null;
                 const daysLeft = trialEndMs

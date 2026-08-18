@@ -6,6 +6,7 @@
       "errorTitle": "Resposta com IA",
       "error": "Não foi possível gerar uma resposta. Tente novamente.",
       "limitReached": "Você usou todas as suas respostas de IA incluídas este mês. Ative o pagamento por uso em Faturamento para continuar rascunhando.",
+      "limitReachedCommission": "Você usou todas as suas respostas de IA incluídas este mês. Os rascunhos voltam no começo do mês seguinte.",
       "proRequired": "As respostas com IA são um recurso Pro.",
       "disabled": "Ative o assistente de IA em Faturamento para rascunhar respostas.",
       "assistant": {
@@ -16,7 +17,8 @@
         "resets": "Renova em {{date}}",
         "overageLabel": "Pagamento por uso",
         "overageHint": "Após o limite mensal, cada resposta adicional custa ${{price}}.",
-        "hardStopHint": "Os rascunhos param em {{included}} respostas/mês. Ative para continuar com pagamento por uso."
+        "hardStopHint": "Os rascunhos param em {{included}} respostas/mês. Ative para continuar com pagamento por uso.",
+        "hardStopCommission": "Seu plano inclui {{included}} respostas de IA por mês. Os rascunhos pausam ao atingir esse limite e reiniciam no começo do mês seguinte."
       },
       "faq": {
         "title": "Documento de FAQ",
@@ -228,6 +230,7 @@
     "upgradeToPro": "Upgrade para o Pro",
     "googleSyncProFeature": "A sincronização com o Google Agenda é um recurso Pro. Faça upgrade para sincronizar suas reservas automaticamente.",
     "billingIntro": "Gerencie seu plano e seus pagamentos. O Pro elimina as taxas de fornecedor nas suas reservas e desbloqueia listagens ilimitadas, análises e sincronização de calendário.",
+    "billingIntroCommission": "Gerencie seus pagamentos e seus dados de faturamento.",
     "pageTitle": "Painel",
     "noActiveProfile": "Sem perfil de fornecedor ativo.",
     "totalBookings": "Total de Reservas",
@@ -498,7 +501,8 @@
     "stripeNotConnectedDesc": "Vincule sua conta Stripe para começar a receber pagamentos pelas suas reservas.",
     "dateNotSet": "Data não definida",
     "bookingNumber": "Reserva #{{id}}",
-    "bookingTotal": "Total da reserva",
+    "bookingTotal": "Seus ganhos com a reserva",
+    "eventhubCommission": "Comissão do EventHub",
     "stripeProcessingFee": "Taxa de processamento da Stripe",
     "travelFee": "Taxa de deslocamento"
   },

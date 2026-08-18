@@ -6,6 +6,7 @@
       "errorTitle": "AI reply",
       "error": "Couldn't generate a reply. Please try again.",
       "limitReached": "You've used all your included AI replies this month. Turn on pay-as-you-go in Billing to keep drafting.",
+      "limitReachedCommission": "You've used all your included AI replies this month. Drafting resumes at the start of your next month.",
       "proRequired": "AI replies are a Pro feature.",
       "disabled": "Turn on the AI assistant in Billing to draft replies.",
       "assistant": {
@@ -16,7 +17,8 @@
         "resets": "Resets {{date}}",
         "overageLabel": "Pay-as-you-go",
         "overageHint": "After your monthly limit, extra replies are billed at ${{price}} each.",
-        "hardStopHint": "Drafting stops at {{included}} replies/month. Turn on to keep going with pay-as-you-go."
+        "hardStopHint": "Drafting stops at {{included}} replies/month. Turn on to keep going with pay-as-you-go.",
+        "hardStopCommission": "Your plan includes {{included}} AI replies a month. Drafting pauses once you reach it and resets at the start of your next month."
       },
       "faq": {
         "title": "FAQ document",
@@ -228,6 +230,7 @@
     "upgradeToPro": "Upgrade to Pro",
     "googleSyncProFeature": "Google Calendar sync is a Pro feature. Upgrade to automatically sync your bookings.",
     "billingIntro": "Manage your plan and payouts. Pro removes vendor fees on your bookings and unlocks unlimited listings, analytics, and calendar sync.",
+    "billingIntroCommission": "Manage your payouts and billing details.",
     "pageTitle": "Dashboard",
     "noActiveProfile": "No active vendor profile.",
     "totalBookings": "Total Bookings",
@@ -498,7 +501,8 @@
     "stripeNotConnectedDesc": "Link your Stripe account to start receiving payments for your bookings.",
     "dateNotSet": "Date not set",
     "bookingNumber": "Booking #{{id}}",
-    "bookingTotal": "Booking total",
+    "bookingTotal": "Your booking earnings",
+    "eventhubCommission": "EventHub commission",
     "stripeProcessingFee": "Stripe Processing Fee",
     "travelFee": "Travel fee"
   },

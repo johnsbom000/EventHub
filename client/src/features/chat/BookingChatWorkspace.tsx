@@ -272,6 +272,8 @@ type AiSettings = {
   hasProFeatures: boolean;
   enabled: boolean;
   overageEnabled: boolean;
+  /** False for commission vendors — pay-as-you-go does not exist for them. */
+  overageAvailable?: boolean;
   includedPerPeriod: number;
   used: number;
   remaining: number;
@@ -289,12 +291,15 @@ function AiReplyToolbar({
   bookingId,
   channelId,
   onUsed,
+  overageAvailable,
   t,
 }: {
   enabled: boolean;
   bookingId?: string;
   channelId?: string;
   onUsed: () => void;
+  /** False for commission vendors — pay-as-you-go does not exist for them. */
+  overageAvailable?: boolean;
   t: (key: string, opts?: Record<string, unknown>) => string;
 }) {
   const composer = useMessageComposer();
@@ -326,7 +331,13 @@ function AiReplyToolbar({
       }
       const description =
         code === "ai_limit_reached"
-          ? t("ai.limitReached")
+          // Commission vendors hard-stop at the allowance — pay-as-you-go is
+          // force-disabled server-side, so pointing them at Billing describes a
+          // remedy they cannot take. This 429 is in fact specifically theirs:
+          // Model A free vendors are 403'd by ai_pro_required before reaching it.
+          ? (overageAvailable === false
+              ? t("ai.limitReachedCommission")
+              : t("ai.limitReached"))
           : code === "ai_pro_required"
             ? t("ai.proRequired")
             : code === "ai_disabled"
@@ -1405,6 +1416,7 @@ export function BookingChatWorkspace({ role, initialBookingId, initialVendorId }
                       bookingId={isSelectedInquiry ? undefined : selectedBookingId || undefined}
                       channelId={activeChannel?.id}
                       onUsed={() => refetchAiSettings()}
+                      overageAvailable={aiSettings?.overageAvailable}
                       t={t}
                     />
                     <MessageInput overrideSubmitHandler={sendModeratedMessage} />

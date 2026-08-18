@@ -186,6 +186,11 @@ export async function getAiSettings(account: VendorAccount) {
     // have no subscription to meter overage against, so the UI must not show
     // overage as on when generation will hard-stop at the allowance.
     overageEnabled: account.aiOverageEnabled === true && !isCommissionVendor(account),
+    // Whether pay-as-you-go can be turned on AT ALL. False for commission
+    // vendors, who hard-stop at the allowance. The client needs this to avoid
+    // telling them to "turn on pay-as-you-go in Billing" — a remedy that does
+    // not exist for them, and whose toggle would visibly snap back.
+    overageAvailable: !isCommissionVendor(account),
     ...credits,
   };
 }

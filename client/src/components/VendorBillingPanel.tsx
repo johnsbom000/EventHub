@@ -33,6 +33,8 @@ type AiSettings = {
   hasProFeatures: boolean;
   enabled: boolean;
   overageEnabled: boolean;
+  /** False for commission vendors — pay-as-you-go does not exist for them. */
+  overageAvailable?: boolean;
   includedPerPeriod: number;
   used: number;
   remaining: number;
@@ -336,8 +338,15 @@ export default function VendorBillingPanel() {
       />
       <div>
         <h2 className="font-heading text-[20px] leading-none tracking-tight mb-2">Billing &amp; Plan</h2>
+        {/* Arm-aware: the default intro sells Pro ("Pro removes vendor fees…"),
+            which is false for a commission vendor — no Pro exists for them, their
+            commission never goes away, and they already have unlimited listings,
+            analytics and calendar sync. This sits ABOVE the showUpgradePrompts
+            gate below, so it needs its own check. */}
         <p className="text-sm text-muted-foreground">
-          {t("vendorDashboard.billingIntro")}
+          {showUpgradePrompts
+            ? t("vendorDashboard.billingIntro")
+            : t("vendorDashboard.billingIntroCommission")}
         </p>
       </div>
 
@@ -595,23 +604,34 @@ function AiAssistantCard({ hasProFeatures }: { hasProFeatures: boolean }) {
             </div>
           </div>
 
-          {/* Pay-as-you-go overage */}
-          <div className="flex items-start justify-between gap-4">
-            <div>
-              <p className="text-sm font-medium">{t("ai.assistant.overageLabel")}</p>
-              <p className="mt-0.5 text-xs text-muted-foreground">
-                {overageEnabled
-                  ? t("ai.assistant.overageHint", { price })
-                  : t("ai.assistant.hardStopHint", { included })}
-              </p>
+          {/* Pay-as-you-go overage.
+              Hidden for commission vendors: aiReplyService force-disables overage
+              for them (getAiCreditState pins overageEnabled to false), so the
+              toggle POSTed true, refetched false and visibly snapped back — while
+              the hint offered a remedy they can never enable. They get a plain
+              hard-stop statement instead. */}
+          {ai?.overageAvailable !== false ? (
+            <div className="flex items-start justify-between gap-4">
+              <div>
+                <p className="text-sm font-medium">{t("ai.assistant.overageLabel")}</p>
+                <p className="mt-0.5 text-xs text-muted-foreground">
+                  {overageEnabled
+                    ? t("ai.assistant.overageHint", { price })
+                    : t("ai.assistant.hardStopHint", { included })}
+                </p>
+              </div>
+              <Switch
+                checked={overageEnabled}
+                onCheckedChange={(v) => saveSetting({ overageEnabled: v }, "overage")}
+                disabled={savingToggle !== null}
+                aria-label={t("ai.assistant.overageLabel")}
+              />
             </div>
-            <Switch
-              checked={overageEnabled}
-              onCheckedChange={(v) => saveSetting({ overageEnabled: v }, "overage")}
-              disabled={savingToggle !== null}
-              aria-label={t("ai.assistant.overageLabel")}
-            />
-          </div>
+          ) : (
+            <p className="text-xs text-muted-foreground">
+              {t("ai.assistant.hardStopCommission", { included })}
+            </p>
+          )}
 
           {/* FAQ document */}
           <div className="rounded-xl border border-border bg-background/50 p-4">

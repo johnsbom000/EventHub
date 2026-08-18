@@ -32,6 +32,7 @@
     "test:travel-fee-customer-fee": "node --import tsx ./tests/travel-fee-customer-fee.test.ts",
     "test:pricing-flag-gate": "node --import tsx ./tests/pricing-flag-gate.test.ts",
     "test:landing-copy": "node --import tsx ./tests/landing-commission-copy.test.ts",
+    "test:payout-email": "node --import tsx ./tests/booking-confirmed-payout-email.test.ts",
     "migrate": "tsx --env-file .env server/scripts/validate_migrations.ts && tsx --env-file .env server/migrate.ts",
     "validate:migrations": "tsx --env-file .env server/scripts/validate_migrations.ts",
     "start": "NODE_ENV=production node dist/index.js",

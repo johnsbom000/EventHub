@@ -61,6 +61,59 @@ for (const status of ["none", "active", "trialing", "past_due", "canceled", "com
   assert.deepEqual(a, b, "absent pricingModel === subscription");
 }
 
+// ── Grandfathered vendors (migration 0164) ───────────────────────────────────
+// These are real people who joined when EventHub was free and were told it would
+// stay that way. Their VENDOR fee is waived permanently, in every state.
+for (const status of ["none", "active", "trialing", "past_due", "canceled", "comp"] as const) {
+  const rates = resolveFeeRates({ subscriptionStatus: status, feeExempt: true }, now);
+  assert.equal(
+    rates.vendorFeeRate,
+    0,
+    `grandfathered vendor never pays the vendor fee (status ${status})`,
+  );
+}
+
+// The CUSTOMER fee is NOT waived by grandfathering — it is charged to the
+// customer at checkout, not deducted from the vendor.
+{
+  const rates = resolveFeeRates({ subscriptionStatus: "none", feeExempt: true }, now);
+  assert.equal(
+    rates.customerFeeRate,
+    CUSTOMER_FEE_RATE,
+    "grandfathering waives the vendor fee only, never the customer service fee",
+  );
+}
+
+// Exemption outranks the commission model. Structurally unreachable (0164 only
+// backfills rows that predate the commission arm) but asserted so that a future
+// reordering of resolveFeeRates cannot silently start billing this cohort.
+{
+  const rates = resolveFeeRates(
+    { subscriptionStatus: "none", pricingModel: "commission", feeExempt: true },
+    now,
+  );
+  assert.equal(rates.vendorFeeRate, 0, "fee exemption wins over the commission model");
+}
+
+// Absent/false/null feeExempt must charge the standard rate. `undefined` means
+// "column not selected" and MUST NOT be read as exempt — that would waive the
+// vendor fee for everyone the moment a partial select forgot the column.
+for (const value of [undefined, null, false] as const) {
+  const rates = resolveFeeRates({ subscriptionStatus: "none", feeExempt: value }, now);
+  assert.equal(
+    rates.vendorFeeRate,
+    VENDOR_FEE_RATE,
+    `feeExempt=${String(value)} must NOT waive the vendor fee`,
+  );
+}
+
+// A grandfathered vendor who later buys Pro still pays 0 — same answer by a
+// different route, but it must not throw or produce a non-zero rate.
+{
+  const rates = resolveFeeRates({ subscriptionStatus: "active", feeExempt: true }, now);
+  assert.equal(rates.vendorFeeRate, 0, "grandfathered + Pro is still 0");
+}
+
 // Rates are always finite, non-negative numbers below 1 — never NaN/undefined,
 // which would silently produce NaN money downstream.
 for (const model of ["subscription", "commission"] as const) {

@@ -6,6 +6,7 @@
       "errorTitle": "Respuesta con IA",
       "error": "No se pudo generar una respuesta. Inténtalo de nuevo.",
       "limitReached": "Has usado todas tus respuestas de IA incluidas este mes. Activa el pago por uso en Facturación para seguir redactando.",
+      "limitReachedCommission": "Has usado todas tus respuestas de IA incluidas este mes. La redacción se reanuda al comenzar tu próximo mes.",
       "proRequired": "Las respuestas con IA son una función Pro.",
       "disabled": "Activa el asistente de IA en Facturación para redactar respuestas.",
       "assistant": {
@@ -16,7 +17,8 @@
         "resets": "Se restablece el {{date}}",
         "overageLabel": "Pago por uso",
         "overageHint": "Tras tu límite mensual, cada respuesta adicional cuesta ${{price}}.",
-        "hardStopHint": "La redacción se detiene en {{included}} respuestas/mes. Actívalo para continuar con pago por uso."
+        "hardStopHint": "La redacción se detiene en {{included}} respuestas/mes. Actívalo para continuar con pago por uso.",
+        "hardStopCommission": "Tu plan incluye {{included}} respuestas de IA al mes. La redacción se pausa al alcanzarlas y se reinicia al comenzar tu próximo mes."
       },
       "faq": {
         "title": "Documento de preguntas frecuentes",
@@ -228,6 +230,7 @@
     "upgradeToPro": "Mejorar a Pro",
     "googleSyncProFeature": "La sincronización con Google Calendar es una función Pro. Mejora tu plan para sincronizar tus reservas automáticamente.",
     "billingIntro": "Gestiona tu plan y tus pagos. Pro elimina las tarifas de proveedor en tus reservas y desbloquea listados ilimitados, analíticas y sincronización de calendario.",
+    "billingIntroCommission": "Gestiona tus pagos y tus datos de facturación.",
     "pageTitle": "Panel",
     "noActiveProfile": "Sin perfil de proveedor activo.",
     "totalBookings": "Total de Reservas",
@@ -498,7 +501,8 @@
     "stripeNotConnectedDesc": "Vincula tu cuenta de Stripe para empezar a recibir pagos por tus reservas.",
     "dateNotSet": "Fecha no establecida",
     "bookingNumber": "Reserva #{{id}}",
-    "bookingTotal": "Total de la reserva",
+    "bookingTotal": "Tus ingresos por la reserva",
+    "eventhubCommission": "Comisión de EventHub",
     "stripeProcessingFee": "Comisión de procesamiento de Stripe",
     "travelFee": "Tarifa de viaje"
   },

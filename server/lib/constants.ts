@@ -60,8 +60,11 @@ export const STRIPE_PRICE_AI_OVERAGE = process.env.STRIPE_PRICE_AI_OVERAGE || ""
 export const STRIPE_FEE_ESTIMATE_PERCENT = 0.029;
 export const STRIPE_FEE_ESTIMATE_FIXED_CENTS = 30;
 // Vendors bear Stripe's payment-processing fee (customer pays the clean list
-// price; the fee is deducted from the vendor's payout). Positioning: EventHub
-// still takes no cut — this is Stripe charging to use Stripe.
+// price; the fee is deducted from the vendor's payout). This is SEPARATE from
+// EventHub's own vendor commission (VENDOR_FEE_RATE, above) — both are deducted
+// from the vendor's payout, and any surface showing one must show the other or
+// the numbers will not reconcile. Do not describe this as "EventHub takes no
+// cut": that was true only while VENDOR_FEE_RATE was 0.
 //
 // This is the platform DEFAULT for NEW bookings only. It is snapshotted onto
 // each payment row (payments.vendor_absorbs_stripe_fees) at creation time, and

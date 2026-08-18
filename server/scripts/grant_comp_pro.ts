@@ -60,6 +60,7 @@ async function main() {
         plan: vendorAccounts.subscriptionPlan,
         status: vendorAccounts.subscriptionStatus,
         compEndsAt: vendorAccounts.compEndsAt,
+        pricingModel: vendorAccounts.pricingModel,
         userEmail: users.email,
       })
       .from(vendorAccounts)
@@ -80,6 +81,14 @@ async function main() {
     }
 
     for (const v of matches) {
+      // Mirrors the admin endpoint's 403 (routers/admin.ts): commission vendors
+      // have no subscription, so granting comp Pro puts them in a state the
+      // billing UI and comp-expiry emails both describe wrongly — and, before
+      // resolveFeeRates checked the model first, would have waived their 8%.
+      if (v.pricingModel === "commission") {
+        console.log(`⛔ ${email} → vendor ${v.id} is on the commission pricing model — comp Pro does not apply. Skipped.`);
+        continue;
+      }
       const before = `plan=${v.plan}, status=${v.status}, compEndsAt=${v.compEndsAt ? new Date(v.compEndsAt).toISOString() : "null"}`;
       console.log(`• ${email} → vendor ${v.id} (${v.businessName ?? "—"}, active=${v.active})`);
       console.log(`    before: ${before}`);

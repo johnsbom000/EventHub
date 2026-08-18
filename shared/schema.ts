@@ -398,6 +398,12 @@ export const vendorAccounts = pgTable(
     // Commission pricing test — set once at provision, never mutated. See
     // migration 0163. 'subscription' | 'commission'.
     pricingModel: text("pricing_model").notNull().default("subscription"),
+    // Grandfathering (migration 0164). True for every vendor that existed when
+    // the 8% vendor commission went live — they were onboarded on the promise
+    // that EventHub is free, so their VENDOR fee is permanently waived. The 5%
+    // customer service fee still applies to their bookings. Defaults to false
+    // for all new signups. Read by resolveFeeRates() BEFORE anything else.
+    feeExempt: boolean("fee_exempt").notNull().default(false),
     // Meta ad attribution, captured on first touch at the landing page.
     landingStyle: text("landing_style"),
     utmSource: text("utm_source"),

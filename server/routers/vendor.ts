@@ -5910,9 +5910,11 @@ export function registerVendorRoutes(app: Express): void {
           listingTitleSnapshot: r.listingTitleSnapshot ?? null,
           netAmount: netCents,
           grossAmount: grossCents,
-          // Vendor payout breakdown: gross service earnings, Stripe's processing
-          // fee deducted, and the resulting take-home (netAmount). EventHub still
-          // takes no commission (platformFeeAmount stays 0).
+          // Vendor payout breakdown. NOTE: grossPayoutAmount is already NET of
+          // the vendor commission (platformFeeAmount), so a client rendering a
+          // breakdown must add the commission back to show the vendor's actual
+          // earnings and then deduct it as its own line — otherwise the
+          // commission is invisible and the rows do not reconcile to netAmount.
           grossPayoutAmount: grossPayoutCents,
           stripeProcessingFeeAmount: stripeProcessingFeeCents,
           // Travel fee earned on this booking (0 when none) — its own breakdown

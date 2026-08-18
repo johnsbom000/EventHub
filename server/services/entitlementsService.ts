@@ -34,6 +34,14 @@ export interface VendorSubscriptionFields {
    * unchanged; absent or unrecognised means 'subscription'.
    */
   pricingModel?: string | null;
+  /**
+   * Grandfathered vendor (migration 0164) — predates the 8% vendor commission
+   * and was onboarded on the promise that EventHub is free. Waives the VENDOR
+   * fee permanently; the customer service fee is unaffected. Absent means false,
+   * which is the safe default: a missing value charges the standard rate rather
+   * than silently waiving revenue.
+   */
+  feeExempt?: boolean | null;
 }
 
 /**
@@ -56,6 +64,7 @@ export const vendorEntitlementColumns = {
   subscriptionStatus: vendorAccounts.subscriptionStatus,
   compEndsAt: vendorAccounts.compEndsAt,
   pricingModel: vendorAccounts.pricingModel,
+  feeExempt: vendorAccounts.feeExempt,
 } as const;
 
 export type VendorPricingModel = "subscription" | "commission";
@@ -75,6 +84,21 @@ function normalizePricingModel(value: string | null | undefined): VendorPricingM
  */
 export function isCommissionVendor(account: { pricingModel?: string | null }): boolean {
   return normalizePricingModel(account.pricingModel) === "commission";
+}
+
+/**
+ * True for grandfathered vendors — those who existed before the 8% vendor
+ * commission went live (migration 0164 backfilled them). They were onboarded on
+ * the promise that EventHub is free to use, so their vendor fee is permanently
+ * waived.
+ *
+ * Strict `=== true` on purpose: a partial select that omits the column yields
+ * `undefined`, and the safe reading of "I don't know" is "not exempt" (charge the
+ * standard rate) rather than "exempt" (silently waive revenue on every vendor).
+ * The inverse of the pricingModel footgun, and deliberately so.
+ */
+export function isFeeExemptVendor(account: { feeExempt?: boolean | null }): boolean {
+  return account.feeExempt === true;
 }
 
 export interface VendorEntitlements {
