@@ -4782,6 +4782,9 @@ export function registerVendorRoutes(app: Express): void {
           b.base_subtotal_cents as "baseSubtotalCents",
           b.subtotal_amount_cents as "subtotalAmountCents",
           b.customer_fee_amount_cents as "customerFeeAmountCents",
+          -- Needed by the vendor fee breakdown so the refundable deposit is shown
+          -- as its own line instead of being absorbed into the service fee.
+          b.security_deposit_cents as "securityDepositCents",
           b.platform_fee as "platformFee",
           b.vendor_payout as "vendorPayout",
           coalesce(b.vendor_profile_id, listing_owner.profile_id) as "vendorProfileId",

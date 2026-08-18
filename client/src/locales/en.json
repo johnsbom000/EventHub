@@ -428,6 +428,7 @@
     "feeBreakdown": "Fee Breakdown",
     "listingPrice": "Listing price",
     "customerServiceFee": "Customer service fee",
+    "securityDepositRefundable": "Security deposit (refundable to customer)",
     "customerTotal": "Customer total",
     "eventhubFee": "EventHub fee",
     "estimatedPayout": "Estimated payout",

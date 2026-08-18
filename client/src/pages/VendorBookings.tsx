@@ -337,6 +337,7 @@ export default function VendorBookings() {
         listingPriceCents: number;
         customerFeeCents: number;
         vendorFeeCents: number;
+        securityDepositCents: number;
         estimatedPayoutCents: number;
         googleSyncLabel: "synced" | "unsynced";
         status: string;
@@ -941,6 +942,15 @@ export default function VendorBookings() {
                             <div className="text-sm flex items-center justify-between gap-3">
                               <span className="text-muted-foreground">{t("vendorBookings.customerServiceFee")}</span>
                               <span>{formatUsd(item.customerFeeCents)}</span>
+                            </div>
+                          ) : null}
+                          {/* Shown as its own line so the breakdown reconciles to the
+                              customer total. Without it the deposit was invisible here
+                              and got absorbed into the service-fee figure. */}
+                          {item.securityDepositCents > 0 ? (
+                            <div className="text-sm flex items-center justify-between gap-3">
+                              <span className="text-muted-foreground">{t("vendorBookings.securityDepositRefundable")}</span>
+                              <span>{formatUsd(item.securityDepositCents)}</span>
                             </div>
                           ) : null}
                           <div className="text-sm flex items-center justify-between gap-3">
