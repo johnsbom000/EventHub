@@ -835,6 +835,7 @@
     "pageTitle": "Terms of Service",
     "backToEventHub": "Back to EventHub",
     "contents": "Contents",
+    "effective": "Effective {{version}}",
     "meta": "Version 7 · Governing law and venue: State of Utah · Questions: support@eventhubglobal.com",
     "contactEmail": "support@eventhubglobal.com",
     "notice": "Please read these Terms carefully. By accessing or using EventHub, you agree to be bound by these Terms, including the mandatory arbitration and class action waiver provisions in Section 7.",
@@ -1229,7 +1230,9 @@
     "errorLogisticsEventEndBeforeStart": "Event end time must be after the event start time.",
     "errorLogisticsDoneBeforeNeeded": "Done-with time must be after the needed-by time.",
     "errorLogisticsMissingTimes": "Add the event times and the rental possession window.",
-    "errorLogisticsInvalidTime": "One or more logistics times are invalid."
+    "errorLogisticsInvalidTime": "One or more logistics times are invalid.",
+    "serviceFee": "Service fee",
+    "securityDepositRefundable": "Security deposit (refundable)"
   },
   "vendorLogin": {
     "loadingTitle": "Redirecting to Auth0",

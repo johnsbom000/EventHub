@@ -119,6 +119,11 @@ export const users = pgTable(
     // (migration 0159 + backfill_customer_photos_to_s3.ts).
     profilePhotoUrl: text("profile_photo_url"),
     preferredLanguage: varchar("preferred_language", { length: 10 }).notNull().default("en"),
+    // Terms acceptance (migration 0165). NULL = never accepted on record; see
+    // shared/termsVersion.ts. Stamped when a customer confirms a booking, which
+    // is where the UI states that continuing constitutes agreement.
+    termsVersionAccepted: text("terms_version_accepted"),
+    termsAcceptedAt: timestamp("terms_accepted_at", { withTimezone: true }),
     stripeCustomerId: text("stripe_customer_id"),
     vendorOnlySignup: boolean("vendor_only_signup").notNull().default(false),
     // One-shot re-engagement flag: redirect to /vendor/provision on next
@@ -404,6 +409,11 @@ export const vendorAccounts = pgTable(
     // customer service fee still applies to their bookings. Defaults to false
     // for all new signups. Read by resolveFeeRates() BEFORE anything else.
     feeExempt: boolean("fee_exempt").notNull().default(false),
+    // Terms acceptance (migration 0165). NULL = never accepted on record — true
+    // for every vendor who predates this, deliberately not backfilled. Stamped
+    // at provision. See shared/termsVersion.ts.
+    termsVersionAccepted: text("terms_version_accepted"),
+    termsAcceptedAt: timestamp("terms_accepted_at", { withTimezone: true }),
     // Meta ad attribution, captured on first touch at the landing page.
     landingStyle: text("landing_style"),
     utmSource: text("utm_source"),

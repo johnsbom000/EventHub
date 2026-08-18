@@ -153,6 +153,7 @@ import { requireAuth0, verifyAuth0Token } from "../auth0"; // ✅ Auth0 middlewa
 import { z } from "zod";
 import { db } from "../db";
 import { eq, and, or, ne, not, isNull, inArray, sql as drizzleSql, count, sum, gte, lte, desc, asc } from "drizzle-orm";
+import { TERMS_VERSION } from "@shared/termsVersion";
 import multer from "multer";
 import { promises as fs } from "fs";
 import path from "path";
@@ -2043,6 +2044,27 @@ export function registerBookingRoutes(app: Express): void {
         if (!booking?.id) {
           fail(500, "Failed to create booking record");
         }
+
+        // Record the customer's Terms acceptance. The checkout page states that
+        // confirming a booking constitutes agreement, so this is the moment it
+        // happens. Inside the booking transaction on purpose: the acceptance and
+        // the thing it authorises either both land or neither does.
+        //
+        // Version comes from the server, never the request. Guarded so an older
+        // version can never overwrite a newer one — a customer who accepted the
+        // current Terms keeps that record on every subsequent booking.
+        await tx
+          .update(users)
+          .set({ termsVersionAccepted: TERMS_VERSION, termsAcceptedAt: new Date() })
+          .where(
+            and(
+              eq(users.id, customerAuth.id),
+              or(
+                isNull(users.termsVersionAccepted),
+                ne(users.termsVersionAccepted, TERMS_VERSION),
+              ),
+            ),
+          );
 
         // Record discount redemption inside the transaction so it's atomic with the booking
         if (appliedDiscountId) {

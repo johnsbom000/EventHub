@@ -1,6 +1,7 @@
 import type { Express } from "express";
 import { createServer, type Server } from "http";
 import { logger } from "../lib/logger";
+import { TERMS_VERSION } from "@shared/termsVersion";
 import {
   safeGoogleErrorMessage,
   logRouteError,
@@ -1183,6 +1184,10 @@ export function registerVendorRoutes(app: Express): void {
       .optional(),
 
     createNewProfile: z.boolean().optional(),
+    // Client asserts the vendor ticked the agreement checkbox. The VERSION is
+    // never taken from the client — the server stamps TERMS_VERSION, so the
+    // record reflects what we actually served.
+    acceptedTerms: z.boolean().optional(),
     referralCode: z.string().max(20).optional(),
     foundingInviteToken: z.string().max(64).optional(),
     marqueeInviteToken: z.string().max(64).optional(),
@@ -1578,9 +1583,19 @@ export function registerVendorRoutes(app: Express): void {
       const ownerFirstName = asTrimmedString(onboardingData.ownerFirstName) || null;
       const ownerLastName  = asTrimmedString(onboardingData.ownerLastName)  || null;
       const ownerPhone     = asTrimmedString(onboardingData.ownerPhone)     || null;
+      // Record Terms acceptance. The VERSION is the server's TERMS_VERSION, never
+      // a value from the request — the record has to state what we served. Only
+      // stamped when the client asserts the agreement checkbox was ticked, and
+      // never overwritten with an older version, so re-running onboarding cannot
+      // walk an acceptance backwards.
+      const termsAcceptance =
+        onboardingData.acceptedTerms === true && account.termsVersionAccepted !== TERMS_VERSION
+          ? { termsVersionAccepted: TERMS_VERSION, termsAcceptedAt: new Date() }
+          : {};
+
       await db
         .update(vendorAccounts)
-        .set({ ownerFirstName, ownerLastName, ownerPhone })
+        .set({ ownerFirstName, ownerLastName, ownerPhone, ...termsAcceptance })
         .where(eq(vendorAccounts.id, account.id));
 
       const existingProfiles = await db.select().from(vendorProfiles).where(and(eq(vendorProfiles.accountId, account.id), eq(vendorProfiles.active, true)));

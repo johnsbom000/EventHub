@@ -3,6 +3,8 @@ import { useTranslation } from "react-i18next";
 import { Link } from "wouter";
 import { ChevronLeft } from "lucide-react";
 
+import { TERMS_VERSION } from "@shared/termsVersion";
+
 /**
  * Terms of Service.
  *
@@ -65,7 +67,12 @@ export default function TermsOfService() {
 
         <div className="mb-8">
           <h1 className="text-3xl font-semibold tracking-tight text-foreground">{t("terms.pageTitle")}</h1>
-          <p className="mt-2 text-sm text-muted-foreground">{t("terms.meta")}</p>
+          {/* The effective date shown here is the same TERMS_VERSION stamped onto
+              a user's record when they accept, so "which Terms did they agree
+              to" resolves to a document you can actually point at. */}
+          <p className="mt-2 text-sm text-muted-foreground">
+            {t("terms.effective", { version: TERMS_VERSION })} · {t("terms.meta")}
+          </p>
         </div>
 
         <div className="lg:grid lg:grid-cols-[200px_1fr] lg:gap-12">

@@ -2037,7 +2037,7 @@ function CheckoutContent({
                   the card more than this page says. */}
               <div className="flex items-center justify-between">
                 <span className="text-sm text-muted-foreground">
-                  Service fee
+                  {t("checkout.serviceFee")}
                   {feeRates ? ` (${(feeRates.customerFeeRate * 100).toFixed(feeRates.customerFeeRate * 100 % 1 === 0 ? 0 : 1)}%)` : ""}
                 </span>
                 {customerFee === null ? (

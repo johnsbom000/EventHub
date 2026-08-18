@@ -835,6 +835,7 @@
     "pageTitle": "Términos de Servicio",
     "backToEventHub": "Volver a EventHub",
     "contents": "Contenido",
+    "effective": "En vigor desde el {{version}}",
     "meta": "Versión 7 · Ley aplicable y jurisdicción: Estado de Utah · Consultas: support@eventhubglobal.com",
     "contactEmail": "support@eventhubglobal.com",
     "notice": "Lee estos Términos con atención. Al acceder a EventHub o utilizarlo, aceptas quedar obligado por estos Términos, incluidas las disposiciones de arbitraje obligatorio y renuncia a demandas colectivas de la Sección 7.",
@@ -1229,7 +1230,9 @@
     "errorLogisticsEventEndBeforeStart": "La hora de fin del evento debe ser posterior a la hora de inicio.",
     "errorLogisticsDoneBeforeNeeded": "La hora de finalización debe ser posterior a la hora de necesidad.",
     "errorLogisticsMissingTimes": "Agrega los horarios del evento y la ventana de posesión del alquiler.",
-    "errorLogisticsInvalidTime": "Uno o más horarios de logística son inválidos."
+    "errorLogisticsInvalidTime": "Uno o más horarios de logística son inválidos.",
+    "serviceFee": "Tarifa de servicio",
+    "securityDepositRefundable": "Depósito de seguridad (reembolsable)"
   },
   "vendorLogin": {
     "loadingTitle": "Redirigiendo a Auth0",

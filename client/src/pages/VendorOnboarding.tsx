@@ -453,6 +453,12 @@ export default function VendorOnboarding() {
  ...data,
  operatingTimezone: data.operatingTimezone || detectBrowserTimezone(),
  createNewProfile: isCreatingAdditionalProfile,
+ // Terms acceptance. This request is only reachable from Step 4, whose
+ // buttons stay disabled until the agreement checkbox is ticked, so
+ // arriving here IS the acceptance. The server stamps its own
+ // TERMS_VERSION rather than trusting a version sent by the client —
+ // the record must say what we actually served, not what a caller claims.
+ acceptedTerms: true,
  pricingModel,
  landingStyle: attribution?.landingStyle,
  utmSource: attribution?.utmSource,
