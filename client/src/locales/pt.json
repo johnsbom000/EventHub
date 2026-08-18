@@ -428,6 +428,7 @@
     "feeBreakdown": "Detalhamento de Taxas",
     "listingPrice": "Preço da listagem",
     "customerServiceFee": "Taxa de serviço ao cliente",
+    "securityDepositRefundable": "Caução (reembolsável ao cliente)",
     "customerTotal": "Total do cliente",
     "eventhubFee": "Taxa do EventHub",
     "estimatedPayout": "Pagamento estimado",
