@@ -133,6 +133,13 @@ type PendingTravelFeePayment = {
   travelFeeCents?: number;
   customerFeeCents?: number;
   bookingId: string;
+  /**
+   * The PaymentIntent this sheet is collecting for. Echoed back to
+   * confirm-payment so the server resolves THIS charge's `payments` row — a
+   * booking can hold several travel-fee rows, and that row supplies both the
+   * success check and the amounts quoted in the receipt/notification.
+   */
+  paymentIntentId?: string;
 };
 
 function TravelFeePaymentForm({
@@ -174,7 +181,10 @@ function TravelFeePaymentForm({
     try {
       const confirmRes = await apiRequest(
         "POST",
-        `/api/bookings/${pending.bookingId}/travel-fee-proposals/${pending.proposalId}/confirm-payment`
+        `/api/bookings/${pending.bookingId}/travel-fee-proposals/${pending.proposalId}/confirm-payment`,
+        // Names the exact charge to confirm; without it the server falls back
+        // to the newest travel-fee payment row for the booking.
+        { paymentIntentId: pending.paymentIntentId }
       );
       if (!confirmRes.ok) {
         const body = await confirmRes.json().catch(() => ({}));
@@ -703,6 +713,9 @@ export function BookingChatWorkspace({ role, initialBookingId, initialVendorId }
           travelFeeCents: data.travelFeeCents,
           customerFeeCents: data.customerFeeCents,
           bookingId: variables.bookingId,
+          // Identifies WHICH travel-fee payment this is. A booking can carry
+          // several; confirm-payment verifies and quotes the row this id names.
+          paymentIntentId: data.paymentIntentId,
         });
       }
     },

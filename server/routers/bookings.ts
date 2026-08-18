@@ -96,7 +96,12 @@ import {
   exceedsCapacity,
 } from "../services/bookingService";
 import { resolveFeeRates } from "../services/feeRatesService";
-import { computeTravelFeeCharge } from "../lib/travelFeeCharge";
+import {
+  computeTravelFeeCharge,
+  resolveTravelFeeProposalBreakdowns,
+  type TravelFeeProposalLike,
+  type PersistedTravelFeePaymentColumns,
+} from "../lib/travelFeeCharge";
 import { vendorEntitlementColumns } from "../services/entitlementsService";
 import { registerGoogleRoutes } from "../routers/google";
 import { registerBoardRoutes } from "../routers/boards";
@@ -2481,28 +2486,65 @@ export function registerBookingRoutes(app: Express): void {
    * Every read surface that quotes a proposal must be able to quote the amount
    * the card is actually charged (fee + service fee), not the vendor-side fee
    * alone — otherwise the UI under-states the charge. The proposal row itself
-   * stores only the vendor-side fee, so the breakdown is derived on read from
-   * the vendor's LIVE rates; the authoritative, persisted numbers are captured
-   * at charge time on the payments row in the accept handler.
+   * stores only the vendor-side fee, so the breakdown has to come from
+   * somewhere else, and WHICH source is correct depends on the status:
+   *
+   *   pending  → nothing has been charged yet, so the only meaningful quote is
+   *              a derivation from the vendor's LIVE rates. (Also the right
+   *              answer: that IS what the customer would pay if they accept now.)
+   *   accepted → the money already moved, and the rates in force at that moment
+   *              were captured on the `payments` row by the accept handler.
+   *              Those persisted numbers are authoritative — re-deriving from
+   *              live rates would silently rewrite the history of a charge the
+   *              customer already paid (feeRatesService: "changing a rate later
+   *              never rewrites the economics of existing bookings").
+   *
+   * declined/expired proposals were never charged, so they derive like pending.
+   *
+   * This function only LOADS the two inputs; the persisted-beats-live rule
+   * itself lives in resolveTravelFeeProposalBreakdowns (pure, unit-tested).
    */
-  async function withTravelFeeChargeBreakdown<
-    T extends { amountCents: number; vendorAccountId: string }
-  >(rows: T[]) {
+  async function withTravelFeeChargeBreakdown<T extends TravelFeeProposalLike>(rows: T[]) {
     if (rows.length === 0) return [] as Array<T & ReturnType<typeof computeTravelFeeCharge>>;
     const ratesByVendor = new Map<string, Awaited<ReturnType<typeof loadTravelFeeVendorRates>>>();
     for (const vendorAccountId of Array.from(new Set(rows.map((r) => r.vendorAccountId)))) {
       ratesByVendor.set(vendorAccountId, await loadTravelFeeVendorRates(vendorAccountId));
     }
-    return rows.map((row) => {
-      const rates = ratesByVendor.get(row.vendorAccountId);
-      // No resolvable vendor (deleted account) → no rates to apply, so the
-      // breakdown collapses to the bare fee. Harmless: accept requires a live
-      // connected account, so such a proposal can never be charged at all.
-      const charge = computeTravelFeeCharge(
-        row.amountCents,
-        rates ?? { vendorFeeRate: 0, customerFeeRate: 0 }
-      );
-      return { ...row, ...charge };
+
+    // Only accepted proposals have a charge to look up; skip the query entirely
+    // when there are none (the common case for a booking still negotiating).
+    const acceptedBookingIds = Array.from(
+      new Set(rows.filter((r) => r.status === "accepted").map((r) => r.bookingId))
+    );
+    const paidRowsByBooking = new Map<string, PersistedTravelFeePaymentColumns[]>();
+    if (acceptedBookingIds.length > 0) {
+      const paidRows = await db
+        .select({
+          bookingId: payments.bookingId,
+          amount: payments.amount,
+          vendorGrossAmount: payments.vendorGrossAmount,
+          platformFeeAmount: payments.platformFeeAmount,
+          vendorNetPayoutAmount: payments.vendorNetPayoutAmount,
+        })
+        .from(payments)
+        .where(
+          and(
+            inArray(payments.bookingId, acceptedBookingIds),
+            eq(payments.paymentType, "travel_fee" as any)
+          )
+        )
+        // Oldest first — the resolver pairs proposals to charges in charge order.
+        .orderBy(asc(payments.createdAt));
+      for (const { bookingId: paidBookingId, ...paid } of paidRows) {
+        const bucket = paidRowsByBooking.get(paidBookingId) ?? [];
+        bucket.push(paid);
+        paidRowsByBooking.set(paidBookingId, bucket);
+      }
+    }
+
+    return resolveTravelFeeProposalBreakdowns(rows, {
+      paidRowsByBooking,
+      ratesForVendor: (vendorAccountId) => ratesByVendor.get(vendorAccountId),
     });
   }
 
@@ -2858,6 +2900,12 @@ export function registerBookingRoutes(app: Express): void {
           customerFeeCents: charge.customerFeeCents,
           chargedAmountCents: charge.chargedAmountCents,
           proposalId: proposal.id,
+          // The client MUST echo this back to confirm-payment. A booking can
+          // hold several travel-fee `payments` rows (multiple proposals over
+          // its lifetime), and confirm-payment both verifies the PI and reads
+          // the money copy off that row — so it has to resolve THIS charge, not
+          // whichever row happens to come back first.
+          paymentIntentId: paymentIntent.id,
         });
       } catch {
         return res.status(500).json({ error: "Failed to accept proposal" });
@@ -2906,6 +2954,21 @@ export function registerBookingRoutes(app: Express): void {
         // `amount` / `vendorGrossAmount` are the values PERSISTED at charge time —
         // authoritative for the receipt copy below, so the confirmation can never
         // quote a different number than the card was charged.
+        //
+        // ROW SELECTION IS LOAD-BEARING. A booking can hold several travel-fee
+        // `payments` rows (a vendor may propose more than once over its life, and
+        // each accepted proposal mints a fresh PaymentIntent → a fresh row). This
+        // handler both (a) verifies the payment succeeded and (b) reads the money
+        // copy that goes into the chat message, the vendor notification and the
+        // receipt email off that row. Resolving the wrong row would confirm
+        // proposal B against proposal A's succeeded PI and quote A's amount for
+        // B's charge. So: match on the PaymentIntent id the accept response
+        // handed the client — exact, and scoped to this booking so a caller can
+        // never point it at someone else's payment.
+        const requestedPaymentIntentId =
+          typeof (req.body as any)?.paymentIntentId === "string"
+            ? ((req.body as any).paymentIntentId as string).trim()
+            : "";
         const [travelPayment] = await db
           .select({
             stripePaymentIntentId: payments.stripePaymentIntentId,
@@ -2916,13 +2979,39 @@ export function registerBookingRoutes(app: Express): void {
           .where(
             and(
               eq(payments.bookingId, bookingId),
-              eq(payments.paymentType, "travel_fee" as any)
+              eq(payments.paymentType, "travel_fee" as any),
+              ...(requestedPaymentIntentId
+                ? [eq(payments.stripePaymentIntentId, requestedPaymentIntentId)]
+                : [])
             )
           )
+          // Fallback ordering for clients that predate `paymentIntentId` in the
+          // accept response: the newest travel-fee row is the one just minted by
+          // this accept, so it is by far the likeliest correct row. Never leave
+          // this unordered — an unordered LIMIT 1 is the wrong-row bug above.
+          .orderBy(desc(payments.createdAt))
           .limit(1);
 
         if (!travelPayment?.stripePaymentIntentId) {
           return res.status(400).json({ error: "No travel fee payment record found. Please start the payment again." });
+        }
+
+        // The PaymentIntent id above is CLIENT-SUPPLIED, so verify the row it
+        // resolved actually belongs to THIS proposal before treating its
+        // succeeded PI as proof of payment — otherwise a customer could confirm
+        // a $300 proposal against an earlier $100 proposal's succeeded PI.
+        // vendorGrossAmount is the proposal's amountCents by construction (the
+        // accept handler writes vendorGross = the travel fee itself), so it is
+        // an exact check. A legacy row with a null vendorGrossAmount is let
+        // through — it predates the column being populated and there is nothing
+        // to compare against.
+        if (
+          typeof travelPayment.vendorGrossAmount === "number" &&
+          travelPayment.vendorGrossAmount !== proposal.amountCents
+        ) {
+          return res
+            .status(400)
+            .json({ error: "That payment does not match this proposal. Please start the payment again." });
         }
 
         // Verify with Stripe that payment actually succeeded
