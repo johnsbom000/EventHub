@@ -1,4 +1,4 @@
-import type { Express } from "express";
+import type { Express, Response } from "express";
 import { db } from "../db";
 import { eq, and, isNull } from "drizzle-orm";
 import { vendorAccounts } from "@shared/schema";
@@ -8,6 +8,7 @@ import {
 } from "../services/vendorAuth";
 import { ensureStripeCustomer } from "../services/paymentService";
 import { getVendorEntitlements, isCompActive } from "../services/entitlementsService";
+import { isCommissionVendor } from "../services/feeRatesService";
 import { deactivateExtraActiveListingsForFreeTier } from "../services/bookingService";
 import { disconnectGoogleCalendarForVendor } from "../google";
 import { appUrl, logRouteError, respondWithInternalServerError } from "../lib/routeHelpers";
@@ -28,6 +29,22 @@ function priceIdForInterval(interval: string): string | null {
   if (interval === "annual") return STRIPE_PRICE_PRO_ANNUAL || null;
   if (interval === "monthly") return STRIPE_PRICE_PRO_MONTHLY || null;
   return null;
+}
+
+/**
+ * Commission vendors have no subscription and must never reach a billing route.
+ * Hiding the UI is not enough — pricing model is an authorization boundary, and
+ * the client-supplied model at signup is untrusted. Sends a 403 and returns
+ * true when the caller must stop; call after the vendor account is resolved
+ * and before any Stripe call.
+ */
+function rejectCommissionVendor(account: { pricingModel?: string | null }, res: Response): boolean {
+  if (!isCommissionVendor(account)) return false;
+  res.status(403).json({
+    error: "Subscriptions are not available on this account's pricing model.",
+    code: "commission_pricing_model",
+  });
+  return true;
 }
 
 /**
@@ -74,6 +91,7 @@ export function registerBillingRoutes(app: Express) {
     try {
       const account = await getVendorAccountFromRequest(req);
       if (!account?.id) return res.status(404).json({ error: "Vendor account not found" });
+      if (rejectCommissionVendor(account, res)) return;
       if (!account.userId || !account.email) {
         return res.status(400).json({ error: "Vendor account is missing identity for billing" });
       }
@@ -147,6 +165,7 @@ export function registerBillingRoutes(app: Express) {
     try {
       const account = await getVendorAccountFromRequest(req);
       if (!account?.id) return res.status(404).json({ error: "Vendor account not found" });
+      if (rejectCommissionVendor(account, res)) return;
 
       const interval = typeof req.body?.interval === "string" ? req.body.interval.trim() : "monthly";
       const result = await startReverseTrialForVendor(account, {
@@ -167,6 +186,13 @@ export function registerBillingRoutes(app: Express) {
         case "disabled":
         case "already_subscribed":
           return res.status(409).json({ error: "trial_not_available", message: "A free trial is only available on a new account. Please upgrade to Pro instead." });
+        case "commission_pricing_model":
+          // Unreachable in practice — rejectCommissionVendor already returned above —
+          // but kept in sync with that 403 shape as defense in depth.
+          return res.status(403).json({
+            error: "Subscriptions are not available on this account's pricing model.",
+            code: "commission_pricing_model",
+          });
         default:
           return res.status(500).json({ error: "Unable to start trial" });
       }
@@ -185,6 +211,7 @@ export function registerBillingRoutes(app: Express) {
     try {
       const account = await getVendorAccountFromRequest(req);
       if (!account?.id) return res.status(404).json({ error: "Vendor account not found" });
+      if (rejectCommissionVendor(account, res)) return;
       if (!account.userId || !account.email) {
         return res.status(400).json({ error: "Vendor account is missing identity for billing" });
       }
@@ -213,6 +240,7 @@ export function registerBillingRoutes(app: Express) {
     try {
       const account = await getVendorAccountFromRequest(req);
       if (!account?.id) return res.status(404).json({ error: "Vendor account not found" });
+      if (rejectCommissionVendor(account, res)) return;
 
       const variant = experimentLabel(req.body?.variant);
       if (!variant) return res.status(400).json({ error: "variant is required" });
@@ -236,6 +264,7 @@ export function registerBillingRoutes(app: Express) {
     try {
       const account = await getVendorAccountFromRequest(req);
       if (!account?.id) return res.status(404).json({ error: "Vendor account not found" });
+      if (rejectCommissionVendor(account, res)) return;
       if (!account.userId || !account.email) {
         return res.status(400).json({ error: "Vendor account is missing identity for billing" });
       }
@@ -441,6 +470,7 @@ export type ReverseTrialResult =
   | { status: "disabled" } // REVERSE_TRIAL_ENABLED kill switch is off
   | { status: "missing_identity" } // no userId/email to bill
   | { status: "not_configured" } // Pro price IDs not set in env
+  | { status: "commission_pricing_model" } // commission vendors have no subscription/trial — skip
   | { status: "error"; error: unknown };
 
 /**
@@ -461,10 +491,17 @@ export async function startReverseTrialForVendor(
     stripeSubscriptionId?: string | null;
     subscriptionStatus?: string | null;
     compEndsAt?: Date | string | null;
+    pricingModel?: string | null;
   },
   opts: { interval?: string; treatment?: string; variant?: string } = {}
 ): Promise<ReverseTrialResult> {
   try {
+    // Commission vendors have no subscription and no trial clock — they already
+    // have full feature access permanently. Enrolling them would create a Stripe
+    // subscription that later downgrades features they are entitled to keep.
+    // Checked first (mirrors resolveFeeRates) so this stays load-bearing even if
+    // an upstream caller ever forgets its own commission guard.
+    if (isCommissionVendor(account)) return { status: "commission_pricing_model" };
     if (!REVERSE_TRIAL_ENABLED) return { status: "disabled" };
     if (!account?.id) return { status: "error", error: new Error("missing account id") };
     if (!account.userId || !account.email) return { status: "missing_identity" };

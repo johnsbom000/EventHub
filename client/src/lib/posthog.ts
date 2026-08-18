@@ -21,6 +21,73 @@ const POSTHOG_HOST = String(import.meta.env.VITE_POSTHOG_HOST || "https://us.i.p
 let initialized = false;
 
 /**
+ * Flags whose last-known value is mirrored into localStorage and replayed into
+ * `posthog.init({ bootstrap })`, so a RETURNING visitor's first paint already
+ * has the right variant instead of the unresolved default.
+ *
+ * Allowlisted rather than "persist everything" to keep the payload bounded and
+ * to make it obvious which flags are allowed to steer a first paint.
+ * Must stay in sync with PRICING_FLAG_KEY (hooks/usePricingModel.ts) — that
+ * module type-checks the equality.
+ */
+export const BOOTSTRAPPED_FLAG_KEYS = ["pricing-model-test"] as const;
+export type BootstrappedFlagKey = (typeof BOOTSTRAPPED_FLAG_KEYS)[number];
+
+const FLAG_BOOTSTRAP_STORAGE_KEY = "eh:ph-flag-bootstrap";
+
+function readBootstrapFlags(): Record<string, string | boolean> | undefined {
+  if (typeof window === "undefined") return undefined;
+  try {
+    const raw = window.localStorage.getItem(FLAG_BOOTSTRAP_STORAGE_KEY);
+    if (!raw) return undefined;
+    const parsed: unknown = JSON.parse(raw);
+    if (!parsed || typeof parsed !== "object") return undefined;
+    const out: Record<string, string | boolean> = {};
+    for (const key of BOOTSTRAPPED_FLAG_KEYS) {
+      const value = (parsed as Record<string, unknown>)[key];
+      if (typeof value === "string" || typeof value === "boolean") out[key] = value;
+    }
+    return Object.keys(out).length ? out : undefined;
+  } catch {
+    return undefined;
+  }
+}
+
+/** Last-known value of a bootstrapped flag, readable before posthog-js loads. */
+export function phReadPersistedFlag(key: BootstrappedFlagKey): string | boolean | undefined {
+  return readBootstrapFlags()?.[key];
+}
+
+/** Remember a resolved flag value so the NEXT visit can paint it immediately. */
+export function phPersistFlag(key: BootstrappedFlagKey, value: string | boolean): void {
+  if (typeof window === "undefined") return;
+  try {
+    const next = { ...(readBootstrapFlags() ?? {}), [key]: value };
+    window.localStorage.setItem(FLAG_BOOTSTRAP_STORAGE_KEY, JSON.stringify(next));
+  } catch {
+    // Storage full / disabled — bootstrapping is an optimisation, never required.
+  }
+}
+
+function clearPersistedFlags(): void {
+  if (typeof window === "undefined") return;
+  try {
+    window.localStorage.removeItem(FLAG_BOOTSTRAP_STORAGE_KEY);
+  } catch {
+    // Never throw
+  }
+}
+
+/**
+ * Whether PostHog is actually running. Callers that WAIT for flags need this:
+ * with no key configured, `onFeatureFlags` never fires, so waiting would burn
+ * the full timeout for nothing.
+ */
+export function phIsEnabled(): boolean {
+  return initialized;
+}
+
+/**
  * Initialise PostHog. Idempotent and safe to call before render.
  *
  * $pageview is intentionally NOT auto-captured — useTrackPageView fires it on
@@ -30,8 +97,13 @@ let initialized = false;
 export function initPostHog(): void {
   if (typeof window === "undefined" || initialized || !POSTHOG_KEY) return;
   initialized = true;
+  const bootstrapFlags = readBootstrapFlags();
   posthog.init(POSTHOG_KEY, {
     api_host: POSTHOG_HOST,
+    // Seed the last-known variant for a returning visitor so their first paint
+    // is already correct. This does NOT help a first-touch visitor (nothing is
+    // cached) — the render gate in usePricingModelResolution() covers those.
+    ...(bootstrapFlags ? { bootstrap: { featureFlags: bootstrapFlags } } : {}),
     capture_pageview: false,
     capture_pageleave: true,
     persistence: "localStorage+cookie",
@@ -70,6 +142,9 @@ export function phIdentify(distinctId: string, properties: Record<string, unknow
 
 /** Drop the identified session on logout so the next visitor starts anonymous. */
 export function phReset(): void {
+  // Always drop the cached flags: the next visitor gets a new distinct_id and
+  // must not inherit the previous person's variant as their first paint.
+  clearPersistedFlags();
   if (!initialized) return;
   try {
     posthog.reset();
@@ -97,11 +172,19 @@ export function phFeatureFlag(key: string): string | boolean | undefined {
  * Subscribe to feature-flag readiness/changes. posthog-js loads flags
  * asynchronously after init, so first-time visitors get a callback once the
  * flags resolve. Returns an unsubscribe function (a no-op when disabled).
+ *
+ * posthog-js invokes the callback with `{ errorsLoading: true }` when the
+ * underlying `/flags` request failed, rather than raising. The optional
+ * second callback argument passes that through so callers that care about a
+ * failed load (vs. a genuine resolve) can distinguish the two; existing
+ * callers that only declare `() => void` keep working unchanged.
  */
-export function phOnFeatureFlags(cb: () => void): () => void {
+export function phOnFeatureFlags(
+  cb: (errorsLoading?: boolean) => void,
+): () => void {
   if (!initialized) return () => {};
   try {
-    return posthog.onFeatureFlags(() => cb());
+    return posthog.onFeatureFlags((_flags, _variants, context) => cb(context?.errorsLoading));
   } catch {
     return () => {};
   }

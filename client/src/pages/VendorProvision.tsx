@@ -6,7 +6,8 @@ import { getFreshAccessToken } from "@/lib/authToken";
 import { apiRequest, notifyEmailUnverified } from "@/lib/queryClient";
 import { phCapture } from "@/lib/posthog";
 import { trackSignupCompletedOnce } from "@/lib/tracking";
-import { readLandingVariant } from "@/hooks/useLandingVariant";
+import { resolvePricingModelForWrite } from "@/hooks/usePricingModel";
+import { readAttribution, clearAttribution } from "@/lib/landingAttribution";
 import { useToast } from "@/hooks/use-toast";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
@@ -84,13 +85,37 @@ export default function VendorProvision() {
       const token = await getFreshAccessToken();
       if (!token) throw new Error("auth_required");
 
+      const attribution = readAttribution();
+
+      // Wait for PostHog flags before stamping the immutable pricing_model
+      // column. readPricingModel() alone returns "subscription" for a real
+      // assignment, an unresolved flag, AND a failed /decide — indistinguishable,
+      // and unrecoverable because the column is never mutated. Times out quickly
+      // so a PostHog outage degrades to the safe default rather than blocking signup.
+      const { model: pricingModel, resolved: pricingModelResolved } =
+        await resolvePricingModelForWrite();
+
       const res = await fetch("/api/vendor/provision", {
         method: "POST",
         headers: {
           "Content-Type": "application/json",
           Authorization: `Bearer ${token}`,
         },
-        body: JSON.stringify({ businessName: trimmed }),
+        body: JSON.stringify({
+          businessName: trimmed,
+          // Read live (and flag-gated above), not from the first-touch
+          // sessionStorage record: on paid traffic's first visit the PostHog
+          // /decide round trip is very likely still in flight, so a value
+          // captured at landing would be the "subscription" pre-resolution
+          // placeholder, frozen forever by first-touch.
+          pricingModel,
+          landingStyle: attribution?.landingStyle,
+          utmSource: attribution?.utmSource,
+          utmMedium: attribution?.utmMedium,
+          utmCampaign: attribution?.utmCampaign,
+          utmContent: attribution?.utmContent,
+          fbclid: attribution?.fbclid,
+        }),
       });
 
       if (!res.ok) {
@@ -113,14 +138,21 @@ export default function VendorProvision() {
       const provisionData = await res.json().catch(() => ({} as any));
       const reverseTrial: boolean = Boolean(provisionData?.reverseTrial);
 
-      // Primary conversion event for the landing A/B/n experiment: a brand-new
-      // vendor account was just created. Tagged with the sticky landing variant
-      // so PostHog can attribute the conversion back to the arm the visitor saw.
-      phCapture("vendor_provisioned", { variant: readLandingVariant() });
+      // Primary conversion event for the landing test: a brand-new vendor account
+      // was just created. Tagged with the first-touch landing style so PostHog can
+      // attribute the conversion back to the page the visitor actually landed on.
+      // pricing_model_resolved=false means the flag never loaded and this vendor
+      // was stamped with the safe default — filter those out when analysing the
+      // pricing experiment, they are not a real assignment.
+      const landingStyle = attribution?.landingStyle ?? null;
+      phCapture("vendor_provisioned", {
+        landing_style: landingStyle,
+        pricing_model_resolved: pricingModelResolved,
+      });
       // Reverse-trial cohort marker (server also logs reverse_trial_started to
-      // event_log). Captured here with the landing variant for PostHog attribution.
+      // event_log). Captured here with the landing style for PostHog attribution.
       if (reverseTrial) {
-        phCapture("reverse_trial_started", { variant: readLandingVariant() });
+        phCapture("reverse_trial_started", { landing_style: landingStyle });
       }
       // The vendor account was just created — this is the ad campaign's primary
       // conversion. Mirror it to PostHog (signup_completed) and the Meta Pixel
@@ -128,7 +160,7 @@ export default function VendorProvision() {
       // Once-per-session guard (in the helper) dedupes against the App.tsx
       // post-login path; `user.email` rides only to the server-side CAPI copy.
       trackSignupCompletedOnce(
-        { role: "vendor", variant: readLandingVariant() },
+        { role: "vendor", landing_style: landingStyle },
         user?.email,
       );
 
@@ -137,6 +169,9 @@ export default function VendorProvision() {
       sessionStorage.removeItem("eh:pro-trial-intent");
       sessionStorage.removeItem("eh:pro-trial-interval");
       sessionStorage.removeItem("eh:pro-trial-mode");
+      // Only clear attribution once the provision request has actually
+      // succeeded — clearing it on failure would lose the attribution on retry.
+      clearAttribution();
 
       await qc.invalidateQueries({ queryKey: ["/api/vendor/me"] });
       await qc.invalidateQueries({ queryKey: ["/api/customer/me"] });

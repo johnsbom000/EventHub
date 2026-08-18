@@ -55,10 +55,10 @@ const LISTING_TYPE_OPTIONS: ListingTypeOption[] = [
 interface ListingTypeSelectorProps {
   onSelect: (type: ListingType) => void;
   /** When false, Pro-only types render with a lock and route to the upgrade CTA. */
-  isPro?: boolean;
+  hasProFeatures?: boolean;
 }
 
-export function ListingTypeSelector({ onSelect, isPro = false }: ListingTypeSelectorProps) {
+export function ListingTypeSelector({ onSelect, hasProFeatures = false }: ListingTypeSelectorProps) {
   return (
     <div className="flex min-h-full flex-col items-center justify-center bg-background px-4 py-16">
       <div className="w-full max-w-3xl space-y-10">
@@ -72,7 +72,7 @@ export function ListingTypeSelector({ onSelect, isPro = false }: ListingTypeSele
         <div className="grid gap-5 sm:grid-cols-3">
           {LISTING_TYPE_OPTIONS.map((option) => {
             const Icon = option.icon;
-            const locked = Boolean(option.proOnly) && !isPro;
+            const locked = Boolean(option.proOnly) && !hasProFeatures;
             return (
               <button
                 key={option.type}

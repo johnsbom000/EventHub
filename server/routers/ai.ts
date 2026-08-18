@@ -109,9 +109,9 @@ export function registerAiRoutes(app: Express): void {
     try {
       const account = await getVendorAccountFromRequest(req);
       if (!account?.id) return res.status(404).json({ error: "vendor_not_found" });
-      const isPro = getVendorEntitlements(account).isPro;
+      const hasProFeatures = getVendorEntitlements(account).hasProFeatures;
       const settings = await getAiSettings(account);
-      return res.json({ isPro, ...settings });
+      return res.json({ hasProFeatures, ...settings });
     } catch (err: any) {
       logRouteError("/api/vendor/ai/settings", err);
       return res.status(500).json({ error: "ai_error" });
@@ -145,9 +145,9 @@ export function registerAiRoutes(app: Express): void {
           .from(vendorAccounts)
           .where(eq(vendorAccounts.id, account.id))
           .limit(1);
-        const isPro = getVendorEntitlements(fresh ?? account).isPro;
+        const hasProFeatures = getVendorEntitlements(fresh ?? account).hasProFeatures;
         const settings = await getAiSettings(fresh ?? account);
-        return res.json({ isPro, ...settings });
+        return res.json({ hasProFeatures, ...settings });
       } catch (err: any) {
         logRouteError("/api/vendor/ai/settings POST", err);
         return res.status(500).json({ error: "ai_error" });
@@ -187,7 +187,7 @@ export function registerAiRoutes(app: Express): void {
       try {
         const account = await getVendorAccountFromRequest(req);
         if (!account?.id) return res.status(404).json({ error: "vendor_not_found" });
-        if (!getVendorEntitlements(account).isPro) {
+        if (!getVendorEntitlements(account).hasProFeatures) {
           return res.status(403).json({ error: "ai_pro_required", message: "AI replies are a Pro feature" });
         }
 

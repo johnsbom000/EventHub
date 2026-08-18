@@ -1,4 +1,6 @@
 import posthog from "posthog-js";
+import { readAttribution } from "@/lib/landingAttribution";
+import { readPricingModel } from "@/hooks/usePricingModel";
 
 declare global {
   interface Window {
@@ -86,5 +88,57 @@ export function trackSignupCompletedOnce(props: Record<string, any> = {}, email?
     // sessionStorage unavailable (private mode / disabled) — fall through and
     // fire; a rare double-count is better than dropping the conversion.
   }
-  trackBoth("signup_completed", props, { event: "CompleteRegistration", standard: true }, email);
+  // Experiment arm rides along on the conversion so CPA can be split by
+  // pricing model in Meta and by any property in PostHog. Sourced here (once,
+  // for every caller of this helper) rather than per call site, so there is a
+  // single place that decides how these two properties are read:
+  //  - pricing_model is read LIVE via readPricingModel() — it is a PostHog
+  //    feature flag, not stored attribution, because flags are guaranteed to
+  //    have resolved by the time an account-creation conversion fires (unlike
+  //    at landing-mount, where the /decide round trip may still be pending).
+  //  - landing_style comes from the first-touch attribution captured on
+  //    landing; it is null for organic "/" traffic, which is deliberate.
+  const attribution = readAttribution();
+  const enrichedProps = {
+    ...props,
+    pricing_model: readPricingModel(),
+    landing_style: attribution?.landingStyle ?? null,
+  };
+  trackBoth("signup_completed", enrichedProps, { event: "CompleteRegistration", standard: true }, email);
+}
+
+/** Fires the `listing_published` / Meta `ListingPublished` conversion at most
+ *  once per listing per browser session. This is a distinct activation
+ *  milestone from account signup — it must never reuse `CompleteRegistration`,
+ *  which would conflate two different business events into one Meta
+ *  conversion count.
+ *
+ *  Guarded per `listingId` (rather than a single global flag like
+ *  trackSignupCompletedOnce) because the wizard's Publish button briefly
+ *  re-enables immediately after a successful publish call (its in-flight
+ *  guard resets in a `finally`, ahead of the async close/navigate), so a fast
+ *  double-click can reach this call site again for the *same* listing. A
+ *  per-listing guard closes that gap while still letting a vendor publish
+ *  several distinct listings/add-ons in one session — each one is a genuine,
+ *  separate activation and should count. */
+export function trackListingPublishedOnce(listingId: string, props: Record<string, any> = {}) {
+  const GUARD_KEY = `eh:listing-published-fired:${listingId}`;
+  try {
+    if (typeof sessionStorage !== "undefined") {
+      if (sessionStorage.getItem(GUARD_KEY)) return; // already fired for this listing
+      sessionStorage.setItem(GUARD_KEY, "1");
+    }
+  } catch {
+    // sessionStorage unavailable (private mode / disabled) — fall through and
+    // fire; a rare double-count is better than dropping the conversion.
+  }
+  // Same experiment-attribution sourcing as trackSignupCompletedOnce, so CPA
+  // can be split by pricing model / landing style for this event too.
+  const attribution = readAttribution();
+  const enrichedProps = {
+    ...props,
+    pricing_model: readPricingModel(),
+    landing_style: attribution?.landingStyle ?? null,
+  };
+  trackBoth("listing_published", enrichedProps, { event: "ListingPublished", standard: false });
 }

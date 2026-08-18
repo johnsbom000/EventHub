@@ -3,9 +3,10 @@ import { ChevronDown } from "lucide-react";
 import { Eyebrow } from "@/pages/landing/primitives";
 
 /* ---------------------------------------------------------------------------
-   Shared FAQ section — sits directly under the "Upgrade to Pro" pricing block
-   on every free-first variant. Native <details> accordion (no JS state); the
-   first item starts open for discoverability.
+   Shared FAQ section — sits directly under the pricing block on every
+   free-first variant (the "Upgrade to Pro" band in subscription mode, the
+   commission band in commission mode). Native <details> accordion (no JS
+   state); the first item starts open for discoverability.
 
    Copy lives in the shared `landingShared.faq` block (en/es/pt), so editing it
    once updates every direction.

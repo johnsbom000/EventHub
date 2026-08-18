@@ -57,7 +57,7 @@ export default function VendorDiscounts() {
     queryKey: ["/api/vendor/me"],
     enabled: isAuthenticated,
   });
-  const isPro = Boolean(me?.isPro);
+  const hasProFeatures = Boolean(me?.hasProFeatures);
 
   const [activeTab, setActiveTab] = useState<Discount["status"]>("active");
   const [modalOpen, setModalOpen] = useState(false);
@@ -84,7 +84,7 @@ export default function VendorDiscounts() {
   });
 
   function openCreate() {
-    if (!isPro) {
+    if (!hasProFeatures) {
       upgrade.open();
       return;
     }
@@ -93,7 +93,7 @@ export default function VendorDiscounts() {
   }
 
   function openEdit(d: Discount) {
-    if (!isPro) {
+    if (!hasProFeatures) {
       upgrade.open();
       return;
     }
@@ -127,8 +127,8 @@ export default function VendorDiscounts() {
           </Button>
         </div>
 
-        {/* Pro gate: discounts & promos are a Pro feature. */}
-        {!isPro ? (
+        {/* Pro gate: discounts & promos require Pro features. */}
+        {!hasProFeatures ? (
           <div className="flex flex-wrap items-center gap-3 rounded-lg border border-[#4a6a7d]/30 bg-[#4a6a7d]/8 px-4 py-3" data-testid="discounts-pro-banner">
             <Sparkles className="h-4 w-4 shrink-0 text-[#4a6a7d]" />
             <p className="flex-1 text-sm text-[#2a3a42]">

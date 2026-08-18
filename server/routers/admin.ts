@@ -287,9 +287,8 @@ import {
   toConversationPayload,
   deriveVendorSlug,
 } from "../lib/routeUtils";
+import { isCommissionVendor } from "../services/entitlementsService";
 import {
-  VENDOR_FEE_RATE,
-  CUSTOMER_FEE_RATE,
   STRIPE_FEE_ESTIMATE_PERCENT,
   STRIPE_FEE_ESTIMATE_FIXED_CENTS,
   VENDOR_ABSORBS_STRIPE_FEES,
@@ -611,6 +610,9 @@ export function registerAdminRoutes(app: Express): void {
           stripeChargeId: payments.stripeChargeId,
           stripeConnectedAccountId: payments.stripeConnectedAccountId,
           amount: payments.amount,
+          // Vendor-side gross (the travel fee itself, excluding the customer
+          // service fee that rides on `amount`). Caps the vendor's award below.
+          vendorGrossAmount: payments.vendorGrossAmount,
           refundAmount: payments.refundAmount,
           status: payments.status,
         })
@@ -631,15 +633,27 @@ export function registerAdminRoutes(app: Express): void {
           return res.status(400).json({ error: "Held travel fee is not in a settleable state" });
         }
         const alreadyRefunded = heldTravel.refundAmount ?? 0;
+        // What is left on the CHARGE (travel fee + customer service fee).
         const heldRemaining = Math.max(0, heldTravel.amount - alreadyRefunded);
+        // What the vendor may be awarded: the travel fee itself, never the
+        // customer service fee. Without this cap the vendor's ceiling would have
+        // silently risen by the service fee the moment travel fees started
+        // carrying it. Legacy rows (no vendor gross recorded) fall back to the
+        // charge, which for them WAS the fee.
+        const travelAwardCeiling = Math.min(
+          heldRemaining,
+          Math.max(0, (heldTravel.vendorGrossAmount ?? heldTravel.amount) - alreadyRefunded)
+        );
 
         const requestedAward =
           typeof payload.travelAwardCents === "number"
             ? payload.travelAwardCents
             : payload.decision === "payout"
-              ? heldRemaining
+              ? travelAwardCeiling
               : 0;
-        const travelAward = Math.min(Math.max(0, requestedAward), heldRemaining);
+        const travelAward = Math.min(Math.max(0, requestedAward), travelAwardCeiling);
+        // The remainder of the charge — including the customer service fee —
+        // goes back to the customer, so the charge always fully settles.
         const travelRefundToCustomer = heldRemaining - travelAward;
 
         // Vendor connected account is required to pay an award.
@@ -1423,6 +1437,7 @@ export function registerAdminRoutes(app: Express): void {
           WHERE va.deleted_at IS NULL
             AND va.active = true
             AND va.reverse_trial_started_at IS NOT NULL
+            AND va.pricing_model <> 'commission'
         )
         SELECT
           COUNT(*)::int AS cohort_total,
@@ -1455,6 +1470,7 @@ export function registerAdminRoutes(app: Express): void {
           AND va.active = true
           AND va.reverse_trial_started_at IS NOT NULL
           AND va.reverse_trial_started_at <= NOW() - INTERVAL '21 days'
+          AND va.pricing_model <> 'commission'
         GROUP BY COALESCE(va.paywall_variant, 'unassigned')
         ORDER BY variant
       `);
@@ -2200,6 +2216,26 @@ export function registerAdminRoutes(app: Express): void {
       if (!vendorId) return res.status(400).json({ error: "Vendor id required" });
       const days = Math.max(1, Math.min(365, parseIntegerValue(req.body?.days) ?? 30));
       const compEndsAt = new Date(Date.now() + days * 24 * 60 * 60 * 1000);
+
+      // Commission vendors have no subscription to comp. Granting one buys them
+      // nothing (they already have full feature access and still pay the
+      // commission — resolveFeeRates checks the pricing model BEFORE isPro), but
+      // when it EXPIRES, reconcileVendorSubscriptionState drops them to "free"
+      // and tears down listings + Google sync for an account whose entitlements
+      // say unlimited. deactivateExtraActiveListingsForFreeTier is now a no-op
+      // for them as a backstop; this rejects the mistake at the source.
+      const [target] = await db
+        .select({ pricingModel: vendorAccounts.pricingModel })
+        .from(vendorAccounts)
+        .where(and(eq(vendorAccounts.id, vendorId), isNull(vendorAccounts.deletedAt)))
+        .limit(1);
+      if (!target) return res.status(404).json({ error: "Vendor not found" });
+      if (isCommissionVendor(target)) {
+        return res.status(403).json({
+          error: "Complimentary Pro does not apply to commission-model vendors — they already have full feature access.",
+          code: "commission_pricing_model",
+        });
+      }
 
       const [updated] = await db
         .update(vendorAccounts)

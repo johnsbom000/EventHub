@@ -6,6 +6,7 @@
       "errorTitle": "Resposta com IA",
       "error": "Não foi possível gerar uma resposta. Tente novamente.",
       "limitReached": "Você usou todas as suas respostas de IA incluídas este mês. Ative o pagamento por uso em Faturamento para continuar rascunhando.",
+      "limitReachedCommission": "Você usou todas as suas respostas de IA incluídas este mês. Os rascunhos voltam no começo do mês seguinte.",
       "proRequired": "As respostas com IA são um recurso Pro.",
       "disabled": "Ative o assistente de IA em Faturamento para rascunhar respostas.",
       "assistant": {
@@ -16,7 +17,8 @@
         "resets": "Renova em {{date}}",
         "overageLabel": "Pagamento por uso",
         "overageHint": "Após o limite mensal, cada resposta adicional custa ${{price}}.",
-        "hardStopHint": "Os rascunhos param em {{included}} respostas/mês. Ative para continuar com pagamento por uso."
+        "hardStopHint": "Os rascunhos param em {{included}} respostas/mês. Ative para continuar com pagamento por uso.",
+        "hardStopCommission": "Seu plano inclui {{included}} respostas de IA por mês. Os rascunhos pausam ao atingir esse limite e reiniciam no começo do mês seguinte."
       },
       "faq": {
         "title": "Documento de FAQ",
@@ -228,6 +230,7 @@
     "upgradeToPro": "Upgrade para o Pro",
     "googleSyncProFeature": "A sincronização com o Google Agenda é um recurso Pro. Faça upgrade para sincronizar suas reservas automaticamente.",
     "billingIntro": "Gerencie seu plano e seus pagamentos. O Pro elimina as taxas de fornecedor nas suas reservas e desbloqueia listagens ilimitadas, análises e sincronização de calendário.",
+    "billingIntroCommission": "Gerencie seus pagamentos e seus dados de faturamento.",
     "pageTitle": "Painel",
     "noActiveProfile": "Sem perfil de fornecedor ativo.",
     "totalBookings": "Total de Reservas",
@@ -425,6 +428,7 @@
     "feeBreakdown": "Detalhamento de Taxas",
     "listingPrice": "Preço da listagem",
     "customerServiceFee": "Taxa de serviço ao cliente",
+    "securityDepositRefundable": "Caução (reembolsável ao cliente)",
     "customerTotal": "Total do cliente",
     "eventhubFee": "Taxa do EventHub",
     "estimatedPayout": "Pagamento estimado",
@@ -498,7 +502,8 @@
     "stripeNotConnectedDesc": "Vincule sua conta Stripe para começar a receber pagamentos pelas suas reservas.",
     "dateNotSet": "Data não definida",
     "bookingNumber": "Reserva #{{id}}",
-    "bookingTotal": "Total da reserva",
+    "bookingTotal": "Seus ganhos com a reserva",
+    "eventhubCommission": "Comissão do EventHub",
     "stripeProcessingFee": "Taxa de processamento da Stripe",
     "travelFee": "Taxa de deslocamento"
   },
@@ -827,41 +832,640 @@
     "serviceAreaNationwide": "Nacional",
     "serviceAreaGlobal": "Global"
   },
+  "privacy": {
+    "pageTitle": "Política de Privacidade",
+    "backToEventHub": "Voltar ao EventHub",
+    "contents": "Conteúdo",
+    "effective": "Em vigor desde {{date}}",
+    "meta": "Lei aplicável: Estado de Utah · Dúvidas: support@eventhubglobal.com",
+    "contactEmail": "support@eventhubglobal.com",
+    "intro": [
+      "A EventHub, LLC (\"EventHub\", \"nós\" ou \"nosso\") opera um marketplace on-line que conecta fornecedores de locação e serviços para eventos a clientes. Esta Política de Privacidade explica como coletamos, usamos, divulgamos e protegemos suas informações quando você usa nossa plataforma em eventhubglobal.com e quaisquer aplicativos móveis ou de desktop associados (em conjunto, a \"Plataforma\").",
+      "Ao acessar ou usar a Plataforma, você concorda com esta Política de Privacidade. Se não concordar, interrompa o uso."
+    ],
+    "sections": [
+      {
+        "id": "information-we-collect",
+        "label": "Informações que coletamos",
+        "heading": "1. Informações que coletamos",
+        "blocks": [
+          {
+            "type": "p",
+            "text": "**Informações que você fornece diretamente**"
+          },
+          {
+            "type": "ul",
+            "items": [
+              "**Cadastro da conta:** nome, endereço de e-mail e foto de perfil quando você cria uma conta.",
+              "**Cadastro de fornecedores:** razão social, endereço comercial, informações de identificação fiscal e dados bancários ou de cartão de débito (coletados e armazenados pela Stripe — consulte a Seção 3).",
+              "**Anúncios:** fotos, descrições, preços, disponibilidade e informações de localização que você envia para suas ofertas de locação ou serviços.",
+              "**Reservas e pagamentos:** datas do evento, endereços de entrega, detalhes da reserva e informações do cartão de pagamento (coletadas pela Stripe — consulte a Seção 3).",
+              "**Mensagens:** o conteúdo das mensagens trocadas entre clientes e fornecedores pelo nosso chat no aplicativo.",
+              "**Avaliações:** as notas e avaliações escritas que você envia sobre reservas concluídas.",
+              "**Comunicações de suporte:** as informações que você fornece ao entrar em contato conosco."
+            ]
+          },
+          {
+            "type": "p",
+            "text": "**Informações coletadas automaticamente**"
+          },
+          {
+            "type": "ul",
+            "items": [
+              "**Dados de uso:** páginas visitadas, consultas de busca, anúncios visualizados, cliques e duração da sessão.",
+              "**Informações do dispositivo:** endereço IP, tipo de navegador, sistema operacional e identificadores do dispositivo.",
+              "**Dados de localização:** localização aproximada inferida a partir do endereço IP e localização precisa (se permitida), usada para mostrar fornecedores próximos e geocodificar endereços.",
+              "**Cookies e tecnologias semelhantes:** identificadores de sessão, preferências de análise e valores de sinalizadores de funcionalidade armazenados no seu navegador. Consulte nossos Termos de Serviço para mais detalhes."
+            ]
+          },
+          {
+            "type": "p",
+            "text": "**Informações de terceiros**"
+          },
+          {
+            "type": "ul",
+            "items": [
+              "**Auth0:** informações de autenticação, incluindo seu nome, e-mail e imagem de perfil, caso você entre com um provedor social (Google etc.).",
+              "**Stripe:** status do pagamento, notificações de disputa e eventos de confirmação de repasse entregues por webhook.",
+              "**Google Calendar:** dados de eventos da agenda, caso você conecte seu Google Calendar para gerenciar a disponibilidade como fornecedor."
+            ]
+          }
+        ]
+      },
+      {
+        "id": "how-we-use",
+        "label": "Como usamos as informações",
+        "heading": "2. Como usamos suas informações",
+        "blocks": [
+          {
+            "type": "p",
+            "text": "Usamos as informações que coletamos para:"
+          },
+          {
+            "type": "ul",
+            "items": [
+              "Criar e manter sua conta e autenticar sua identidade.",
+              "Processar reservas, pagamentos, reembolsos e repasses.",
+              "Conectar clientes a fornecedores e facilitar a comunicação entre eles.",
+              "Enviar e-mails transacionais (confirmações de reserva, recibos de pagamento, notificações de disputa, convites para avaliar).",
+              "Fazer cumprir nossos Termos de Serviço, incluindo nossa política contra negociações fora da plataforma.",
+              "Detectar, investigar e prevenir fraudes, abusos e incidentes de segurança.",
+              "Aprimorar e personalizar a Plataforma por meio de análises e testes A/B.",
+              "Cumprir as leis aplicáveis e responder a solicitações legítimas de autoridades governamentais."
+            ]
+          },
+          {
+            "type": "p",
+            "text": "Não vendemos suas informações pessoais a terceiros e não as usamos para veicular publicidade comportamental em nome de anunciantes terceiros."
+          }
+        ]
+      },
+      {
+        "id": "payment-processing",
+        "label": "Processamento de pagamentos",
+        "heading": "3. Processamento de pagamentos (Stripe)",
+        "blocks": [
+          {
+            "type": "p",
+            "text": "Todo o processamento de pagamentos no EventHub é feito pela **Stripe, Inc.** (\"Stripe\"). Quando você informa os dados do cartão de pagamento, esses dados são transmitidos diretamente à Stripe e nunca são armazenados nos servidores do EventHub."
+          },
+          {
+            "type": "p",
+            "text": "A Stripe é um processador de pagamentos certificado PCI-DSS Nível 1. Ao concluir uma compra ou se conectar como fornecedor, você concorda com a Política de Privacidade da Stripe (https://stripe.com/privacy) e com o Contrato de Conta Conectada da Stripe (https://stripe.com/legal/connect-account)."
+          },
+          {
+            "type": "p",
+            "text": "O EventHub recebe da Stripe: o status do pagamento (aprovado, recusado, reembolsado), a confirmação do repasse e notificações de disputa/chargeback. Armazenamos esses eventos para manter registros financeiros e de reservas precisos."
+          },
+          {
+            "type": "p",
+            "text": "Os repasses aos fornecedores ficam retidos por um período definido pela Plataforma após cada evento, antes de serem transferidos para a conta Stripe conectada do fornecedor. As práticas de dados da Stripe, incluindo a retenção de dados para registros financeiros, são regidas pela Política de Privacidade da Stripe."
+          }
+        ]
+      },
+      {
+        "id": "authentication",
+        "label": "Autenticação",
+        "heading": "4. Autenticação (Auth0)",
+        "blocks": [
+          {
+            "type": "p",
+            "text": "A autenticação das contas é gerenciada pela **Auth0, Inc.** (\"Auth0\"). Quando você se cadastra ou faz login, suas credenciais são processadas pela Auth0 conforme a Política de Privacidade dela (https://auth0.com/privacy)."
+          },
+          {
+            "type": "p",
+            "text": "O EventHub recebe da Auth0: seu identificador de usuário, endereço de e-mail, nome e foto de perfil (se fornecida). Não recebemos nem armazenamos sua senha."
+          },
+          {
+            "type": "p",
+            "text": "Se você entrar usando um provedor social (como o Google), a política de privacidade desse provedor também se aplica às informações compartilhadas durante a autenticação."
+          }
+        ]
+      },
+      {
+        "id": "maps-location",
+        "label": "Mapas e localização",
+        "heading": "5. Mapas e dados de localização (Mapbox)",
+        "blocks": [
+          {
+            "type": "p",
+            "text": "Os recursos de localização de fornecedores e exibição de mapas são fornecidos pela **Mapbox, Inc.** Quando você explora fornecedores ou informa um endereço, dados de localização podem ser transmitidos à Mapbox para geocodificação e renderização dos blocos do mapa, sujeitos à Política de Privacidade da Mapbox (https://www.mapbox.com/legal/privacy)."
+          },
+          {
+            "type": "p",
+            "text": "A localização precisa do dispositivo (GPS) só é acessada se você conceder permissão expressamente pelo navegador. Você pode navegar pela Plataforma sem conceder acesso à localização; por padrão, usamos sua localização aproximada derivada do IP."
+          }
+        ]
+      },
+      {
+        "id": "messaging",
+        "label": "Mensagens",
+        "heading": "6. Mensagens (Stream)",
+        "blocks": [
+          {
+            "type": "p",
+            "text": "As mensagens no aplicativo entre clientes e fornecedores são fornecidas pela **Stream, Inc.** O conteúdo das mensagens é transmitido à Stream e armazenado por ela, sujeito à sua Política de Privacidade (https://getstream.io/legal/privacy-policy/)."
+          },
+          {
+            "type": "p",
+            "text": "O EventHub monitora o conteúdo das mensagens exclusivamente para fazer cumprir nossos Termos de Serviço, incluindo a detecção de tentativas de negociação fora da plataforma. Mensagens sinalizadas pelo nosso sistema automatizado podem ser revisadas pela equipe do EventHub."
+          }
+        ]
+      },
+      {
+        "id": "google-calendar",
+        "label": "Integração com o Google Calendar",
+        "heading": "7. Integração com o Google Calendar",
+        "blocks": [
+          {
+            "type": "p",
+            "text": "O EventHub oferece aos fornecedores uma integração opcional com o Google Calendar para sincronizar as reservas confirmadas na agenda do fornecedor."
+          },
+          {
+            "type": "p",
+            "text": "**O que acessamos**"
+          },
+          {
+            "type": "p",
+            "text": "Quando um fornecedor conecta sua conta Google, o EventHub solicita três permissões:"
+          },
+          {
+            "type": "ul",
+            "items": [
+              "**Acesso de leitura e escrita aos eventos da agenda** (calendar.events) — usado para criar, atualizar e excluir eventos de reserva na agenda selecionada pelo fornecedor e para registrar canais de notificações push, de modo que alterações feitas diretamente no Google Calendar sejam refletidas na disponibilidade do EventHub.",
+              "**Acesso somente leitura à lista de agendas do fornecedor** (calendar.calendarlist.readonly) — usado para exibir as agendas disponíveis do fornecedor, para que ele escolha com qual sincronizar.",
+              "**Acesso ao endereço de e-mail da conta Google do fornecedor** (userinfo.email) — usado para exibir a conta Google conectada nas configurações do painel do fornecedor."
+            ]
+          },
+          {
+            "type": "p",
+            "text": "O EventHub lê dados de eventos apenas da agenda específica que o fornecedor seleciona expressamente. Não acessamos o Drive, os Contatos, o Gmail nem quaisquer outros dados do Google."
+          },
+          {
+            "type": "p",
+            "text": "**Como usamos**"
+          },
+          {
+            "type": "p",
+            "text": "Usamos os dados do Google Calendar exclusivamente para gravar e atualizar eventos de reserva quando o status da reserva muda, gravar eventos de bloqueio por férias quando um fornecedor marca datas como indisponíveis e receber notificações push quando um fornecedor edita um evento diretamente no Google Calendar, para que a disponibilidade no EventHub permaneça sincronizada. Os dados do Google Calendar nunca são usados para publicidade, análise ou criação de perfis de usuários."
+          },
+          {
+            "type": "p",
+            "text": "**Como armazenamos**"
+          },
+          {
+            "type": "p",
+            "text": "Os tokens de acesso OAuth (de curta duração, ~1 hora) e os tokens de atualização (de longa duração) são criptografados em repouso com AES-256-GCM, usando uma chave de 256 bits armazenada separadamente do banco de dados. Os tokens nunca são compartilhados com terceiros e nunca são registrados em logs nem expostos ao código do lado do cliente."
+          },
+          {
+            "type": "p",
+            "text": "**Retenção**"
+          },
+          {
+            "type": "p",
+            "text": "Os tokens são mantidos enquanto a integração estiver ativa. A desconexão pelo painel do fornecedor exclui imediatamente todos os tokens do nosso banco de dados e revoga o token de acesso junto ao Google. A exclusão da conta elimina todos os tokens do Google em até 30 dias."
+          },
+          {
+            "type": "p",
+            "text": "**Direitos do fornecedor**"
+          },
+          {
+            "type": "p",
+            "text": "Os fornecedores podem desconectar a integração com o Google Calendar a qualquer momento nas Configurações do painel. Isso interrompe toda a sincronização futura e exclui os tokens armazenados. Os eventos de agenda criados anteriormente não são removidos do Google Calendar na desconexão. Os fornecedores também podem revogar o acesso do EventHub diretamente em https://myaccount.google.com/permissions"
+          }
+        ]
+      },
+      {
+        "id": "analytics-cookies",
+        "label": "Análises e cookies",
+        "heading": "8. Análises, cookies e tecnologias semelhantes",
+        "blocks": [
+          {
+            "type": "p",
+            "text": "Usamos cookies e armazenamento do navegador para operar a Plataforma, lembrar suas preferências e entender como a Plataforma é usada. Essas tecnologias são o meio pelo qual as informações de uso e de dispositivo descritas na Seção 1 são efetivamente coletadas."
+          },
+          {
+            "type": "p",
+            "text": "As análises de produto são fornecidas pela **PostHog, Inc.** A PostHog armazena um identificador de visitante pseudonimizado em um cookie e no armazenamento local do navegador, e registra as páginas que você visita e eventos de produto como criar uma conta ou publicar um anúncio. A PostHog cria um perfil tanto para visitantes anônimos quanto para usuários autenticados, e registra os parâmetros de campanha publicitária contidos no link pelo qual você chegou. Isso está sujeito à Política de Privacidade da PostHog (https://posthog.com/privacy)."
+          },
+          {
+            "type": "p",
+            "text": "As tecnologias que usamos se enquadram nestas categorias:"
+          },
+          {
+            "type": "ul",
+            "items": [
+              "**Estritamente necessárias:** tokens de autenticação que o Auth0 guarda no armazenamento local do seu navegador para manter você conectado entre visitas. Sem eles não é possível entrar nem concluir uma reserva.",
+              "**Preferências:** um cookie próprio que lembra se o painel de navegação está expandido, e armazenamento do navegador que lembra o idioma selecionado.",
+              "**Análises e experimentos:** o armazenamento da PostHog descrito acima. A PostHog também determina a qual variante de um recurso ou de um experimento de preços sua visita é atribuída e guarda essa atribuição, para que as condições exibidas a você permaneçam consistentes em vez de mudarem entre visitas.",
+              "**Atribuição:** armazenamento de sessão que registra qual página de destino e qual anúncio trouxeram você à Plataforma, para medirmos quais campanhas funcionam. É apagado ao fechar o navegador."
+            ]
+          },
+          {
+            "type": "p",
+            "text": "Não usamos cookies nem tecnologias semelhantes para publicidade de terceiros, e não permitimos que terceiros as usem na Plataforma para criar perfis publicitários sobre você. Não vendemos as informações que elas coletam."
+          },
+          {
+            "type": "p",
+            "text": "A maioria dos navegadores permite bloquear ou excluir cookies e limpar o armazenamento do site nas configurações. Bloquear o armazenamento estritamente necessário impedirá que você entre ou reserve. Bloquear o armazenamento de análises não afeta sua capacidade de usar a Plataforma."
+          }
+        ]
+      },
+      {
+        "id": "how-we-share",
+        "label": "Como compartilhamos as informações",
+        "heading": "9. Como compartilhamos suas informações",
+        "blocks": [
+          {
+            "type": "p",
+            "text": "Compartilhamos suas informações somente nas seguintes circunstâncias:"
+          },
+          {
+            "type": "ul",
+            "items": [
+              "**Entre clientes e fornecedores:** quando uma reserva é criada, compartilhamos com o fornecedor o nome do cliente, os detalhes do evento e o endereço de entrega. A razão social, a localização e as informações de contato do fornecedor são compartilhadas com o cliente.",
+              "**Prestadores de serviços:** compartilhamos dados com Stripe, Auth0, Mapbox, Stream, PostHog e outros suboperadores descritos acima, e com provedores de infraestrutura em nuvem (como Railway e Neon), exclusivamente para operar e aprimorar a Plataforma.",
+              "**Obrigações legais:** podemos divulgar informações se exigido por lei, ordem judicial ou autoridade governamental, ou se acreditarmos que a divulgação é necessária para proteger os direitos, a propriedade ou a segurança do EventHub, de nossos usuários ou do público.",
+              "**Transferências empresariais:** se o EventHub for adquirido, incorporado ou passar por operação societária semelhante, suas informações poderão ser transferidas como parte dessa operação. Avisaremos você por e-mail e/ou por aviso em destaque na Plataforma antes que suas informações sejam transferidas."
+            ]
+          },
+          {
+            "type": "p",
+            "text": "Não vendemos, alugamos nem negociamos suas informações pessoais com terceiros para fins de marketing deles."
+          }
+        ]
+      },
+      {
+        "id": "data-retention",
+        "label": "Retenção de dados",
+        "heading": "10. Retenção de dados",
+        "blocks": [
+          {
+            "type": "p",
+            "text": "Mantemos suas informações pessoais enquanto sua conta estiver ativa ou pelo tempo necessário para prestar os serviços. Também mantemos informações para cumprir obrigações legais (incluindo exigências fiscais e de guarda de registros financeiros, que podem se estender por até 7 anos), resolver disputas e fazer cumprir acordos."
+          },
+          {
+            "type": "p",
+            "text": "Quando você solicita a exclusão da sua conta, excluiremos ou anonimizaremos suas informações pessoais em até 30 dias, exceto quando a retenção for exigida por lei ou necessária para resolver disputas pendentes."
+          }
+        ]
+      },
+      {
+        "id": "security",
+        "label": "Segurança",
+        "heading": "11. Segurança",
+        "blocks": [
+          {
+            "type": "p",
+            "text": "Adotamos salvaguardas padrão do setor, incluindo transmissão criptografada de dados (HTTPS/TLS), armazenamento criptografado de credenciais sensíveis, validação de tokens de autenticação no servidor e controles de acesso que limitam o acesso da equipe a dados pessoais."
+          },
+          {
+            "type": "p",
+            "text": "Nenhum método de transmissão pela Internet ou de armazenamento eletrônico é 100% seguro. Embora usemos meios comercialmente razoáveis para proteger suas informações, não podemos garantir segurança absoluta. Se você tomar conhecimento de uma vulnerabilidade de segurança, entre em contato pelo e-mail support@eventhubglobal.com."
+          }
+        ]
+      },
+      {
+        "id": "your-rights",
+        "label": "Seus direitos",
+        "heading": "12. Seus direitos",
+        "blocks": [
+          {
+            "type": "p",
+            "text": "Dependendo da sua localização, você pode ter o direito de:"
+          },
+          {
+            "type": "ul",
+            "items": [
+              "**Acesso:** solicitar uma cópia das informações pessoais que mantemos sobre você.",
+              "**Correção:** solicitar a correção de informações imprecisas ou incompletas.",
+              "**Exclusão:** solicitar a exclusão das suas informações pessoais, sujeita às exigências legais de retenção.",
+              "**Portabilidade:** receber suas informações pessoais em formato estruturado e legível por máquina.",
+              "**Oposição:** opor-se ao tratamento das suas informações pessoais para determinadas finalidades.",
+              "**Retirada do consentimento:** quando o tratamento se basear em consentimento, retirá-lo a qualquer momento, sem afetar o tratamento anterior."
+            ]
+          },
+          {
+            "type": "p",
+            "text": "Para exercer esses direitos, envie um e-mail para support@eventhubglobal.com. Responderemos em até 30 dias. Podemos pedir que você verifique sua identidade antes de atender a uma solicitação."
+          }
+        ]
+      },
+      {
+        "id": "california",
+        "label": "Residentes da Califórnia",
+        "heading": "13. Residentes da Califórnia (CCPA / CPRA)",
+        "blocks": [
+          {
+            "type": "p",
+            "text": "Se você reside na Califórnia, a Lei de Privacidade do Consumidor da Califórnia (CCPA) e a Lei de Direitos de Privacidade da Califórnia (CPRA) lhe garantem direitos adicionais, entre eles:"
+          },
+          {
+            "type": "ul",
+            "items": [
+              "O direito de saber quais informações pessoais coletamos, usamos, divulgamos e vendemos.",
+              "O direito de excluir as informações pessoais que coletamos de você (sujeito a exceções).",
+              "O direito de corrigir informações pessoais imprecisas.",
+              "O direito de recusar a venda ou o compartilhamento de informações pessoais. **Não vendemos nem compartilhamos informações pessoais conforme definido pela CCPA/CPRA.**",
+              "O direito à não discriminação por exercer seus direitos de privacidade."
+            ]
+          },
+          {
+            "type": "p",
+            "text": "Para enviar uma solicitação de direitos de privacidade da Califórnia, escreva para support@eventhubglobal.com com \"California Privacy Request\" no assunto. Responderemos em até 45 dias."
+          }
+        ]
+      },
+      {
+        "id": "children",
+        "label": "Privacidade de crianças",
+        "heading": "14. Privacidade de crianças",
+        "blocks": [
+          {
+            "type": "p",
+            "text": "A Plataforma destina-se a usuários com pelo menos 18 anos. Não coletamos intencionalmente informações pessoais de crianças menores de 13 anos. Se soubermos que coletamos informações pessoais de uma criança menor de 13 anos sem consentimento verificável dos pais ou responsáveis, excluiremos essas informações. Se você acredita que uma criança nos forneceu informações pessoais, entre em contato pelo e-mail support@eventhubglobal.com."
+          }
+        ]
+      },
+      {
+        "id": "changes",
+        "label": "Alterações nesta Política",
+        "heading": "15. Alterações nesta Política",
+        "blocks": [
+          {
+            "type": "p",
+            "text": "Podemos atualizar esta Política de Privacidade periodicamente. Se fizermos alterações relevantes, avisaremos você atualizando a data de vigência no topo desta política e, quando exigido por lei, enviando um e-mail para o endereço associado à sua conta ou exibindo um aviso em destaque na Plataforma."
+          },
+          {
+            "type": "p",
+            "text": "O uso continuado da Plataforma após a data de vigência de quaisquer alterações constitui aceitação da Política de Privacidade atualizada."
+          }
+        ]
+      },
+      {
+        "id": "contact",
+        "label": "Fale conosco",
+        "heading": "16. Fale conosco",
+        "blocks": [
+          {
+            "type": "p",
+            "text": "Se você tiver dúvidas, preocupações ou solicitações sobre esta Política de Privacidade, entre em contato conosco:"
+          },
+          {
+            "type": "ul",
+            "items": [
+              "**E-mail:** support@eventhubglobal.com",
+              "**Endereço para correspondência:** EventHub, LLC · Attn: Privacy · 1555 N Freedom Blvd · Provo, UT 84604 · EUA"
+            ]
+          },
+          {
+            "type": "p",
+            "text": "No caso de disputas não resolvidas por meio da nossa equipe de suporte, você pode ter o direito de apresentar uma reclamação à autoridade local de proteção de dados."
+          }
+        ]
+      }
+    ]
+  },
   "terms": {
     "pageTitle": "Termos de Serviço",
     "backToEventHub": "Voltar ao EventHub",
     "contents": "Conteúdo",
-    "version": "Versão 6 · Vigente desde 1º de maio de 2025 · EventHub",
-    "noticeTitle": "Aviso importante sobre o papel do EventHub",
-    "noticeBody": "O EventHub é uma plataforma de mercado — conectamos clientes com fornecedores independentes. Não somos parte de nenhuma transação entre clientes e fornecedores. Todas as reservas, serviços e disputas são diretamente entre o cliente e o fornecedor.",
-    "s1Title": "1. Aceitação dos Termos",
-    "s1Body": "Ao acessar ou usar o EventHub, você concorda em estar vinculado a estes Termos de Serviço. Se não concordar, por favor não use a plataforma.",
-    "s2Title": "2. Papel do Mercado",
-    "s2Body": "O EventHub é uma plataforma que conecta clientes com fornecedores independentes. Não somos parte de nenhuma transação, não empregamos fornecedores e não garantimos a qualidade ou legalidade de nenhum serviço listado.",
-    "s3Title": "3. Contas de Usuário",
-    "s3Body": "Você deve ter pelo menos 18 anos para criar uma conta. Você é responsável por manter a confidencialidade das suas credenciais de conta e por toda a atividade na sua conta.",
-    "s4Title": "4. Listagens de Fornecedores",
-    "s4Body": "Os fornecedores são os únicos responsáveis pela precisão de suas listagens, incluindo preços, disponibilidade e descrições de serviços. O EventHub não verifica o conteúdo das listagens.",
-    "s5Title": "5. Reservas e Pagamentos",
-    "s5Body": "Todas as reservas estão sujeitas à aceitação do fornecedor. Os pagamentos são processados pelo Stripe. O EventHub pode cobrar uma taxa de serviço dos clientes e, dependendo do plano de assinatura do fornecedor, uma taxa de plataforma dos fornecedores nas reservas; os fornecedores em planos pagos podem estar isentos da taxa de plataforma. Todas as taxas aplicáveis são exibidas antes do pagamento e no painel do fornecedor. As taxas padrão de processamento de pagamento do Stripe também podem ser aplicadas. Os pagamentos são emitidos após a conclusão bem-sucedida da reserva, menos as taxas aplicáveis. O EventHub pode alterar suas taxas, a estrutura de taxas e os preços de assinatura a qualquer momento; qualquer alteração se aplica apenas às reservas e aos períodos de assinatura que comecem após entrar em vigor, e as taxas vigentes são sempre exibidas antes do pagamento e no painel do fornecedor.",
-    "s6Title": "6. Cancelamentos e Reembolsos",
-    "s6Body": "As políticas de cancelamento são definidas pelos fornecedores individuais e são exibidas em cada listagem. O EventHub aplica a política declarada pelo fornecedor. Os reembolsos são emitidos conforme essa política.",
-    "s7Title": "7. Disputas",
-    "s7Body": "Os clientes têm uma janela de 48 horas após a data do evento para reportar problemas. As disputas são tratadas entre o cliente e o fornecedor. O EventHub pode auxiliar na resolução, mas não é obrigado a fazê-lo.",
-    "s8Title": "8. Conduta Proibida",
-    "s8Body": "Os usuários não podem usar o EventHub para realizar transações fora da plataforma, compartilhar informações de contato com o objetivo de contornar a plataforma, publicar listagens falsas ou enganosas, ou praticar assédio ou discriminação.",
-    "s9Title": "9. Propriedade Intelectual",
-    "s9Body": "Todo o conteúdo no EventHub, incluindo logotipos, design e código, é propriedade do EventHub ou de seus licenciantes. Você não pode copiar, reproduzir ou distribuir nenhum conteúdo sem permissão por escrito.",
-    "s10Title": "10. Limitação de Responsabilidade",
-    "s10Body": "O EventHub não é responsável por quaisquer danos indiretos, incidentais ou consequentes decorrentes do uso da plataforma, incluindo, mas não se limitando a, ausência de fornecedores, danos à propriedade ou lesões pessoais.",
-    "s11Title": "11. Indenização",
-    "s11Body": "Você concorda em indenizar e isentar de responsabilidade o EventHub e seus afiliados de quaisquer reclamações, danos ou despesas decorrentes do seu uso da plataforma ou violação destes Termos.",
-    "s12Title": "12. Alterações nos Termos",
-    "s12Body": "O EventHub reserva-se o direito de atualizar estes Termos a qualquer momento. O uso continuado da plataforma após as alterações constitui a aceitação dos Termos atualizados.",
-    "s13Title": "13. Lei Aplicável",
-    "s13Body": "Estes Termos são regidos pelas leis do Estado da Flórida, sem levar em conta os princípios de conflito de leis.",
-    "s14Title": "14. Contato",
-    "s14Body": "Para perguntas sobre estes Termos, entre em contato conosco em legal@eventhub.com."
+    "effective": "Em vigor desde {{version}}",
+    "meta": "Versão 7 · Lei aplicável e foro: Estado de Utah · Dúvidas: support@eventhubglobal.com",
+    "contactEmail": "support@eventhubglobal.com",
+    "notice": "Leia estes Termos com atenção. Ao acessar ou usar o EventHub, você concorda em ficar vinculado a estes Termos, incluindo as disposições de arbitragem obrigatória e renúncia a ações coletivas da Seção 7.",
+    "footerBefore": "Em caso de dúvidas sobre estes Termos, entre em contato pelo e-mail",
+    "footerAfter": ". O EventHub se reserva o direito de modificar estes Termos a qualquer momento. O uso continuado da Plataforma após qualquer modificação constitui sua aceitação dos Termos atualizados.",
+    "sections": [
+      {
+        "id": "platform-agreement",
+        "label": "Acordo da Plataforma",
+        "heading": "1. Acordo Geral da Plataforma",
+        "blocks": [
+          {
+            "type": "p",
+            "text": "O EventHub opera um marketplace on-line que conecta fornecedores de locação e serviços para eventos (\"Fornecedores\") a clientes que procuram bens e serviços relacionados a eventos (\"Clientes\"). Em conjunto, Fornecedores e Clientes são denominados \"Usuários\"."
+          },
+          {
+            "type": "p",
+            "text": "O EventHub expressamente:"
+          },
+          {
+            "type": "ul",
+            "items": [
+              "**Não** é parte de nenhuma transação, reserva ou acordo firmado entre Usuários",
+              "**Não** possui, opera nem controla quaisquer bens ou serviços anunciados",
+              "**Não** garante a qualidade, segurança, legalidade ou exatidão de qualquer anúncio",
+              "Atua exclusivamente como plataforma tecnológica que facilita conexões e processa pagamentos como agente limitado de cobrança"
+            ]
+          },
+          {
+            "type": "p",
+            "text": "Ao acessar, se cadastrar ou usar o EventHub, você concorda em ficar legalmente vinculado a estes Termos. Você deve ter pelo menos 18 anos e capacidade legal para celebrar um contrato vinculante."
+          },
+          {
+            "type": "p",
+            "text": "A responsabilidade do EventHub perante qualquer Usuário é limitada a **$100** no total para toda e qualquer reivindicação decorrente do uso da Plataforma. Todas as controvérsias estão sujeitas a arbitragem vinculante; ações coletivas são renunciadas."
+          },
+          {
+            "type": "p",
+            "text": "Todos os Fornecedores são contratados independentes, e não empregados, agentes ou representantes do EventHub. O EventHub não responde de forma indireta por atos, omissões, negligência ou má conduta de qualquer Fornecedor ou Cliente."
+          }
+        ]
+      },
+      {
+        "id": "vendor-agreement",
+        "label": "Acordo do Fornecedor",
+        "heading": "2. Acordo do Fornecedor",
+        "blocks": [
+          {
+            "type": "p",
+            "text": "Antes de qualquer anúncio entrar no ar, os Fornecedores devem concluir uma etapa de aceite separada no painel do fornecedor. Ao ativar uma conta de fornecedor, os Fornecedores concordam com as seguintes obrigações:"
+          },
+          {
+            "type": "ul",
+            "items": [
+              "Fornecer informações de anúncio precisas, completas e não enganosas",
+              "Cumprir todas as reservas confirmadas exatamente conforme descrito",
+              "Manter conformidade com todas as leis, alvarás, licenças e regulamentos aplicáveis",
+              "Manter seguro empresarial adequado quando exigido por lei ou razoavelmente prudente",
+              "Responder a consultas de reserva e comunicações de clientes em tempo hábil",
+              "Recolher os tributos aplicáveis sobre toda a receita recebida por meio da Plataforma",
+              "Notificar imediatamente o EventHub sobre qualquer mudança relevante em seu negócio ou em sua capacidade de cumprir reservas"
+            ]
+          },
+          {
+            "type": "p",
+            "text": "Os Fornecedores não podem solicitar reservas, pagamentos ou comunicações fora da plataforma a Clientes que conheceram por meio do EventHub. As violações estão sujeitas à suspensão da conta ou ao banimento permanente conforme a Política Antielisão da Seção 5."
+          },
+          {
+            "type": "p",
+            "text": "**Taxa de serviço do cliente.** O EventHub cobra dos Clientes uma taxa de serviço de **5%** do valor reservado em todas as reservas, em todos os planos e sob todos os modelos de preço. Ela é acrescentada ao total do Cliente e informada antes do pagamento. Taxas de deslocamento, entrega e outras taxas cobradas pelo fornecedor por meio da Plataforma fazem parte do valor reservado e estão sujeitas à mesma taxa de serviço de 5%."
+          },
+          {
+            "type": "p",
+            "text": "**Comissão do fornecedor.** O EventHub cobra dos Fornecedores uma comissão de plataforma de **8%** do valor reservado em todas as reservas, deduzida do repasse ao Fornecedor. Aplicam-se duas isenções, e apenas estas duas: (a) um Fornecedor no modelo de preço por assinatura que possua uma **assinatura paga ativa do EventHub Pro** paga comissão de 0% enquanto essa assinatura permanecer ativa; e (b) um **Fornecedor legado**, conforme definido abaixo, paga comissão de 0% de forma permanente. Os Fornecedores no nível gratuito do modelo de preço por assinatura pagam a comissão de 8%. Os Fornecedores no modelo de preço por comissão não têm assinatura nem nível pago disponível e pagam a comissão de 8% em todas as reservas. Nenhum outro status, programa ou promoção isenta da comissão do fornecedor, e a taxa de serviço do cliente nunca é dispensada por uma assinatura Pro nem pela condição de legado."
+          },
+          {
+            "type": "p",
+            "text": "**Fornecedores legados.** Os Fornecedores cujas contas foram criadas antes de a comissão do fornecedor entrar em vigor foram integrados com o entendimento de que o EventHub não lhes cobrava comissão. O EventHub honra isso: essas contas são designadas como **legadas** e ficam permanentemente isentas da comissão do fornecedor, sem custo e sem necessidade de assinatura. Essa isenção é específica da conta, não é transferível e se aplica somente à comissão do fornecedor — **a taxa de serviço do cliente de 5% continua se aplicando às reservas feitas com um Fornecedor legado**, porque essa taxa é cobrada do Cliente e não deduzida do Fornecedor. O EventHub se reserva o direito de designar contas individuais como legadas ou de outra forma isentas de taxas, e por isso Fornecedores diferentes podem pagar comissões diferentes."
+          },
+          {
+            "type": "p",
+            "text": "As taxas são fixadas no momento em que cada reserva é criada e não são alteradas retroativamente. Todas as taxas aplicáveis são informadas antes do pagamento e no painel do fornecedor. Os pagamentos são processados pelo nosso processador de pagamentos terceirizado (Stripe). **As taxas padrão de processamento de pagamentos da Stripe são suportadas pelo Fornecedor** e deduzidas de seu repasse; elas são separadas e adicionais a qualquer comissão do EventHub. Os cronogramas de repasse e as taxas aplicáveis são informados no painel do fornecedor. Os repasses são processados após a conclusão bem-sucedida da reserva, deduzidas as taxas aplicáveis. O EventHub pode alterar suas taxas, sua estrutura de taxas e os preços de assinatura a qualquer momento; qualquer alteração se aplica somente a reservas e períodos de assinatura iniciados após sua entrada em vigor, e as taxas vigentes são sempre exibidas antes do pagamento e no painel do fornecedor."
+          }
+        ]
+      },
+      {
+        "id": "listing-terms",
+        "label": "Termos do Anúncio",
+        "heading": "3. Termos do Anúncio",
+        "blocks": [
+          {
+            "type": "p",
+            "text": "Todos os anúncios no EventHub são criados e mantidos exclusivamente pelos Fornecedores. O EventHub não verifica, inspeciona nem endossa qualquer anúncio, fornecedor ou os bens e serviços neles descritos."
+          },
+          {
+            "type": "p",
+            "text": "**As políticas de cancelamento são definidas por cada Fornecedor, por anúncio, e não são padronizadas pelo EventHub.** Antes de prosseguir para o pagamento, os Clientes recebem a política de cancelamento específica daquele Fornecedor e as condições de caução por danos. Ao prosseguir para o pagamento após revisar essas condições, os Clientes reconhecem e aceitam essas políticas específicas do fornecedor. O prazo de disputa descrito na Seção 4 é independente da política de cancelamento de qualquer Fornecedor e não a estende."
+          },
+          {
+            "type": "p",
+            "text": "Fotos, descrições e preços dos anúncios são fornecidos pelos Fornecedores e podem não refletir a disponibilidade ou a condição atuais. Recomenda-se que os Clientes se comuniquem diretamente com os Fornecedores pelo sistema de mensagens do EventHub para confirmar detalhes antes de reservar."
+          }
+        ]
+      },
+      {
+        "id": "transaction-agreement",
+        "label": "Acordo de Transação",
+        "heading": "4. Acordo de Transação",
+        "blocks": [
+          {
+            "type": "p",
+            "text": "Uma reserva vinculante é formada quando um Cliente conclui o pagamento e este é confirmado. Ao confirmar uma reserva, os Clientes concordam em:"
+          },
+          {
+            "type": "ul",
+            "items": [
+              "Autorizar o valor integral cobrado por meio do processador de pagamentos do EventHub",
+              "Assumir responsabilidade por qualquer dano ou perda dos itens locados além do desgaste normal",
+              "Assumir todo o risco de lesões pessoais decorrentes do uso dos bens ou serviços locados",
+              "Realizar todas as comunicações relacionadas à reserva exclusivamente pela plataforma EventHub"
+            ]
+          },
+          {
+            "type": "p",
+            "text": "Os Clientes têm um **prazo de 72 horas a partir da data do evento** para abrir uma disputa de reembolso. Disputas abertas após esse prazo não serão consideradas. As disputas devem incluir documentação comprobatória."
+          },
+          {
+            "type": "p",
+            "text": "O EventHub processa pagamentos como agente limitado de cobrança em nome dos Fornecedores. Os repasses aos Fornecedores são liberados após a data do evento, sujeitos a quaisquer disputas em aberto. Todos os pagamentos são processados pela Stripe e sujeitos aos termos de serviço da Stripe."
+          }
+        ]
+      },
+      {
+        "id": "messaging-terms",
+        "label": "Termos de Mensagens",
+        "heading": "5. Termos de Mensagens e Consultas",
+        "blocks": [
+          {
+            "type": "p",
+            "text": "O EventHub disponibiliza um sistema de mensagens para facilitar a comunicação entre Clientes e Fornecedores. Todas as comunicações relacionadas a uma reserva devem ocorrer por meio desse sistema."
+          },
+          {
+            "type": "p",
+            "text": "É proibido aos Usuários compartilhar pelo sistema de mensagens:"
+          },
+          {
+            "type": "ul",
+            "items": [
+              "Endereços de e-mail ou números de telefone",
+              "URLs de sites externos ou links de reserva",
+              "Perfis de redes sociais ou nomes de usuário de aplicativos de pagamento",
+              "Qualquer informação destinada a facilitar transações fora da plataforma"
+            ]
+          },
+          {
+            "type": "p",
+            "text": "O sistema de detecção de elisão do EventHub monitora as mensagens em busca de dados de contato proibidos. As violações resultam em advertência, bloqueio da mensagem e possível suspensão da conta conforme o sistema de três advertências. Solicitar reservas fora da plataforma constitui violação material destes Termos e pode resultar no encerramento permanente da conta. Este parágrafo e as proibições acima constituem a Política Antielisão do EventHub."
+          },
+          {
+            "type": "p",
+            "text": "Os registros de mensagens podem ser retidos e revisados pela equipe do EventHub em conexão com disputas, investigações ou processos judiciais. Ao usar o sistema de mensagens, você consente com essa retenção e revisão."
+          }
+        ]
+      },
+      {
+        "id": "post-booking",
+        "label": "Pós-Reserva",
+        "heading": "6. Acordo Pós-Reserva",
+        "blocks": [
+          {
+            "type": "p",
+            "text": "Na confirmação da reserva, tanto o Cliente quanto o Fornecedor recebem um e-mail de confirmação documentando as condições da reserva, a política de cancelamento, os requisitos de caução por danos e as obrigações de cumprimento. Esses e-mails de confirmação constituem notificação das condições acordadas."
+          },
+          {
+            "type": "p",
+            "text": "O **prazo de disputa de 72 horas começa na data do evento**, não na data da reserva. Os Clientes devem apresentar qualquer reclamação sobre a qualidade do serviço dentro desse prazo. Os Fornecedores devem apresentar qualquer reclamação por danos dentro de **72 horas** após a devolução do item, com provas fotográficas com marcação de data e hora e, para reclamações acima de $100, um orçamento de terceiro."
+          },
+          {
+            "type": "p",
+            "text": "Os pedidos de cancelamento devem seguir a política de cancelamento do Fornecedor conforme informada no momento da reserva. Os reembolsos, quando aplicáveis, são processados em 5 a 10 dias úteis, dependendo da sua instituição financeira. Quando uma reserva é cancelada ou reembolsada, a taxa de serviço do cliente é reembolsada na mesma proporção do valor da reserva a que se aplicou."
+          }
+        ]
+      },
+      {
+        "id": "disputes",
+        "label": "Disputas e Resolução",
+        "heading": "7. Disputas e Resolução",
+        "blocks": [
+          {
+            "type": "p",
+            "text": "O EventHub oferece um processo de resolução de disputas como serviço de cortesia. O EventHub tem o direito, mas não a obrigação, de investigar disputas entre Usuários."
+          },
+          {
+            "type": "p",
+            "text": "Para abrir uma disputa:"
+          },
+          {
+            "type": "ul",
+            "items": [
+              "Reclamações sobre a qualidade do serviço devem ser abertas dentro de **72 horas** da data do evento, com documentação comprobatória (fotos, comunicações escritas etc.)",
+              "Reclamações por danos do fornecedor exigem provas fotográficas com marcação de data e hora enviadas dentro de **72 horas** após a devolução do item; reclamações acima de $100 exigem orçamento de reparo ou reposição de terceiro",
+              "Reclamações por lesões pessoais devem ser dirigidas ao Fornecedor e, quando aplicável, à sua seguradora. O EventHub não oferece cobertura de seguro"
+            ]
+          },
+          {
+            "type": "p",
+            "text": "As determinações do EventHub em disputas são decisões administrativas não vinculantes, não decisões judiciais. O EventHub não atua como árbitro nem mediador. Quaisquer ajustes de pagamento feitos pelo EventHub em conexão com uma disputa são feitos a seu exclusivo critério e não constituem reconhecimento de responsabilidade por nenhuma das partes."
+          },
+          {
+            "type": "p",
+            "text": "Todas as controvérsias entre um Usuário e o EventHub que não puderem ser resolvidas de forma amigável estão sujeitas a arbitragem individual vinculante conforme as Regras de Arbitragem do Consumidor da American Arbitration Association. Ações coletivas e arbitragem coletiva são renunciadas. **Estes Termos são regidos pelas leis do Estado de Utah**, sem consideração a seus princípios de conflito de leis, e o foro exclusivo para qualquer controvérsia não sujeita a arbitragem são os tribunais estaduais e federais localizados no Estado de Utah."
+          }
+        ]
+      }
+    ]
   },
   "vendorHub": {
     "missingVendorId": "ID do fornecedor ausente.",
@@ -986,7 +1590,9 @@
     "cancellationPolicyWithinDays": "Cancele pelo menos {{days}} dias antes do evento para receber um reembolso integral. Cancelamentos dentro desse prazo não são reembolsáveis.",
     "cancellationPolicyNoRefund": "Esta reserva não é reembolsável após a compra.",
     "cardNumber": "Número do cartão",
-    "termsDisclaimer": "Ao confirmar esta reserva, você concorda com nossos Termos de Serviço, incluindo autorização de pagamento, a janela de disputa de 48 horas a partir da data do evento, responsabilidade por danos e assunção de risco de lesões pessoais.",
+    "termsDisclaimerBefore": "Ao confirmar esta reserva, você concorda com nossos",
+    "termsDisclaimerMiddle": ", incluindo autorização de pagamento, o prazo de disputa de 72 horas a partir da data do evento, responsabilidade por danos e assunção de risco de lesões pessoais. Aplica-se nossa",
+    "termsDisclaimerAfter": ".",
     "placeOrder": "Pagar {{total}}",
     "bookNow": "Reservar agora",
     "requestToBook": "Solicitar reserva",
@@ -1039,7 +1645,9 @@
     "errorLogisticsEventEndBeforeStart": "O horário de término do evento deve ser posterior ao horário de início.",
     "errorLogisticsDoneBeforeNeeded": "O horário de conclusão deve ser posterior ao horário de necessidade.",
     "errorLogisticsMissingTimes": "Adicione os horários do evento e a janela de posse do aluguel.",
-    "errorLogisticsInvalidTime": "Um ou mais horários de logística são inválidos."
+    "errorLogisticsInvalidTime": "Um ou mais horários de logística são inválidos.",
+    "serviceFee": "Taxa de serviço",
+    "securityDepositRefundable": "Caução (reembolsável)"
   },
   "vendorLogin": {
     "loadingTitle": "Redirecionando para Auth0",
@@ -1398,7 +2006,7 @@
       "deal7": "30 dias grátis, cancele quando quiser",
       "cta": "Comece seu teste gratuito de 30 dias — $29/mês",
       "logIn": "Entrar",
-      "trustLine": "Sem taxas de fornecedor · Pagamentos seguros via Stripe · Cancele quando quiser"
+      "trustLine": "Sem taxas de fornecedor no Pro · Pagamentos seguros via Stripe · Cancele quando quiser"
     },
     "footer": {
       "description": "A plataforma completa para fornecedores de eventos anunciarem serviços, gerenciarem reservas e receberem pagamentos. É também onde anfitriões encontram e reservam os fornecedores perfeitos para qualquer evento.",
@@ -1413,6 +2021,22 @@
     "toast": {
       "signupFailedTitle": "Falha no cadastro",
       "signupFailedFallback": "Algo deu errado. Tente novamente."
+    }
+  },
+  "landingComm": {
+    "bar": {
+      "text": "Entre grátis. Só ganhamos quando você ganha."
+    },
+    "hero": {
+      "trustLine": "Anunciar é grátis · Pagamentos seguros via Stripe · Sem mensalidade"
+    },
+    "closing": {
+      "launchOffer": "Tudo incluído",
+      "dealTitle": "Todos os recursos, desde o primeiro dia.",
+      "deal1": "Todos os recursos incluídos — sem níveis nem adicionais",
+      "deal7": "Sem contratos — saia quando quiser",
+      "cta": "Crie sua conta grátis",
+      "trustLine": "Entre grátis · Pagamentos seguros via Stripe"
     }
   },
   "customerExp": {
@@ -1448,6 +2072,21 @@
         "q": "Meu negócio envolve muita logística. Como o EventHub lida com logística?",
         "a": "Defina seu raio de atendimento e ofereça entrega, retirada, montagem, desmontagem e deslocamento — cada um com sua própria taxa. As taxas podem ser fixas ou variar conforme a localização e, para trabalhos fora da área ou variáveis, você envia ao cliente um orçamento personalizado para aceitar antes de a reserva ser confirmada."
       }
+    },
+    "commissionPlan": {
+      "eyebrow": "Preços",
+      "title": "Um único plano. Sem mensalidade.",
+      "subtitle": "Ganhamos quando você ganha.",
+      "points": {
+        "noCard": "Não é necessário cartão de crédito",
+        "noCommitment": "Sem compromisso mensal",
+        "noBookingNoPay": "Se você não reservar, você não paga"
+      },
+      "customerFee": "Uma taxa de serviço é adicionada no pagamento e paga pelo cliente.",
+      "feeNote": "Cobramos uma comissão sobre cada reserva. As taxas exatas estão em nossos",
+      "feeNoteLink": "Termos de Serviço",
+      "reassurance": "Sem cartão. Sem mensalidade.",
+      "cta": "Crie sua conta grátis"
     },
     "customerBullets": {
       "transparent": "Transparente",
@@ -1521,7 +2160,7 @@
     "reassurance": "Ainda em dúvida? Comece no plano Grátis e faça upgrade assim que precisar de mais — sua vitrine vai com você.",
     "free": {
       "title": "Grátis",
-      "note": "grátis para sempre",
+      "note": "sem assinatura",
       "cta": "Começar grátis"
     },
     "pro": {
@@ -1535,6 +2174,7 @@
       "save": "Economize 17%"
     },
     "rows": {
+      "commission": "Comissão do EventHub",
       "storefront": "Sua própria vitrine e link de reservas",
       "bookings": "Receba reservas e gerencie sua agenda",
       "messaging": "Mensagens com clientes no app",
@@ -1553,7 +2193,12 @@
       "reminder": "Avisaremos antes da renovação",
       "cancel": "Cancele quando quiser",
       "keepFree": "Mantenha seu plano grátis para sempre"
-    }
+    },
+    "values": {
+      "applies": "Aplica-se"
+    },
+    "feeNote": "Uma taxa de serviço do cliente se aplica a todas as reservas, e o Pro dispensa sua comissão por reserva. As taxas exatas estão em nossos",
+    "feeNoteLink": "Termos de Serviço"
   },
   "landingFreeA": {
     "bar": {
@@ -1576,9 +2221,14 @@
       "subtitle": ""
     }
   },
+  "landingFreeAComm": {
+    "bar": {
+      "text": "Configure em minutos. Sem curva de aprendizado. Sem mensalidade, nunca."
+    }
+  },
   "landingFreeB": {
     "bar": {
-      "text": "Fique com 100% do que você reserva."
+      "text": "Receba reservas. Receba o pagamento. Sem complicação."
     },
     "header": {
       "getStarted": "Comece a ganhar grátis"
@@ -1590,6 +2240,17 @@
     },
     "testimonials": {
       "eyebrow": ""
+    }
+  },
+  "landingFreeBComm": {
+    "bar": {
+      "text": "Entre grátis. Só ganhamos quando você ganha."
+    },
+    "header": {
+      "getStarted": "Comece grátis"
+    },
+    "hero": {
+      "trust": "Sem mensalidade. Sem assinatura. Nunca."
     }
   },
   "landingFreeC": {
@@ -1614,6 +2275,11 @@
       "subtitle": "Crie sua vitrine e comece a receber reservas no EventHub."
     }
   },
+  "landingFreeCComm": {
+    "bar": {
+      "text": "· Sem assinatura, sem mensalidade, sem cartão de crédito."
+    }
+  },
   "landingFreeD": {
     "header": {
       "getStarted": "Comece grátis"
@@ -1632,6 +2298,11 @@
       "subtitle": "Dois minutos daqui até seu primeiro link de reservas."
     }
   },
+  "landingFreeDComm": {
+    "hero": {
+      "trust": "Entre grátis · Sem cartão de crédito · Sem mensalidade"
+    }
+  },
   "landingFreeE": {
     "bar": {
       "lead": "Os clientes podem reservar sozinhos",
@@ -1648,6 +2319,11 @@
     },
     "testimonials": {
       "eyebrow": "De fornecedores como você"
+    }
+  },
+  "landingFreeEComm": {
+    "hero": {
+      "trust": "Entre grátis · Sem cartão de crédito · Sem assinatura, nunca"
     }
   },
   "demoShared": {

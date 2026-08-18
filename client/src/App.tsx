@@ -8,7 +8,9 @@ import { Toaster } from "@/components/ui/toaster";
 import { ScrollToTop } from "@/components/ScrollToTop";
 import { TooltipProvider } from "@/components/ui/tooltip";
 import { useTrackPageView } from "@/hooks/useTrackPageView";
-import { useLandingVariant, readLandingVariant } from "@/hooks/useLandingVariant";
+import { useLandingStyle } from "@/hooks/useLandingVariant";
+import { readAttribution } from "@/lib/landingAttribution";
+import { usePricingModelResolution } from "@/hooks/usePricingModel";
 import { phCapture } from "@/lib/posthog";
 import { trackSignupCompletedOnce } from "@/lib/tracking";
 import EmailVerificationGate from "@/components/EmailVerificationGate";
@@ -52,7 +54,6 @@ import { deriveVendorDetection, type VendorMeState } from "@/lib/vendorState";
 import { useIsVendorOnly } from "@/hooks/useIsVendorOnly";
 import { useToast } from "@/hooks/use-toast";
 import Privacy from "@/pages/Privacy";
-import LinkExpired from "@/pages/LinkExpired";
 import VendorProvision from "@/pages/VendorProvision";
 import { UpgradeModalProvider } from "@/components/UpgradeModal";
 
@@ -143,16 +144,18 @@ function PostLogin() {
     if (hasRedirectedRef.current) return;
     hasRedirectedRef.current = true;
 
-    // Conversion event for the landing A/B/n experiment. Tagged with the sticky
-    // variant so every arm is measurable. (Landing-page vendor signups return to
-    // /vendor/provision instead and fire vendor_provisioned there.)
+    // Conversion event for the landing test. Tagged with the first-touch landing
+    // style (the /for-vendors route the visitor actually arrived on) so every ad
+    // is measurable; null means they did not arrive via an ad landing at all.
+    // (Landing-page vendor signups return to /vendor/provision instead and fire
+    // vendor_provisioned there.)
     const role = vendorDetection.status === "vendor" ? "vendor" : "customer";
     // Fire to PostHog (signup_completed) AND the Meta Pixel (CompleteRegistration)
     // so both funnels see the account-creation conversion. Once-per-session guard
     // lives in the helper so this and the VendorProvision path can't double-count
     // the same signup. `user.email` rides only to the server-side CAPI copy.
     trackSignupCompletedOnce(
-      { role, variant: readLandingVariant() },
+      { role, landing_style: readAttribution()?.landingStyle ?? null },
       user?.email,
     );
 
@@ -184,27 +187,68 @@ function PostLogin() {
   );
 }
 
-// Renders the landing page for the PostHog "landing-free-first-test" experiment.
-// Reading the flag here (via useLandingVariant) records the experiment exposure
-// for every public visitor to "/". Falls back to the control page until flags
-// resolve and for any variant value PostHog doesn't recognise (e.g. an arm at
-// 0%), so the split is controlled entirely from the dashboard.
+// Neutral hold shown while the pricing flag resolves. Deliberately contains no
+// product copy at all — no headline, no price, no fee claim — so it is identical
+// for both arms and cannot leak either money story. Same white ground as every
+// landing page so the real page swaps in without a flash. Typically visible for
+// the flag round-trip only (~100–300ms), capped by
+// PRICING_FLAG_RESOLVE_TIMEOUT_MS.
+function LandingPlaceholder() {
+  return (
+    <div className="min-h-screen bg-white flex items-center justify-center" role="status" aria-busy="true">
+      <span
+        aria-hidden="true"
+        className="h-8 w-8 animate-spin rounded-full border-2 border-[rgba(74,106,125,0.18)] border-t-[#4a6a7d]"
+      />
+      <span className="sr-only">Loading</span>
+    </div>
+  );
+}
+
+// Renders the landing page for the six /for-vendors ad routes (and "/").
+// Style is derived deterministically from the URL (useLandingStyle) — each
+// Meta ad links to its own route, so which design a visitor sees is controlled
+// by ad spend, not randomised. Falls back to the control page for "/" and for
+// any unrecognised style segment, so a mistyped ad URL still converts.
+// The pricing MODEL is orthogonal: it is randomised after the click by the
+// PostHog `pricing-model-test` flag, so both arms are drawn from the same ad and
+// audience. Each page renders the same layout with only the money story swapped.
+//
+// The pricing flag resolves asynchronously, so the page is HELD behind an
+// arm-agnostic placeholder until it does (see usePricingModelResolution).
+// Painting first and swapping later would show commission visitors subscription
+// copy above the fold, then reflow — contaminating the arm.
 function LandingForVariant() {
-  const variant = useLandingVariant();
-  switch (variant) {
-    case "direction-a":
-      return <TemporaryLandingFreeA />;
-    case "direction-b":
-      return <TemporaryLandingFreeB />;
-    case "direction-c":
-      return <TemporaryLandingFreeC />;
-    case "direction-d":
-      return <TemporaryLandingFreeD />;
-    case "direction-e":
-      return <TemporaryLandingFreeE />;
+  const style = useLandingStyle();
+  const { model, ready } = usePricingModelResolution();
+  if (!ready) return <LandingPlaceholder />;
+  switch (style) {
+    case "a":
+      return <TemporaryLandingFreeA model={model} />;
+    case "b":
+      return <TemporaryLandingFreeB model={model} />;
+    case "c":
+      return <TemporaryLandingFreeC model={model} />;
+    case "d":
+      return <TemporaryLandingFreeD model={model} />;
+    case "e":
+      return <TemporaryLandingFreeE model={model} />;
     default:
-      return <TemporaryLanding />;
+      return <TemporaryLanding model={model} />;
   }
+}
+
+// [vendor-only restrictions] remove this entire component
+// Landing shown to an ALREADY-PROVISIONED vendor-only account (the effect above
+// is redirecting them to /vendor/dashboard). Their pricing model is whatever
+// vendor_accounts.pricing_model was stamped with at provision — an immutable
+// column — so the experiment flag must not be consulted here: it could
+// re-randomise a paying Pro vendor into the commission arm and tell them
+// "Free to join". Hard-coded to "subscription", the model every existing vendor
+// account predates the experiment on. (Their stored model is not exposed to this
+// route; /api/customer/me returns only vendorOnlySignup.)
+function VendorOnlyLanding() {
+  return <TemporaryLanding model="subscription" />;
 }
 
 function RootEntry() {
@@ -213,6 +257,12 @@ function RootEntry() {
   const { toast } = useToast();
   const hasShownToastRef = useRef(false);
   const { isVendorOnly, isLoading: isVendorOnlyLoading } = useIsVendorOnly();
+  // NOTE: the pricing flag is deliberately NOT read here. RootEntry also serves
+  // authenticated customers and vendors who never see a landing page, and
+  // reading the flag records a $feature_flag_called exposure — enrolling users
+  // who can never convert and diluting both arms' denominators. The flag is
+  // evaluated only inside LandingForVariant, which is where a landing page
+  // actually renders.
 
   // "Become a Vendor" flow — check vendor status and redirect to dashboard/onboarding.
   const [vendorIntent] = useState(() => {
@@ -295,7 +345,7 @@ function RootEntry() {
   }
   // Vendor-only signups don't get the customer marketplace; the effect above
   // redirects them to /vendor/dashboard.
-  if (isVendorOnly) return <TemporaryLanding />; // [vendor-only restrictions]
+  if (isVendorOnly) return <VendorOnlyLanding />; // [vendor-only restrictions]
 
   // Authenticated customers with a profile get the vendor marketplace.
   return <Home />;
@@ -371,6 +421,8 @@ function Router() {
       <VendorIntentRedirect />
       <Switch>
         <Route path="/" component={RootEntry} />
+        <Route path="/for-vendors" component={RootEntry} />
+        <Route path="/for-vendors/:style" component={RootEntry} />
         {import.meta.env.DEV && <Route path="/demo/slideshows" component={DemoPreview} />}
         <Route path="/post-login" component={PostLogin} />
         {/* [vendor-only restrictions] unwrap VendorOnlyGuard from all routes below that have it */}
@@ -411,9 +463,6 @@ function Router() {
         <Route path="/vendor/my-hub" component={MyHub} />
         <Route path="/my-hub" component={MyHub} />
 
-        {/* Retired vendor programs — old invite links now show an expired notice */}
-        <Route path="/vendor/marquee" component={LinkExpired} />
-        <Route path="/vendor/founding" component={LinkExpired} />
 
         {/* Legal */}
         <Route path="/terms" component={Terms} />
@@ -475,6 +524,7 @@ function AppContent() {
     const pathname = location.split("?")[0] || "/";
     const isExcludedRoute =
       pathname === "/" ||
+      pathname.startsWith("/for-vendors") ||
       pathname.startsWith("/browse") ||
       pathname === "/dashboard" ||
       pathname.startsWith("/dashboard/") ||

@@ -41,6 +41,7 @@ import { UpgradeModal } from "@/components/UpgradeModal";
 import { StripeSetupModal } from "@/components/StripeSetupModal";
 import { OnboardingRequiredModal } from "@/components/OnboardingRequiredModal";
 import { apiRequest, getApiErrorStatus, queryClient } from "@/lib/queryClient";
+import { trackListingPublishedOnce } from "@/lib/tracking";
 import { cn } from "@/lib/utils";
 import type { LocationResult } from "@/types/location";
 import { POPULAR_FOR_OPTIONS } from "@/constants/eventTypes";
@@ -588,7 +589,7 @@ export function CreateListingWizard({ onClose, initialListingType, parentListing
  const { data: vendorProfile } = useQuery({ queryKey: ["/api/vendor/profile"] });
 
  const vendorType = ((me as any)?.vendorType || "unspecified") as string;
- const isPro = Boolean((me as any)?.isPro);
+ const hasProFeatures = Boolean((me as any)?.hasProFeatures);
  const [showUpgradeForAddon, setShowUpgradeForAddon] = useState(false);
 
  const [currentStep, setCurrentStep] = useState<StepId>("basics");
@@ -1904,8 +1905,14 @@ export function CreateListingWizard({ onClose, initialListingType, parentListing
  }
 
  await queryClient.invalidateQueries({ queryKey: ["/api/vendor/listings"] });
- // Meta Pixel conversion: vendor successfully published a new listing.
- window.fbq?.("track", "CompleteRegistration");
+ // Conversion: vendor successfully published a listing. This is a distinct
+ // activation milestone from account signup (never CompleteRegistration) —
+ // routed through trackBoth (PostHog + Meta CAPI, shared event_id) via a
+ // per-listing dedupe guard. Best-effort/non-throwing; never blocks publish.
+ trackListingPublishedOnce(id, {
+   listing_type: listingType,
+   is_addon: Boolean(parentListingId),
+ });
  if (parentListingId) {
    try {
      await apiRequest("POST", `/api/vendor/listings/${parentListingId}/addon-links`, { addonListingId: id });
@@ -1977,9 +1984,9 @@ export function CreateListingWizard({ onClose, initialListingType, parentListing
  />
  <div className="min-h-0 flex-1 overflow-y-auto">
  <ListingTypeSelector
- isPro={isPro}
+ hasProFeatures={hasProFeatures}
  onSelect={(type) => {
- if (type === "addon" && !isPro) {
+ if (type === "addon" && !hasProFeatures) {
  setShowUpgradeForAddon(true);
  return;
  }

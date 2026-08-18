@@ -8,9 +8,12 @@ import BrandWordmark from "@/components/BrandWordmark";
 import AuthModal from "@/components/AuthModal";
 import { trackBoth } from "@/lib/tracking";
 import { initEngagement } from "@/lib/engagement";
+import { captureAttribution, readAttribution } from "@/lib/landingAttribution";
+import { readPricingModel, type PricingModel } from "@/hooks/usePricingModel";
 import VendorHubStill from "@/pages/landing/VendorHubStill";
 import { CustomerBullets } from "@/pages/landing/primitives";
 import HowItWorks from "@/pages/landing/HowItWorks";
+import CommissionPlanSection from "@/pages/landing/CommissionPlanSection";
 import { Reveal } from "@/pages/landing/motion";
 
 type AuthTab = "login" | "signup";
@@ -467,8 +470,15 @@ function SignupDialog({
    Page
 --------------------------------------------------------------------------- */
 
-export default function TemporaryLanding() {
+export default function TemporaryLanding({ model }: { model: PricingModel }) {
   const { t } = useTranslation();
+
+  // Commission copy lives in the `landingComm` sibling namespace, which holds
+  // ONLY the strings that differ; anything it omits resolves from `landing`, so
+  // the two arms stay identical apart from the money story. In subscription
+  // mode this is exactly the base key, so today's page is unchanged.
+  const k = (key: string): string[] =>
+    model === "commission" ? [`landingComm.${key}`, `landing.${key}`] : [`landing.${key}`];
 
   useEffect(() => {
     const params = new URLSearchParams(window.location.search);
@@ -493,6 +503,14 @@ export default function TemporaryLanding() {
   // or dwells 30s. Returns cleanup so the listeners/timer are torn down on unmount.
   useEffect(() => initEngagement(), []);
 
+  // First-touch ad attribution: this is the "control" landing style (served at
+  // `/for-vendors` and `/`), so it needs the same capture-on-mount the A–E
+  // free-first pages get via useLandingSignup — otherwise every control-style
+  // signup silently defaults to pricingModel "subscription" regardless of the
+  // visitor's actual PostHog assignment. No-op if already captured this
+  // session (first-touch wins).
+  useEffect(() => captureAttribution(), []);
+
   // role = null opens the dialog on the "vendor or customer?" choice step;
   // a role pre-selects it and jumps straight to the sign-up methods.
   const openSignup = (role: SignupRole | null = null) => {
@@ -503,8 +521,25 @@ export default function TemporaryLanding() {
   // Every above/below-the-fold signup CTA routes through here so the click is
   // attributed (PostHog signup_cta_click + Meta Lead) with a per-button cta_id
   // before the signup dialog opens.
+  //
+  // This is the CONTROL style, served at both `/for-vendors` (a launch ad) and
+  // `/` (organic) — it is the arm the pricing-model test actually launches
+  // with first, so pricing_model/landing_style are enriched here the same way
+  // as the A–E free-first pages (client/src/pages/landing/signup.tsx),
+  // sourced identically: pricing_model read LIVE via readPricingModel()
+  // (PostHog flag, not stored), landing_style from the first-touch
+  // readAttribution() (null on organic "/").
   const handleSignupCta = (ctaId: string, role: SignupRole | null = null) => {
-    trackBoth("signup_cta_click", { cta_id: ctaId }, { event: "Lead", standard: true });
+    trackBoth(
+      "signup_cta_click",
+      {
+        cta_id: ctaId,
+        pricing_model: readPricingModel(),
+        landing_style: readAttribution()?.landingStyle ?? null,
+        source: ctaId,
+      },
+      { event: "Lead", standard: true },
+    );
     openSignup(role);
   };
   const openLogin = () => {
@@ -543,22 +578,30 @@ export default function TemporaryLanding() {
     <div className="min-h-screen bg-white">
       {/* Sticky bar + header pinned together so they never overlap */}
       <div className="sticky top-0 z-40">
-        {/* Launch-deal announcement bar (always shown) */}
+        {/* Launch-deal announcement bar (always shown). Under the commission
+            model the Pro / $29-a-month offer does not exist, so the priced
+            mention is replaced by one honest line in the same wrapper — same
+            bar, same height, so the hero below it is unmoved. */}
         <div className="deal-outline relative bg-[#2a3a42] text-[#f5f0e8]" style={{ ["--ring" as any]: "2px" }}>
           <div className="mx-auto flex max-w-[1320px] flex-wrap items-center justify-center gap-x-3 gap-y-1 px-5 py-2 text-center lg:px-10">
-            <span className="font-sans text-[0.92rem] leading-tight">
-              <span className="font-semibold">EventHub Pro</span>
-              <span className="mx-1.5 font-semibold text-[#e07a6a]">{t("landing.bar.price")}</span>
-              <span className="text-[rgba(245,240,232,0.55)] line-through">$39</span>
-              <span className="mx-1.5 text-[rgba(245,240,232,0.4)]">·</span>
-              <span className="text-[rgba(245,240,232,0.85)]">{t("landing.bar.noFees")}</span>
-            </span>
+            {model === "commission" && (
+              <span className="font-sans text-[0.92rem] leading-tight">{t(k("bar.text"))}</span>
+            )}
+            {model === "subscription" && (
+              <span className="font-sans text-[0.92rem] leading-tight">
+                <span className="font-semibold">EventHub Pro</span>
+                <span className="mx-1.5 font-semibold text-[#e07a6a]">{t("landing.bar.price")}</span>
+                <span className="text-[rgba(245,240,232,0.55)] line-through">$39</span>
+                <span className="mx-1.5 text-[rgba(245,240,232,0.4)]">·</span>
+                <span className="text-[rgba(245,240,232,0.85)]">{t("landing.bar.noFees")}</span>
+              </span>
+            )}
             <button
               type="button"
               onClick={() => handleSignupCta("sticky_bar", "vendor")}
               className="rounded-full bg-[#e07a6a] px-3.5 py-1 font-sans text-[0.85rem] font-semibold text-white transition-colors hover:bg-[#c96959]"
             >
-              {t("landing.bar.cta")}
+              {t(k("bar.cta"))}
             </button>
           </div>
         </div>
@@ -607,7 +650,7 @@ export default function TemporaryLanding() {
             {/* CTA is centered on the trust line beneath it */}
             <div className="mt-8 inline-flex flex-col items-center">
               <PrimaryButton onClick={() => handleSignupCta("hero_primary", "vendor")} className="!px-7 !py-3.5 !text-[1.1rem]">{t("landing.hero.ctaVendor")}</PrimaryButton>
-              <p className="mt-5 font-sans text-[0.95rem] text-[#9aacb4]">{t("landing.hero.trustLine")}</p>
+              <p className="mt-5 font-sans text-[0.95rem] text-[#9aacb4]">{t(k("hero.trustLine"))}</p>
             </div>
           </div>
           <div className="lg:pl-6">
@@ -701,18 +744,20 @@ export default function TemporaryLanding() {
             </h2>
           </div>
           <div className="space-y-3">
-            {FAQ_KEYS.map((k, i) => (
+            {/* Param is `key`, not `k` — `k` is the namespace helper above and
+                shadowing it here would silently make it unreachable. */}
+            {FAQ_KEYS.map((key, i) => (
               <details
-                key={k}
+                key={key}
                 open={i === 0}
                 className="group rounded-[16px] border border-[rgba(74,106,125,0.14)] bg-white px-6 py-5 transition-shadow open:shadow-[0_14px_40px_rgba(74,106,125,0.08)]"
               >
                 <summary className="flex cursor-pointer list-none items-center justify-between gap-4 font-sans text-[1.08rem] font-semibold text-[#2a3a42]">
-                  {t(`landing.faq.${k}.q`)}
+                  {t(`landing.faq.${key}.q`)}
                   <ChevronDown className="h-5 w-5 shrink-0 text-[#4a6a7d] transition-transform duration-200 group-open:rotate-180" />
                 </summary>
                 <p className="mt-4 font-sans text-[1.02rem] leading-[1.65] text-[#4a6a7d]">
-                  {t(`landing.faq.${k}.a`)}
+                  {t(`landing.faq.${key}.a`)}
                 </p>
               </details>
             ))}
@@ -720,14 +765,23 @@ export default function TemporaryLanding() {
         </div>
       </section>
 
+      {/* Pricing (commission arm only). This page's subscription pricing surface
+          is the priced launch-deal panel in the closing section below, which is
+          gated to `model === "subscription"`; without this the commission arm
+          had no pricing surface anywhere on the page. The two never render
+          together. */}
+      {model === "commission" && (
+        <CommissionPlanSection animated onStartFree={() => handleSignupCta("pricing_start_free", "vendor")} />
+      )}
+
       {/* Closing CTA */}
       <section className="bg-[#2a3a42]">
         <div className="mx-auto max-w-[1320px] px-5 py-20 text-center lg:px-10">
           <h2 className="font-heading text-[2.4rem] font-light leading-[1.1] text-white lg:text-[3.2rem]">
-            {t("landing.closing.title")}
+            {t(k("closing.title"))}
           </h2>
           <p className="mx-auto mt-4 max-w-xl font-sans text-[1.15rem] leading-[1.6] text-[rgba(245,240,232,0.8)]">
-            {t("landing.closing.subtitle")}
+            {t(k("closing.subtitle"))}
           </p>
           {/* Launch-deal panel with the moving palette outline */}
           <div
@@ -736,43 +790,50 @@ export default function TemporaryLanding() {
           >
             <div className="flex items-center gap-2">
               <span className="rounded-full bg-[#e07a6a] px-2.5 py-0.5 font-sans text-[0.7rem] font-semibold uppercase tracking-[0.12em] text-white">
-                {t("landing.closing.launchOffer")}
+                {t(k("closing.launchOffer"))}
               </span>
             </div>
             <h3 className="mt-4 font-heading text-[1.9rem] font-light leading-tight text-white">
-              {t("landing.closing.dealTitle")}
+              {t(k("closing.dealTitle"))}
             </h3>
-            <p className="mt-3 font-sans text-[1.05rem] leading-[1.6] text-[rgba(245,240,232,0.82)]">
-              <Trans
-                i18nKey="landing.closing.dealPricing"
-                components={{
-                  struck: <span className="text-[rgba(245,240,232,0.5)] line-through" />,
-                  strong: <span className="font-semibold text-white" />,
-                  muted: <span className="text-[rgba(245,240,232,0.7)]" />,
-                }}
-              />
-            </p>
+            {/* The struck $39 → $29/mo launch price is a subscription-only
+                artefact. Under the commission model there is no monthly price
+                to quote, so the line is dropped rather than reworded — the
+                honest "we only make money when you do" line in the top bar is
+                the whole money story. */}
+            {model === "subscription" && (
+              <p className="mt-3 font-sans text-[1.05rem] leading-[1.6] text-[rgba(245,240,232,0.82)]">
+                <Trans
+                  i18nKey="landing.closing.dealPricing"
+                  components={{
+                    struck: <span className="text-[rgba(245,240,232,0.5)] line-through" />,
+                    strong: <span className="font-semibold text-white" />,
+                    muted: <span className="text-[rgba(245,240,232,0.7)]" />,
+                  }}
+                />
+              </p>
+            )}
             <ul className="mt-6 grid gap-3 sm:grid-cols-2">
               <li className="flex items-start gap-2.5 font-sans text-[0.98rem] text-[rgba(245,240,232,0.92)]">
-                <span className="mt-0.5 text-[#e07a6a]">✓</span> {t("landing.closing.deal1")}
+                <span className="mt-0.5 text-[#e07a6a]">✓</span> {t(k("closing.deal1"))}
               </li>
               <li className="flex items-start gap-2.5 font-sans text-[0.98rem] text-[rgba(245,240,232,0.92)]">
-                <span className="mt-0.5 text-[#9dd4cc]">✓</span> {t("landing.closing.deal2")}
+                <span className="mt-0.5 text-[#9dd4cc]">✓</span> {t(k("closing.deal2"))}
               </li>
               <li className="flex items-start gap-2.5 font-sans text-[0.98rem] text-[rgba(245,240,232,0.92)]">
-                <span className="mt-0.5 text-[#c9a06a]">✓</span> {t("landing.closing.deal3")}
+                <span className="mt-0.5 text-[#c9a06a]">✓</span> {t(k("closing.deal3"))}
               </li>
               <li className="flex items-start gap-2.5 font-sans text-[0.98rem] text-[rgba(245,240,232,0.92)]">
-                <span className="mt-0.5 text-[#e07a6a]">✓</span> {t("landing.closing.deal4")}
+                <span className="mt-0.5 text-[#e07a6a]">✓</span> {t(k("closing.deal4"))}
               </li>
               <li className="flex items-start gap-2.5 font-sans text-[0.98rem] text-[rgba(245,240,232,0.92)]">
-                <span className="mt-0.5 text-[#9dd4cc]">✓</span> {t("landing.closing.deal5")}
+                <span className="mt-0.5 text-[#9dd4cc]">✓</span> {t(k("closing.deal5"))}
               </li>
               <li className="flex items-start gap-2.5 font-sans text-[0.98rem] text-[rgba(245,240,232,0.92)]">
-                <span className="mt-0.5 text-[#c9a06a]">✓</span> {t("landing.closing.deal6")}
+                <span className="mt-0.5 text-[#c9a06a]">✓</span> {t(k("closing.deal6"))}
               </li>
               <li className="flex items-start gap-2.5 font-sans text-[0.98rem] text-[rgba(245,240,232,0.92)]">
-                <span className="mt-0.5 text-[#e07a6a]">✓</span> {t("landing.closing.deal7")}
+                <span className="mt-0.5 text-[#e07a6a]">✓</span> {t(k("closing.deal7"))}
               </li>
             </ul>
             <div className="mt-8 inline-flex flex-col items-center">
@@ -781,10 +842,10 @@ export default function TemporaryLanding() {
                 onClick={() => handleSignupCta("closing_cta", "vendor")}
                 className="rounded-[12px] bg-[#e07a6a] px-8 py-4 font-sans text-[1.1rem] font-semibold text-white transition-colors hover:bg-[#c96959]"
               >
-                {t("landing.closing.cta")}
+                {t(k("closing.cta"))}
               </button>
               <p className="mt-4 font-sans text-[0.9rem] text-[rgba(245,240,232,0.6)]">
-                {t("landing.closing.trustLine")}
+                {t(k("closing.trustLine"))}
               </p>
             </div>
           </div>

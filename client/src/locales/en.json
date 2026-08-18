@@ -6,6 +6,7 @@
       "errorTitle": "AI reply",
       "error": "Couldn't generate a reply. Please try again.",
       "limitReached": "You've used all your included AI replies this month. Turn on pay-as-you-go in Billing to keep drafting.",
+      "limitReachedCommission": "You've used all your included AI replies this month. Drafting resumes at the start of your next month.",
       "proRequired": "AI replies are a Pro feature.",
       "disabled": "Turn on the AI assistant in Billing to draft replies.",
       "assistant": {
@@ -16,7 +17,8 @@
         "resets": "Resets {{date}}",
         "overageLabel": "Pay-as-you-go",
         "overageHint": "After your monthly limit, extra replies are billed at ${{price}} each.",
-        "hardStopHint": "Drafting stops at {{included}} replies/month. Turn on to keep going with pay-as-you-go."
+        "hardStopHint": "Drafting stops at {{included}} replies/month. Turn on to keep going with pay-as-you-go.",
+        "hardStopCommission": "Your plan includes {{included}} AI replies a month. Drafting pauses once you reach it and resets at the start of your next month."
       },
       "faq": {
         "title": "FAQ document",
@@ -228,6 +230,7 @@
     "upgradeToPro": "Upgrade to Pro",
     "googleSyncProFeature": "Google Calendar sync is a Pro feature. Upgrade to automatically sync your bookings.",
     "billingIntro": "Manage your plan and payouts. Pro removes vendor fees on your bookings and unlocks unlimited listings, analytics, and calendar sync.",
+    "billingIntroCommission": "Manage your payouts and billing details.",
     "pageTitle": "Dashboard",
     "noActiveProfile": "No active vendor profile.",
     "totalBookings": "Total Bookings",
@@ -425,6 +428,7 @@
     "feeBreakdown": "Fee Breakdown",
     "listingPrice": "Listing price",
     "customerServiceFee": "Customer service fee",
+    "securityDepositRefundable": "Security deposit (refundable to customer)",
     "customerTotal": "Customer total",
     "eventhubFee": "EventHub fee",
     "estimatedPayout": "Estimated payout",
@@ -498,7 +502,8 @@
     "stripeNotConnectedDesc": "Link your Stripe account to start receiving payments for your bookings.",
     "dateNotSet": "Date not set",
     "bookingNumber": "Booking #{{id}}",
-    "bookingTotal": "Booking total",
+    "bookingTotal": "Your booking earnings",
+    "eventhubCommission": "EventHub commission",
     "stripeProcessingFee": "Stripe Processing Fee",
     "travelFee": "Travel fee"
   },
@@ -827,41 +832,640 @@
     "serviceAreaNationwide": "Nationally",
     "serviceAreaGlobal": "Globally"
   },
+  "privacy": {
+    "pageTitle": "Privacy Policy",
+    "backToEventHub": "Back to EventHub",
+    "contents": "Contents",
+    "effective": "Effective {{date}}",
+    "meta": "Governing law: State of Utah · Questions: support@eventhubglobal.com",
+    "contactEmail": "support@eventhubglobal.com",
+    "intro": [
+      "EventHub, LLC (\"EventHub,\" \"we,\" \"us,\" or \"our\") operates an online marketplace connecting event rental and service vendors with customers. This Privacy Policy explains how we collect, use, disclose, and safeguard your information when you use our platform at eventhubglobal.com and any associated mobile or desktop applications (collectively, the \"Platform\").",
+      "By accessing or using the Platform you agree to this Privacy Policy. If you do not agree, please discontinue use."
+    ],
+    "sections": [
+      {
+        "id": "information-we-collect",
+        "label": "Information We Collect",
+        "heading": "1. Information We Collect",
+        "blocks": [
+          {
+            "type": "p",
+            "text": "**Information You Provide Directly**"
+          },
+          {
+            "type": "ul",
+            "items": [
+              "**Account registration:** name, email address, and profile photo when you create an account.",
+              "**Vendor onboarding:** business name, business address, tax identification information, and bank or debit card details (collected and stored by Stripe — see Section 3).",
+              "**Listings:** photos, descriptions, pricing, availability, and location information you submit for your rental or service offerings.",
+              "**Bookings and payments:** event dates, delivery addresses, booking details, and payment card information (collected by Stripe — see Section 3).",
+              "**Messages:** content of messages exchanged between customers and vendors through our in-app chat.",
+              "**Reviews:** ratings and written reviews you submit for completed bookings.",
+              "**Support communications:** information you provide when contacting us."
+            ]
+          },
+          {
+            "type": "p",
+            "text": "**Information Collected Automatically**"
+          },
+          {
+            "type": "ul",
+            "items": [
+              "**Usage data:** pages visited, search queries, listings viewed, clicks, and session duration.",
+              "**Device information:** IP address, browser type, operating system, and device identifiers.",
+              "**Location data:** approximate location inferred from IP address, and precise location (if permitted) used to show nearby vendors and to geocode addresses.",
+              "**Cookies and similar technologies:** session identifiers, analytics preferences, and feature-flag values stored in your browser. See our Terms of Service for details."
+            ]
+          },
+          {
+            "type": "p",
+            "text": "**Information From Third Parties**"
+          },
+          {
+            "type": "ul",
+            "items": [
+              "**Auth0:** authentication information including your name, email, and profile image if you sign in with a social provider (Google, etc.).",
+              "**Stripe:** payment status, dispute notifications, and payout confirmation events delivered via webhook.",
+              "**Google Calendar:** calendar event data if you connect your Google Calendar to manage vendor availability."
+            ]
+          }
+        ]
+      },
+      {
+        "id": "how-we-use",
+        "label": "How We Use Information",
+        "heading": "2. How We Use Your Information",
+        "blocks": [
+          {
+            "type": "p",
+            "text": "We use the information we collect to:"
+          },
+          {
+            "type": "ul",
+            "items": [
+              "Create and maintain your account and authenticate your identity.",
+              "Process bookings, payments, refunds, and payouts.",
+              "Connect customers with vendors and facilitate communication between them.",
+              "Send transactional emails (booking confirmations, payment receipts, dispute notifications, review prompts).",
+              "Enforce our Terms of Service, including our off-platform circumvention policy.",
+              "Detect, investigate, and prevent fraud, abuse, and security incidents.",
+              "Improve and personalize the Platform through analytics and A/B testing.",
+              "Comply with applicable laws and respond to lawful requests from government authorities."
+            ]
+          },
+          {
+            "type": "p",
+            "text": "We do not sell your personal information to third parties, and we do not use it to serve behavioral advertising on behalf of third-party advertisers."
+          }
+        ]
+      },
+      {
+        "id": "payment-processing",
+        "label": "Payment Processing",
+        "heading": "3. Payment Processing (Stripe)",
+        "blocks": [
+          {
+            "type": "p",
+            "text": "All payment processing on EventHub is handled by **Stripe, Inc.** (\"Stripe\"). When you enter payment card details, those details are transmitted directly to Stripe and are never stored on EventHub's servers."
+          },
+          {
+            "type": "p",
+            "text": "Stripe is a PCI-DSS Level 1 certified payment processor. By completing a purchase or connecting as a vendor, you agree to Stripe's Privacy Policy (https://stripe.com/privacy) and the Stripe Connected Account Agreement (https://stripe.com/legal/connect-account)."
+          },
+          {
+            "type": "p",
+            "text": "EventHub receives from Stripe: payment status (succeeded, failed, refunded), payout confirmation, and dispute/chargeback notifications. We store these events to maintain accurate booking and financial records."
+          },
+          {
+            "type": "p",
+            "text": "Vendor payouts are held for a platform-defined period following each event before being transferred to the vendor's connected Stripe account. Stripe's data practices, including data retention for financial records, are governed by Stripe's Privacy Policy."
+          }
+        ]
+      },
+      {
+        "id": "authentication",
+        "label": "Authentication",
+        "heading": "4. Authentication (Auth0)",
+        "blocks": [
+          {
+            "type": "p",
+            "text": "Account authentication is managed by **Auth0, Inc.** (\"Auth0\"). When you register or log in, your credentials are processed by Auth0 under their Privacy Policy (https://auth0.com/privacy)."
+          },
+          {
+            "type": "p",
+            "text": "EventHub receives from Auth0: your user identifier, email address, name, and profile photo (if provided). We do not receive or store your password."
+          },
+          {
+            "type": "p",
+            "text": "If you sign in using a social provider (such as Google), that provider's privacy policy also applies to information shared during authentication."
+          }
+        ]
+      },
+      {
+        "id": "maps-location",
+        "label": "Maps & Location",
+        "heading": "5. Maps & Location Data (Mapbox)",
+        "blocks": [
+          {
+            "type": "p",
+            "text": "Vendor location and map display features are powered by **Mapbox, Inc.** When you browse vendors or enter an address, location data may be transmitted to Mapbox for geocoding and map tile rendering, subject to Mapbox's Privacy Policy (https://www.mapbox.com/legal/privacy)."
+          },
+          {
+            "type": "p",
+            "text": "Precise device location (GPS) is only accessed if you explicitly grant permission through your browser. You may browse the Platform without granting location access; we use your IP-derived approximate location as a default."
+          }
+        ]
+      },
+      {
+        "id": "messaging",
+        "label": "Messaging",
+        "heading": "6. Messaging (Stream)",
+        "blocks": [
+          {
+            "type": "p",
+            "text": "In-app messaging between customers and vendors is powered by **Stream, Inc.** Message content is transmitted to and stored by Stream, subject to their Privacy Policy (https://getstream.io/legal/privacy-policy/)."
+          },
+          {
+            "type": "p",
+            "text": "EventHub monitors message content solely to enforce our Terms of Service, including detection of off-platform solicitation. Messages flagged by our automated system may be reviewed by EventHub staff."
+          }
+        ]
+      },
+      {
+        "id": "google-calendar",
+        "label": "Google Calendar Integration",
+        "heading": "7. Google Calendar Integration",
+        "blocks": [
+          {
+            "type": "p",
+            "text": "EventHub offers vendors an optional integration with Google Calendar to synchronize confirmed bookings into the vendor's calendar."
+          },
+          {
+            "type": "p",
+            "text": "**What We Access**"
+          },
+          {
+            "type": "p",
+            "text": "When a vendor connects their Google account, EventHub requests three permissions:"
+          },
+          {
+            "type": "ul",
+            "items": [
+              "**Read and write access to calendar events** (calendar.events) — used to create, update, and delete booking events in the vendor's selected calendar, and to register push notification watch channels so that changes made directly in Google Calendar are reflected in EventHub availability.",
+              "**Read-only access to the vendor's calendar list** (calendar.calendarlist.readonly) — used to display the vendor's available calendars so they can select which one to sync with.",
+              "**Access to the vendor's Google account email address** (userinfo.email) — used to display the connected Google account in the vendor's dashboard settings."
+            ]
+          },
+          {
+            "type": "p",
+            "text": "EventHub only reads event data from the specific calendar the vendor explicitly selects. We do not access Drive, Contacts, Gmail, or any other Google data."
+          },
+          {
+            "type": "p",
+            "text": "**How We Use It**"
+          },
+          {
+            "type": "p",
+            "text": "We use Google Calendar data exclusively to write and update booking events when booking status changes, write vacation block events when a vendor marks dates unavailable, and receive push notifications when a vendor edits an event directly in Google Calendar so EventHub availability stays in sync. Google Calendar data is never used for advertising, analytics, or user profiling."
+          },
+          {
+            "type": "p",
+            "text": "**How We Store It**"
+          },
+          {
+            "type": "p",
+            "text": "OAuth access tokens (short-lived, ~1 hour) and refresh tokens (long-lived) are encrypted at rest using AES-256-GCM with a 256-bit key stored separately from the database. Tokens are never shared with any third party and are never logged or exposed to client-side code."
+          },
+          {
+            "type": "p",
+            "text": "**Retention**"
+          },
+          {
+            "type": "p",
+            "text": "Tokens are kept while the integration is active. Disconnecting from the vendor dashboard immediately deletes all tokens from our database and revokes the access token with Google. Account deletion purges all Google tokens within 30 days."
+          },
+          {
+            "type": "p",
+            "text": "**Vendor Rights**"
+          },
+          {
+            "type": "p",
+            "text": "Vendors may disconnect the Google Calendar integration at any time from dashboard Settings. This stops all future sync and deletes stored tokens. Previously created calendar events are not removed from Google Calendar on disconnect. Vendors may also revoke EventHub's access directly at https://myaccount.google.com/permissions"
+          }
+        ]
+      },
+      {
+        "id": "analytics-cookies",
+        "label": "Analytics & Cookies",
+        "heading": "8. Analytics, Cookies & Similar Technologies",
+        "blocks": [
+          {
+            "type": "p",
+            "text": "We use cookies and browser storage to operate the Platform, remember your preferences, and understand how the Platform is used. These technologies are how the usage and device information described in Section 1 is actually collected."
+          },
+          {
+            "type": "p",
+            "text": "Product analytics are provided by **PostHog, Inc.** PostHog stores a pseudonymous visitor identifier in a cookie and in browser local storage, and records the pages you visit and product events such as creating an account or publishing a listing. PostHog creates a profile for anonymous visitors as well as signed-in users, and records the advertising campaign parameters contained in the link you arrived from. This is subject to PostHog's Privacy Policy (https://posthog.com/privacy)."
+          },
+          {
+            "type": "p",
+            "text": "The technologies we use fall into these categories:"
+          },
+          {
+            "type": "ul",
+            "items": [
+              "**Strictly necessary:** authentication tokens stored in your browser's local storage by Auth0 to keep you signed in between visits. You cannot sign in or complete a booking without these.",
+              "**Preferences:** a first-party cookie that remembers whether the navigation panel is expanded, and browser storage that remembers your selected language.",
+              "**Analytics and experiments:** PostHog storage, described above. PostHog also determines which variant of a feature or pricing experiment your visit is assigned to and stores that assignment, so that the terms you were shown remain consistent rather than changing between visits.",
+              "**Attribution:** session storage recording which landing page and advertisement brought you to the Platform, so we can measure which campaigns are effective. This is cleared when you close your browser."
+            ]
+          },
+          {
+            "type": "p",
+            "text": "We do not use cookies or similar technologies for third-party advertising, and we do not allow third parties to use them on the Platform to build advertising profiles about you. We do not sell the information they collect."
+          },
+          {
+            "type": "p",
+            "text": "Most browsers let you block or delete cookies and clear site storage through their settings. Blocking strictly necessary storage will prevent you from signing in or booking. Blocking analytics storage does not affect your ability to use the Platform."
+          }
+        ]
+      },
+      {
+        "id": "how-we-share",
+        "label": "How We Share Information",
+        "heading": "9. How We Share Your Information",
+        "blocks": [
+          {
+            "type": "p",
+            "text": "We share your information only in the following circumstances:"
+          },
+          {
+            "type": "ul",
+            "items": [
+              "**Between customers and vendors:** When a booking is created, we share the customer's name, event details, and delivery address with the vendor. The vendor's business name, location, and contact information are shared with the customer.",
+              "**Service providers:** We share data with Stripe, Auth0, Mapbox, Stream, PostHog, and other sub-processors as described above, and with cloud infrastructure providers (such as Railway and Neon), solely to operate and improve the Platform.",
+              "**Legal obligations:** We may disclose information if required by law, court order, or government authority, or if we believe disclosure is necessary to protect the rights, property, or safety of EventHub, our users, or the public.",
+              "**Business transfers:** If EventHub is acquired, merged, or undergoes a similar corporate transaction, your information may be transferred as part of that transaction. We will notify you via email and/or a prominent notice on the Platform before your information is transferred."
+            ]
+          },
+          {
+            "type": "p",
+            "text": "We do not sell, rent, or trade your personal information to third parties for their marketing purposes."
+          }
+        ]
+      },
+      {
+        "id": "data-retention",
+        "label": "Data Retention",
+        "heading": "10. Data Retention",
+        "blocks": [
+          {
+            "type": "p",
+            "text": "We retain your personal information for as long as your account is active or as needed to provide services. We also retain information to comply with legal obligations (including tax and financial record-keeping requirements, which may extend up to 7 years), resolve disputes, and enforce agreements."
+          },
+          {
+            "type": "p",
+            "text": "When you request deletion of your account, we will delete or anonymize your personal information within 30 days, except where retention is required by law or needed to resolve outstanding disputes."
+          }
+        ]
+      },
+      {
+        "id": "security",
+        "label": "Security",
+        "heading": "11. Security",
+        "blocks": [
+          {
+            "type": "p",
+            "text": "We implement industry-standard safeguards including encrypted data transmission (HTTPS/TLS), encrypted storage of sensitive credentials, server-side authentication token validation, and access controls limiting staff access to personal data."
+          },
+          {
+            "type": "p",
+            "text": "No method of transmission over the Internet or method of electronic storage is 100% secure. While we use commercially reasonable means to protect your information, we cannot guarantee absolute security. If you become aware of a security vulnerability, please contact us at support@eventhubglobal.com."
+          }
+        ]
+      },
+      {
+        "id": "your-rights",
+        "label": "Your Rights",
+        "heading": "12. Your Rights",
+        "blocks": [
+          {
+            "type": "p",
+            "text": "Depending on your location, you may have the right to:"
+          },
+          {
+            "type": "ul",
+            "items": [
+              "**Access:** request a copy of the personal information we hold about you.",
+              "**Correction:** request correction of inaccurate or incomplete information.",
+              "**Deletion:** request deletion of your personal information, subject to legal retention requirements.",
+              "**Portability:** receive your personal information in a structured, machine-readable format.",
+              "**Objection:** object to processing of your personal information for certain purposes.",
+              "**Withdrawal of consent:** where processing is based on consent, withdraw it at any time without affecting prior processing."
+            ]
+          },
+          {
+            "type": "p",
+            "text": "To exercise these rights, email us at support@eventhubglobal.com. We will respond within 30 days. We may ask you to verify your identity before fulfilling a request."
+          }
+        ]
+      },
+      {
+        "id": "california",
+        "label": "California Residents",
+        "heading": "13. California Residents (CCPA / CPRA)",
+        "blocks": [
+          {
+            "type": "p",
+            "text": "If you are a California resident, the California Consumer Privacy Act (CCPA) and the California Privacy Rights Act (CPRA) provide you additional rights, including:"
+          },
+          {
+            "type": "ul",
+            "items": [
+              "The right to know what personal information we collect, use, disclose, and sell.",
+              "The right to delete personal information we have collected from you (subject to exceptions).",
+              "The right to correct inaccurate personal information.",
+              "The right to opt out of the sale or sharing of personal information. **We do not sell or share personal information as defined under the CCPA/CPRA.**",
+              "The right to non-discrimination for exercising your privacy rights."
+            ]
+          },
+          {
+            "type": "p",
+            "text": "To submit a California privacy rights request, email support@eventhubglobal.com with \"California Privacy Request\" in the subject line. We will respond within 45 days."
+          }
+        ]
+      },
+      {
+        "id": "children",
+        "label": "Children's Privacy",
+        "heading": "14. Children's Privacy",
+        "blocks": [
+          {
+            "type": "p",
+            "text": "The Platform is intended for users who are at least 18 years old. We do not knowingly collect personal information from children under 13. If we learn that we have collected personal information from a child under 13 without verifiable parental consent, we will delete that information. If you believe a child has provided us with personal information, please contact us at support@eventhubglobal.com."
+          }
+        ]
+      },
+      {
+        "id": "changes",
+        "label": "Changes to This Policy",
+        "heading": "15. Changes to This Policy",
+        "blocks": [
+          {
+            "type": "p",
+            "text": "We may update this Privacy Policy from time to time. If we make material changes, we will notify you by updating the effective date at the top of this policy and, where required by law, by sending an email to the address associated with your account or by displaying a prominent notice on the Platform."
+          },
+          {
+            "type": "p",
+            "text": "Your continued use of the Platform after the effective date of any changes constitutes acceptance of the updated Privacy Policy."
+          }
+        ]
+      },
+      {
+        "id": "contact",
+        "label": "Contact Us",
+        "heading": "16. Contact Us",
+        "blocks": [
+          {
+            "type": "p",
+            "text": "If you have questions, concerns, or requests regarding this Privacy Policy, please contact us:"
+          },
+          {
+            "type": "ul",
+            "items": [
+              "**Email:** support@eventhubglobal.com",
+              "**Mailing address:** EventHub, LLC · Attn: Privacy · 1555 N Freedom Blvd · Provo, UT 84604 · USA"
+            ]
+          },
+          {
+            "type": "p",
+            "text": "For disputes not resolved through our support team, you may have the right to lodge a complaint with your local data protection authority."
+          }
+        ]
+      }
+    ]
+  },
   "terms": {
     "pageTitle": "Terms of Service",
     "backToEventHub": "Back to EventHub",
     "contents": "Contents",
-    "version": "Version 6 · Effective May 1, 2025 · EventHub",
-    "noticeTitle": "Important notice regarding EventHub's role",
-    "noticeBody": "EventHub is a marketplace platform — we connect customers with independent vendors. We are not a party to any transaction between customers and vendors. All bookings, services, and disputes are between the customer and the vendor directly.",
-    "s1Title": "1. Acceptance of Terms",
-    "s1Body": "By accessing or using EventHub, you agree to be bound by these Terms of Service. If you do not agree, please do not use the platform.",
-    "s2Title": "2. Marketplace Role",
-    "s2Body": "EventHub is a platform that connects customers with independent vendors. We are not a party to any transaction, do not employ vendors, and do not guarantee the quality or legality of any service listed.",
-    "s3Title": "3. User Accounts",
-    "s3Body": "You must be at least 18 years old to create an account. You are responsible for maintaining the confidentiality of your account credentials and for all activity under your account.",
-    "s4Title": "4. Vendor Listings",
-    "s4Body": "Vendors are solely responsible for the accuracy of their listings, including pricing, availability, and service descriptions. EventHub does not verify listing content.",
-    "s5Title": "5. Bookings & Payments",
-    "s5Body": "All bookings are subject to vendor acceptance. Payments are processed through Stripe. EventHub may charge a service fee to customers and, depending on the vendor's subscription plan, a platform fee to vendors on bookings; vendors on paid plans may be exempt from the vendor platform fee. All applicable fees are disclosed before checkout and in the vendor dashboard. Stripe's payment-processing fees may also apply. Payouts are issued after successful booking completion, less any applicable fees. EventHub may change its fees, fee structure, and subscription pricing at any time; any change applies only to bookings and subscription periods that begin after it takes effect, and current fees are always shown before checkout and in the vendor dashboard.",
-    "s6Title": "6. Cancellations & Refunds",
-    "s6Body": "Cancellation policies are set by individual vendors and are displayed on each listing. EventHub enforces the vendor's stated policy. Refunds are issued per that policy.",
-    "s7Title": "7. Disputes",
-    "s7Body": "Customers have a 72-hour dispute window after the event date to report issues. Disputes are handled between the customer and vendor. EventHub may assist in resolution but is not obligated to do so.",
-    "s8Title": "8. Prohibited Conduct",
-    "s8Body": "Users may not use EventHub to conduct transactions outside the platform, share contact information for the purpose of circumventing the platform, post false or misleading listings, or engage in harassment or discrimination.",
-    "s9Title": "9. Intellectual Property",
-    "s9Body": "All content on EventHub, including logos, design, and code, is owned by EventHub or its licensors. You may not copy, reproduce, or distribute any content without written permission.",
-    "s10Title": "10. Limitation of Liability",
-    "s10Body": "EventHub is not liable for any indirect, incidental, or consequential damages arising from use of the platform, including but not limited to vendor no-shows, property damage, or personal injury.",
-    "s11Title": "11. Indemnification",
-    "s11Body": "You agree to indemnify and hold harmless EventHub and its affiliates from any claims, damages, or expenses arising from your use of the platform or violation of these Terms.",
-    "s12Title": "12. Changes to Terms",
-    "s12Body": "EventHub reserves the right to update these Terms at any time. Continued use of the platform after changes constitutes acceptance of the updated Terms.",
-    "s13Title": "13. Governing Law",
-    "s13Body": "These Terms are governed by the laws of the State of Florida, without regard to conflict of law principles.",
-    "s14Title": "14. Contact",
-    "s14Body": "For questions about these Terms, contact us at legal@eventhub.com."
+    "effective": "Effective {{version}}",
+    "meta": "Version 7 · Governing law and venue: State of Utah · Questions: support@eventhubglobal.com",
+    "contactEmail": "support@eventhubglobal.com",
+    "notice": "Please read these Terms carefully. By accessing or using EventHub, you agree to be bound by these Terms, including the mandatory arbitration and class action waiver provisions in Section 7.",
+    "footerBefore": "For questions about these Terms, contact us at",
+    "footerAfter": ". EventHub reserves the right to modify these Terms at any time. Continued use of the Platform after any modification constitutes your acceptance of the updated Terms.",
+    "sections": [
+      {
+        "id": "platform-agreement",
+        "label": "Platform Agreement",
+        "heading": "1. Global Platform Agreement",
+        "blocks": [
+          {
+            "type": "p",
+            "text": "EventHub operates an online marketplace connecting event rental and service vendors (\"Vendors\") with customers seeking event-related goods and services (\"Customers\"). Together, Vendors and Customers are referred to as \"Users.\""
+          },
+          {
+            "type": "p",
+            "text": "EventHub expressly:"
+          },
+          {
+            "type": "ul",
+            "items": [
+              "Is **not** a party to any transaction, booking, or agreement formed between Users",
+              "Does **not** own, operate, or control any listed goods or services",
+              "Does **not** guarantee the quality, safety, legality, or accuracy of any listing",
+              "Acts solely as a technology platform facilitating connections and processing payments as a limited payment collection agent"
+            ]
+          },
+          {
+            "type": "p",
+            "text": "By accessing, registering for, or using EventHub, you agree to be legally bound by these Terms. You must be at least 18 years of age and legally capable of entering into a binding contract."
+          },
+          {
+            "type": "p",
+            "text": "EventHub's liability to any User is capped at **$100** in the aggregate for any and all claims arising from use of the Platform. All disputes are subject to binding arbitration; class action claims are waived."
+          },
+          {
+            "type": "p",
+            "text": "All Vendors are independent contractors — not employees, agents, or representatives of EventHub. EventHub is not vicariously liable for the acts, omissions, negligence, or misconduct of any Vendor or Customer."
+          }
+        ]
+      },
+      {
+        "id": "vendor-agreement",
+        "label": "Vendor Agreement",
+        "heading": "2. Vendor Agreement",
+        "blocks": [
+          {
+            "type": "p",
+            "text": "Before any listing goes live, Vendors must complete a separate acceptance step in the vendor dashboard. By activating a vendor account, Vendors agree to the following obligations:"
+          },
+          {
+            "type": "ul",
+            "items": [
+              "Provide accurate, complete, and non-misleading listing information",
+              "Fulfill all confirmed bookings exactly as described",
+              "Maintain compliance with all applicable laws, permits, licenses, and regulations",
+              "Carry appropriate business insurance where required by law or reasonably prudent",
+              "Respond to booking inquiries and customer communications in a timely manner",
+              "Remit applicable taxes on all revenue received through the Platform",
+              "Immediately notify EventHub of any material changes to their business or ability to fulfill bookings"
+            ]
+          },
+          {
+            "type": "p",
+            "text": "Vendors may not solicit off-platform bookings, payments, or communications from Customers they meet through EventHub. Violations are subject to account suspension or permanent ban under the Anti-Circumvention Policy in Section 5."
+          },
+          {
+            "type": "p",
+            "text": "**Customer service fee.** EventHub charges Customers a service fee of **5%** of the booked amount on every booking, on every plan and under every pricing model. It is added to the Customer's total and disclosed before checkout. Travel, delivery, and other vendor-charged fees collected through the Platform are part of the booked amount and carry the same 5% service fee."
+          },
+          {
+            "type": "p",
+            "text": "**Vendor commission.** EventHub charges Vendors a platform commission of **8%** of the booked amount on every booking, deducted from the Vendor's payout. Two exemptions apply, and only these two: (a) a Vendor on the subscription pricing model who holds an **active paid EventHub Pro subscription** pays a 0% commission for as long as that subscription remains active; and (b) a **legacy Vendor**, as defined below, pays a 0% commission permanently. Vendors on the free tier of the subscription pricing model pay the 8% commission. Vendors on the commission pricing model have no subscription and no paid tier available to them, and pay the 8% commission on all bookings. No other status, program, or promotion waives the vendor commission, and the customer service fee is never waived by a Pro subscription or by legacy status."
+          },
+          {
+            "type": "p",
+            "text": "**Legacy Vendors.** Vendors whose accounts were created before the vendor commission took effect were onboarded on the understanding that EventHub charged them no commission. EventHub honours that: those accounts are designated **legacy** and are permanently exempt from the vendor commission, at no cost and with no subscription required. This exemption is account-specific, is not transferable, and applies to the vendor commission only — **the 5% customer service fee still applies to bookings made with a legacy Vendor**, because that fee is charged to the Customer rather than deducted from the Vendor. EventHub reserves the right to designate individual accounts as legacy or otherwise fee-exempt, and different Vendors may therefore be charged different commission rates."
+          },
+          {
+            "type": "p",
+            "text": "Fee rates are fixed at the time each booking is created and are not changed retroactively. All applicable fees are disclosed before checkout and in the vendor dashboard. Payments are processed by our third-party payment processor (Stripe). **Stripe's standard payment-processing fees are borne by the Vendor** and are deducted from the Vendor's payout; they are separate from, and additional to, any EventHub commission. Payout schedules and the applicable fees are disclosed in the vendor dashboard. Payouts are processed after successful booking completion, less any applicable fees. EventHub may change its fees, fee structure, and subscription pricing at any time; any change applies only to bookings and subscription periods that begin after it takes effect, and current fees are always shown before checkout and in the vendor dashboard."
+          }
+        ]
+      },
+      {
+        "id": "listing-terms",
+        "label": "Listing Terms",
+        "heading": "3. Listing Terms",
+        "blocks": [
+          {
+            "type": "p",
+            "text": "All listings on EventHub are created and maintained exclusively by Vendors. EventHub does not verify, inspect, or endorse any listing, vendor, or the goods and services described therein."
+          },
+          {
+            "type": "p",
+            "text": "**Cancellation policies are set by each Vendor, per listing, and are not standardized by EventHub.** Before proceeding to checkout, Customers are presented with that Vendor's specific cancellation policy and damage deposit terms. By continuing to checkout after reviewing these terms, Customers acknowledge and accept those vendor-specific policies. The dispute window described in Section 4 is separate from, and does not extend, any Vendor's cancellation policy."
+          },
+          {
+            "type": "p",
+            "text": "Listing photos, descriptions, and pricing are provided by Vendors and may not reflect current availability or condition. Customers are encouraged to communicate directly with Vendors through the EventHub messaging system to confirm details before booking."
+          }
+        ]
+      },
+      {
+        "id": "transaction-agreement",
+        "label": "Transaction Agreement",
+        "heading": "4. Transaction Agreement",
+        "blocks": [
+          {
+            "type": "p",
+            "text": "A binding booking is formed when a Customer completes checkout and payment is confirmed. By confirming a booking, Customers agree to:"
+          },
+          {
+            "type": "ul",
+            "items": [
+              "Authorize the full payment amount charged through EventHub's payment processor",
+              "Accept responsibility for any damage to or loss of rented items beyond normal wear",
+              "Assume all risk of personal injury arising from use of the rented goods or services",
+              "Conduct all booking-related communications exclusively through the EventHub platform"
+            ]
+          },
+          {
+            "type": "p",
+            "text": "Customers have a **72-hour window from the event date** to file a refund dispute. Disputes filed after this window will not be considered. Disputes must include supporting documentation."
+          },
+          {
+            "type": "p",
+            "text": "EventHub processes payments as a limited payment collection agent on behalf of Vendors. Vendor payouts are released after the event date, subject to any open disputes. All payments are processed through Stripe and subject to Stripe's terms of service."
+          }
+        ]
+      },
+      {
+        "id": "messaging-terms",
+        "label": "Messaging Terms",
+        "heading": "5. Messaging & Inquiry Terms",
+        "blocks": [
+          {
+            "type": "p",
+            "text": "EventHub provides a messaging system to facilitate communication between Customers and Vendors. All booking-related communications must occur through this system."
+          },
+          {
+            "type": "p",
+            "text": "Users are prohibited from sharing through the messaging system:"
+          },
+          {
+            "type": "ul",
+            "items": [
+              "Email addresses or phone numbers",
+              "External website URLs or booking links",
+              "Social media handles or payment app usernames",
+              "Any information intended to facilitate off-platform transactions"
+            ]
+          },
+          {
+            "type": "p",
+            "text": "EventHub's circumvention detection system monitors messages for prohibited contact information. Violations result in a warning, message block, and potential account suspension under the three-warning system. Soliciting off-platform bookings constitutes a material breach of these Terms and may result in permanent account termination. This paragraph and the prohibitions above constitute EventHub's Anti-Circumvention Policy."
+          },
+          {
+            "type": "p",
+            "text": "Message records may be retained and reviewed by EventHub staff in connection with disputes, investigations, or legal proceedings. By using the messaging system, you consent to this retention and review."
+          }
+        ]
+      },
+      {
+        "id": "post-booking",
+        "label": "Post-Booking",
+        "heading": "6. Post-Booking Agreement",
+        "blocks": [
+          {
+            "type": "p",
+            "text": "Upon booking confirmation, both the Customer and Vendor receive a confirmation email documenting the booking terms, cancellation policy, damage deposit requirements, and fulfillment obligations. These confirmation emails constitute notice of the agreed terms."
+          },
+          {
+            "type": "p",
+            "text": "The **72-hour dispute window begins from the event date** — not the booking date. Customers must file any service quality claims within this window. Vendors must file any damage claims within **72 hours** of item return, supported by timestamped photo evidence and, for claims over $100, a third-party estimate."
+          },
+          {
+            "type": "p",
+            "text": "Cancellation requests must follow the Vendor's cancellation policy as disclosed at the time of booking. Refunds, where applicable, are processed within 5–10 business days depending on your financial institution. Where a booking is cancelled or refunded, the customer service fee is refunded in the same proportion as the booking amount to which it applied."
+          }
+        ]
+      },
+      {
+        "id": "disputes",
+        "label": "Disputes & Resolution",
+        "heading": "7. Disputes & Resolution",
+        "blocks": [
+          {
+            "type": "p",
+            "text": "EventHub provides a dispute resolution process as a courtesy service. EventHub has the right — but not the obligation — to investigate disputes between Users."
+          },
+          {
+            "type": "p",
+            "text": "To file a dispute:"
+          },
+          {
+            "type": "ul",
+            "items": [
+              "Service quality claims must be filed within **72 hours** of the event date with supporting documentation (photos, written communication, etc.)",
+              "Vendor damage claims require timestamped photo evidence submitted within **72 hours** of item return; claims over $100 require a third-party repair or replacement estimate",
+              "Personal injury claims must be directed to the Vendor and, where applicable, their insurer — EventHub does not provide insurance coverage"
+            ]
+          },
+          {
+            "type": "p",
+            "text": "EventHub's dispute determinations are non-binding administrative decisions, not legal findings. EventHub does not act as an arbitrator or mediator. Any payment adjustments made by EventHub in connection with a dispute are made at EventHub's sole discretion and do not constitute an admission of liability by any party."
+          },
+          {
+            "type": "p",
+            "text": "All disputes between a User and EventHub that cannot be resolved informally are subject to binding individual arbitration under the American Arbitration Association's Consumer Arbitration Rules. Class action lawsuits and class-wide arbitration are waived. **These Terms are governed by the laws of the State of Utah**, without regard to its conflict of law principles, and the exclusive venue for any dispute not subject to arbitration is the state and federal courts located in the State of Utah."
+          }
+        ]
+      }
+    ]
   },
   "vendorHub": {
     "missingVendorId": "Missing vendor id.",
@@ -986,7 +1590,9 @@
     "cancellationPolicyWithinDays": "Cancel at least {{days}} days before the event for a full refund. Cancellations inside that window are non-refundable.",
     "cancellationPolicyNoRefund": "This booking is non-refundable after purchase.",
     "cardNumber": "Card Number",
-    "termsDisclaimer": "By confirming this booking you agree to our Terms of Service, including payment authorization, the 72-hour dispute window from your event date, damage responsibility, and assumption of risk for personal injury.",
+    "termsDisclaimerBefore": "By confirming this booking you agree to our",
+    "termsDisclaimerMiddle": ", including payment authorization, the 72-hour dispute window from your event date, damage responsibility, and assumption of risk for personal injury. Our",
+    "termsDisclaimerAfter": "applies.",
     "placeOrder": "Pay {{total}}",
     "bookNow": "Book Now",
     "requestToBook": "Request to Book",
@@ -1039,7 +1645,9 @@
     "errorLogisticsEventEndBeforeStart": "Event end time must be after the event start time.",
     "errorLogisticsDoneBeforeNeeded": "Done-with time must be after the needed-by time.",
     "errorLogisticsMissingTimes": "Add the event times and the rental possession window.",
-    "errorLogisticsInvalidTime": "One or more logistics times are invalid."
+    "errorLogisticsInvalidTime": "One or more logistics times are invalid.",
+    "serviceFee": "Service fee",
+    "securityDepositRefundable": "Security deposit (refundable)"
   },
   "vendorLogin": {
     "loadingTitle": "Redirecting to Auth0",
@@ -1398,7 +2006,7 @@
       "deal7": "30 days free, cancel anytime",
       "cta": "Start your 30-day free trial — $29/mo",
       "logIn": "Log in",
-      "trustLine": "No vendor fees · Secure payouts via Stripe · Cancel anytime"
+      "trustLine": "No vendor fees on Pro · Secure payouts via Stripe · Cancel anytime"
     },
     "faq": {
       "eyebrow": "Common questions",
@@ -1429,6 +2037,22 @@
     "toast": {
       "signupFailedTitle": "Sign up failed",
       "signupFailedFallback": "Something went wrong. Please try again."
+    }
+  },
+  "landingComm": {
+    "bar": {
+      "text": "Free to join. We only make money when you do."
+    },
+    "hero": {
+      "trustLine": "Free to list · Secure payouts via Stripe · No monthly fee"
+    },
+    "closing": {
+      "launchOffer": "Everything included",
+      "dealTitle": "Every feature, from day one.",
+      "deal1": "Every feature included — no tiers, no add-ons",
+      "deal7": "No contracts — leave whenever you want",
+      "cta": "Create your free account",
+      "trustLine": "Free to join · Secure payouts via Stripe"
     }
   },
     "customerExp": {
@@ -1466,6 +2090,21 @@
           "q": "My business is logistics-heavy. How does EventHub handle logistics?",
           "a": "Set your service radius and offer delivery, pickup, setup, takedown, and travel — each with its own fee. Fees can be flat or vary by location, and for out-of-area or variable jobs you send the customer a custom quote to accept before the booking is final."
         }
+      },
+      "commissionPlan": {
+        "eyebrow": "Pricing",
+        "title": "One plan. No monthly bill.",
+        "subtitle": "We earn when you earn.",
+        "points": {
+          "noCard": "No credit card required",
+          "noCommitment": "No monthly commitment",
+          "noBookingNoPay": "If you don't book, you don't pay"
+        },
+        "customerFee": "A service fee is added at checkout and paid by the customer.",
+        "feeNote": "We take a commission on each booking. Exact rates are in our",
+        "feeNoteLink": "Terms of Service",
+        "reassurance": "No card required. No monthly bill.",
+        "cta": "Create your free account"
       },
       "customerBullets": {
         "transparent": "Transparent",
@@ -1526,52 +2165,58 @@
       "q2": "EventHub gives me time back so I can find more customers.",
       "q3": "Switching my system to EventHub was easier than expected."
     },    "plans": {
-      "eyebrow": "Upgrade to Pro",
-      "title": "Fill more dates. Skip the busywork.",
-      "subtitle": "",
-      "compare": "Compare plans",
-      "unlimited": "Unlimited",
-      "perMonth": "/mo",
-      "perDay": "just ${{amount}}/day",
-      "billedAnnual": "billed $290/year",
-      "billedMonthly": "billed monthly",
-      "reassurance": "Not sure yet? Start on Free and upgrade the moment you need more — your storefront comes with you.",
-      "free": {
-        "title": "Free",
-        "note": "free forever",
-        "cta": "Start free"
-      },
-      "pro": {
-        "badge": "Most popular",
-        "title": "Pro",
-        "cta": "Try Pro free"
-      },
-      "toggle": {
-        "monthly": "Monthly",
-        "annual": "Annual",
-        "save": "Save 17%"
-      },
-      "rows": {
-        "storefront": "Your own storefront & booking link",
-        "bookings": "Take bookings & manage your calendar",
-        "messaging": "In-app customer messaging",
-        "payouts": "Secure payouts through Stripe",
-        "reminders": "Booking confirmations & reminders",
-        "listings": "Active listings",
-        "ai": "AI reply assistant for messages",
-        "discounts": "Discounts & promo codes",
-        "reputation": "Reputation management",
-        "analytics": "Advanced analytics & booking trends",
-        "calendar": "Google Calendar sync"
-      },
-      "risk": {
-        "trial": "30-day free trial on Pro",
-        "noCard": "No credit card to start",
-        "reminder": "We'll remind you before it renews",
-        "cancel": "Cancel anytime",
-        "keepFree": "Keep your free plan forever"
-      }
-    },
+            "eyebrow": "Upgrade to Pro",
+            "title": "Fill more dates. Skip the busywork.",
+            "subtitle": "",
+            "compare": "Compare plans",
+            "unlimited": "Unlimited",
+            "perMonth": "/mo",
+            "perDay": "just ${{amount}}/day",
+            "billedAnnual": "billed $290/year",
+            "billedMonthly": "billed monthly",
+            "reassurance": "Not sure yet? Start on Free and upgrade the moment you need more — your storefront comes with you.",
+            "free": {
+              "title": "Free",
+              "note": "no subscription",
+              "cta": "Start free"
+            },
+            "pro": {
+              "badge": "Most popular",
+              "title": "Pro",
+              "cta": "Try Pro free"
+            },
+            "toggle": {
+              "monthly": "Monthly",
+              "annual": "Annual",
+              "save": "Save 17%"
+            },
+            "rows": {
+              "commission": "EventHub commission",
+              "storefront": "Your own storefront & booking link",
+              "bookings": "Take bookings & manage your calendar",
+              "messaging": "In-app customer messaging",
+              "payouts": "Secure payouts through Stripe",
+              "reminders": "Booking confirmations & reminders",
+              "listings": "Active listings",
+              "ai": "AI reply assistant for messages",
+              "discounts": "Discounts & promo codes",
+              "reputation": "Reputation management",
+              "analytics": "Advanced analytics & booking trends",
+              "calendar": "Google Calendar sync"
+            },
+            "risk": {
+              "trial": "30-day free trial on Pro",
+              "noCard": "No credit card to start",
+              "reminder": "We'll remind you before it renews",
+              "cancel": "Cancel anytime",
+              "keepFree": "Keep your free plan forever"
+            },
+            "values": {
+              "applies": "Applies"
+            },
+            "feeNote": "A customer service fee applies to every booking, and Pro waives your per-booking commission. Exact rates are in our",
+            "feeNoteLink": "Terms of Service"
+          },
 
     "landingFreeA": {
       "bar": {
@@ -1594,10 +2239,15 @@
         "subtitle": ""
       }
     },
+    "landingFreeAComm": {
+      "bar": {
+        "text": "Set up in minutes. No learning curve. No monthly fee, ever."
+      }
+    },
 
     "landingFreeB": {
       "bar": {
-        "text": "Keep 100% of what you book."
+        "text": "Get booked. Get paid. Keep it simple."
       },
       "header": {
         "getStarted": "Start earning free"
@@ -1609,6 +2259,17 @@
       },
       "testimonials": {
         "eyebrow": ""
+      }
+    },
+    "landingFreeBComm": {
+      "bar": {
+        "text": "Free to join. We only make money when you do."
+      },
+      "header": {
+        "getStarted": "Start free"
+      },
+      "hero": {
+        "trust": "No monthly fee. No subscription. Ever."
       }
     },
 
@@ -1634,6 +2295,11 @@
         "subtitle": "Set up your storefront and start taking bookings on EventHub."
       }
     },
+    "landingFreeCComm": {
+      "bar": {
+        "text": "· No subscription, no monthly fee, no credit card."
+      }
+    },
 
     "landingFreeD": {
       "header": {
@@ -1653,6 +2319,11 @@
         "subtitle": "Two minutes from here to your first booking link."
       }
     },
+    "landingFreeDComm": {
+      "hero": {
+        "trust": "Free to join · No credit card · No monthly fee"
+      }
+    },
 
     "landingFreeE": {
       "bar": {
@@ -1670,6 +2341,11 @@
       },
       "testimonials": {
         "eyebrow": "From vendors like you"
+      }
+    },
+    "landingFreeEComm": {
+      "hero": {
+        "trust": "Free to join · No credit card · No subscription, ever"
       }
     },
   "demoShared": {

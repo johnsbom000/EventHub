@@ -123,8 +123,23 @@ function getConversationEventKey(conversation: Conversation) {
 type PendingTravelFeePayment = {
   clientSecret: string;
   proposalId: string;
+  /**
+   * The amount the card is CHARGED (travel fee + customer service fee). The
+   * server returns the charged total in `amountCents` precisely so this sheet
+   * can never quote less than the PaymentIntent.
+   */
   amountCents: number;
+  /** Breakdown for disclosure; absent on legacy responses. */
+  travelFeeCents?: number;
+  customerFeeCents?: number;
   bookingId: string;
+  /**
+   * The PaymentIntent this sheet is collecting for. Echoed back to
+   * confirm-payment so the server resolves THIS charge's `payments` row — a
+   * booking can hold several travel-fee rows, and that row supplies both the
+   * success check and the amounts quoted in the receipt/notification.
+   */
+  paymentIntentId?: string;
 };
 
 function TravelFeePaymentForm({
@@ -166,7 +181,10 @@ function TravelFeePaymentForm({
     try {
       const confirmRes = await apiRequest(
         "POST",
-        `/api/bookings/${pending.bookingId}/travel-fee-proposals/${pending.proposalId}/confirm-payment`
+        `/api/bookings/${pending.bookingId}/travel-fee-proposals/${pending.proposalId}/confirm-payment`,
+        // Names the exact charge to confirm; without it the server falls back
+        // to the newest travel-fee payment row for the booking.
+        { paymentIntentId: pending.paymentIntentId }
       );
       if (!confirmRes.ok) {
         const body = await confirmRes.json().catch(() => ({}));
@@ -182,10 +200,27 @@ function TravelFeePaymentForm({
 
   return (
     <div className="space-y-4">
+      {/* The total must match the PaymentIntent exactly — the service fee is
+          disclosed as its own line so the headline number is never a surprise. */}
       <p className="text-sm text-muted-foreground">
         You are paying a travel / delivery fee of{" "}
-        <span className="font-semibold text-foreground">{fmt(pending.amountCents)}</span>.
+        <span className="font-semibold text-foreground">
+          {fmt(pending.travelFeeCents ?? pending.amountCents)}
+        </span>
+        {pending.customerFeeCents ? (
+          <>
+            {" "}plus a {fmt(pending.customerFeeCents)} service fee.
+          </>
+        ) : (
+          "."
+        )}
       </p>
+      {pending.customerFeeCents ? (
+        <div className="flex items-center justify-between rounded-md bg-muted/60 px-3 py-2 text-sm">
+          <span className="text-muted-foreground">Total charged today</span>
+          <span className="font-semibold text-foreground">{fmt(pending.amountCents)}</span>
+        </div>
+      ) : null}
       <div className="rounded-md border p-3">
         <CardElement
           options={{
@@ -234,9 +269,11 @@ function TravelFeePaymentModal({
 }
 
 type AiSettings = {
-  isPro: boolean;
+  hasProFeatures: boolean;
   enabled: boolean;
   overageEnabled: boolean;
+  /** False for commission vendors — pay-as-you-go does not exist for them. */
+  overageAvailable?: boolean;
   includedPerPeriod: number;
   used: number;
   remaining: number;
@@ -254,12 +291,15 @@ function AiReplyToolbar({
   bookingId,
   channelId,
   onUsed,
+  overageAvailable,
   t,
 }: {
   enabled: boolean;
   bookingId?: string;
   channelId?: string;
   onUsed: () => void;
+  /** False for commission vendors — pay-as-you-go does not exist for them. */
+  overageAvailable?: boolean;
   t: (key: string, opts?: Record<string, unknown>) => string;
 }) {
   const composer = useMessageComposer();
@@ -291,7 +331,13 @@ function AiReplyToolbar({
       }
       const description =
         code === "ai_limit_reached"
-          ? t("ai.limitReached")
+          // Commission vendors hard-stop at the allowance — pay-as-you-go is
+          // force-disabled server-side, so pointing them at Billing describes a
+          // remedy they cannot take. This 429 is in fact specifically theirs:
+          // Model A free vendors are 403'd by ai_pro_required before reaching it.
+          ? (overageAvailable === false
+              ? t("ai.limitReachedCommission")
+              : t("ai.limitReached"))
           : code === "ai_pro_required"
             ? t("ai.proRequired")
             : code === "ai_disabled"
@@ -538,7 +584,16 @@ export function BookingChatWorkspace({ role, initialBookingId, initialVendorId }
   type TravelFeeProposal = {
     id: string;
     bookingId: string;
+    /** Vendor-side travel/delivery fee — NOT what the customer is charged. */
     amountCents: number;
+    /**
+     * Charge breakdown attached by the server. `chargedAmountCents` is what the
+     * card is charged (fee + customer service fee) and is the number that must
+     * be shown to the customer.
+     */
+    travelFeeCents?: number;
+    customerFeeCents?: number;
+    chargedAmountCents?: number;
     reason: string | null;
     status: "pending" | "accepted" | "declined" | "cancelled";
     paymentScheduleId: string | null;
@@ -582,7 +637,7 @@ export function BookingChatWorkspace({ role, initialBookingId, initialVendorId }
     enabled: role === "vendor",
     staleTime: 30_000,
   });
-  const aiEnabled = role === "vendor" && Boolean(aiSettings?.isPro) && Boolean(aiSettings?.enabled);
+  const aiEnabled = role === "vendor" && Boolean(aiSettings?.hasProFeatures) && Boolean(aiSettings?.enabled);
 
   // Most-recent vendor proposal that was declined and has no newer pending/accepted proposal
   const declinedVendorProposal = (() => {
@@ -664,8 +719,14 @@ export function BookingChatWorkspace({ role, initialBookingId, initialVendorId }
         setPendingTravelFeePayment({
           clientSecret: data.clientSecret,
           proposalId: variables.proposalId,
+          // Server-authoritative charged total — same number as the PaymentIntent.
           amountCents: data.amountCents,
+          travelFeeCents: data.travelFeeCents,
+          customerFeeCents: data.customerFeeCents,
           bookingId: variables.bookingId,
+          // Identifies WHICH travel-fee payment this is. A booking can carry
+          // several; confirm-payment verifies and quotes the row this id names.
+          paymentIntentId: data.paymentIntentId,
         });
       }
     },
@@ -1172,10 +1233,18 @@ export function BookingChatWorkspace({ role, initialBookingId, initialVendorId }
                   {pendingProposal ? (
                     <div>
                       <p className="text-sm font-semibold text-amber-900">Travel / delivery fee proposed</p>
+                      {/* Always lead with the CHARGED total. Quoting the bare fee
+                          here would show less than the card is charged. */}
                       <p className="mt-0.5 text-sm text-amber-800">
-                        {fmt(pendingProposal.amountCents)}
+                        {fmt(pendingProposal.chargedAmountCents ?? pendingProposal.amountCents)}
                         {pendingProposal.reason ? ` — ${pendingProposal.reason}` : ""}
                       </p>
+                      {pendingProposal.customerFeeCents ? (
+                        <p className="mt-0.5 text-xs text-amber-700">
+                          {fmt(pendingProposal.travelFeeCents ?? pendingProposal.amountCents)} fee +{" "}
+                          {fmt(pendingProposal.customerFeeCents)} service fee
+                        </p>
+                      ) : null}
                       <div className="mt-2 flex items-center gap-2">
                         <button
                           type="button"
@@ -1220,8 +1289,9 @@ export function BookingChatWorkspace({ role, initialBookingId, initialVendorId }
                       </p>
                       {pastProposals.map((p) => (
                         <div key={p.id} className="flex items-center justify-between gap-2 text-xs text-amber-800">
+                          {/* Charged total, so an accepted row matches the receipt. */}
                           <span>
-                            {fmt(p.amountCents)}
+                            {fmt(p.chargedAmountCents ?? p.amountCents)}
                             {p.reason ? ` — ${p.reason}` : ""}
                           </span>
                           <span
@@ -1346,6 +1416,7 @@ export function BookingChatWorkspace({ role, initialBookingId, initialVendorId }
                       bookingId={isSelectedInquiry ? undefined : selectedBookingId || undefined}
                       channelId={activeChannel?.id}
                       onUsed={() => refetchAiSettings()}
+                      overageAvailable={aiSettings?.overageAvailable}
                       t={t}
                     />
                     <MessageInput overrideSubmitHandler={sendModeratedMessage} />

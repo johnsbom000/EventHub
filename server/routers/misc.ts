@@ -32,11 +32,11 @@ import {
   bookingRowMatchesActiveProfile,
   listVendorProfilesForAccount,
   normalizeProfileNamesForAccount,
-  getVendorAccountFromRequest,
   requireVendorAccountAuth0,
   requireVendorAuth0,
   resolveActiveVendorProfile,
 } from "../services/vendorAuth";
+import { resolveFeeRates } from "../services/feeRatesService";
 import {
   requireCustomerAnyAuth,
   isMachineGeneratedCustomerName,
@@ -131,7 +131,6 @@ import {
   type TravelFeeProposal,
   listingReviews,
   reviewReplies,
-  vendorReferrals,
   vendorInquiries,
 } from "@shared/schema";
 import {
@@ -464,9 +463,44 @@ app.post(
     }
   );
 
-  // Public fee rate config — lets the frontend stay in sync with env-driven rates
-  app.get("/api/config/fees", (_req, res) => {
-    res.json({ vendorFeeRate: VENDOR_FEE_RATE, customerFeeRate: CUSTOMER_FEE_RATE });
+  // Public fee rate config — lets the frontend stay in sync with the caller's
+  // actual rates when authenticated, or the default (unwaived) rates otherwise.
+  // Must never 401/500 for an anonymous visitor: this is called from public pages.
+  //
+  // attachAuth0IfPresent is fail-open (established pattern already used on public
+  // routes in this file — see /api/users/me/location above): it populates req.auth0
+  // only when a valid Bearer token is present, so an anonymous caller falls straight
+  // through to the default rates below with no 401. We resolve the vendor account
+  // directly from the auth0 identity (same resolver requireVendorAccountAuth0 uses)
+  // rather than via getVendorAccountFromRequest, since nothing else on this route
+  // populates req.vendorAuth.
+  app.get("/api/config/fees", attachAuth0IfPresent, async (req, res) => {
+    // The response is caller-specific once authenticated (a Pro vendor's waived
+    // rate must never be served to — or cached in front of — anyone else).
+    res.set("Cache-Control", "private, max-age=0, no-cache");
+    res.set("Vary", "Authorization");
+    try {
+      const auth0 = (req as any).auth0 as { sub?: string; email?: string; email_verified?: boolean } | undefined;
+      const resolution = auth0?.sub
+        ? await resolveVendorAccountForAuth0Identity({
+            auth0Sub: auth0.sub,
+            email: auth0.email,
+            context: "config-fees",
+            emailVerified: auth0?.email_verified === true,
+          })
+        : null;
+      const account =
+        resolution?.account && !resolution.account.deletedAt && resolution.account.active !== false
+          ? resolution.account
+          : null;
+      const rates = account
+        ? resolveFeeRates(account)
+        : { vendorFeeRate: VENDOR_FEE_RATE, customerFeeRate: CUSTOMER_FEE_RATE };
+      res.json(rates);
+    } catch (error) {
+      logRouteError("/api/config/fees", error as any);
+      res.json({ vendorFeeRate: VENDOR_FEE_RATE, customerFeeRate: CUSTOMER_FEE_RATE });
+    }
   });
 
   // Location search (used by LocationPicker autocomplete)
@@ -850,15 +884,31 @@ app.post(
 
       const whereClause = and(...(conditions as any[]));
 
-      // Sort order — the default "recommended" sort applies a light Pro search
-      // boost: vendors with Pro in effect rank above free vendors, then newest
-      // first within each group. This is a soft tiebreak, NOT a hard top
-      // placement — a separate paid "Featured" slot is reserved for the future.
-      // The Pro condition mirrors getVendorEntitlements()'s `isPro` exactly
-      // (active/trialing/past_due, or an unexpired comp grant); keep them in sync.
-      // To disable the boost, drop `desc(proBoostExpr)` from the recommended case.
+      // Sort order — the default "recommended" sort applies a light boost:
+      // boosted vendors rank above the rest, then newest first within each group.
+      // This is a soft tiebreak, NOT a hard top placement — a separate paid
+      // "Featured" slot is reserved for the future. To disable the boost, drop
+      // `desc(proBoostExpr)` from the recommended case.
+      //
+      // WHO IS BOOSTED: any vendor who is PAYING for placement, by either route.
+      //   - Subscription vendors with Pro in effect — mirrors
+      //     getVendorEntitlements()'s `isPro` exactly (active/trialing/past_due,
+      //     or an unexpired comp grant); keep the two in sync.
+      //   - Commission vendors, ALWAYS. They earn the boost by paying the very
+      //     per-booking commission that Pro waives — a boosted Pro vendor pays 0%
+      //     while a commission vendor pays the full rate on the same booking, so
+      //     excluding them would charge more for less.
+      //
+      // This clause is also load-bearing for the pricing EXPERIMENT: every new
+      // subscription-arm vendor is auto-enrolled as `trialing` at provision, so
+      // without the commission term 100% of one arm would be boosted for their
+      // first 30 days while 0% of the other ever was — precisely the activation
+      // window the test measures. Bookings-per-vendor would then be partly
+      // measuring search rank instead of pricing preference. Do not remove this
+      // term while the pricing test is running.
       const proBoostExpr = drizzleSql`(
         ${vendorAccounts.subscriptionStatus} IN ('active', 'trialing', 'past_due')
+        OR ${vendorAccounts.pricingModel} = 'commission'
         OR (
           ${vendorAccounts.subscriptionStatus} = 'comp'
           AND (${vendorAccounts.compEndsAt} IS NULL OR ${vendorAccounts.compEndsAt} > now())
