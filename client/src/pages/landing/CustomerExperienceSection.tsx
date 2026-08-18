@@ -1,6 +1,7 @@
 import { useTranslation, Trans } from "react-i18next";
 import { Eye, CalendarCheck, Sparkles } from "lucide-react";
 import BookingFlowDemo from "@/pages/landing/BookingFlowDemo";
+import VendorHubStill from "@/pages/landing/VendorHubStill";
 
 /* ---------------------------------------------------------------------------
    Shared "Customer Experience" section used by every free-first landing
@@ -16,7 +17,17 @@ const PILLARS = [
   { key: "ease", Icon: Sparkles },
 ] as const;
 
-export default function CustomerExperienceSection({ storefrontImages }: { storefrontImages?: string[] } = {}) {
+export default function CustomerExperienceSection({
+  storefrontImages,
+  visual = "booking",
+}: {
+  storefrontImages?: string[];
+  // Which artwork sits beside the pillars. "booking" is the animated
+  // customer-side BookingFlowDemo; "hub" is the static vendor-hub poster.
+  // Variants whose hero already shows the hub still keep "booking" here so the
+  // same artwork never appears twice on one page.
+  visual?: "booking" | "hub";
+} = {}) {
   const { t } = useTranslation();
 
   return (
@@ -56,9 +67,9 @@ export default function CustomerExperienceSection({ storefrontImages }: { storef
             </ul>
           </div>
 
-          {/* Right — the customer booking demo */}
+          {/* Right — booking demo, or the vendor-hub still */}
           <div className="mx-auto w-full max-w-[520px]">
-            <BookingFlowDemo storefrontImages={storefrontImages} />
+            {visual === "hub" ? <VendorHubStill /> : <BookingFlowDemo storefrontImages={storefrontImages} />}
           </div>
         </div>
       </div>

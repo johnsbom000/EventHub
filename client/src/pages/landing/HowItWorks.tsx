@@ -1,6 +1,7 @@
 import { useTranslation, Trans } from "react-i18next";
 import { Store, ClipboardList, Link as LinkIcon, Zap } from "lucide-react";
 import { Eyebrow, PrimaryButton } from "@/pages/landing/primitives";
+import { cn } from "@/lib/utils";
 
 /* ---------------------------------------------------------------------------
    Shared "How it works" section — on every free-first variant. Four steps from
@@ -15,10 +16,18 @@ const STEPS = [
   { key: "admin", Icon: Zap },
 ] as const;
 
-export default function HowItWorks({ onSignup }: { onSignup: () => void }) {
+export default function HowItWorks({
+  onSignup,
+  className,
+}: {
+  onSignup: () => void;
+  // Per-variant section styling (e.g. hiding the top rule where this section
+  // butts against a hero that already fades to white). Merged last.
+  className?: string;
+}) {
   const { t } = useTranslation();
   return (
-    <section className="border-y border-[rgba(74,106,125,0.08)] bg-white">
+    <section className={cn("border-y border-[rgba(74,106,125,0.08)] bg-white", className)}>
       <div className="mx-auto max-w-[1240px] px-5 py-20 lg:px-10 lg:py-24">
         <div className="mb-12 text-center">
           <Eyebrow>{t("howItWorks.eyebrow")}</Eyebrow>

@@ -10,8 +10,10 @@ import { trackBoth } from "@/lib/tracking";
 import { initEngagement } from "@/lib/engagement";
 import { captureAttribution, readAttribution } from "@/lib/landingAttribution";
 import { readPricingModel } from "@/hooks/usePricingModel";
-import BookingFlowDemo from "@/pages/landing/BookingFlowDemo";
+import VendorHubStill from "@/pages/landing/VendorHubStill";
+import { CustomerBullets } from "@/pages/landing/primitives";
 import HowItWorks from "@/pages/landing/HowItWorks";
+import { Reveal } from "@/pages/landing/motion";
 
 type AuthTab = "login" | "signup";
 type SignupRole = "vendor" | "customer";
@@ -67,18 +69,6 @@ function PrimaryButton({ onClick, children, className = "" }: { onClick: () => v
       type="button"
       onClick={onClick}
       className={`rounded-[12px] bg-[#2a3a42] px-6 py-3 font-sans text-[1.05rem] font-semibold text-white transition-colors hover:bg-[#3a4f59] ${className}`}
-    >
-      {children}
-    </button>
-  );
-}
-
-function GhostButton({ onClick, children, className = "" }: { onClick: () => void; children: ReactNode; className?: string }) {
-  return (
-    <button
-      type="button"
-      onClick={onClick}
-      className={`rounded-[12px] border-[1.5px] border-[rgba(74,106,125,0.3)] bg-white px-6 py-3 font-sans text-[1.05rem] font-semibold text-[#2a3a42] transition-colors hover:border-[#4a6a7d] hover:bg-[#f8fafb] ${className}`}
     >
       {children}
     </button>
@@ -629,10 +619,9 @@ export default function TemporaryLanding() {
       </div>
 
       {/* Hero */}
-      <section className="border-b border-[rgba(74,106,125,0.08)] bg-gradient-to-b from-[#f8fafb] to-white">
-        <div className="mx-auto grid max-w-[1320px] items-center gap-12 px-5 py-16 lg:grid-cols-[1.05fr_1fr] lg:gap-16 lg:px-10 lg:py-24">
+      <section className="bg-gradient-to-b from-[#f8fafb] to-white">
+        <div className="mx-auto grid min-h-[calc(100svh-95px)] max-w-[1320px] items-center gap-12 px-5 py-16 lg:grid-cols-[1.05fr_1fr] lg:gap-16 lg:px-10 lg:py-24">
           <div>
-            <Eyebrow>{t("landing.hero.eyebrow")}</Eyebrow>
             <h1 className="font-heading text-[clamp(2.6rem,6vw,4rem)] font-light leading-[1.05] text-[#2a3a42]">
               <Trans
                 i18nKey="landing.hero.title"
@@ -642,11 +631,11 @@ export default function TemporaryLanding() {
             <p className="mt-6 max-w-xl font-sans text-[1.2rem] leading-[1.6] text-[#4a6a7d]">
               {t("landing.hero.subtitle")}
             </p>
-            <div className="mt-8 flex flex-wrap items-center gap-4">
+            {/* CTA is centered on the trust line beneath it */}
+            <div className="mt-8 inline-flex flex-col items-center">
               <PrimaryButton onClick={() => handleSignupCta("hero_primary", "vendor")} className="!px-7 !py-3.5 !text-[1.1rem]">{t("landing.hero.ctaVendor")}</PrimaryButton>
-              <GhostButton onClick={openLogin} className="!px-7 !py-3.5 !text-[1.1rem]">{t("landing.hero.logIn")}</GhostButton>
+              <p className="mt-5 font-sans text-[0.95rem] text-[#9aacb4]">{t("landing.hero.trustLine")}</p>
             </div>
-            <p className="mt-5 font-sans text-[0.95rem] text-[#9aacb4]">{t("landing.hero.trustLine")}</p>
           </div>
           <div className="lg:pl-6">
             <DashboardMock />
@@ -655,7 +644,7 @@ export default function TemporaryLanding() {
       </section>
 
       {/* How it works — shared 4-step section (same as the free-first variants) */}
-      <HowItWorks onSignup={() => handleSignupCta("how_it_works", "vendor")} />
+      <HowItWorks onSignup={() => handleSignupCta("how_it_works", "vendor")} className="border-t-transparent" />
 
       {/* Vendor experience */}
       <section className="mx-auto max-w-[1320px] px-5 py-20 lg:px-10 lg:py-28">
@@ -669,29 +658,39 @@ export default function TemporaryLanding() {
           </p>
         </div>
 
+        {/* Each row fades up as it scrolls into view. Reveal degrades to
+            instantly-visible under prefers-reduced-motion. */}
         <div className="space-y-24">
-          <FeatureRow
-            eyebrow={t("landing.vendorSection.listings.eyebrow")}
-            title={t("landing.vendorSection.listings.title")}
-            visual={<ListingsMock />}
-          />
-          <FeatureRow
-            reverse
-            eyebrow={t("landing.vendorSection.bookings.eyebrow")}
-            title={t("landing.vendorSection.bookings.title")}
-            visual={<BookingsMock />}
-          />
-          <FeatureRow
-            eyebrow={t("landing.vendorSection.payments.eyebrow")}
-            title={t("landing.vendorSection.payments.title")}
-            visual={<PayoutsMock />}
-          />
-          <FeatureRow
-            reverse
-            eyebrow={t("landing.vendorSection.messaging.eyebrow")}
-            title={t("landing.vendorSection.messaging.title")}
-            visual={<ChatMock />}
-          />
+          <Reveal strict y={64} duration={1}>
+            <FeatureRow
+              eyebrow={t("landing.vendorSection.listings.eyebrow")}
+              title={t("landing.vendorSection.listings.title")}
+              visual={<ListingsMock />}
+            />
+          </Reveal>
+          <Reveal strict y={64} duration={1}>
+            <FeatureRow
+              reverse
+              eyebrow={t("landing.vendorSection.bookings.eyebrow")}
+              title={t("landing.vendorSection.bookings.title")}
+              visual={<BookingsMock />}
+            />
+          </Reveal>
+          <Reveal strict y={64} duration={1}>
+            <FeatureRow
+              eyebrow={t("landing.vendorSection.payments.eyebrow")}
+              title={t("landing.vendorSection.payments.title")}
+              visual={<PayoutsMock />}
+            />
+          </Reveal>
+          <Reveal strict y={64} duration={1}>
+            <FeatureRow
+              reverse
+              eyebrow={t("landing.vendorSection.messaging.eyebrow")}
+              title={t("landing.vendorSection.messaging.title")}
+              visual={<ChatMock />}
+            />
+          </Reveal>
         </div>
       </section>
 
@@ -704,6 +703,7 @@ export default function TemporaryLanding() {
               <h2 className="font-heading text-[2.4rem] font-light leading-[1.1] text-[#2a3a42] lg:text-[3rem]">
                 {t("landing.customerSection.title")}
               </h2>
+              <CustomerBullets className="mt-6" />
               <PrimaryButton
                 onClick={() => handleSignupCta("customer_section", "vendor")}
                 className="mt-7 !px-7 !py-3.5 !text-[1.1rem]"
@@ -712,7 +712,7 @@ export default function TemporaryLanding() {
               </PrimaryButton>
             </div>
             <div className="mx-auto w-full max-w-[520px]">
-              <BookingFlowDemo />
+              <VendorHubStill />
             </div>
           </div>
         </div>
@@ -802,7 +802,7 @@ export default function TemporaryLanding() {
                 <span className="mt-0.5 text-[#e07a6a]">✓</span> {t("landing.closing.deal7")}
               </li>
             </ul>
-            <div className="mt-8 flex flex-wrap items-center gap-4">
+            <div className="mt-8 inline-flex flex-col items-center">
               <button
                 type="button"
                 onClick={() => handleSignupCta("closing_cta", "vendor")}
@@ -810,17 +810,10 @@ export default function TemporaryLanding() {
               >
                 {t("landing.closing.cta")}
               </button>
-              <button
-                type="button"
-                onClick={openLogin}
-                className="rounded-[12px] border-[1.5px] border-[rgba(245,240,232,0.4)] px-8 py-4 font-sans text-[1.1rem] font-semibold text-[#f5f0e8] transition-colors hover:bg-[rgba(245,240,232,0.08)]"
-              >
-                {t("landing.closing.logIn")}
-              </button>
+              <p className="mt-4 font-sans text-[0.9rem] text-[rgba(245,240,232,0.6)]">
+                {t("landing.closing.trustLine")}
+              </p>
             </div>
-            <p className="mt-4 font-sans text-[0.9rem] text-[rgba(245,240,232,0.6)]">
-              {t("landing.closing.trustLine")}
-            </p>
           </div>
         </div>
       </section>
