@@ -1325,7 +1325,6 @@
       "getStarted": "Get started"
     },
     "hero": {
-      "eyebrow": "For event vendors",
       "title": "Run your event business, <accent>all in one place.</accent>",
       "subtitle": "DMs, spreadsheets, quotes that go nowhere. It adds up. EventHub allows you to give customers total transparency to book you without any effort on your part.",
       "ctaVendor": "Get started as a vendor",
@@ -1452,6 +1451,28 @@
 
 
     "landingShared": {
+      "faq": {
+        "eyebrow": "Common questions",
+        "title": "You stay in control",
+        "q1": {
+          "q": "My event business is so custom — does EventHub have flexibility for customization?",
+          "a": "Yes. Build listings your way: single items, multi-tier packages, and add-ons customers can attach — each with your own pricing, what's included, deposit, and cancellation policy. Turn on pre-booking contact and customers can message you to work out the details before they book."
+        },
+        "q2": {
+          "q": "Do I have to allow \"instant bookings\" from customers?",
+          "a": "No. Every listing has a booking type you control: Instant Book, or Request to Book — where customers submit their dates and you personally accept or decline. Outside of Rentals, listings default to Request to Book, so nothing lands on your calendar without your say-so."
+        },
+        "q3": {
+          "q": "My business is logistics-heavy. How does EventHub handle logistics?",
+          "a": "Set your service radius and offer delivery, pickup, setup, takedown, and travel — each with its own fee. Fees can be flat or vary by location, and for out-of-area or variable jobs you send the customer a custom quote to accept before the booking is final."
+        }
+      },
+      "customerBullets": {
+        "transparent": "Transparent",
+        "professional": "Professional",
+        "easy": "User friendly",
+        "noBackAndForth": "No back and forth"
+      },
       "logIn": "Log in",
       "closingCta": "Create your free account",
       "freeToJoin": "Free to join · No credit card required",
@@ -1560,7 +1581,6 @@
         "getStarted": "Create free account"
       },
       "hero": {
-        "eyebrow": "See it work — no payment needed",
         "title": "Your event rental business is eating your time.<br /><accent>Take it back</accent>.",
         "subtitle": "DMs, spreadsheets, quotes that go nowhere. It adds up. EventHub allows you to give customers total transparency to book you without any effort on your part.",
         "trust": "Loved by event vendors",
@@ -1583,7 +1603,6 @@
         "getStarted": "Start earning free"
       },
       "hero": {
-        "eyebrow": "Your money, your rules",
         "title": "Get more event rental bookings. <accent>Work a fraction of the time</accent>.",
         "subtitle": "Your storefront shows customers everything up front, pricing, availability, and what's included, so more inquiries turn into paid bookings and fewer waste your day.",
         "trust": "Free to start · No credit card",
@@ -1591,22 +1610,6 @@
       },
       "testimonials": {
         "eyebrow": ""
-      },
-      "faq": {
-        "eyebrow": "Common questions",
-        "title": "You stay in control",
-        "q1": {
-          "q": "My event business is so custom — does EventHub have flexibility for customization?",
-          "a": "Yes. Build listings your way: single items, multi-tier packages, and add-ons customers can attach — each with your own pricing, what's included, deposit, and cancellation policy. Turn on pre-booking contact and customers can message you to work out the details before they book."
-        },
-        "q2": {
-          "q": "Do I have to allow \"instant bookings\" from customers?",
-          "a": "No. Every listing has a booking type you control: Instant Book, or Request to Book — where customers submit their dates and you personally accept or decline. Outside of Rentals, listings default to Request to Book, so nothing lands on your calendar without your say-so."
-        },
-        "q3": {
-          "q": "My business is logistics-heavy. How does EventHub handle logistics?",
-          "a": "Set your service radius and offer delivery, pickup, setup, takedown, and travel — each with its own fee. Fees can be flat or vary by location, and for out-of-area or variable jobs you send the customer a custom quote to accept before the booking is final."
-        }
       }
     },
 
@@ -1638,7 +1641,6 @@
         "getStarted": "Start free"
       },
       "hero": {
-        "eyebrow": "For event vendors",
         "title": "Get booked, the <accent>easy</accent> way.",
         "subtitle": "One storefront. One link. Two-minute setup.",
         "trust": "Free · No credit card · Cancel anytime",
@@ -1662,17 +1664,10 @@
         "getStarted": "Create free account"
       },
       "hero": {
-        "eyebrow": "The customer experience",
         "title": "Stop responding to event rental <accent>DMs</accent>.",
         "subtitle": "Paste one link into Facebook Marketplace and your socials. Customers see availability, logistics, inclusions, add-ons, and more. No more back-and-forth that goes nowhere.",
         "trust": "Free to start · No credit card · Upgrade Anytime",
         "ctaPrimary": "Try it out"
-      },
-      "setup": {
-        "eyebrow": "Your side takes minutes",
-        "title": "Give them something to book in <accent>two minutes</accent>.",
-        "body": "Guided listing creation turns your photos and prices into a live storefront. Publish, share the link, and let the bookings begin.",
-        "cta": "Create your storefront"
       },
       "testimonials": {
         "eyebrow": "From vendors like you"
