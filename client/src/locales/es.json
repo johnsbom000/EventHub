@@ -831,6 +831,384 @@
     "serviceAreaNationwide": "Nacional",
     "serviceAreaGlobal": "Global"
   },
+  "privacy": {
+    "pageTitle": "Política de Privacidad",
+    "backToEventHub": "Volver a EventHub",
+    "contents": "Contenido",
+    "effective": "En vigor desde el {{date}}",
+    "meta": "Ley aplicable: Estado de Utah · Consultas: support@eventhubglobal.com",
+    "contactEmail": "support@eventhubglobal.com",
+    "intro": [
+      "EventHub, LLC (\"EventHub\", \"nosotros\" o \"nuestro\") opera un mercado en línea que conecta a proveedores de alquiler y servicios para eventos con clientes. Esta Política de Privacidad explica cómo recopilamos, usamos, divulgamos y protegemos tu información cuando utilizas nuestra plataforma en eventhubglobal.com y cualquier aplicación móvil o de escritorio asociada (en conjunto, la \"Plataforma\").",
+      "Al acceder a la Plataforma o utilizarla, aceptas esta Política de Privacidad. Si no estás de acuerdo, deja de usarla."
+    ],
+    "sections": [
+      {
+        "id": "information-we-collect",
+        "label": "Información que recopilamos",
+        "heading": "1. Información que recopilamos",
+        "blocks": [
+          {
+            "type": "p",
+            "text": "**Información que proporcionas directamente**"
+          },
+          {
+            "type": "ul",
+            "items": [
+              "**Registro de la cuenta:** nombre, dirección de correo electrónico y foto de perfil cuando creas una cuenta.",
+              "**Alta de proveedores:** nombre comercial, domicilio comercial, información de identificación fiscal y datos bancarios o de tarjeta de débito (recopilados y almacenados por Stripe: consulta la Sección 3).",
+              "**Anuncios:** fotos, descripciones, precios, disponibilidad e información de ubicación que envías para tus ofertas de alquiler o de servicios.",
+              "**Reservas y pagos:** fechas del evento, direcciones de entrega, detalles de la reserva e información de la tarjeta de pago (recopilada por Stripe: consulta la Sección 3).",
+              "**Mensajes:** el contenido de los mensajes intercambiados entre clientes y proveedores a través de nuestro chat en la aplicación.",
+              "**Reseñas:** las calificaciones y reseñas escritas que envías sobre reservas completadas.",
+              "**Comunicaciones de soporte:** la información que nos proporcionas cuando te pones en contacto con nosotros."
+            ]
+          },
+          {
+            "type": "p",
+            "text": "**Información recopilada automáticamente**"
+          },
+          {
+            "type": "ul",
+            "items": [
+              "**Datos de uso:** páginas visitadas, consultas de búsqueda, anuncios vistos, clics y duración de la sesión.",
+              "**Información del dispositivo:** dirección IP, tipo de navegador, sistema operativo e identificadores del dispositivo.",
+              "**Datos de ubicación:** ubicación aproximada inferida a partir de la dirección IP y ubicación precisa (si lo permites), utilizada para mostrar proveedores cercanos y geocodificar direcciones.",
+              "**Cookies y tecnologías similares:** identificadores de sesión, preferencias de analítica y valores de indicadores de funcionalidad almacenados en tu navegador. Consulta nuestros Términos de Servicio para más detalles."
+            ]
+          },
+          {
+            "type": "p",
+            "text": "**Información de terceros**"
+          },
+          {
+            "type": "ul",
+            "items": [
+              "**Auth0:** información de autenticación, incluidos tu nombre, correo electrónico e imagen de perfil si inicias sesión con un proveedor social (Google, etc.).",
+              "**Stripe:** estado del pago, notificaciones de disputas y eventos de confirmación de pagos entregados mediante webhook.",
+              "**Google Calendar:** datos de eventos del calendario si conectas tu Google Calendar para gestionar la disponibilidad como proveedor."
+            ]
+          }
+        ]
+      },
+      {
+        "id": "how-we-use",
+        "label": "Cómo usamos la información",
+        "heading": "2. Cómo usamos tu información",
+        "blocks": [
+          {
+            "type": "p",
+            "text": "Usamos la información que recopilamos para:"
+          },
+          {
+            "type": "ul",
+            "items": [
+              "Crear y mantener tu cuenta y autenticar tu identidad.",
+              "Procesar reservas, pagos, reembolsos y liquidaciones.",
+              "Conectar a los clientes con los proveedores y facilitar la comunicación entre ellos.",
+              "Enviar correos electrónicos transaccionales (confirmaciones de reserva, recibos de pago, notificaciones de disputas, solicitudes de reseña).",
+              "Hacer cumplir nuestros Términos de Servicio, incluida nuestra política contra la elusión de la plataforma.",
+              "Detectar, investigar y prevenir fraudes, abusos e incidentes de seguridad.",
+              "Mejorar y personalizar la Plataforma mediante analítica y pruebas A/B.",
+              "Cumplir con las leyes aplicables y responder a solicitudes legítimas de autoridades gubernamentales."
+            ]
+          },
+          {
+            "type": "p",
+            "text": "No vendemos tu información personal a terceros ni la utilizamos para mostrar publicidad conductual en nombre de anunciantes externos."
+          }
+        ]
+      },
+      {
+        "id": "payment-processing",
+        "label": "Procesamiento de pagos",
+        "heading": "3. Procesamiento de pagos (Stripe)",
+        "blocks": [
+          {
+            "type": "p",
+            "text": "Todo el procesamiento de pagos en EventHub está a cargo de **Stripe, Inc.** (\"Stripe\"). Cuando introduces los datos de tu tarjeta de pago, esos datos se transmiten directamente a Stripe y nunca se almacenan en los servidores de EventHub."
+          },
+          {
+            "type": "p",
+            "text": "Stripe es un procesador de pagos certificado PCI-DSS Nivel 1. Al completar una compra o conectarte como proveedor, aceptas la Política de Privacidad de Stripe (https://stripe.com/privacy) y el Acuerdo de Cuenta Conectada de Stripe (https://stripe.com/legal/connect-account)."
+          },
+          {
+            "type": "p",
+            "text": "EventHub recibe de Stripe: el estado del pago (exitoso, fallido, reembolsado), la confirmación de la liquidación y las notificaciones de disputas o contracargos. Almacenamos estos eventos para mantener registros de reservas y financieros exactos."
+          },
+          {
+            "type": "p",
+            "text": "Las liquidaciones a proveedores se retienen durante un período definido por la Plataforma después de cada evento antes de transferirse a la cuenta de Stripe conectada del proveedor. Las prácticas de datos de Stripe, incluida la conservación de datos para registros financieros, se rigen por la Política de Privacidad de Stripe."
+          }
+        ]
+      },
+      {
+        "id": "authentication",
+        "label": "Autenticación",
+        "heading": "4. Autenticación (Auth0)",
+        "blocks": [
+          {
+            "type": "p",
+            "text": "La autenticación de las cuentas está gestionada por **Auth0, Inc.** (\"Auth0\"). Cuando te registras o inicias sesión, tus credenciales son procesadas por Auth0 conforme a su Política de Privacidad (https://auth0.com/privacy)."
+          },
+          {
+            "type": "p",
+            "text": "EventHub recibe de Auth0: tu identificador de usuario, dirección de correo electrónico, nombre y foto de perfil (si la proporcionas). No recibimos ni almacenamos tu contraseña."
+          },
+          {
+            "type": "p",
+            "text": "Si inicias sesión con un proveedor social (como Google), la política de privacidad de ese proveedor también se aplica a la información compartida durante la autenticación."
+          }
+        ]
+      },
+      {
+        "id": "maps-location",
+        "label": "Mapas y ubicación",
+        "heading": "5. Mapas y datos de ubicación (Mapbox)",
+        "blocks": [
+          {
+            "type": "p",
+            "text": "Las funciones de ubicación de proveedores y de visualización de mapas funcionan con **Mapbox, Inc.** Cuando exploras proveedores o introduces una dirección, los datos de ubicación pueden transmitirse a Mapbox para la geocodificación y la representación de los mosaicos del mapa, sujeto a la Política de Privacidad de Mapbox (https://www.mapbox.com/legal/privacy)."
+          },
+          {
+            "type": "p",
+            "text": "Solo se accede a la ubicación precisa del dispositivo (GPS) si otorgas permiso expresamente a través de tu navegador. Puedes navegar por la Plataforma sin conceder acceso a la ubicación; de forma predeterminada usamos tu ubicación aproximada derivada de la IP."
+          }
+        ]
+      },
+      {
+        "id": "messaging",
+        "label": "Mensajería",
+        "heading": "6. Mensajería (Stream)",
+        "blocks": [
+          {
+            "type": "p",
+            "text": "La mensajería dentro de la aplicación entre clientes y proveedores funciona con **Stream, Inc.** El contenido de los mensajes se transmite a Stream y es almacenado por Stream, sujeto a su Política de Privacidad (https://getstream.io/legal/privacy-policy/)."
+          },
+          {
+            "type": "p",
+            "text": "EventHub supervisa el contenido de los mensajes únicamente para hacer cumplir nuestros Términos de Servicio, incluida la detección de solicitudes para operar fuera de la plataforma. Los mensajes marcados por nuestro sistema automatizado pueden ser revisados por el personal de EventHub."
+          }
+        ]
+      },
+      {
+        "id": "google-calendar",
+        "label": "Integración con Google Calendar",
+        "heading": "7. Integración con Google Calendar",
+        "blocks": [
+          {
+            "type": "p",
+            "text": "EventHub ofrece a los proveedores una integración opcional con Google Calendar para sincronizar las reservas confirmadas en el calendario del proveedor."
+          },
+          {
+            "type": "p",
+            "text": "**A qué accedemos**"
+          },
+          {
+            "type": "p",
+            "text": "Cuando un proveedor conecta su cuenta de Google, EventHub solicita tres permisos:"
+          },
+          {
+            "type": "ul",
+            "items": [
+              "**Acceso de lectura y escritura a los eventos del calendario** (calendar.events): se usa para crear, actualizar y eliminar eventos de reservas en el calendario seleccionado por el proveedor, y para registrar canales de notificaciones push de modo que los cambios hechos directamente en Google Calendar se reflejen en la disponibilidad de EventHub.",
+              "**Acceso de solo lectura a la lista de calendarios del proveedor** (calendar.calendarlist.readonly): se usa para mostrar los calendarios disponibles del proveedor y que pueda elegir con cuál sincronizar.",
+              "**Acceso a la dirección de correo electrónico de la cuenta de Google del proveedor** (userinfo.email): se usa para mostrar la cuenta de Google conectada en la configuración del panel del proveedor."
+            ]
+          },
+          {
+            "type": "p",
+            "text": "EventHub solo lee datos de eventos del calendario específico que el proveedor selecciona expresamente. No accedemos a Drive, Contactos, Gmail ni a ningún otro dato de Google."
+          },
+          {
+            "type": "p",
+            "text": "**Cómo la usamos**"
+          },
+          {
+            "type": "p",
+            "text": "Usamos los datos de Google Calendar exclusivamente para escribir y actualizar los eventos de reservas cuando cambia el estado de la reserva, escribir eventos de bloqueo por vacaciones cuando un proveedor marca fechas como no disponibles y recibir notificaciones push cuando un proveedor edita un evento directamente en Google Calendar, de modo que la disponibilidad en EventHub se mantenga sincronizada. Los datos de Google Calendar nunca se utilizan para publicidad, analítica ni elaboración de perfiles de usuario."
+          },
+          {
+            "type": "p",
+            "text": "**Cómo la almacenamos**"
+          },
+          {
+            "type": "p",
+            "text": "Los tokens de acceso de OAuth (de corta duración, ~1 hora) y los tokens de actualización (de larga duración) se cifran en reposo con AES-256-GCM mediante una clave de 256 bits almacenada por separado de la base de datos. Los tokens nunca se comparten con terceros ni se registran ni se exponen al código del lado del cliente."
+          },
+          {
+            "type": "p",
+            "text": "**Conservación**"
+          },
+          {
+            "type": "p",
+            "text": "Los tokens se conservan mientras la integración esté activa. Al desconectarla desde el panel del proveedor, se eliminan de inmediato todos los tokens de nuestra base de datos y se revoca el token de acceso ante Google. La eliminación de la cuenta purga todos los tokens de Google en un plazo de 30 días."
+          },
+          {
+            "type": "p",
+            "text": "**Derechos del proveedor**"
+          },
+          {
+            "type": "p",
+            "text": "Los proveedores pueden desconectar la integración con Google Calendar en cualquier momento desde la Configuración del panel. Esto detiene toda sincronización futura y elimina los tokens almacenados. Los eventos de calendario creados previamente no se eliminan de Google Calendar al desconectar. Los proveedores también pueden revocar el acceso de EventHub directamente en https://myaccount.google.com/permissions"
+          }
+        ]
+      },
+      {
+        "id": "how-we-share",
+        "label": "Cómo compartimos la información",
+        "heading": "8. Cómo compartimos tu información",
+        "blocks": [
+          {
+            "type": "p",
+            "text": "Compartimos tu información únicamente en las siguientes circunstancias:"
+          },
+          {
+            "type": "ul",
+            "items": [
+              "**Entre clientes y proveedores:** cuando se crea una reserva, compartimos con el proveedor el nombre del cliente, los detalles del evento y la dirección de entrega. El nombre comercial, la ubicación y la información de contacto del proveedor se comparten con el cliente.",
+              "**Proveedores de servicios:** compartimos datos con Stripe, Auth0, Mapbox, Stream y otros subencargados descritos anteriormente, así como con proveedores de infraestructura en la nube (como Railway y Neon), únicamente para operar y mejorar la Plataforma.",
+              "**Obligaciones legales:** podemos divulgar información si lo exige la ley, una orden judicial o una autoridad gubernamental, o si creemos que la divulgación es necesaria para proteger los derechos, la propiedad o la seguridad de EventHub, de nuestros usuarios o del público.",
+              "**Transferencias empresariales:** si EventHub es adquirida, se fusiona o participa en una transacción corporativa similar, tu información podrá transferirse como parte de esa transacción. Te lo notificaremos por correo electrónico o mediante un aviso destacado en la Plataforma antes de que se transfiera tu información."
+            ]
+          },
+          {
+            "type": "p",
+            "text": "No vendemos, alquilamos ni intercambiamos tu información personal con terceros para sus fines de marketing."
+          }
+        ]
+      },
+      {
+        "id": "data-retention",
+        "label": "Conservación de datos",
+        "heading": "9. Conservación de datos",
+        "blocks": [
+          {
+            "type": "p",
+            "text": "Conservamos tu información personal mientras tu cuenta esté activa o durante el tiempo necesario para prestar los servicios. También conservamos información para cumplir obligaciones legales (incluidos los requisitos fiscales y de registros financieros, que pueden extenderse hasta 7 años), resolver disputas y hacer cumplir acuerdos."
+          },
+          {
+            "type": "p",
+            "text": "Cuando solicitas la eliminación de tu cuenta, eliminaremos o anonimizaremos tu información personal en un plazo de 30 días, salvo cuando la conservación sea exigida por ley o necesaria para resolver disputas pendientes."
+          }
+        ]
+      },
+      {
+        "id": "security",
+        "label": "Seguridad",
+        "heading": "10. Seguridad",
+        "blocks": [
+          {
+            "type": "p",
+            "text": "Aplicamos salvaguardas estándar del sector, entre ellas la transmisión cifrada de datos (HTTPS/TLS), el almacenamiento cifrado de credenciales sensibles, la validación de tokens de autenticación en el servidor y controles de acceso que limitan el acceso del personal a los datos personales."
+          },
+          {
+            "type": "p",
+            "text": "Ningún método de transmisión por Internet ni de almacenamiento electrónico es 100 % seguro. Aunque empleamos medios comercialmente razonables para proteger tu información, no podemos garantizar una seguridad absoluta. Si detectas una vulnerabilidad de seguridad, escríbenos a support@eventhubglobal.com."
+          }
+        ]
+      },
+      {
+        "id": "your-rights",
+        "label": "Tus derechos",
+        "heading": "11. Tus derechos",
+        "blocks": [
+          {
+            "type": "p",
+            "text": "Según tu ubicación, es posible que tengas derecho a:"
+          },
+          {
+            "type": "ul",
+            "items": [
+              "**Acceso:** solicitar una copia de la información personal que conservamos sobre ti.",
+              "**Rectificación:** solicitar la corrección de información inexacta o incompleta.",
+              "**Supresión:** solicitar la eliminación de tu información personal, sujeta a los requisitos legales de conservación.",
+              "**Portabilidad:** recibir tu información personal en un formato estructurado y legible por máquina.",
+              "**Oposición:** oponerte al tratamiento de tu información personal para determinados fines.",
+              "**Retiro del consentimiento:** cuando el tratamiento se base en el consentimiento, retirarlo en cualquier momento sin que ello afecte al tratamiento previo."
+            ]
+          },
+          {
+            "type": "p",
+            "text": "Para ejercer estos derechos, escríbenos a support@eventhubglobal.com. Responderemos en un plazo de 30 días. Es posible que te pidamos verificar tu identidad antes de atender una solicitud."
+          }
+        ]
+      },
+      {
+        "id": "california",
+        "label": "Residentes de California",
+        "heading": "12. Residentes de California (CCPA / CPRA)",
+        "blocks": [
+          {
+            "type": "p",
+            "text": "Si resides en California, la Ley de Privacidad del Consumidor de California (CCPA) y la Ley de Derechos de Privacidad de California (CPRA) te otorgan derechos adicionales, entre ellos:"
+          },
+          {
+            "type": "ul",
+            "items": [
+              "El derecho a saber qué información personal recopilamos, usamos, divulgamos y vendemos.",
+              "El derecho a eliminar la información personal que hemos recopilado de ti (sujeto a excepciones).",
+              "El derecho a corregir información personal inexacta.",
+              "El derecho a excluirte de la venta o el intercambio de información personal. **No vendemos ni compartimos información personal según la definición de la CCPA/CPRA.**",
+              "El derecho a no sufrir discriminación por ejercer tus derechos de privacidad."
+            ]
+          },
+          {
+            "type": "p",
+            "text": "Para presentar una solicitud de derechos de privacidad de California, escribe a support@eventhubglobal.com con el asunto \"California Privacy Request\". Responderemos en un plazo de 45 días."
+          }
+        ]
+      },
+      {
+        "id": "children",
+        "label": "Privacidad de menores",
+        "heading": "13. Privacidad de menores",
+        "blocks": [
+          {
+            "type": "p",
+            "text": "La Plataforma está dirigida a usuarios que tengan al menos 18 años. No recopilamos a sabiendas información personal de menores de 13 años. Si descubrimos que hemos recopilado información personal de un menor de 13 años sin el consentimiento verificable de sus padres o tutores, eliminaremos esa información. Si crees que un menor nos ha proporcionado información personal, escríbenos a support@eventhubglobal.com."
+          }
+        ]
+      },
+      {
+        "id": "changes",
+        "label": "Cambios a esta Política",
+        "heading": "14. Cambios a esta Política",
+        "blocks": [
+          {
+            "type": "p",
+            "text": "Podemos actualizar esta Política de Privacidad cada cierto tiempo. Si realizamos cambios sustanciales, te lo notificaremos actualizando la fecha de entrada en vigor en la parte superior de esta política y, cuando la ley lo exija, enviando un correo electrónico a la dirección asociada a tu cuenta o mostrando un aviso destacado en la Plataforma."
+          },
+          {
+            "type": "p",
+            "text": "El uso continuado de la Plataforma después de la fecha de entrada en vigor de cualquier cambio constituye la aceptación de la Política de Privacidad actualizada."
+          }
+        ]
+      },
+      {
+        "id": "contact",
+        "label": "Contáctanos",
+        "heading": "15. Contáctanos",
+        "blocks": [
+          {
+            "type": "p",
+            "text": "Si tienes preguntas, inquietudes o solicitudes sobre esta Política de Privacidad, ponte en contacto con nosotros:"
+          },
+          {
+            "type": "ul",
+            "items": [
+              "**Correo electrónico:** support@eventhubglobal.com",
+              "**Dirección postal:** EventHub, LLC · Attn: Privacy · [Address] · Utah, EE. UU."
+            ]
+          },
+          {
+            "type": "p",
+            "text": "En el caso de disputas que no se resuelvan a través de nuestro equipo de soporte, es posible que tengas derecho a presentar una reclamación ante tu autoridad local de protección de datos."
+          }
+        ]
+      }
+    ]
+  },
   "terms": {
     "pageTitle": "Términos de Servicio",
     "backToEventHub": "Volver a EventHub",
@@ -1657,6 +2035,21 @@
         "q": "Mi negocio tiene mucha logística. ¿Cómo gestiona EventHub la logística?",
         "a": "Define tu radio de servicio y ofrece entrega, recogida, montaje, desmontaje y desplazamiento, cada uno con su propia tarifa. Las tarifas pueden ser fijas o variar según la ubicación, y para trabajos fuera de zona o variables envías al cliente un presupuesto personalizado para que lo acepte antes de confirmar la reserva."
       }
+    },
+    "commissionPlan": {
+      "eyebrow": "Precios",
+      "title": "Un solo plan. Sin mensualidad.",
+      "subtitle": "Ganamos cuando tú ganas.",
+      "points": {
+        "noCard": "No se requiere tarjeta de crédito",
+        "noCommitment": "Sin compromiso mensual",
+        "noBookingNoPay": "Si no reservas, no pagas"
+      },
+      "customerFee": "Se añade una tarifa de servicio al pagar y la abona el cliente.",
+      "feeNote": "Cobramos una comisión sobre cada reserva. Las tarifas exactas están en nuestros",
+      "feeNoteLink": "Términos de Servicio",
+      "reassurance": "Sin tarjeta. Sin mensualidad.",
+      "cta": "Crea tu cuenta gratis"
     },
     "customerBullets": {
       "transparent": "Transparente",

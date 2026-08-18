@@ -13,6 +13,7 @@ import { readPricingModel, type PricingModel } from "@/hooks/usePricingModel";
 import VendorHubStill from "@/pages/landing/VendorHubStill";
 import { CustomerBullets } from "@/pages/landing/primitives";
 import HowItWorks from "@/pages/landing/HowItWorks";
+import CommissionPlanSection from "@/pages/landing/CommissionPlanSection";
 import { Reveal } from "@/pages/landing/motion";
 
 type AuthTab = "login" | "signup";
@@ -763,6 +764,15 @@ export default function TemporaryLanding({ model }: { model: PricingModel }) {
           </div>
         </div>
       </section>
+
+      {/* Pricing (commission arm only). This page's subscription pricing surface
+          is the priced launch-deal panel in the closing section below, which is
+          gated to `model === "subscription"`; without this the commission arm
+          had no pricing surface anywhere on the page. The two never render
+          together. */}
+      {model === "commission" && (
+        <CommissionPlanSection animated onStartFree={() => handleSignupCta("pricing_start_free", "vendor")} />
+      )}
 
       {/* Closing CTA */}
       <section className="bg-[#2a3a42]">

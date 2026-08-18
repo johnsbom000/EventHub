@@ -6,6 +6,7 @@ import { Reveal, fadeUp, fadeUpBlur, stagger, EASE } from "@/pages/landing/motio
 import HowItWorks from "@/pages/landing/HowItWorks";
 import Testimonials from "@/pages/landing/Testimonials";
 import FreeVsProSection from "@/pages/landing/FreeVsProSection";
+import CommissionPlanSection from "@/pages/landing/CommissionPlanSection";
 import FaqSection from "@/pages/landing/FaqSection";
 import CustomerExperienceSection from "@/pages/landing/CustomerExperienceSection";
 import VendorDashboardDemo from "@/pages/landing/VendorDashboardDemo";
@@ -108,8 +109,10 @@ export default function TemporaryLandingFreeA({ model }: { model: PricingModel }
       <Reveal>
         <CustomerExperienceSection visual="hub" />
       </Reveal>
-      {/* Free-vs-Pro pricing has no meaning under the commission model: there is
-          one tier, so the section is omitted rather than restated. */}
+      {/* Pricing. Each arm gets its own section and never both: the Free-vs-Pro
+          table for subscription, the one-plan section for commission. The
+          commission arm used to get nothing here, which left it with no pricing
+          surface at all. */}
       {model === "subscription" && handleProCta && (
         <Reveal>
           <FreeVsProSection
@@ -117,6 +120,11 @@ export default function TemporaryLandingFreeA({ model }: { model: PricingModel }
             onStartFree={() => handleSignupCta("pricing_start_free")}
             onTryPro={() => handleProCta("pricing_try_pro")}
           />
+        </Reveal>
+      )}
+      {model === "commission" && (
+        <Reveal>
+          <CommissionPlanSection animated onStartFree={() => handleSignupCta("pricing_start_free")} />
         </Reveal>
       )}
       <Reveal>

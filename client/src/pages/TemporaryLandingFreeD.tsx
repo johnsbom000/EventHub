@@ -4,6 +4,7 @@ import { useLandingSignup } from "@/pages/landing/signup";
 import HowItWorks from "@/pages/landing/HowItWorks";
 import Testimonials from "@/pages/landing/Testimonials";
 import FreeVsProSection from "@/pages/landing/FreeVsProSection";
+import CommissionPlanSection from "@/pages/landing/CommissionPlanSection";
 import FaqSection from "@/pages/landing/FaqSection";
 import CustomerExperienceSection from "@/pages/landing/CustomerExperienceSection";
 import ScatteredBookings from "@/pages/landing/ScatteredBookings";
@@ -60,14 +61,19 @@ export default function TemporaryLandingFreeD({ model }: { model: PricingModel }
       <HowItWorks onSignup={() => handleSignupCta("how_it_works")} className="border-t-transparent" />
       <CustomerExperienceSection visual="hub" />
       <Testimonials theme="light" layout="stacked" eyebrowKey={`${NS}.testimonials.eyebrow`} />
-      {/* Free-vs-Pro pricing has no meaning under the commission model: there is
-          one tier, so the section is omitted rather than restated. */}
+      {/* Pricing. Each arm gets its own section and never both: the Free-vs-Pro
+          table for subscription, the one-plan section for commission. The
+          commission arm used to get nothing here, which left it with no pricing
+          surface at all. */}
       {model === "subscription" && handleProCta && (
         <FreeVsProSection
           treatment="nocard"
           onStartFree={() => handleSignupCta("pricing_start_free")}
           onTryPro={() => handleProCta("pricing_try_pro")}
         />
+      )}
+      {model === "commission" && (
+        <CommissionPlanSection onStartFree={() => handleSignupCta("pricing_start_free")} />
       )}
       <FaqSection />
       <Closing
