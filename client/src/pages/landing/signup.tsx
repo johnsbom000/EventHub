@@ -7,7 +7,6 @@ import BrandWordmark from "@/components/BrandWordmark";
 import AuthModal from "@/components/AuthModal";
 import { trackBoth } from "@/lib/tracking";
 import { initEngagement } from "@/lib/engagement";
-import { readLandingVariant, type LandingVariant } from "@/hooks/useLandingVariant";
 import { captureAttribution, readAttribution } from "@/lib/landingAttribution";
 import { readPricingModel, type PricingModel } from "@/hooks/usePricingModel";
 
@@ -23,14 +22,13 @@ import { readPricingModel, type PricingModel } from "@/hooks/usePricingModel";
      vendor/customer choice on its Sign-up tab, so even the login → sign-up
      detour can't silently mint a customer account.
 
-   PRO-TRIAL ("Try Pro free") — A/B TEST (tied to landing variant):
+   PRO-TRIAL ("Try Pro free") — subscription model only:
    A "Try Pro free" click starts a 30-day Pro trial after the vendor account is
-   created. Which trial treatment fires is tied to the landing variant the
-   visitor saw (see `treatmentForVariant`):
-     - card-upfront (A/C/E): VendorProvision hands off to Stripe Checkout to
-       collect a card, then the trial auto-charges at day 30.
-     - no-card (B/D): VendorProvision calls /billing/start-trial to begin a
-       card-free trial that downgrades to Free at day 30 unless a card is added.
+   created. Two treatments exist (see `PRO_TRIAL_TREATMENT`):
+     - card-upfront: VendorProvision hands off to Stripe Checkout to collect a
+       card, then the trial auto-charges at day 30. Currently PAUSED.
+     - no-card: VendorProvision calls /billing/start-trial to begin a card-free
+       trial that downgrades to Free at day 30 unless a card is added. In use.
    The chosen treatment is passed to VendorProvision via `eh:pro-trial-mode`.
 --------------------------------------------------------------------------- */
 
@@ -38,14 +36,12 @@ const VENDOR_INTENT_RETURN_TO = "/vendor/provision";
 
 type SignupIntent = "free" | "pro";
 
-// Pro-trial treatment assignment. The card-upfront arm is PAUSED for now, so
-// every landing variant starts a no-card trial. The card path (Stripe Checkout)
-// remains built and dormant in VendorProvision; to re-enable the card-vs-no-card
-// A/B, map direction-a/c/e back to "card" here.
+// Pro-trial treatment. The card-upfront arm is PAUSED, so every landing page
+// starts a no-card trial. The card path (Stripe Checkout) remains built and
+// dormant in VendorProvision; to re-enable the card-vs-no-card A/B, branch on
+// the landing style here and write "card" for the chosen pages.
 type ProTrialTreatment = "card" | "nocard";
-function treatmentForVariant(_variant: LandingVariant): ProTrialTreatment {
-  return "nocard";
-}
+const PRO_TRIAL_TREATMENT: ProTrialTreatment = "nocard";
 
 function SignupDialog({
   open,
@@ -211,8 +207,8 @@ export function useLandingSignup(_ns: string, model: PricingModel) {
     // the effect first; it is not doing real work today.
     captureAttribution();
     sessionStorage.setItem("eh:after-auth-intent", "vendor");
-    // Pro-trial A/B: a "Try Pro free" click (intent === "pro") starts a trial
-    // after the account is created; the treatment is tied to the landing variant.
+    // Pro-trial: a "Try Pro free" click (intent === "pro") starts a trial after
+    // the account is created, using the currently-selected treatment.
     // A plain "Start free" click clears any stale flags so it can never inherit a
     // Pro trial. These are read (and cleared) by VendorProvision post-provision.
     // A commission vendor never starts a Pro trial (there is no Pro tier), so
@@ -221,7 +217,7 @@ export function useLandingSignup(_ns: string, model: PricingModel) {
     if (intent === "pro" && model === "subscription") {
       sessionStorage.setItem("eh:pro-trial-intent", "1");
       sessionStorage.setItem("eh:pro-trial-interval", "monthly");
-      sessionStorage.setItem("eh:pro-trial-mode", treatmentForVariant(readLandingVariant()));
+      sessionStorage.setItem("eh:pro-trial-mode", PRO_TRIAL_TREATMENT);
     } else {
       sessionStorage.removeItem("eh:pro-trial-intent");
       sessionStorage.removeItem("eh:pro-trial-interval");

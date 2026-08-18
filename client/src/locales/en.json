@@ -843,7 +843,7 @@
     "s4Title": "4. Vendor Listings",
     "s4Body": "Vendors are solely responsible for the accuracy of their listings, including pricing, availability, and service descriptions. EventHub does not verify listing content.",
     "s5Title": "5. Bookings & Payments",
-    "s5Body": "All bookings are subject to vendor acceptance. Payments are processed through Stripe. EventHub may charge a service fee to customers and, depending on the vendor's subscription plan, a platform fee to vendors on bookings; vendors on paid plans may be exempt from the vendor platform fee. All applicable fees are disclosed before checkout and in the vendor dashboard. Stripe's payment-processing fees may also apply. Payouts are issued after successful booking completion, less any applicable fees. EventHub may change its fees, fee structure, and subscription pricing at any time; any change applies only to bookings and subscription periods that begin after it takes effect, and current fees are always shown before checkout and in the vendor dashboard.",
+    "s5Body": "All bookings are subject to vendor acceptance. Payments are processed through Stripe. EventHub charges customers a service fee of 5% of the booked amount on every booking, under every plan and pricing model, added to the customer's total and shown before checkout. EventHub charges vendors a platform commission of 8% of the booked amount on every booking, deducted from the vendor's payout. There is exactly one exemption: a vendor on the subscription pricing model who holds an active paid EventHub Pro subscription pays 0% commission for as long as that subscription is active. Vendors on the free tier of the subscription pricing model pay the 8% commission, and vendors on the commission pricing model have no subscription and pay the 8% commission on all bookings. A Pro subscription never waives the customer service fee. Fee rates are fixed when each booking is created and are not changed retroactively. All applicable fees are disclosed before checkout and in the vendor dashboard. Stripe's payment-processing fees may also apply. Payouts are issued after successful booking completion, less any applicable fees. EventHub may change its fees, fee structure, and subscription pricing at any time; any change applies only to bookings and subscription periods that begin after it takes effect, and current fees are always shown before checkout and in the vendor dashboard.",
     "s6Title": "6. Cancellations & Refunds",
     "s6Body": "Cancellation policies are set by individual vendors and are displayed on each listing. EventHub enforces the vendor's stated policy. Refunds are issued per that policy.",
     "s7Title": "7. Disputes",
@@ -1398,7 +1398,7 @@
       "deal7": "30 days free, cancel anytime",
       "cta": "Start your 30-day free trial — $29/mo",
       "logIn": "Log in",
-      "trustLine": "No vendor fees · Secure payouts via Stripe · Cancel anytime"
+      "trustLine": "No vendor fees on Pro · Secure payouts via Stripe · Cancel anytime"
     },
     "faq": {
       "eyebrow": "Common questions",
@@ -1618,7 +1618,7 @@
 
     "landingFreeB": {
       "bar": {
-        "text": "Keep 100% of what you book."
+        "text": "Get booked. Get paid. Keep it simple."
       },
       "header": {
         "getStarted": "Start earning free"

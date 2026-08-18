@@ -8,7 +8,8 @@ import { Toaster } from "@/components/ui/toaster";
 import { ScrollToTop } from "@/components/ScrollToTop";
 import { TooltipProvider } from "@/components/ui/tooltip";
 import { useTrackPageView } from "@/hooks/useTrackPageView";
-import { readLandingVariant, useLandingStyle } from "@/hooks/useLandingVariant";
+import { useLandingStyle } from "@/hooks/useLandingVariant";
+import { readAttribution } from "@/lib/landingAttribution";
 import { usePricingModelResolution } from "@/hooks/usePricingModel";
 import { phCapture } from "@/lib/posthog";
 import { trackSignupCompletedOnce } from "@/lib/tracking";
@@ -144,16 +145,18 @@ function PostLogin() {
     if (hasRedirectedRef.current) return;
     hasRedirectedRef.current = true;
 
-    // Conversion event for the landing A/B/n experiment. Tagged with the sticky
-    // variant so every arm is measurable. (Landing-page vendor signups return to
-    // /vendor/provision instead and fire vendor_provisioned there.)
+    // Conversion event for the landing test. Tagged with the first-touch landing
+    // style (the /for-vendors route the visitor actually arrived on) so every ad
+    // is measurable; null means they did not arrive via an ad landing at all.
+    // (Landing-page vendor signups return to /vendor/provision instead and fire
+    // vendor_provisioned there.)
     const role = vendorDetection.status === "vendor" ? "vendor" : "customer";
     // Fire to PostHog (signup_completed) AND the Meta Pixel (CompleteRegistration)
     // so both funnels see the account-creation conversion. Once-per-session guard
     // lives in the helper so this and the VendorProvision path can't double-count
     // the same signup. `user.email` rides only to the server-side CAPI copy.
     trackSignupCompletedOnce(
-      { role, variant: readLandingVariant() },
+      { role, landing_style: readAttribution()?.landingStyle ?? null },
       user?.email,
     );
 

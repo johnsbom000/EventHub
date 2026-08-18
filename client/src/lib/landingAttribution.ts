@@ -17,8 +17,7 @@ import { styleFromPath, type LandingStyle } from "@/hooks/useLandingVariant";
  * unresolved. Freezing that placeholder via first-touch would have permanently
  * mis-stamped most commission-arm signups. Instead, the pricing model is read
  * live (readPricingModel()) at provision time in VendorProvision.tsx /
- * VendorOnboarding.tsx, by which point flags have long since resolved — the
- * same pattern this codebase already uses for readLandingVariant().
+ * VendorOnboarding.tsx, by which point flags have long since resolved.
  */
 const STORAGE_KEY = "eh:landing-attribution";
 

@@ -843,7 +843,7 @@
     "s4Title": "4. Listados de Proveedores",
     "s4Body": "Los proveedores son los únicos responsables de la exactitud de sus listados, incluyendo precios, disponibilidad y descripciones de servicios. EventHub no verifica el contenido de los listados.",
     "s5Title": "5. Reservas y Pagos",
-    "s5Body": "Todas las reservas están sujetas a la aceptación del proveedor. Los pagos se procesan a través de Stripe. EventHub puede cobrar una tarifa de servicio a los clientes y, según el plan de suscripción del proveedor, una tarifa de plataforma a los proveedores en las reservas; los proveedores con planes de pago pueden estar exentos de la tarifa de plataforma. Todas las tarifas aplicables se muestran antes del pago y en el panel del proveedor. También pueden aplicarse las tarifas estándar de procesamiento de pagos de Stripe. Los pagos se emiten tras la finalización exitosa de la reserva, menos las tarifas aplicables. EventHub puede cambiar sus tarifas, la estructura de tarifas y los precios de suscripción en cualquier momento; cualquier cambio se aplica únicamente a las reservas y los períodos de suscripción que comiencen después de que entre en vigor, y las tarifas vigentes siempre se muestran antes del pago y en el panel del proveedor.",
+    "s5Body": "Todas las reservas están sujetas a la aceptación del proveedor. Los pagos se procesan a través de Stripe. EventHub cobra a los clientes una tarifa de servicio del 5% del importe reservado en cada reserva, en todos los planes y modelos de precios, que se añade al total del cliente y se muestra antes del pago. EventHub cobra a los proveedores una comisión de plataforma del 8% del importe reservado en cada reserva, que se descuenta del pago al proveedor. Existe exactamente una excepción: un proveedor en el modelo de suscripción que mantenga una suscripción de pago activa a EventHub Pro paga un 0% de comisión mientras esa suscripción siga activa. Los proveedores del nivel gratuito del modelo de suscripción pagan la comisión del 8%, y los proveedores del modelo de comisión no tienen suscripción y pagan la comisión del 8% en todas las reservas. Una suscripción Pro nunca exime de la tarifa de servicio del cliente. Las tarifas se fijan al crear cada reserva y no se modifican de forma retroactiva. Todas las tarifas aplicables se muestran antes del pago y en el panel del proveedor. También pueden aplicarse las tarifas estándar de procesamiento de pagos de Stripe. Los pagos se emiten tras la finalización exitosa de la reserva, menos las tarifas aplicables. EventHub puede cambiar sus tarifas, la estructura de tarifas y los precios de suscripción en cualquier momento; cualquier cambio se aplica únicamente a las reservas y los períodos de suscripción que comiencen después de que entre en vigor, y las tarifas vigentes siempre se muestran antes del pago y en el panel del proveedor.",
     "s6Title": "6. Cancelaciones y Reembolsos",
     "s6Body": "Las políticas de cancelación las establecen los proveedores individuales y se muestran en cada listado. EventHub aplica la política declarada del proveedor. Los reembolsos se emiten según esa política.",
     "s7Title": "7. Disputas",
@@ -1398,7 +1398,7 @@
       "deal7": "30 días gratis, cancela cuando quieras",
       "cta": "Comienza tu prueba gratuita de 30 días — $29/mes",
       "logIn": "Iniciar sesión",
-      "trustLine": "Sin tarifas de proveedor · Pagos seguros vía Stripe · Cancela cuando quieras"
+      "trustLine": "Sin tarifas de proveedor con Pro · Pagos seguros vía Stripe · Cancela cuando quieras"
     },
     "footer": {
       "description": "La plataforma todo en uno para que los proveedores de eventos publiquen servicios, gestionen reservas y cobren. También es donde los anfitriones encuentran y reservan los proveedores perfectos para cualquier evento.",
@@ -1599,7 +1599,7 @@
   },
   "landingFreeB": {
     "bar": {
-      "text": "Quédate con el 100% de lo que reservas."
+      "text": "Consigue reservas. Cobra. Sin complicaciones."
     },
     "header": {
       "getStarted": "Empieza a ganar gratis"

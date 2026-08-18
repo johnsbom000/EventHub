@@ -9,8 +9,14 @@ import CustomerExperienceSection from "@/pages/landing/CustomerExperienceSection
 import VendorDashboardDemo from "@/pages/landing/VendorDashboardDemo";
 import type { PricingModel } from "@/hooks/usePricingModel";
 
-/* Direction B — "Money & zero fees": the financial payoff (keep 100%, 0%
-   commission) is the strongest driver. Dark hero + three stat cards. */
+/* Direction B — "More bookings, less work": the earnings payoff is the
+   strongest driver. Dark hero + storefront demo.
+
+   NOTE: this page's pitch was originally built on a zero-fee promise ("keep
+   100%", "0% commission"). That premise is false now that free-tier vendors pay
+   the 8% commission, so the fee claims were removed. Rewriting Direction B's
+   money story into something both accurate and compelling is a marketing
+   decision that has NOT been made — the copy here is currently neutral. */
 
 const NS = "landingFreeB";
 

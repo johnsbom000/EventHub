@@ -843,7 +843,7 @@
     "s4Title": "4. Listagens de Fornecedores",
     "s4Body": "Os fornecedores são os únicos responsáveis pela precisão de suas listagens, incluindo preços, disponibilidade e descrições de serviços. O EventHub não verifica o conteúdo das listagens.",
     "s5Title": "5. Reservas e Pagamentos",
-    "s5Body": "Todas as reservas estão sujeitas à aceitação do fornecedor. Os pagamentos são processados pelo Stripe. O EventHub pode cobrar uma taxa de serviço dos clientes e, dependendo do plano de assinatura do fornecedor, uma taxa de plataforma dos fornecedores nas reservas; os fornecedores em planos pagos podem estar isentos da taxa de plataforma. Todas as taxas aplicáveis são exibidas antes do pagamento e no painel do fornecedor. As taxas padrão de processamento de pagamento do Stripe também podem ser aplicadas. Os pagamentos são emitidos após a conclusão bem-sucedida da reserva, menos as taxas aplicáveis. O EventHub pode alterar suas taxas, a estrutura de taxas e os preços de assinatura a qualquer momento; qualquer alteração se aplica apenas às reservas e aos períodos de assinatura que comecem após entrar em vigor, e as taxas vigentes são sempre exibidas antes do pagamento e no painel do fornecedor.",
+    "s5Body": "Todas as reservas estão sujeitas à aceitação do fornecedor. Os pagamentos são processados pelo Stripe. O EventHub cobra dos clientes uma taxa de serviço de 5% do valor reservado em todas as reservas, em todos os planos e modelos de preço, acrescentada ao total do cliente e exibida antes do pagamento. O EventHub cobra dos fornecedores uma comissão de plataforma de 8% do valor reservado em todas as reservas, descontada do repasse ao fornecedor. Existe exatamente uma exceção: um fornecedor no modelo de assinatura que mantenha uma assinatura paga ativa do EventHub Pro paga 0% de comissão enquanto essa assinatura estiver ativa. Os fornecedores do nível gratuito do modelo de assinatura pagam a comissão de 8%, e os fornecedores do modelo de comissão não têm assinatura e pagam a comissão de 8% em todas as reservas. Uma assinatura Pro nunca isenta da taxa de serviço do cliente. As taxas são fixadas na criação de cada reserva e não são alteradas retroativamente. Todas as taxas aplicáveis são exibidas antes do pagamento e no painel do fornecedor. As taxas padrão de processamento de pagamento do Stripe também podem ser aplicadas. Os pagamentos são emitidos após a conclusão bem-sucedida da reserva, menos as taxas aplicáveis. O EventHub pode alterar suas taxas, a estrutura de taxas e os preços de assinatura a qualquer momento; qualquer alteração se aplica apenas às reservas e aos períodos de assinatura que comecem após entrar em vigor, e as taxas vigentes são sempre exibidas antes do pagamento e no painel do fornecedor.",
     "s6Title": "6. Cancelamentos e Reembolsos",
     "s6Body": "As políticas de cancelamento são definidas pelos fornecedores individuais e são exibidas em cada listagem. O EventHub aplica a política declarada pelo fornecedor. Os reembolsos são emitidos conforme essa política.",
     "s7Title": "7. Disputas",
@@ -1398,7 +1398,7 @@
       "deal7": "30 dias grátis, cancele quando quiser",
       "cta": "Comece seu teste gratuito de 30 dias — $29/mês",
       "logIn": "Entrar",
-      "trustLine": "Sem taxas de fornecedor · Pagamentos seguros via Stripe · Cancele quando quiser"
+      "trustLine": "Sem taxas de fornecedor no Pro · Pagamentos seguros via Stripe · Cancele quando quiser"
     },
     "footer": {
       "description": "A plataforma completa para fornecedores de eventos anunciarem serviços, gerenciarem reservas e receberem pagamentos. É também onde anfitriões encontram e reservam os fornecedores perfeitos para qualquer evento.",
@@ -1599,7 +1599,7 @@
   },
   "landingFreeB": {
     "bar": {
-      "text": "Fique com 100% do que você reserva."
+      "text": "Receba reservas. Receba o pagamento. Sem complicação."
     },
     "header": {
       "getStarted": "Comece a ganhar grátis"
