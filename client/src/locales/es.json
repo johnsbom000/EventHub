@@ -1727,7 +1727,7 @@
     "reassurance": "¿Aún no estás seguro? Empieza con el plan Gratis y mejora en cuanto necesites más: tu tienda te acompaña.",
     "free": {
       "title": "Gratis",
-      "note": "gratis para siempre",
+      "note": "sin suscripción",
       "cta": "Empezar gratis"
     },
     "pro": {
@@ -1741,6 +1741,7 @@
       "save": "Ahorra 17%"
     },
     "rows": {
+      "commission": "Comisión de EventHub",
       "storefront": "Tu propia tienda y enlace de reservas",
       "bookings": "Recibe reservas y gestiona tu calendario",
       "messaging": "Mensajería con clientes en la app",
@@ -1759,7 +1760,12 @@
       "reminder": "Te avisaremos antes de que se renueve",
       "cancel": "Cancela cuando quieras",
       "keepFree": "Conserva tu plan gratis para siempre"
-    }
+    },
+    "values": {
+      "applies": "Se aplica"
+    },
+    "feeNote": "Se aplica una tarifa de servicio al cliente en cada reserva, y Pro exime tu comisión por reserva. Las tarifas exactas están en nuestros",
+    "feeNoteLink": "Términos de Servicio"
   },
   "landingFreeA": {
     "bar": {

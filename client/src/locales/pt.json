@@ -1727,7 +1727,7 @@
     "reassurance": "Ainda em dúvida? Comece no plano Grátis e faça upgrade assim que precisar de mais — sua vitrine vai com você.",
     "free": {
       "title": "Grátis",
-      "note": "grátis para sempre",
+      "note": "sem assinatura",
       "cta": "Começar grátis"
     },
     "pro": {
@@ -1741,6 +1741,7 @@
       "save": "Economize 17%"
     },
     "rows": {
+      "commission": "Comissão do EventHub",
       "storefront": "Sua própria vitrine e link de reservas",
       "bookings": "Receba reservas e gerencie sua agenda",
       "messaging": "Mensagens com clientes no app",
@@ -1759,7 +1760,12 @@
       "reminder": "Avisaremos antes da renovação",
       "cancel": "Cancele quando quiser",
       "keepFree": "Mantenha seu plano grátis para sempre"
-    }
+    },
+    "values": {
+      "applies": "Aplica-se"
+    },
+    "feeNote": "Uma taxa de serviço do cliente se aplica a todas as reservas, e o Pro dispensa sua comissão por reserva. As taxas exatas estão em nossos",
+    "feeNoteLink": "Termos de Serviço"
   },
   "landingFreeA": {
     "bar": {

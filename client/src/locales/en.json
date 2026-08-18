@@ -1732,52 +1732,58 @@
       "q2": "EventHub gives me time back so I can find more customers.",
       "q3": "Switching my system to EventHub was easier than expected."
     },    "plans": {
-      "eyebrow": "Upgrade to Pro",
-      "title": "Fill more dates. Skip the busywork.",
-      "subtitle": "",
-      "compare": "Compare plans",
-      "unlimited": "Unlimited",
-      "perMonth": "/mo",
-      "perDay": "just ${{amount}}/day",
-      "billedAnnual": "billed $290/year",
-      "billedMonthly": "billed monthly",
-      "reassurance": "Not sure yet? Start on Free and upgrade the moment you need more — your storefront comes with you.",
-      "free": {
-        "title": "Free",
-        "note": "free forever",
-        "cta": "Start free"
-      },
-      "pro": {
-        "badge": "Most popular",
-        "title": "Pro",
-        "cta": "Try Pro free"
-      },
-      "toggle": {
-        "monthly": "Monthly",
-        "annual": "Annual",
-        "save": "Save 17%"
-      },
-      "rows": {
-        "storefront": "Your own storefront & booking link",
-        "bookings": "Take bookings & manage your calendar",
-        "messaging": "In-app customer messaging",
-        "payouts": "Secure payouts through Stripe",
-        "reminders": "Booking confirmations & reminders",
-        "listings": "Active listings",
-        "ai": "AI reply assistant for messages",
-        "discounts": "Discounts & promo codes",
-        "reputation": "Reputation management",
-        "analytics": "Advanced analytics & booking trends",
-        "calendar": "Google Calendar sync"
-      },
-      "risk": {
-        "trial": "30-day free trial on Pro",
-        "noCard": "No credit card to start",
-        "reminder": "We'll remind you before it renews",
-        "cancel": "Cancel anytime",
-        "keepFree": "Keep your free plan forever"
-      }
-    },
+            "eyebrow": "Upgrade to Pro",
+            "title": "Fill more dates. Skip the busywork.",
+            "subtitle": "",
+            "compare": "Compare plans",
+            "unlimited": "Unlimited",
+            "perMonth": "/mo",
+            "perDay": "just ${{amount}}/day",
+            "billedAnnual": "billed $290/year",
+            "billedMonthly": "billed monthly",
+            "reassurance": "Not sure yet? Start on Free and upgrade the moment you need more — your storefront comes with you.",
+            "free": {
+              "title": "Free",
+              "note": "no subscription",
+              "cta": "Start free"
+            },
+            "pro": {
+              "badge": "Most popular",
+              "title": "Pro",
+              "cta": "Try Pro free"
+            },
+            "toggle": {
+              "monthly": "Monthly",
+              "annual": "Annual",
+              "save": "Save 17%"
+            },
+            "rows": {
+              "commission": "EventHub commission",
+              "storefront": "Your own storefront & booking link",
+              "bookings": "Take bookings & manage your calendar",
+              "messaging": "In-app customer messaging",
+              "payouts": "Secure payouts through Stripe",
+              "reminders": "Booking confirmations & reminders",
+              "listings": "Active listings",
+              "ai": "AI reply assistant for messages",
+              "discounts": "Discounts & promo codes",
+              "reputation": "Reputation management",
+              "analytics": "Advanced analytics & booking trends",
+              "calendar": "Google Calendar sync"
+            },
+            "risk": {
+              "trial": "30-day free trial on Pro",
+              "noCard": "No credit card to start",
+              "reminder": "We'll remind you before it renews",
+              "cancel": "Cancel anytime",
+              "keepFree": "Keep your free plan forever"
+            },
+            "values": {
+              "applies": "Applies"
+            },
+            "feeNote": "A customer service fee applies to every booking, and Pro waives your per-booking commission. Exact rates are in our",
+            "feeNoteLink": "Terms of Service"
+          },
 
     "landingFreeA": {
       "bar": {
