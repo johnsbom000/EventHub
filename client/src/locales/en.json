@@ -835,37 +835,221 @@
     "pageTitle": "Terms of Service",
     "backToEventHub": "Back to EventHub",
     "contents": "Contents",
-    "version": "Version 6 · Effective May 1, 2025 · EventHub",
-    "noticeTitle": "Important notice regarding EventHub's role",
-    "noticeBody": "EventHub is a marketplace platform — we connect customers with independent vendors. We are not a party to any transaction between customers and vendors. All bookings, services, and disputes are between the customer and the vendor directly.",
-    "s1Title": "1. Acceptance of Terms",
-    "s1Body": "By accessing or using EventHub, you agree to be bound by these Terms of Service. If you do not agree, please do not use the platform.",
-    "s2Title": "2. Marketplace Role",
-    "s2Body": "EventHub is a platform that connects customers with independent vendors. We are not a party to any transaction, do not employ vendors, and do not guarantee the quality or legality of any service listed.",
-    "s3Title": "3. User Accounts",
-    "s3Body": "You must be at least 18 years old to create an account. You are responsible for maintaining the confidentiality of your account credentials and for all activity under your account.",
-    "s4Title": "4. Vendor Listings",
-    "s4Body": "Vendors are solely responsible for the accuracy of their listings, including pricing, availability, and service descriptions. EventHub does not verify listing content.",
-    "s5Title": "5. Bookings & Payments",
-    "s5Body": "All bookings are subject to vendor acceptance. Payments are processed through Stripe. EventHub charges customers a service fee of 5% of the booked amount on every booking, under every plan and pricing model, added to the customer's total and shown before checkout. EventHub charges vendors a platform commission of 8% of the booked amount on every booking, deducted from the vendor's payout. There is exactly one exemption: a vendor on the subscription pricing model who holds an active paid EventHub Pro subscription pays 0% commission for as long as that subscription is active. Vendors on the free tier of the subscription pricing model pay the 8% commission, and vendors on the commission pricing model have no subscription and pay the 8% commission on all bookings. A Pro subscription never waives the customer service fee. Fee rates are fixed when each booking is created and are not changed retroactively. All applicable fees are disclosed before checkout and in the vendor dashboard. Stripe's payment-processing fees may also apply. Payouts are issued after successful booking completion, less any applicable fees. EventHub may change its fees, fee structure, and subscription pricing at any time; any change applies only to bookings and subscription periods that begin after it takes effect, and current fees are always shown before checkout and in the vendor dashboard.",
-    "s6Title": "6. Cancellations & Refunds",
-    "s6Body": "Cancellation policies are set by individual vendors and are displayed on each listing. EventHub enforces the vendor's stated policy. Refunds are issued per that policy.",
-    "s7Title": "7. Disputes",
-    "s7Body": "Customers have a 72-hour dispute window after the event date to report issues. Disputes are handled between the customer and vendor. EventHub may assist in resolution but is not obligated to do so.",
-    "s8Title": "8. Prohibited Conduct",
-    "s8Body": "Users may not use EventHub to conduct transactions outside the platform, share contact information for the purpose of circumventing the platform, post false or misleading listings, or engage in harassment or discrimination.",
-    "s9Title": "9. Intellectual Property",
-    "s9Body": "All content on EventHub, including logos, design, and code, is owned by EventHub or its licensors. You may not copy, reproduce, or distribute any content without written permission.",
-    "s10Title": "10. Limitation of Liability",
-    "s10Body": "EventHub is not liable for any indirect, incidental, or consequential damages arising from use of the platform, including but not limited to vendor no-shows, property damage, or personal injury.",
-    "s11Title": "11. Indemnification",
-    "s11Body": "You agree to indemnify and hold harmless EventHub and its affiliates from any claims, damages, or expenses arising from your use of the platform or violation of these Terms.",
-    "s12Title": "12. Changes to Terms",
-    "s12Body": "EventHub reserves the right to update these Terms at any time. Continued use of the platform after changes constitutes acceptance of the updated Terms.",
-    "s13Title": "13. Governing Law",
-    "s13Body": "These Terms are governed by the laws of the State of Florida, without regard to conflict of law principles.",
-    "s14Title": "14. Contact",
-    "s14Body": "For questions about these Terms, contact us at legal@eventhub.com."
+    "meta": "Version 7 · Governing law and venue: State of Utah · Questions: support@eventhubglobal.com",
+    "contactEmail": "support@eventhubglobal.com",
+    "notice": "Please read these Terms carefully. By accessing or using EventHub, you agree to be bound by these Terms, including the mandatory arbitration and class action waiver provisions in Section 7.",
+    "footerBefore": "For questions about these Terms, contact us at",
+    "footerAfter": ". EventHub reserves the right to modify these Terms at any time. Continued use of the Platform after any modification constitutes your acceptance of the updated Terms.",
+    "sections": [
+      {
+        "id": "platform-agreement",
+        "label": "Platform Agreement",
+        "heading": "1. Global Platform Agreement",
+        "blocks": [
+          {
+            "type": "p",
+            "text": "EventHub operates an online marketplace connecting event rental and service vendors (\"Vendors\") with customers seeking event-related goods and services (\"Customers\"). Together, Vendors and Customers are referred to as \"Users.\""
+          },
+          {
+            "type": "p",
+            "text": "EventHub expressly:"
+          },
+          {
+            "type": "ul",
+            "items": [
+              "Is **not** a party to any transaction, booking, or agreement formed between Users",
+              "Does **not** own, operate, or control any listed goods or services",
+              "Does **not** guarantee the quality, safety, legality, or accuracy of any listing",
+              "Acts solely as a technology platform facilitating connections and processing payments as a limited payment collection agent"
+            ]
+          },
+          {
+            "type": "p",
+            "text": "By accessing, registering for, or using EventHub, you agree to be legally bound by these Terms. You must be at least 18 years of age and legally capable of entering into a binding contract."
+          },
+          {
+            "type": "p",
+            "text": "EventHub's liability to any User is capped at **$100** in the aggregate for any and all claims arising from use of the Platform. All disputes are subject to binding arbitration; class action claims are waived."
+          },
+          {
+            "type": "p",
+            "text": "All Vendors are independent contractors — not employees, agents, or representatives of EventHub. EventHub is not vicariously liable for the acts, omissions, negligence, or misconduct of any Vendor or Customer."
+          }
+        ]
+      },
+      {
+        "id": "vendor-agreement",
+        "label": "Vendor Agreement",
+        "heading": "2. Vendor Agreement",
+        "blocks": [
+          {
+            "type": "p",
+            "text": "Before any listing goes live, Vendors must complete a separate acceptance step in the vendor dashboard. By activating a vendor account, Vendors agree to the following obligations:"
+          },
+          {
+            "type": "ul",
+            "items": [
+              "Provide accurate, complete, and non-misleading listing information",
+              "Fulfill all confirmed bookings exactly as described",
+              "Maintain compliance with all applicable laws, permits, licenses, and regulations",
+              "Carry appropriate business insurance where required by law or reasonably prudent",
+              "Respond to booking inquiries and customer communications in a timely manner",
+              "Remit applicable taxes on all revenue received through the Platform",
+              "Immediately notify EventHub of any material changes to their business or ability to fulfill bookings"
+            ]
+          },
+          {
+            "type": "p",
+            "text": "Vendors may not solicit off-platform bookings, payments, or communications from Customers they meet through EventHub. Violations are subject to account suspension or permanent ban under the Anti-Circumvention Policy in Section 5."
+          },
+          {
+            "type": "p",
+            "text": "**Customer service fee.** EventHub charges Customers a service fee of **5%** of the booked amount on every booking, on every plan and under every pricing model. It is added to the Customer's total and disclosed before checkout. Travel, delivery, and other vendor-charged fees collected through the Platform are part of the booked amount and carry the same 5% service fee."
+          },
+          {
+            "type": "p",
+            "text": "**Vendor commission.** EventHub charges Vendors a platform commission of **8%** of the booked amount on every booking, deducted from the Vendor's payout. Two exemptions apply, and only these two: (a) a Vendor on the subscription pricing model who holds an **active paid EventHub Pro subscription** pays a 0% commission for as long as that subscription remains active; and (b) a **legacy Vendor**, as defined below, pays a 0% commission permanently. Vendors on the free tier of the subscription pricing model pay the 8% commission. Vendors on the commission pricing model have no subscription and no paid tier available to them, and pay the 8% commission on all bookings. No other status, program, or promotion waives the vendor commission, and the customer service fee is never waived by a Pro subscription or by legacy status."
+          },
+          {
+            "type": "p",
+            "text": "**Legacy Vendors.** Vendors whose accounts were created before the vendor commission took effect were onboarded on the understanding that EventHub charged them no commission. EventHub honours that: those accounts are designated **legacy** and are permanently exempt from the vendor commission, at no cost and with no subscription required. This exemption is account-specific, is not transferable, and applies to the vendor commission only — **the 5% customer service fee still applies to bookings made with a legacy Vendor**, because that fee is charged to the Customer rather than deducted from the Vendor. EventHub reserves the right to designate individual accounts as legacy or otherwise fee-exempt, and different Vendors may therefore be charged different commission rates."
+          },
+          {
+            "type": "p",
+            "text": "Fee rates are fixed at the time each booking is created and are not changed retroactively. All applicable fees are disclosed before checkout and in the vendor dashboard. Payments are processed by our third-party payment processor (Stripe). **Stripe's standard payment-processing fees are borne by the Vendor** and are deducted from the Vendor's payout; they are separate from, and additional to, any EventHub commission. Payout schedules and the applicable fees are disclosed in the vendor dashboard. Payouts are processed after successful booking completion, less any applicable fees. EventHub may change its fees, fee structure, and subscription pricing at any time; any change applies only to bookings and subscription periods that begin after it takes effect, and current fees are always shown before checkout and in the vendor dashboard."
+          }
+        ]
+      },
+      {
+        "id": "listing-terms",
+        "label": "Listing Terms",
+        "heading": "3. Listing Terms",
+        "blocks": [
+          {
+            "type": "p",
+            "text": "All listings on EventHub are created and maintained exclusively by Vendors. EventHub does not verify, inspect, or endorse any listing, vendor, or the goods and services described therein."
+          },
+          {
+            "type": "p",
+            "text": "**Cancellation policies are set by each Vendor, per listing, and are not standardized by EventHub.** Before proceeding to checkout, Customers are presented with that Vendor's specific cancellation policy and damage deposit terms. By continuing to checkout after reviewing these terms, Customers acknowledge and accept those vendor-specific policies. The dispute window described in Section 4 is separate from, and does not extend, any Vendor's cancellation policy."
+          },
+          {
+            "type": "p",
+            "text": "Listing photos, descriptions, and pricing are provided by Vendors and may not reflect current availability or condition. Customers are encouraged to communicate directly with Vendors through the EventHub messaging system to confirm details before booking."
+          }
+        ]
+      },
+      {
+        "id": "transaction-agreement",
+        "label": "Transaction Agreement",
+        "heading": "4. Transaction Agreement",
+        "blocks": [
+          {
+            "type": "p",
+            "text": "A binding booking is formed when a Customer completes checkout and payment is confirmed. By confirming a booking, Customers agree to:"
+          },
+          {
+            "type": "ul",
+            "items": [
+              "Authorize the full payment amount charged through EventHub's payment processor",
+              "Accept responsibility for any damage to or loss of rented items beyond normal wear",
+              "Assume all risk of personal injury arising from use of the rented goods or services",
+              "Conduct all booking-related communications exclusively through the EventHub platform"
+            ]
+          },
+          {
+            "type": "p",
+            "text": "Customers have a **72-hour window from the event date** to file a refund dispute. Disputes filed after this window will not be considered. Disputes must include supporting documentation."
+          },
+          {
+            "type": "p",
+            "text": "EventHub processes payments as a limited payment collection agent on behalf of Vendors. Vendor payouts are released after the event date, subject to any open disputes. All payments are processed through Stripe and subject to Stripe's terms of service."
+          }
+        ]
+      },
+      {
+        "id": "messaging-terms",
+        "label": "Messaging Terms",
+        "heading": "5. Messaging & Inquiry Terms",
+        "blocks": [
+          {
+            "type": "p",
+            "text": "EventHub provides a messaging system to facilitate communication between Customers and Vendors. All booking-related communications must occur through this system."
+          },
+          {
+            "type": "p",
+            "text": "Users are prohibited from sharing through the messaging system:"
+          },
+          {
+            "type": "ul",
+            "items": [
+              "Email addresses or phone numbers",
+              "External website URLs or booking links",
+              "Social media handles or payment app usernames",
+              "Any information intended to facilitate off-platform transactions"
+            ]
+          },
+          {
+            "type": "p",
+            "text": "EventHub's circumvention detection system monitors messages for prohibited contact information. Violations result in a warning, message block, and potential account suspension under the three-warning system. Soliciting off-platform bookings constitutes a material breach of these Terms and may result in permanent account termination. This paragraph and the prohibitions above constitute EventHub's Anti-Circumvention Policy."
+          },
+          {
+            "type": "p",
+            "text": "Message records may be retained and reviewed by EventHub staff in connection with disputes, investigations, or legal proceedings. By using the messaging system, you consent to this retention and review."
+          }
+        ]
+      },
+      {
+        "id": "post-booking",
+        "label": "Post-Booking",
+        "heading": "6. Post-Booking Agreement",
+        "blocks": [
+          {
+            "type": "p",
+            "text": "Upon booking confirmation, both the Customer and Vendor receive a confirmation email documenting the booking terms, cancellation policy, damage deposit requirements, and fulfillment obligations. These confirmation emails constitute notice of the agreed terms."
+          },
+          {
+            "type": "p",
+            "text": "The **72-hour dispute window begins from the event date** — not the booking date. Customers must file any service quality claims within this window. Vendors must file any damage claims within **72 hours** of item return, supported by timestamped photo evidence and, for claims over $100, a third-party estimate."
+          },
+          {
+            "type": "p",
+            "text": "Cancellation requests must follow the Vendor's cancellation policy as disclosed at the time of booking. Refunds, where applicable, are processed within 5–10 business days depending on your financial institution. Where a booking is cancelled or refunded, the customer service fee is refunded in the same proportion as the booking amount to which it applied."
+          }
+        ]
+      },
+      {
+        "id": "disputes",
+        "label": "Disputes & Resolution",
+        "heading": "7. Disputes & Resolution",
+        "blocks": [
+          {
+            "type": "p",
+            "text": "EventHub provides a dispute resolution process as a courtesy service. EventHub has the right — but not the obligation — to investigate disputes between Users."
+          },
+          {
+            "type": "p",
+            "text": "To file a dispute:"
+          },
+          {
+            "type": "ul",
+            "items": [
+              "Service quality claims must be filed within **72 hours** of the event date with supporting documentation (photos, written communication, etc.)",
+              "Vendor damage claims require timestamped photo evidence submitted within **72 hours** of item return; claims over $100 require a third-party repair or replacement estimate",
+              "Personal injury claims must be directed to the Vendor and, where applicable, their insurer — EventHub does not provide insurance coverage"
+            ]
+          },
+          {
+            "type": "p",
+            "text": "EventHub's dispute determinations are non-binding administrative decisions, not legal findings. EventHub does not act as an arbitrator or mediator. Any payment adjustments made by EventHub in connection with a dispute are made at EventHub's sole discretion and do not constitute an admission of liability by any party."
+          },
+          {
+            "type": "p",
+            "text": "All disputes between a User and EventHub that cannot be resolved informally are subject to binding individual arbitration under the American Arbitration Association's Consumer Arbitration Rules. Class action lawsuits and class-wide arbitration are waived. **These Terms are governed by the laws of the State of Utah**, without regard to its conflict of law principles, and the exclusive venue for any dispute not subject to arbitration is the state and federal courts located in the State of Utah."
+          }
+        ]
+      }
+    ]
   },
   "vendorHub": {
     "missingVendorId": "Missing vendor id.",
@@ -990,7 +1174,9 @@
     "cancellationPolicyWithinDays": "Cancel at least {{days}} days before the event for a full refund. Cancellations inside that window are non-refundable.",
     "cancellationPolicyNoRefund": "This booking is non-refundable after purchase.",
     "cardNumber": "Card Number",
-    "termsDisclaimer": "By confirming this booking you agree to our Terms of Service, including payment authorization, the 72-hour dispute window from your event date, damage responsibility, and assumption of risk for personal injury.",
+    "termsDisclaimerBefore": "By confirming this booking you agree to our",
+    "termsDisclaimerMiddle": ", including payment authorization, the 72-hour dispute window from your event date, damage responsibility, and assumption of risk for personal injury. Our",
+    "termsDisclaimerAfter": "applies.",
     "placeOrder": "Pay {{total}}",
     "bookNow": "Book Now",
     "requestToBook": "Request to Book",

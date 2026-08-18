@@ -2121,16 +2121,23 @@ function CheckoutContent({
                 </p>
               ) : null}
 
+              {/* Point-of-sale consent. Built from three explicit segments rather
+                  than splitting one string on the literal English "Terms of
+                  Service" — that split never matched the Spanish or Portuguese
+                  translations, so segment [1] came back undefined and es/pt
+                  customers saw a truncated sentence followed by hardcoded English.
+                  Never reintroduce a language-dependent split here. */}
               <p className="text-xs text-muted-foreground leading-relaxed">
-                {t("checkout.termsDisclaimer").split("Terms of Service")[0]}
+                {t("checkout.termsDisclaimerBefore")}{" "}
                 <a href="/terms" target="_blank" rel="noopener noreferrer" className="underline underline-offset-2 hover:text-foreground">
                   {t("terms.pageTitle")}
                 </a>
-                {t("checkout.termsDisclaimer").split("Terms of Service")[1]}{" "}
+                {t("checkout.termsDisclaimerMiddle")}{" "}
                 <a href="/privacy" target="_blank" rel="noopener noreferrer" className="underline underline-offset-2 hover:text-foreground">
-                  Privacy Policy
+                  {t("footer.privacyPolicy")}
                 </a>
-                {" "}applies.
+                {t("checkout.termsDisclaimerAfter") === "." ? "" : " "}
+                {t("checkout.termsDisclaimerAfter")}
               </p>
 
               {blockedOutsideRadius ? (

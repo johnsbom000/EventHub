@@ -835,37 +835,221 @@
     "pageTitle": "Términos de Servicio",
     "backToEventHub": "Volver a EventHub",
     "contents": "Contenido",
-    "version": "Versión 6 · Vigente desde el 1 de mayo de 2025 · EventHub",
-    "noticeTitle": "Aviso importante sobre el rol de EventHub",
-    "noticeBody": "EventHub es una plataforma de mercado — conectamos clientes con proveedores independientes. No somos parte de ninguna transacción entre clientes y proveedores. Todas las reservas, servicios y disputas son directamente entre el cliente y el proveedor.",
-    "s1Title": "1. Aceptación de Términos",
-    "s1Body": "Al acceder o usar EventHub, aceptas estar sujeto a estos Términos de Servicio. Si no estás de acuerdo, por favor no uses la plataforma.",
-    "s2Title": "2. Rol del Mercado",
-    "s2Body": "EventHub es una plataforma que conecta clientes con proveedores independientes. No somos parte de ninguna transacción, no empleamos a proveedores y no garantizamos la calidad o legalidad de ningún servicio listado.",
-    "s3Title": "3. Cuentas de Usuario",
-    "s3Body": "Debes tener al menos 18 años para crear una cuenta. Eres responsable de mantener la confidencialidad de tus credenciales de cuenta y de toda la actividad en tu cuenta.",
-    "s4Title": "4. Listados de Proveedores",
-    "s4Body": "Los proveedores son los únicos responsables de la exactitud de sus listados, incluyendo precios, disponibilidad y descripciones de servicios. EventHub no verifica el contenido de los listados.",
-    "s5Title": "5. Reservas y Pagos",
-    "s5Body": "Todas las reservas están sujetas a la aceptación del proveedor. Los pagos se procesan a través de Stripe. EventHub cobra a los clientes una tarifa de servicio del 5% del importe reservado en cada reserva, en todos los planes y modelos de precios, que se añade al total del cliente y se muestra antes del pago. EventHub cobra a los proveedores una comisión de plataforma del 8% del importe reservado en cada reserva, que se descuenta del pago al proveedor. Existe exactamente una excepción: un proveedor en el modelo de suscripción que mantenga una suscripción de pago activa a EventHub Pro paga un 0% de comisión mientras esa suscripción siga activa. Los proveedores del nivel gratuito del modelo de suscripción pagan la comisión del 8%, y los proveedores del modelo de comisión no tienen suscripción y pagan la comisión del 8% en todas las reservas. Una suscripción Pro nunca exime de la tarifa de servicio del cliente. Las tarifas se fijan al crear cada reserva y no se modifican de forma retroactiva. Todas las tarifas aplicables se muestran antes del pago y en el panel del proveedor. También pueden aplicarse las tarifas estándar de procesamiento de pagos de Stripe. Los pagos se emiten tras la finalización exitosa de la reserva, menos las tarifas aplicables. EventHub puede cambiar sus tarifas, la estructura de tarifas y los precios de suscripción en cualquier momento; cualquier cambio se aplica únicamente a las reservas y los períodos de suscripción que comiencen después de que entre en vigor, y las tarifas vigentes siempre se muestran antes del pago y en el panel del proveedor.",
-    "s6Title": "6. Cancelaciones y Reembolsos",
-    "s6Body": "Las políticas de cancelación las establecen los proveedores individuales y se muestran en cada listado. EventHub aplica la política declarada del proveedor. Los reembolsos se emiten según esa política.",
-    "s7Title": "7. Disputas",
-    "s7Body": "Los clientes tienen una ventana de 48 horas después de la fecha del evento para reportar problemas. Las disputas se manejan entre el cliente y el proveedor. EventHub puede ayudar en la resolución, pero no está obligado a hacerlo.",
-    "s8Title": "8. Conducta Prohibida",
-    "s8Body": "Los usuarios no pueden usar EventHub para realizar transacciones fuera de la plataforma, compartir información de contacto con el propósito de eludir la plataforma, publicar listados falsos o engañosos, ni participar en acoso o discriminación.",
-    "s9Title": "9. Propiedad Intelectual",
-    "s9Body": "Todo el contenido en EventHub, incluyendo logotipos, diseño y código, es propiedad de EventHub o sus licenciantes. No puedes copiar, reproducir o distribuir ningún contenido sin permiso por escrito.",
-    "s10Title": "10. Limitación de Responsabilidad",
-    "s10Body": "EventHub no es responsable de ningún daño indirecto, incidental o consecuente derivado del uso de la plataforma, incluyendo pero no limitado a ausencias de proveedores, daños a la propiedad o lesiones personales.",
-    "s11Title": "11. Indemnización",
-    "s11Body": "Aceptas indemnizar y eximir de responsabilidad a EventHub y sus afiliados de cualquier reclamación, daño o gasto derivado de tu uso de la plataforma o violación de estos Términos.",
-    "s12Title": "12. Cambios en los Términos",
-    "s12Body": "EventHub se reserva el derecho de actualizar estos Términos en cualquier momento. El uso continuo de la plataforma después de los cambios constituye la aceptación de los Términos actualizados.",
-    "s13Title": "13. Ley Aplicable",
-    "s13Body": "Estos Términos se rigen por las leyes del Estado de Florida, sin tener en cuenta los principios de conflicto de leyes.",
-    "s14Title": "14. Contacto",
-    "s14Body": "Para preguntas sobre estos Términos, contáctanos en legal@eventhub.com."
+    "meta": "Versión 7 · Ley aplicable y jurisdicción: Estado de Utah · Consultas: support@eventhubglobal.com",
+    "contactEmail": "support@eventhubglobal.com",
+    "notice": "Lee estos Términos con atención. Al acceder a EventHub o utilizarlo, aceptas quedar obligado por estos Términos, incluidas las disposiciones de arbitraje obligatorio y renuncia a demandas colectivas de la Sección 7.",
+    "footerBefore": "Si tienes preguntas sobre estos Términos, escríbenos a",
+    "footerAfter": ". EventHub se reserva el derecho de modificar estos Términos en cualquier momento. El uso continuado de la Plataforma tras cualquier modificación constituye tu aceptación de los Términos actualizados.",
+    "sections": [
+      {
+        "id": "platform-agreement",
+        "label": "Acuerdo de Plataforma",
+        "heading": "1. Acuerdo General de Plataforma",
+        "blocks": [
+          {
+            "type": "p",
+            "text": "EventHub opera un mercado en línea que conecta a proveedores de alquiler y servicios para eventos (\"Proveedores\") con clientes que buscan bienes y servicios relacionados con eventos (\"Clientes\"). En conjunto, Proveedores y Clientes se denominan \"Usuarios\"."
+          },
+          {
+            "type": "p",
+            "text": "EventHub expresamente:"
+          },
+          {
+            "type": "ul",
+            "items": [
+              "**No** es parte de ninguna transacción, reserva o acuerdo celebrado entre Usuarios",
+              "**No** posee, opera ni controla ninguno de los bienes o servicios publicados",
+              "**No** garantiza la calidad, seguridad, legalidad ni exactitud de ninguna publicación",
+              "Actúa únicamente como plataforma tecnológica que facilita conexiones y procesa pagos como agente limitado de cobro"
+            ]
+          },
+          {
+            "type": "p",
+            "text": "Al acceder a EventHub, registrarte o utilizarlo, aceptas quedar legalmente obligado por estos Términos. Debes tener al menos 18 años y capacidad legal para celebrar un contrato vinculante."
+          },
+          {
+            "type": "p",
+            "text": "La responsabilidad de EventHub frente a cualquier Usuario está limitada a **$100** en total por todas y cada una de las reclamaciones derivadas del uso de la Plataforma. Todas las controversias están sujetas a arbitraje vinculante; se renuncia a las demandas colectivas."
+          },
+          {
+            "type": "p",
+            "text": "Todos los Proveedores son contratistas independientes, no empleados, agentes ni representantes de EventHub. EventHub no responde de forma vicaria por los actos, omisiones, negligencia o conducta indebida de ningún Proveedor o Cliente."
+          }
+        ]
+      },
+      {
+        "id": "vendor-agreement",
+        "label": "Acuerdo de Proveedor",
+        "heading": "2. Acuerdo de Proveedor",
+        "blocks": [
+          {
+            "type": "p",
+            "text": "Antes de que una publicación se active, los Proveedores deben completar un paso de aceptación independiente en el panel de proveedor. Al activar una cuenta de proveedor, los Proveedores aceptan las siguientes obligaciones:"
+          },
+          {
+            "type": "ul",
+            "items": [
+              "Proporcionar información de la publicación exacta, completa y no engañosa",
+              "Cumplir todas las reservas confirmadas exactamente como se describen",
+              "Mantener el cumplimiento de todas las leyes, permisos, licencias y reglamentos aplicables",
+              "Contar con el seguro comercial adecuado cuando lo exija la ley o resulte razonablemente prudente",
+              "Responder a las consultas de reserva y a las comunicaciones de los clientes de forma oportuna",
+              "Pagar los impuestos aplicables sobre todos los ingresos recibidos a través de la Plataforma",
+              "Notificar de inmediato a EventHub cualquier cambio material en su negocio o en su capacidad de cumplir reservas"
+            ]
+          },
+          {
+            "type": "p",
+            "text": "Los Proveedores no pueden solicitar reservas, pagos ni comunicaciones fuera de la plataforma a Clientes que hayan conocido a través de EventHub. Las infracciones están sujetas a suspensión de la cuenta o prohibición permanente conforme a la Política Anti-Elusión de la Sección 5."
+          },
+          {
+            "type": "p",
+            "text": "**Tarifa de servicio del cliente.** EventHub cobra a los Clientes una tarifa de servicio del **5%** del importe reservado en cada reserva, en todos los planes y bajo todos los modelos de precios. Se añade al total del Cliente y se informa antes del pago. Las tarifas de desplazamiento, entrega y otras tarifas cobradas por el proveedor a través de la Plataforma forman parte del importe reservado y están sujetas a la misma tarifa de servicio del 5%."
+          },
+          {
+            "type": "p",
+            "text": "**Comisión del proveedor.** EventHub cobra a los Proveedores una comisión de plataforma del **8%** del importe reservado en cada reserva, deducida del pago al Proveedor. Se aplican dos exenciones, y solo estas dos: (a) un Proveedor en el modelo de precios por suscripción que tenga una **suscripción de pago activa a EventHub Pro** paga una comisión del 0% mientras esa suscripción permanezca activa; y (b) un **Proveedor heredado**, según se define más abajo, paga una comisión del 0% de forma permanente. Los Proveedores en el nivel gratuito del modelo de precios por suscripción pagan la comisión del 8%. Los Proveedores en el modelo de precios por comisión no tienen suscripción ni nivel de pago disponible, y pagan la comisión del 8% en todas las reservas. Ningún otro estado, programa o promoción exime de la comisión del proveedor, y la tarifa de servicio del cliente nunca queda exenta por una suscripción Pro ni por la condición de heredado."
+          },
+          {
+            "type": "p",
+            "text": "**Proveedores heredados.** Los Proveedores cuyas cuentas se crearon antes de que entrara en vigor la comisión del proveedor fueron incorporados en el entendimiento de que EventHub no les cobraba comisión. EventHub lo respeta: esas cuentas se designan como **heredadas** y quedan permanentemente exentas de la comisión del proveedor, sin coste alguno y sin necesidad de suscripción. Esta exención es específica de la cuenta, no es transferible y se aplica únicamente a la comisión del proveedor: **la tarifa de servicio del cliente del 5% sigue aplicándose a las reservas realizadas con un Proveedor heredado**, porque esa tarifa se cobra al Cliente y no se deduce del Proveedor. EventHub se reserva el derecho de designar cuentas individuales como heredadas o exentas de tarifas de otro modo, por lo que distintos Proveedores pueden pagar comisiones distintas."
+          },
+          {
+            "type": "p",
+            "text": "Las tarifas se fijan en el momento en que se crea cada reserva y no se modifican de forma retroactiva. Todas las tarifas aplicables se informan antes del pago y en el panel de proveedor. Los pagos son procesados por nuestro procesador de pagos externo (Stripe). **Las tarifas estándar de procesamiento de pagos de Stripe corren a cargo del Proveedor** y se deducen de su pago; son independientes y adicionales a cualquier comisión de EventHub. Los calendarios de pago y las tarifas aplicables se informan en el panel de proveedor. Los pagos se procesan tras la finalización satisfactoria de la reserva, menos las tarifas aplicables. EventHub puede modificar sus tarifas, su estructura de tarifas y los precios de suscripción en cualquier momento; cualquier cambio se aplica únicamente a las reservas y periodos de suscripción que comiencen después de su entrada en vigor, y las tarifas vigentes siempre se muestran antes del pago y en el panel de proveedor."
+          }
+        ]
+      },
+      {
+        "id": "listing-terms",
+        "label": "Términos de Publicación",
+        "heading": "3. Términos de Publicación",
+        "blocks": [
+          {
+            "type": "p",
+            "text": "Todas las publicaciones en EventHub son creadas y mantenidas exclusivamente por los Proveedores. EventHub no verifica, inspecciona ni respalda ninguna publicación, proveedor ni los bienes y servicios descritos en ella."
+          },
+          {
+            "type": "p",
+            "text": "**Las políticas de cancelación las establece cada Proveedor, por publicación, y no están estandarizadas por EventHub.** Antes de proceder al pago, se presenta a los Clientes la política de cancelación específica de ese Proveedor y las condiciones del depósito por daños. Al continuar con el pago tras revisar estas condiciones, los Clientes reconocen y aceptan esas políticas específicas del proveedor. El plazo de disputa descrito en la Sección 4 es independiente de la política de cancelación de cualquier Proveedor y no la amplía."
+          },
+          {
+            "type": "p",
+            "text": "Las fotos, descripciones y precios de las publicaciones los proporcionan los Proveedores y pueden no reflejar la disponibilidad o el estado actuales. Se recomienda a los Clientes comunicarse directamente con los Proveedores a través del sistema de mensajería de EventHub para confirmar los detalles antes de reservar."
+          }
+        ]
+      },
+      {
+        "id": "transaction-agreement",
+        "label": "Acuerdo de Transacción",
+        "heading": "4. Acuerdo de Transacción",
+        "blocks": [
+          {
+            "type": "p",
+            "text": "Se forma una reserva vinculante cuando un Cliente completa el pago y este se confirma. Al confirmar una reserva, los Clientes aceptan:"
+          },
+          {
+            "type": "ul",
+            "items": [
+              "Autorizar el importe total cobrado a través del procesador de pagos de EventHub",
+              "Asumir la responsabilidad por cualquier daño o pérdida de los artículos alquilados más allá del desgaste normal",
+              "Asumir todo riesgo de lesiones personales derivado del uso de los bienes o servicios alquilados",
+              "Realizar todas las comunicaciones relacionadas con la reserva exclusivamente a través de la plataforma EventHub"
+            ]
+          },
+          {
+            "type": "p",
+            "text": "Los Clientes disponen de un **plazo de 72 horas desde la fecha del evento** para presentar una disputa de reembolso. Las disputas presentadas después de este plazo no serán consideradas. Las disputas deben incluir documentación de respaldo."
+          },
+          {
+            "type": "p",
+            "text": "EventHub procesa los pagos como agente limitado de cobro en nombre de los Proveedores. Los pagos a los Proveedores se liberan después de la fecha del evento, sujetos a cualquier disputa abierta. Todos los pagos se procesan a través de Stripe y están sujetos a los términos de servicio de Stripe."
+          }
+        ]
+      },
+      {
+        "id": "messaging-terms",
+        "label": "Términos de Mensajería",
+        "heading": "5. Términos de Mensajería y Consultas",
+        "blocks": [
+          {
+            "type": "p",
+            "text": "EventHub proporciona un sistema de mensajería para facilitar la comunicación entre Clientes y Proveedores. Todas las comunicaciones relacionadas con una reserva deben realizarse a través de este sistema."
+          },
+          {
+            "type": "p",
+            "text": "Se prohíbe a los Usuarios compartir a través del sistema de mensajería:"
+          },
+          {
+            "type": "ul",
+            "items": [
+              "Direcciones de correo electrónico o números de teléfono",
+              "URL de sitios web externos o enlaces de reserva",
+              "Perfiles de redes sociales o nombres de usuario de aplicaciones de pago",
+              "Cualquier información destinada a facilitar transacciones fuera de la plataforma"
+            ]
+          },
+          {
+            "type": "p",
+            "text": "El sistema de detección de elusión de EventHub supervisa los mensajes en busca de datos de contacto prohibidos. Las infracciones dan lugar a una advertencia, al bloqueo del mensaje y a la posible suspensión de la cuenta conforme al sistema de tres advertencias. Solicitar reservas fuera de la plataforma constituye un incumplimiento material de estos Términos y puede dar lugar a la cancelación permanente de la cuenta. Este párrafo y las prohibiciones anteriores constituyen la Política Anti-Elusión de EventHub."
+          },
+          {
+            "type": "p",
+            "text": "Los registros de mensajes pueden ser conservados y revisados por el personal de EventHub en relación con disputas, investigaciones o procedimientos legales. Al utilizar el sistema de mensajería, consientes esta conservación y revisión."
+          }
+        ]
+      },
+      {
+        "id": "post-booking",
+        "label": "Después de la Reserva",
+        "heading": "6. Acuerdo Posterior a la Reserva",
+        "blocks": [
+          {
+            "type": "p",
+            "text": "Al confirmarse una reserva, tanto el Cliente como el Proveedor reciben un correo de confirmación que documenta las condiciones de la reserva, la política de cancelación, los requisitos de depósito por daños y las obligaciones de cumplimiento. Estos correos de confirmación constituyen notificación de las condiciones acordadas."
+          },
+          {
+            "type": "p",
+            "text": "El **plazo de disputa de 72 horas comienza en la fecha del evento**, no en la fecha de la reserva. Los Clientes deben presentar cualquier reclamación por calidad del servicio dentro de este plazo. Los Proveedores deben presentar cualquier reclamación por daños dentro de las **72 horas** siguientes a la devolución del artículo, con pruebas fotográficas con marca de tiempo y, para reclamaciones superiores a $100, un presupuesto de un tercero."
+          },
+          {
+            "type": "p",
+            "text": "Las solicitudes de cancelación deben seguir la política de cancelación del Proveedor tal como se informó en el momento de la reserva. Los reembolsos, cuando correspondan, se procesan en un plazo de 5 a 10 días hábiles según tu entidad financiera. Cuando una reserva se cancela o se reembolsa, la tarifa de servicio del cliente se reembolsa en la misma proporción que el importe de la reserva al que se aplicó."
+          }
+        ]
+      },
+      {
+        "id": "disputes",
+        "label": "Disputas y Resolución",
+        "heading": "7. Disputas y Resolución",
+        "blocks": [
+          {
+            "type": "p",
+            "text": "EventHub ofrece un proceso de resolución de disputas como servicio de cortesía. EventHub tiene el derecho, pero no la obligación, de investigar disputas entre Usuarios."
+          },
+          {
+            "type": "p",
+            "text": "Para presentar una disputa:"
+          },
+          {
+            "type": "ul",
+            "items": [
+              "Las reclamaciones por calidad del servicio deben presentarse dentro de las **72 horas** siguientes a la fecha del evento, con documentación de respaldo (fotos, comunicaciones escritas, etc.)",
+              "Las reclamaciones por daños del proveedor requieren pruebas fotográficas con marca de tiempo presentadas dentro de las **72 horas** siguientes a la devolución del artículo; las reclamaciones superiores a $100 requieren un presupuesto de reparación o reposición de un tercero",
+              "Las reclamaciones por lesiones personales deben dirigirse al Proveedor y, cuando corresponda, a su aseguradora. EventHub no proporciona cobertura de seguro"
+            ]
+          },
+          {
+            "type": "p",
+            "text": "Las determinaciones de EventHub en materia de disputas son decisiones administrativas no vinculantes, no resoluciones legales. EventHub no actúa como árbitro ni mediador. Cualquier ajuste de pago realizado por EventHub en relación con una disputa se hace a su entera discreción y no constituye un reconocimiento de responsabilidad por ninguna de las partes."
+          },
+          {
+            "type": "p",
+            "text": "Todas las controversias entre un Usuario y EventHub que no puedan resolverse de forma informal están sujetas a arbitraje individual vinculante conforme a las Reglas de Arbitraje del Consumidor de la American Arbitration Association. Se renuncia a las demandas colectivas y al arbitraje colectivo. **Estos Términos se rigen por las leyes del Estado de Utah**, sin atender a sus principios de conflicto de leyes, y la jurisdicción exclusiva para cualquier controversia no sujeta a arbitraje corresponde a los tribunales estatales y federales situados en el Estado de Utah."
+          }
+        ]
+      }
+    ]
   },
   "vendorHub": {
     "missingVendorId": "Falta el ID del proveedor.",
@@ -990,7 +1174,9 @@
     "cancellationPolicyWithinDays": "Cancela al menos {{days}} días antes del evento para recibir un reembolso completo. Las cancelaciones dentro de ese plazo no son reembolsables.",
     "cancellationPolicyNoRefund": "Esta reserva no es reembolsable después de la compra.",
     "cardNumber": "Número de tarjeta",
-    "termsDisclaimer": "Al confirmar esta reserva, aceptas nuestros Términos de Servicio, incluida la autorización de pago, la ventana de disputa de 48 horas desde la fecha del evento, la responsabilidad por daños y la asunción de riesgo de lesiones personales.",
+    "termsDisclaimerBefore": "Al confirmar esta reserva, aceptas nuestros",
+    "termsDisclaimerMiddle": ", incluida la autorización de pago, el plazo de disputa de 72 horas desde la fecha del evento, la responsabilidad por daños y la asunción de riesgo de lesiones personales. Se aplica nuestra",
+    "termsDisclaimerAfter": ".",
     "placeOrder": "Pagar {{total}}",
     "bookNow": "Reservar ahora",
     "requestToBook": "Solicitar reserva",
