@@ -1135,6 +1135,10 @@
           {
             "type": "p",
             "text": "No vendemos, alquilamos ni intercambiamos tu información personal con terceros para sus fines de marketing."
+          },
+          {
+            "type": "p",
+            "text": "EventHub opera desde los Estados Unidos. Tu información se procesa y almacena en los Estados Unidos y en otros países donde operan nuestros proveedores de servicios, cuyas leyes de protección de datos pueden diferir de las de tu país."
           }
         ]
       },
@@ -1220,9 +1224,44 @@
         ]
       },
       {
+        "id": "brazil-lgpd",
+        "label": "Residentes de Brasil",
+        "heading": "15. Residentes de Brasil (LGPD)",
+        "blocks": [
+          {
+            "type": "p",
+            "text": "Si te encuentras en Brasil, la Lei Geral de Proteção de Dados (Ley n.º 13.709/2018, \"LGPD\") se aplica a nuestro tratamiento de tus datos personales. EventHub, LLC es el responsable del tratamiento de los datos personales procesados a través de la Plataforma, y los tratamos sobre las bases legales que prevé la LGPD — principalmente la ejecución de un contrato (operar tu cuenta, reservas y pagos), el cumplimiento de obligaciones legales y nuestro interés legítimo en proteger y mejorar la Plataforma."
+          },
+          {
+            "type": "p",
+            "text": "Como titular de datos conforme a la LGPD, tienes derecho a:"
+          },
+          {
+            "type": "ul",
+            "items": [
+              "La confirmación de que tratamos tus datos personales y el acceso a ellos",
+              "La corrección de datos incompletos, inexactos o desactualizados",
+              "La anonimización, el bloqueo o la eliminación de datos innecesarios o excesivos, o tratados en infracción de la LGPD",
+              "La portabilidad de tus datos a otro proveedor de servicios",
+              "Información sobre las entidades públicas y privadas con las que hemos compartido tus datos",
+              "Información sobre la posibilidad de negar el consentimiento y sus consecuencias, y la revocación del consentimiento cuando el tratamiento se base en él",
+              "La eliminación de los datos personales tratados con tu consentimiento, salvo las excepciones legales de conservación"
+            ]
+          },
+          {
+            "type": "p",
+            "text": "La Plataforma se opera desde los Estados Unidos: tus datos personales se transfieren, procesan y almacenan en los Estados Unidos y en otros países donde operan nuestros proveedores de servicios, con salvaguardas contractuales con dichos proveedores. Al usar la Plataforma reconoces esta transferencia internacional."
+          },
+          {
+            "type": "p",
+            "text": "Para ejercer cualquiera de estos derechos, escribe a support@eventhubglobal.com con \"LGPD\" en el asunto. Responderemos dentro de los 15 días cuando la LGPD así lo exija. También tienes derecho a presentar una reclamación ante la Autoridade Nacional de Proteção de Dados (ANPD)."
+          }
+        ]
+      },
+      {
         "id": "children",
         "label": "Privacidad de menores",
-        "heading": "15. Privacidad de menores",
+        "heading": "16. Privacidad de menores",
         "blocks": [
           {
             "type": "p",
@@ -1233,7 +1272,7 @@
       {
         "id": "changes",
         "label": "Cambios a esta Política",
-        "heading": "16. Cambios a esta Política",
+        "heading": "17. Cambios a esta Política",
         "blocks": [
           {
             "type": "p",
@@ -1248,7 +1287,7 @@
       {
         "id": "contact",
         "label": "Contáctanos",
-        "heading": "17. Contáctanos",
+        "heading": "18. Contáctanos",
         "blocks": [
           {
             "type": "p",
@@ -1450,6 +1489,10 @@
           {
             "type": "p",
             "text": "El **plazo de disputa de 72 horas comienza en la fecha del evento**, no en la fecha de la reserva. Los Clientes deben presentar cualquier reclamación por calidad del servicio dentro de este plazo. Los Proveedores deben presentar cualquier reclamación por daños dentro de las **72 horas** siguientes a la finalización del evento, con pruebas fotográficas con marca de tiempo y, para reclamaciones superiores a $100, un presupuesto de un tercero."
+          },
+          {
+            "type": "p",
+            "text": "**Depósitos de garantía.** Cuando un anuncio exige un depósito de garantía, el depósito se cobra en el momento del pago como un cargo separado. Se reembolsa automáticamente **72 horas después de que termine el evento**, siempre que no haya una disputa abierta sobre la reserva. Si se estima una reclamación por daños, EventHub puede retener del depósito hasta el importe concedido; el resto, si lo hay, se reembolsa al Cliente. Los reembolsos del depósito se procesan en un plazo de 5 a 10 días hábiles según tu entidad financiera."
           },
           {
             "type": "p",
@@ -1678,7 +1721,14 @@
           }
         ]
       }
-    ]
+    ],
+    "updatedBanner": {
+      "title": "Hemos actualizado nuestros Términos de Servicio",
+      "body": "Los Términos que rigen tu uso de EventHub cambiaron el {{date}}. Revisa y acepta los Términos actualizados para mantener un registro exacto de tu acuerdo.",
+      "review": "Revisar los Términos actualizados",
+      "accept": "Acepto los Términos actualizados",
+      "error": "No se pudo registrar tu aceptación. Inténtalo de nuevo."
+    }
   },
   "vendorHub": {
     "missingVendorId": "Falta el ID del proveedor.",
