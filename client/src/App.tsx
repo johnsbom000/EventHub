@@ -12,7 +12,7 @@ import { useLandingStyle } from "@/hooks/useLandingVariant";
 import { readAttribution } from "@/lib/landingAttribution";
 import { usePricingModelResolution } from "@/hooks/usePricingModel";
 import { phCapture } from "@/lib/posthog";
-import { trackSignupCompletedOnce } from "@/lib/tracking";
+import { trackSignupCompletedOnce, isAccountNew } from "@/lib/tracking";
 import EmailVerificationGate from "@/components/EmailVerificationGate";
 
 import Home from "@/pages/Home";
@@ -59,6 +59,12 @@ import { UpgradeModalProvider } from "@/components/UpgradeModal";
 
 type CustomerMeIntent = {
   vendorIntentPending?: boolean;
+  /**
+   * Server-supplied account creation time. Used to tell a genuine signup from a
+   * returning login before firing the CompleteRegistration conversion — this
+   * effect runs on EVERY authenticated redirect, not just the first one.
+   */
+  createdAt?: string | null;
 };
 
 // Clears the one-shot vendor-intent flag (server + cache) at the moment a
@@ -154,10 +160,16 @@ function PostLogin() {
     // so both funnels see the account-creation conversion. Once-per-session guard
     // lives in the helper so this and the VendorProvision path can't double-count
     // the same signup. `user.email` rides only to the server-side CAPI copy.
-    trackSignupCompletedOnce(
-      { role, landing_style: readAttribution()?.landingStyle ?? null },
-      user?.email,
-    );
+    // This effect fires on every authenticated redirect — a returning login hits
+    // it exactly like a new signup does, and the once-per-session guard does not
+    // help because a returning user arrives with a fresh session. Gate on the
+    // server's createdAt so only an account made minutes ago counts as a
+    // conversion. Without this, Meta optimises toward people who log in.
+    trackSignupCompletedOnce({
+      isNewAccount: isAccountNew(customerMe?.createdAt),
+      props: { role, landing_style: readAttribution()?.landingStyle ?? null },
+      email: user?.email,
+    });
 
     if (vendorDetection.status === "vendor") {
       // First-time vendors (onboarding tour not yet completed) land on the
