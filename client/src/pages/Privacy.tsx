@@ -42,7 +42,7 @@ type Section = {
 };
 
 /** The date this policy took effect, rendered in the reader's locale. */
-const EFFECTIVE_DATE = new Date(Date.UTC(2026, 5, 3));
+const EFFECTIVE_DATE = new Date(Date.UTC(2026, 7, 19));
 
 const DATE_LOCALES: Record<string, string> = { en: "en-US", es: "es-US", pt: "pt-BR" };
 

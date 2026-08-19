@@ -52,10 +52,22 @@ function Rich({ text }: { text: string }) {
   );
 }
 
+const DATE_LOCALES: Record<string, string> = { en: "en-US", es: "es-US", pt: "pt-BR" };
+
 export default function TermsOfService() {
-  const { t } = useTranslation();
+  const { t, i18n } = useTranslation();
   const sections = t("terms.sections", { returnObjects: true }) as Section[];
   const contactEmail = t("terms.contactEmail");
+
+  // TERMS_VERSION is an ISO date; render it in the reader's locale (same
+  // treatment as the Privacy page) instead of the raw "2026-08-19" string.
+  const dateLocale = DATE_LOCALES[i18n.language?.split("-")[0] ?? "en"] ?? "en-US";
+  const effectiveDate = new Intl.DateTimeFormat(dateLocale, {
+    year: "numeric",
+    month: "long",
+    day: "numeric",
+    timeZone: "UTC",
+  }).format(new Date(`${TERMS_VERSION}T00:00:00Z`));
 
   return (
     <div className="min-h-screen bg-background">
@@ -71,7 +83,7 @@ export default function TermsOfService() {
               a user's record when they accept, so "which Terms did they agree
               to" resolves to a document you can actually point at. */}
           <p className="mt-2 text-sm text-muted-foreground">
-            {t("terms.effective", { version: TERMS_VERSION })} · {t("terms.meta")}
+            {t("terms.effective", { version: effectiveDate })} · {t("terms.meta")}
           </p>
         </div>
 
