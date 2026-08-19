@@ -159,10 +159,16 @@ export default function VendorProvision() {
       // (CompleteRegistration) so the funnel and Meta both register the signup.
       // Once-per-session guard (in the helper) dedupes against the App.tsx
       // post-login path; `user.email` rides only to the server-side CAPI copy.
-      trackSignupCompletedOnce(
-        { role: "vendor", landing_style: landingStyle },
-        user?.email,
-      );
+      // `alreadyExisted` is the server's own answer to "did this request create
+      // the account?" — provision is reachable by an EXISTING vendor (it returns
+      // early with alreadyExisted: true), so authentication alone is not proof of
+      // a signup. Absent field is treated as not-new: better to undercount a
+      // conversion than to teach Meta that logins are registrations.
+      trackSignupCompletedOnce({
+        isNewAccount: provisionData?.alreadyExisted === false,
+        props: { role: "vendor", landing_style: landingStyle },
+        email: user?.email,
+      });
 
       // Clear any stale "Try Pro" flags from an older landing flow — enrollment now
       // happens server-side at provision, so there is no client-side trial hand-off.

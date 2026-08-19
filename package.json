@@ -37,6 +37,7 @@
     "test:privacy-parity": "node --import tsx ./tests/privacy-locale-parity.test.ts",
     "test:terms-acceptance": "node --import tsx ./tests/terms-acceptance.test.ts",
     "test:vendor-fee-display": "node --import tsx ./tests/vendor-fee-display.test.ts",
+    "test:signup-conversion": "node --import tsx ./tests/signup-conversion-gate.test.ts",
     "migrate": "tsx --env-file .env server/scripts/validate_migrations.ts && tsx --env-file .env server/migrate.ts",
     "validate:migrations": "tsx --env-file .env server/scripts/validate_migrations.ts",
     "start": "NODE_ENV=production node dist/index.js",
