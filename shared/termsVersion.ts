@@ -22,8 +22,13 @@
  *               legacy-vendor exemption added; Stripe fee allocation stated;
  *               governing law and venue fixed to Utah; dispute window stated as
  *               72 hours in all three locales.
+ *   2026-08-19  Sections 8–14 added (Version 8): acceptable use, user-content
+ *               license + DMCA, subscription auto-renewal & billing, termination,
+ *               warranty disclaimer & liability limits, indemnification, general
+ *               provisions. Vendor damage-claim window tied to event end (matches
+ *               the enforced booking_end_at + 72h window) instead of "item return".
  */
-export const TERMS_VERSION = "2026-08-18";
+export const TERMS_VERSION = "2026-08-19";
 
 /**
  * True when a recorded acceptance is for the Terms currently in force.
