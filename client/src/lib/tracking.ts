@@ -1,6 +1,9 @@
 import posthog from "posthog-js";
 import { readAttribution } from "@/lib/landingAttribution";
 import { readPricingModel } from "@/hooks/usePricingModel";
+// Re-exported so call sites import the gate and the emitter from one place,
+// while the logic itself stays dependency-free and unit-testable.
+export { isAccountNew, ACCOUNT_IS_NEW_WINDOW_MS } from "@/lib/accountAge";
 
 declare global {
   interface Window {
@@ -72,12 +75,35 @@ export function trackBoth(
   }
 }
 
-/** Fires the `signup_completed` / Meta `CompleteRegistration` conversion at most
- *  once per browser session. Both the App.tsx post-login path and the
- *  VendorProvision path can reach an account-creation moment for the same user,
- *  so a session-scoped guard (rather than a per-module boolean like the one in
- *  engagement.ts) is what actually dedupes them across separate page loads. */
-export function trackSignupCompletedOnce(props: Record<string, any> = {}, email?: string) {
+/**
+ * Fires the `signup_completed` / Meta `CompleteRegistration` conversion for a
+ * genuinely NEW account, at most once per browser session.
+ *
+ * `isNewAccount` is REQUIRED and is the whole point of this signature. This
+ * previously took only props, and the App.tsx post-login path called it on every
+ * authenticated redirect — so it fired for returning logins and for customers,
+ * not just new vendors. The session guard did not help: a returning user in a
+ * fresh session has an empty guard and fires again.
+ *
+ * That matters because Meta OPTIMIZES against this event. Counting logins as
+ * registrations understates CPA and teaches delivery to find people who look
+ * like the existing user base rather than new vendors.
+ *
+ * Callers must prove newness from a server-authoritative signal, not from "the
+ * user is authenticated":
+ *   - VendorProvision: the provision response's `alreadyExisted === false`
+ *   - App.tsx: the account's `createdAt` being within ACCOUNT_IS_NEW_WINDOW_MS
+ * Making it a required argument means a future call site cannot reintroduce the
+ * bug by simply forgetting to check.
+ */
+export function trackSignupCompletedOnce(
+  opts: { isNewAccount: boolean; props?: Record<string, any>; email?: string },
+) {
+  const { isNewAccount, props = {}, email } = opts;
+  // A login is not a registration. Bail before the guard is set, so a later
+  // genuine signup in the same session can still fire.
+  if (!isNewAccount) return;
+
   const GUARD_KEY = "eh:signup-completed-fired";
   try {
     if (typeof sessionStorage !== "undefined") {
