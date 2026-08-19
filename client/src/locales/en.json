@@ -875,7 +875,7 @@
               "**Usage data:** pages visited, search queries, listings viewed, clicks, and session duration.",
               "**Device information:** IP address, browser type, operating system, and device identifiers.",
               "**Location data:** approximate location inferred from IP address, and precise location (if permitted) used to show nearby vendors and to geocode addresses.",
-              "**Cookies and similar technologies:** session identifiers, analytics preferences, and feature-flag values stored in your browser. See our Terms of Service for details."
+              "**Cookies and similar technologies:** session identifiers, analytics preferences, and feature-flag values stored in your browser. See Section 9 for details."
             ]
           },
           {
@@ -988,7 +988,7 @@
           },
           {
             "type": "p",
-            "text": "EventHub monitors message content solely to enforce our Terms of Service, including detection of off-platform solicitation. Messages flagged by our automated system may be reviewed by EventHub staff."
+            "text": "EventHub monitors message content to enforce our Terms of Service, including detection of off-platform solicitation. Messages flagged by our automated system may be reviewed by EventHub staff. If a vendor requests an AI-suggested reply, recent messages from that conversation are also processed as described in Section 8."
           }
         ]
       },
@@ -1027,7 +1027,7 @@
           },
           {
             "type": "p",
-            "text": "We use Google Calendar data exclusively to write and update booking events when booking status changes, write vacation block events when a vendor marks dates unavailable, and receive push notifications when a vendor edits an event directly in Google Calendar so EventHub availability stays in sync. Google Calendar data is never used for advertising, analytics, or user profiling."
+            "text": "We use Google Calendar data exclusively to write and update booking events when booking status changes, write vacation block events when a vendor marks dates unavailable, and receive push notifications when a vendor edits an event directly in Google Calendar so EventHub availability stays in sync. Google Calendar data is never used for advertising, analytics, or user profiling. EventHub's use and transfer of information received from Google APIs adheres to the Google API Services User Data Policy (https://developers.google.com/terms/api-services-user-data-policy), including the Limited Use requirements."
           },
           {
             "type": "p",
@@ -1056,9 +1056,32 @@
         ]
       },
       {
+        "id": "ai-features",
+        "label": "AI Features",
+        "heading": "8. AI Features (Anthropic)",
+        "blocks": [
+          {
+            "type": "p",
+            "text": "Some Platform features use large language models provided by **Anthropic, PBC** (\"Anthropic\"), the maker of Claude. These features run only when a vendor actively uses them — nothing is processed in the background."
+          },
+          {
+            "type": "p",
+            "text": "**AI listing drafts.** When a vendor uses the \"Fill with AI\" option while creating a listing, the photos they upload and the listing details they have entered are transmitted to Anthropic to generate a draft title, description, and other listing fields. The vendor reviews and can edit everything before publishing."
+          },
+          {
+            "type": "p",
+            "text": "**AI reply suggestions.** When a vendor requests a suggested reply in their chat inbox, the most recent messages in that conversation (currently up to 12) and the vendor's own FAQ document are transmitted to Anthropic to generate draft replies. Drafts are never sent automatically — the vendor decides whether to edit, send, or discard them. Because conversations include customer messages, a customer's recent messages in that conversation are processed when the vendor requests a suggestion."
+          },
+          {
+            "type": "p",
+            "text": "Data sent to Anthropic is processed to provide these features, subject to Anthropic's Commercial Terms of Service (https://www.anthropic.com/legal/commercial-terms). EventHub does not use this data for advertising or profiling."
+          }
+        ]
+      },
+      {
         "id": "analytics-cookies",
         "label": "Analytics & Cookies",
-        "heading": "8. Analytics, Cookies & Similar Technologies",
+        "heading": "9. Analytics, Cookies & Similar Technologies",
         "blocks": [
           {
             "type": "p",
@@ -1094,7 +1117,7 @@
       {
         "id": "how-we-share",
         "label": "How We Share Information",
-        "heading": "9. How We Share Your Information",
+        "heading": "10. How We Share Your Information",
         "blocks": [
           {
             "type": "p",
@@ -1104,7 +1127,7 @@
             "type": "ul",
             "items": [
               "**Between customers and vendors:** When a booking is created, we share the customer's name, event details, and delivery address with the vendor. The vendor's business name, location, and contact information are shared with the customer.",
-              "**Service providers:** We share data with Stripe, Auth0, Mapbox, Stream, PostHog, and other sub-processors as described above, and with cloud infrastructure providers (such as Railway and Neon), solely to operate and improve the Platform.",
+              "**Service providers:** We share data with Stripe, Auth0, Mapbox, Stream, PostHog, Anthropic, and other sub-processors as described above, and with cloud infrastructure providers (such as Railway, Neon, and Amazon Web Services, which stores uploaded photos and files), solely to operate and improve the Platform.",
               "**Legal obligations:** We may disclose information if required by law, court order, or government authority, or if we believe disclosure is necessary to protect the rights, property, or safety of EventHub, our users, or the public.",
               "**Business transfers:** If EventHub is acquired, merged, or undergoes a similar corporate transaction, your information may be transferred as part of that transaction. We will notify you via email and/or a prominent notice on the Platform before your information is transferred."
             ]
@@ -1118,7 +1141,7 @@
       {
         "id": "data-retention",
         "label": "Data Retention",
-        "heading": "10. Data Retention",
+        "heading": "11. Data Retention",
         "blocks": [
           {
             "type": "p",
@@ -1133,7 +1156,7 @@
       {
         "id": "security",
         "label": "Security",
-        "heading": "11. Security",
+        "heading": "12. Security",
         "blocks": [
           {
             "type": "p",
@@ -1148,7 +1171,7 @@
       {
         "id": "your-rights",
         "label": "Your Rights",
-        "heading": "12. Your Rights",
+        "heading": "13. Your Rights",
         "blocks": [
           {
             "type": "p",
@@ -1174,7 +1197,7 @@
       {
         "id": "california",
         "label": "California Residents",
-        "heading": "13. California Residents (CCPA / CPRA)",
+        "heading": "14. California Residents (CCPA / CPRA)",
         "blocks": [
           {
             "type": "p",
@@ -1199,7 +1222,7 @@
       {
         "id": "children",
         "label": "Children's Privacy",
-        "heading": "14. Children's Privacy",
+        "heading": "15. Children's Privacy",
         "blocks": [
           {
             "type": "p",
@@ -1210,7 +1233,7 @@
       {
         "id": "changes",
         "label": "Changes to This Policy",
-        "heading": "15. Changes to This Policy",
+        "heading": "16. Changes to This Policy",
         "blocks": [
           {
             "type": "p",
@@ -1225,7 +1248,7 @@
       {
         "id": "contact",
         "label": "Contact Us",
-        "heading": "16. Contact Us",
+        "heading": "17. Contact Us",
         "blocks": [
           {
             "type": "p",
@@ -1251,7 +1274,7 @@
     "backToEventHub": "Back to EventHub",
     "contents": "Contents",
     "effective": "Effective {{version}}",
-    "meta": "Version 7 · Governing law and venue: State of Utah · Questions: support@eventhubglobal.com",
+    "meta": "Version 8 · Governing law and venue: State of Utah · Questions: support@eventhubglobal.com",
     "contactEmail": "support@eventhubglobal.com",
     "notice": "Please read these Terms carefully. By accessing or using EventHub, you agree to be bound by these Terms, including the mandatory arbitration and class action waiver provisions in Section 7.",
     "footerBefore": "For questions about these Terms, contact us at",
@@ -1426,7 +1449,7 @@
           },
           {
             "type": "p",
-            "text": "The **72-hour dispute window begins from the event date** — not the booking date. Customers must file any service quality claims within this window. Vendors must file any damage claims within **72 hours** of item return, supported by timestamped photo evidence and, for claims over $100, a third-party estimate."
+            "text": "The **72-hour dispute window begins from the event date** — not the booking date. Customers must file any service quality claims within this window. Vendors must file any damage claims within **72 hours** of the event end, supported by timestamped photo evidence and, for claims over $100, a third-party estimate."
           },
           {
             "type": "p",
@@ -1451,7 +1474,7 @@
             "type": "ul",
             "items": [
               "Service quality claims must be filed within **72 hours** of the event date with supporting documentation (photos, written communication, etc.)",
-              "Vendor damage claims require timestamped photo evidence submitted within **72 hours** of item return; claims over $100 require a third-party repair or replacement estimate",
+              "Vendor damage claims require timestamped photo evidence submitted within **72 hours** of the event end; claims over $100 require a third-party repair or replacement estimate",
               "Personal injury claims must be directed to the Vendor and, where applicable, their insurer — EventHub does not provide insurance coverage"
             ]
           },
@@ -1462,6 +1485,196 @@
           {
             "type": "p",
             "text": "All disputes between a User and EventHub that cannot be resolved informally are subject to binding individual arbitration under the American Arbitration Association's Consumer Arbitration Rules. Class action lawsuits and class-wide arbitration are waived. **These Terms are governed by the laws of the State of Utah**, without regard to its conflict of law principles, and the exclusive venue for any dispute not subject to arbitration is the state and federal courts located in the State of Utah."
+          }
+        ]
+      },
+      {
+        "id": "accounts-acceptable-use",
+        "label": "Acceptable Use",
+        "heading": "8. Accounts & Acceptable Use",
+        "blocks": [
+          {
+            "type": "p",
+            "text": "You are responsible for your account. You agree to provide accurate registration information, keep it current, and safeguard your login credentials. You are responsible for all activity under your account. Notify us immediately at support@eventhubglobal.com if you suspect unauthorized use of your account."
+          },
+          {
+            "type": "p",
+            "text": "In connection with the Platform, you agree that you will **not**:"
+          },
+          {
+            "type": "ul",
+            "items": [
+              "Use the Platform for any unlawful purpose or in violation of these Terms",
+              "Misrepresent your identity, impersonate any person or entity, or create accounts by automated means",
+              "Post content that is false, misleading, defamatory, or obscene, or that infringes any third party's rights",
+              "Circumvent or attempt to circumvent EventHub's fees, booking flow, or the Anti-Circumvention Policy in Section 5",
+              "Scrape, harvest, or collect data from the Platform by automated means, or access it through any interface other than those EventHub provides",
+              "Reverse engineer, decompile, or attempt to extract the source code of the Platform",
+              "Interfere with or disrupt the integrity, security, or performance of the Platform",
+              "Upload viruses, malware, or other harmful code"
+            ]
+          },
+          {
+            "type": "p",
+            "text": "EventHub may investigate suspected violations and may remove content, restrict features, or suspend or terminate accounts as described in Section 11."
+          }
+        ]
+      },
+      {
+        "id": "user-content",
+        "label": "User Content & IP",
+        "heading": "9. User Content & Intellectual Property",
+        "blocks": [
+          {
+            "type": "p",
+            "text": "\"User Content\" means everything you submit to the Platform — listing photos, descriptions, pricing, reviews, messages, and profile information. As between you and EventHub, you own your User Content."
+          },
+          {
+            "type": "p",
+            "text": "By submitting User Content you grant EventHub a non-exclusive, worldwide, royalty-free, sublicensable license to host, store, reproduce, adapt (for formatting and display), publicly display, and distribute it for the purposes of operating, providing, promoting, and improving the Platform. This includes processing User Content with automated tools — including the third-party AI services described in our Privacy Policy — to provide Platform features such as listing drafts and suggested replies. The license ends when you delete the content or your account, except for copies we retain for legal, dispute-resolution, or backup purposes."
+          },
+          {
+            "type": "p",
+            "text": "You represent and warrant that you own or have all rights needed to grant this license, and that your User Content does not infringe any third party's intellectual property, privacy, or publicity rights."
+          },
+          {
+            "type": "p",
+            "text": "The Platform itself — its software, design, branding, and all content other than User Content — belongs to EventHub or its licensors and is protected by intellectual property laws. These Terms grant you only a limited, revocable, non-transferable right to use the Platform; no other rights are granted."
+          },
+          {
+            "type": "p",
+            "text": "**Copyright complaints (DMCA).** If you believe content on the Platform infringes your copyright, email support@eventhubglobal.com with: (a) identification of the copyrighted work; (b) the location of the allegedly infringing material; (c) your contact information; (d) a good-faith statement that the use is unauthorized; (e) a statement, under penalty of perjury, that your notice is accurate and that you are the owner or authorized to act for the owner; and (f) your physical or electronic signature. EventHub will respond to valid notices consistent with the Digital Millennium Copyright Act, may remove or disable access to the identified material, and may terminate the accounts of repeat infringers."
+          }
+        ]
+      },
+      {
+        "id": "subscriptions-billing",
+        "label": "Subscriptions & Billing",
+        "heading": "10. Subscriptions & Billing",
+        "blocks": [
+          {
+            "type": "p",
+            "text": "EventHub offers an optional paid vendor subscription (\"EventHub Pro\"). Current prices, billing intervals (monthly or annual), and included features are shown in the vendor dashboard and at checkout before you subscribe. Subscription availability depends on your pricing model, as described in Section 2."
+          },
+          {
+            "type": "p",
+            "text": "**Free trial.** New vendor accounts may receive a free Pro trial (currently 30 days) that requires no payment method. If you do not add a payment method, the trial simply ends and your account moves to the free tier — nothing is charged. If you add a payment method, your paid subscription starts when the trial ends; cancel before the trial ends to avoid any charge."
+          },
+          {
+            "type": "p",
+            "text": "**Automatic renewal.** Paid subscriptions renew automatically at the end of each billing period at the then-current price, and your payment method on file is charged, until you cancel. You may cancel at any time in the vendor dashboard; cancellation takes effect at the end of the current billing period and you keep Pro benefits until then. Except where the law requires otherwise, payments already made are non-refundable and partial billing periods are not prorated."
+          },
+          {
+            "type": "p",
+            "text": "**Metered features.** Some Pro features include a monthly usage allowance (for example, AI-suggested replies). Usage beyond the allowance is billed at the per-use rate shown in the vendor dashboard unless you turn off pay-as-you-go there, in which case the feature pauses until your next billing period."
+          },
+          {
+            "type": "p",
+            "text": "**Complimentary subscriptions.** EventHub may grant complimentary or promotional Pro subscriptions subject to conditions disclosed at the time of the grant (for example, publishing a listing within a stated period). EventHub may revoke a complimentary subscription if its conditions are not met. While active, a complimentary subscription waives the vendor commission as described in Section 2."
+          },
+          {
+            "type": "p",
+            "text": "Subscription price changes apply prospectively: they take effect at your next renewal, and we will notify you before any increase."
+          }
+        ]
+      },
+      {
+        "id": "termination",
+        "label": "Termination",
+        "heading": "11. Termination & Suspension",
+        "blocks": [
+          {
+            "type": "p",
+            "text": "You may stop using the Platform and close your account at any time from your account settings or by contacting support@eventhubglobal.com."
+          },
+          {
+            "type": "p",
+            "text": "EventHub may suspend or terminate your account, remove listings, or restrict features — with or without prior notice — if we reasonably believe you have breached these Terms, pose a risk to other Users or to EventHub, have engaged in fraud or illegal activity, or where required by law or our payment processor. For minor breaches we will, where practicable, give notice and an opportunity to cure. Violations of the Anti-Circumvention Policy are handled under the three-warning system in Section 5 and may result in immediate termination."
+          },
+          {
+            "type": "p",
+            "text": "Upon termination: pending bookings may be cancelled or completed at EventHub's reasonable discretion, prioritizing the protection of affected Users; amounts lawfully owed to a Vendor for completed bookings — less applicable fees and any amounts subject to open disputes or chargebacks — are paid out through the normal payout process; and any complimentary subscription ends immediately."
+          },
+          {
+            "type": "p",
+            "text": "Provisions that by their nature should survive termination survive it — including fees already incurred, the User Content license for retained copies, disclaimers, the limitation of liability, indemnification, and the arbitration and governing-law provisions of Section 7."
+          }
+        ]
+      },
+      {
+        "id": "disclaimers",
+        "label": "Disclaimers & Liability",
+        "heading": "12. Disclaimers & Limitation of Liability",
+        "blocks": [
+          {
+            "type": "p",
+            "text": "THE PLATFORM IS PROVIDED \"AS IS\" AND \"AS AVAILABLE\", WITHOUT WARRANTIES OF ANY KIND, EXPRESS OR IMPLIED. TO THE MAXIMUM EXTENT PERMITTED BY LAW, EVENTHUB DISCLAIMS ALL IMPLIED WARRANTIES, INCLUDING MERCHANTABILITY, FITNESS FOR A PARTICULAR PURPOSE, TITLE, AND NON-INFRINGEMENT. EventHub does not warrant that the Platform will be uninterrupted, error-free, or secure, or that any listing, Vendor, or Customer will perform as described."
+          },
+          {
+            "type": "p",
+            "text": "EventHub is a marketplace. As stated in Section 1, EventHub is not a party to transactions between Users, and the entire risk arising from a booking, rental, or service — quality, safety, legality, delivery, personal injury, property damage — rests with the Users involved."
+          },
+          {
+            "type": "p",
+            "text": "TO THE MAXIMUM EXTENT PERMITTED BY LAW, EVENTHUB AND ITS OFFICERS, EMPLOYEES, AND AGENTS ARE NOT LIABLE FOR ANY INDIRECT, INCIDENTAL, SPECIAL, CONSEQUENTIAL, EXEMPLARY, OR PUNITIVE DAMAGES, NOR FOR LOST PROFITS, REVENUE, DATA, OR GOODWILL, ARISING FROM OR RELATED TO USE OF THE PLATFORM, EVEN IF ADVISED OF THE POSSIBILITY OF SUCH DAMAGES. AS STATED IN SECTION 1, EVENTHUB'S AGGREGATE LIABILITY FOR ALL CLAIMS ARISING FROM USE OF THE PLATFORM IS CAPPED AT **$100**."
+          },
+          {
+            "type": "p",
+            "text": "Some jurisdictions do not allow the exclusion of certain warranties or the limitation of certain damages, so parts of the above may not apply to you. In that case, the exclusions and limitations apply to the fullest extent permitted by applicable law, and nothing in these Terms excludes liability that cannot lawfully be excluded."
+          }
+        ]
+      },
+      {
+        "id": "indemnification",
+        "label": "Indemnification",
+        "heading": "13. Indemnification",
+        "blocks": [
+          {
+            "type": "p",
+            "text": "To the maximum extent permitted by law, you agree to indemnify, defend, and hold harmless EventHub and its officers, employees, and agents from and against all claims, liabilities, damages, losses, and expenses (including reasonable attorneys' fees) arising out of or related to: (a) your use of the Platform; (b) your User Content; (c) your breach of these Terms or of applicable law; (d) any transaction or interaction between you and another User, including personal injury or property damage; and (e) for Vendors, the goods and services you list or provide, including your tax, licensing, and insurance obligations."
+          },
+          {
+            "type": "p",
+            "text": "EventHub may, at your expense, assume the exclusive defense and control of any matter subject to indemnification by you, and you agree to cooperate with that defense."
+          }
+        ]
+      },
+      {
+        "id": "general",
+        "label": "General Provisions",
+        "heading": "14. General Provisions",
+        "blocks": [
+          {
+            "type": "p",
+            "text": "**Changes to these Terms.** EventHub may modify these Terms by posting an updated version with a new effective date. We will announce material changes by email or by prominent notice on the Platform. Changes apply prospectively; continued use of the Platform after the effective date constitutes acceptance. If you do not agree to a change, stop using the Platform and, if you are a Vendor, close your account."
+          },
+          {
+            "type": "p",
+            "text": "**Severability.** If any provision of these Terms is held invalid or unenforceable, it will be enforced to the maximum extent permissible and the remaining provisions remain in full force. If the class action waiver in Section 7 is found unenforceable as to a particular claim, that claim — and only that claim — proceeds in court rather than arbitration."
+          },
+          {
+            "type": "p",
+            "text": "**Entire agreement.** These Terms, together with the Privacy Policy and the policies referenced in them, are the entire agreement between you and EventHub regarding the Platform and supersede all prior agreements on that subject."
+          },
+          {
+            "type": "p",
+            "text": "**Assignment.** You may not assign these Terms or your account without EventHub's prior written consent. EventHub may assign these Terms in connection with a merger, acquisition, or sale of assets, or by operation of law."
+          },
+          {
+            "type": "p",
+            "text": "**No waiver.** EventHub's failure to enforce a provision is not a waiver of its right to enforce it later."
+          },
+          {
+            "type": "p",
+            "text": "**Force majeure.** EventHub is not liable for delay or failure to perform caused by events beyond its reasonable control, including natural disasters, labor disputes, internet or utility failures, or acts of government."
+          },
+          {
+            "type": "p",
+            "text": "**Language.** These Terms are published in English, Spanish, and Portuguese. Translations are provided for convenience; if there is a conflict, the English version controls."
+          },
+          {
+            "type": "p",
+            "text": "**Notices.** EventHub may give notice by email to the address on your account or through the Platform. Legal notices to EventHub should be sent to support@eventhubglobal.com."
           }
         ]
       }
@@ -1997,7 +2210,7 @@
       "launchOffer": "Launch offer",
       "dealTitle": "Go Pro at our launch price.",
       "dealPricing": "<struck>$39/mo</struck><strong> $29/mo</strong>, or <strong>$290/year</strong> <struck>$390</struck><muted> + 2 months free.</muted>",
-      "deal1": "No vendor fees — keep 100% of your booking price",
+      "deal1": "0% vendor commission on every booking you take",
       "deal2": "Unlimited listings + advanced analytics",
       "deal3": "AI reply assistant for customer messages",
       "deal4": "Discounts & promo codes to drive bookings",
