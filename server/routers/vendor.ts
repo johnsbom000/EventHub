@@ -979,10 +979,40 @@ export function registerVendorRoutes(app: Express): void {
         vendorOnlySignup,
         onboardingCompleted: Boolean(account.onboardingCompletedAt),
         dashboardTourCompletedAt: account.dashboardTourCompletedAt ?? null,
+        // Drives the "Terms updated" re-acceptance banner: null = nothing on
+        // record (pre-0165 account), stale string = accepted an older version.
+        termsVersionAccepted: account.termsVersionAccepted ?? null,
       });
     } catch (error: any) {
       logRouteError("/api/vendor/me", error);
       res.status(500).json({ error: "Unable to load vendor account" });
+    }
+  });
+
+  /**
+   * POST /api/vendor/me/accept-terms ✅ Auth0-only
+   * Records acceptance of the CURRENT Terms for an already-active vendor (the
+   * dashboard "Terms updated" banner posts here after a version bump). The
+   * version is the server's TERMS_VERSION, never client input, and a current
+   * acceptance is never rewritten — same rules as onboarding and the booking
+   * stamp in bookings.ts.
+   */
+  app.post("/api/vendor/me/accept-terms", mutationRateLimiter, ...requireVendorAuth0, async (req, res) => {
+    try {
+      const context = await resolveActiveVendorProfile(req);
+      if (!context?.account?.id) {
+        return res.status(404).json({ error: "Account not found" });
+      }
+      if (context.account.termsVersionAccepted !== TERMS_VERSION) {
+        await db
+          .update(vendorAccounts)
+          .set({ termsVersionAccepted: TERMS_VERSION, termsAcceptedAt: new Date() })
+          .where(eq(vendorAccounts.id, context.account.id));
+      }
+      res.json({ termsVersionAccepted: TERMS_VERSION });
+    } catch (error: any) {
+      logRouteError("/api/vendor/me/accept-terms", error);
+      res.status(500).json({ error: "Unable to record Terms acceptance" });
     }
   });
 
@@ -1468,6 +1498,18 @@ export function registerVendorRoutes(app: Express): void {
       // Treat deleted accounts as non-existent — re-registration gets a fresh start.
       if (account?.deletedAt) {
         account = null;
+      }
+
+      // Activation requires explicit Terms assent. The onboarding UI always
+      // sends acceptedTerms (the Step 4 checkbox gates the submit button); this
+      // closes the API path where a stale or non-browser client could activate
+      // a vendor with nothing on record. Accounts already on the current
+      // version pass, so re-running onboarding never re-demands the checkbox.
+      if (onboardingData.acceptedTerms !== true && account?.termsVersionAccepted !== TERMS_VERSION) {
+        return res.status(400).json({
+          error: "You must accept the Terms of Service to activate a vendor account.",
+          code: "terms_acceptance_required",
+        });
       }
 
       if (!account) {

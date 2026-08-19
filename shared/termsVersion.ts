@@ -27,6 +27,8 @@
  *               warranty disclaimer & liability limits, indemnification, general
  *               provisions. Vendor damage-claim window tied to event end (matches
  *               the enforced booking_end_at + 72h window) instead of "item return".
+ *               Security-deposit handling disclosed in Section 6 (auto-refund 72h
+ *               after event end absent an open dispute; withhold on upheld claims).
  */
 export const TERMS_VERSION = "2026-08-19";
 

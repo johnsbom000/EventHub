@@ -1135,6 +1135,10 @@
           {
             "type": "p",
             "text": "We do not sell, rent, or trade your personal information to third parties for their marketing purposes."
+          },
+          {
+            "type": "p",
+            "text": "EventHub is operated from the United States. Your information is processed and stored in the United States and in other countries where our service providers operate, which may have data protection laws different from those of your country."
           }
         ]
       },
@@ -1220,9 +1224,44 @@
         ]
       },
       {
+        "id": "brazil-lgpd",
+        "label": "Brazilian Residents",
+        "heading": "15. Brazilian Residents (LGPD)",
+        "blocks": [
+          {
+            "type": "p",
+            "text": "If you are in Brazil, the Lei Geral de Proteção de Dados (Law No. 13,709/2018, \"LGPD\") applies to our processing of your personal data. EventHub, LLC is the controller of personal data processed through the Platform, and we process it on the legal bases the LGPD provides — primarily performance of a contract (operating your account, bookings, and payouts), compliance with legal obligations, and our legitimate interest in securing and improving the Platform."
+          },
+          {
+            "type": "p",
+            "text": "As a data subject under the LGPD, you have the right to:"
+          },
+          {
+            "type": "ul",
+            "items": [
+              "Confirmation that we process your personal data, and access to it",
+              "Correction of incomplete, inaccurate, or outdated data",
+              "Anonymization, blocking, or deletion of unnecessary or excessive data, or of data processed in violation of the LGPD",
+              "Portability of your data to another service provider",
+              "Information about the public and private entities with which we have shared your data",
+              "Information about the option to refuse consent and its consequences, and revocation of consent where processing is based on it",
+              "Deletion of personal data processed with your consent, subject to the legal retention exceptions"
+            ]
+          },
+          {
+            "type": "p",
+            "text": "The Platform is operated from the United States: your personal data is transferred to, processed, and stored in the United States and in other countries where our service providers operate, under contractual safeguards with those providers. By using the Platform you acknowledge this international transfer."
+          },
+          {
+            "type": "p",
+            "text": "To exercise any of these rights, email support@eventhubglobal.com with \"LGPD Request\" in the subject line. We will respond within 15 days where the LGPD requires it. You also have the right to lodge a complaint with the Autoridade Nacional de Proteção de Dados (ANPD)."
+          }
+        ]
+      },
+      {
         "id": "children",
         "label": "Children's Privacy",
-        "heading": "15. Children's Privacy",
+        "heading": "16. Children's Privacy",
         "blocks": [
           {
             "type": "p",
@@ -1233,7 +1272,7 @@
       {
         "id": "changes",
         "label": "Changes to This Policy",
-        "heading": "16. Changes to This Policy",
+        "heading": "17. Changes to This Policy",
         "blocks": [
           {
             "type": "p",
@@ -1248,7 +1287,7 @@
       {
         "id": "contact",
         "label": "Contact Us",
-        "heading": "17. Contact Us",
+        "heading": "18. Contact Us",
         "blocks": [
           {
             "type": "p",
@@ -1450,6 +1489,10 @@
           {
             "type": "p",
             "text": "The **72-hour dispute window begins from the event date** — not the booking date. Customers must file any service quality claims within this window. Vendors must file any damage claims within **72 hours** of the event end, supported by timestamped photo evidence and, for claims over $100, a third-party estimate."
+          },
+          {
+            "type": "p",
+            "text": "**Security deposits.** Where a listing requires a security deposit, the deposit is collected at checkout as a separate charge. It is refunded automatically **72 hours after the event ends**, provided no dispute case is open on the booking. If a damage claim is upheld, EventHub may withhold up to the awarded amount from the deposit; the remainder, if any, is refunded to the Customer. Deposit refunds are processed within 5–10 business days depending on your financial institution."
           },
           {
             "type": "p",
@@ -1678,7 +1721,14 @@
           }
         ]
       }
-    ]
+    ],
+    "updatedBanner": {
+      "title": "We've updated our Terms of Service",
+      "body": "The Terms that govern your use of EventHub changed on {{date}}. Please review and accept the updated Terms to keep an accurate record of your agreement.",
+      "review": "Review the updated Terms",
+      "accept": "I agree to the updated Terms",
+      "error": "We couldn't record your acceptance. Please try again."
+    }
   },
   "vendorHub": {
     "missingVendorId": "Missing vendor id.",

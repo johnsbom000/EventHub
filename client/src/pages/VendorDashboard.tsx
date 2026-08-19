@@ -26,6 +26,7 @@ import { useToast } from "@/hooks/use-toast";
 import { redirectVendorToStripeSetup } from "@/lib/vendorStripe";
 import { apiRequest } from "@/lib/queryClient";
 import { deriveVendorDetection } from "@/lib/vendorState";
+import { TERMS_VERSION, hasAcceptedCurrentTerms } from "@shared/termsVersion";
 import {
  Select,
  SelectContent,
@@ -67,6 +68,10 @@ type VendorMe = {
  showUpgradePrompts?: boolean | null;
  canUseAnalytics?: boolean | null;
  canUseGoogleSync?: boolean | null;
+ onboardingCompleted?: boolean | null;
+ // Terms version this vendor last accepted (null = nothing on record).
+ // Drives the "Terms updated" re-acceptance banner when stale.
+ termsVersionAccepted?: string | null;
 };
 
 type VacationBlock = {
@@ -364,6 +369,34 @@ export default function VendorDashboard() {
  isLoading: isVendorLoading,
  isFetching: isVendorFetching,
  error: vendorMeError,
+ });
+
+ // "Terms updated" re-acceptance banner: shows for onboarded vendors whose
+ // recorded acceptance predates the current TERMS_VERSION (or is missing).
+ // The server stamps its own TERMS_VERSION on accept; nothing here is trusted.
+ const needsTermsReacceptance =
+ Boolean(vendorAccount?.onboardingCompleted) &&
+ !hasAcceptedCurrentTerms(vendorAccount?.termsVersionAccepted);
+ const termsUpdatedDate = useMemo(() => {
+ const localeMap: Record<string, string> = { en: "en-US", es: "es-US", pt: "pt-BR" };
+ const dateLocale = localeMap[i18n.language?.split("-")[0] ?? "en"] ?? "en-US";
+ return new Intl.DateTimeFormat(dateLocale, {
+ year: "numeric",
+ month: "long",
+ day: "numeric",
+ timeZone: "UTC",
+ }).format(new Date(`${TERMS_VERSION}T00:00:00Z`));
+ }, [i18n.language]);
+ const acceptTermsMutation = useMutation({
+ mutationFn: async () => {
+ await apiRequest("POST", "/api/vendor/me/accept-terms", {});
+ },
+ onSuccess: () => {
+ qc.invalidateQueries({ queryKey: ["/api/vendor/me"] });
+ },
+ onError: () => {
+ toast({ title: t("terms.updatedBanner.error"), variant: "destructive" });
+ },
  });
 
  const { data: stats, isLoading: isStatsLoading } = useQuery<VendorStats>({
@@ -1401,6 +1434,38 @@ export default function VendorDashboard() {
  daysLeft={vendorAccount?.reverseTrial?.daysLeft ?? null}
  trialEndsAt={vendorAccount?.reverseTrial?.trialEndsAt ?? null}
  />
+
+ {needsTermsReacceptance ? (
+ <div
+ className="rounded-xl border border-amber-300 bg-amber-50 p-6"
+ data-testid="section-terms-updated"
+ >
+ <h2 className="font-heading text-[20px] leading-none tracking-tight text-amber-900">
+ {t("terms.updatedBanner.title")}
+ </h2>
+ <p className="mt-3 text-sm text-amber-900/90">
+ {t("terms.updatedBanner.body", { date: termsUpdatedDate })}
+ </p>
+ <div className="mt-5 flex flex-wrap items-center gap-4">
+ <Button
+ onClick={() => acceptTermsMutation.mutate()}
+ disabled={acceptTermsMutation.isPending}
+ data-testid="button-accept-updated-terms"
+ >
+ {acceptTermsMutation.isPending ? <Loader2 className="mr-2 h-4 w-4 animate-spin" /> : null}
+ {t("terms.updatedBanner.accept")}
+ </Button>
+ <a
+ href="/terms"
+ target="_blank"
+ rel="noopener noreferrer"
+ className="text-sm text-amber-900 underline underline-offset-2 hover:text-amber-950"
+ >
+ {t("terms.updatedBanner.review")}
+ </a>
+ </div>
+ </div>
+ ) : null}
 
  {vendorAccount?.showUpgradePrompts !== false && vendorAccount?.reverseTrial?.active ? (
  <div
