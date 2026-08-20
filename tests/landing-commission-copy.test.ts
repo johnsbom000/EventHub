@@ -140,7 +140,7 @@ function loadLocale(locale: string): Record<string, unknown> {
   }
   const safe = [
     "Free to join. We only make money when you do.",
-    "No monthly fee. No subscription. Ever.",
+    "No monthly fee. No subscription.",
     "Create your free account",
   ];
   for (const sample of safe) {
