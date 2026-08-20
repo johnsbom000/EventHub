@@ -58,7 +58,7 @@ for (const locale of LOCALES.slice(1)) {
   );
 }
 
-// ── Every locale must have all sixteen sections, in order ───────────────────
+// ── Every locale must have all eighteen sections, in order ──────────────────
 const EXPECTED_SECTIONS = [
   "information-we-collect",
   "how-we-use",
@@ -67,12 +67,14 @@ const EXPECTED_SECTIONS = [
   "maps-location",
   "messaging",
   "google-calendar",
+  "ai-features",
   "analytics-cookies",
   "how-we-share",
   "data-retention",
   "security",
   "your-rights",
   "california",
+  "brazil-lgpd",
   "children",
   "changes",
   "contact",
@@ -81,7 +83,7 @@ for (const locale of LOCALES) {
   assert.deepEqual(
     privacy[locale].sections.map((s) => s.id),
     EXPECTED_SECTIONS,
-    `${locale} has the canonical sixteen sections in order`,
+    `${locale} has the canonical eighteen sections in order`,
   );
   // Non-empty label/heading on every section, or the TOC renders blanks.
   for (const s of privacy[locale].sections) {

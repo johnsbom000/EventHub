@@ -51,7 +51,11 @@ for (const locale of LOCALES.slice(1)) {
   );
 }
 
-// ── Every locale must have all seven sections ───────────────────────────────
+// ── Every locale must have all fourteen sections ────────────────────────────
+// The first seven are the original marketplace contract; the rest were added by
+// the legal-docs hardening pass (PR #218). Order is load-bearing: the Terms page
+// numbers sections by position, and the cross-reference check below bounds
+// citations by this list's length.
 const EXPECTED_SECTIONS = [
   "platform-agreement",
   "vendor-agreement",
@@ -60,12 +64,19 @@ const EXPECTED_SECTIONS = [
   "messaging-terms",
   "post-booking",
   "disputes",
+  "accounts-acceptable-use",
+  "user-content",
+  "subscriptions-billing",
+  "termination",
+  "disclaimers",
+  "indemnification",
+  "general",
 ];
 for (const locale of LOCALES) {
   assert.deepEqual(
     terms[locale].sections.map((s) => s.id),
     EXPECTED_SECTIONS,
-    `${locale} has the canonical seven sections in order`,
+    `${locale} has the canonical fourteen sections in order`,
   );
 }
 
