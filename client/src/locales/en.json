@@ -2504,7 +2504,7 @@
     },
     "landingFreeAComm": {
       "bar": {
-        "text": "Set up in minutes. No learning curve. No monthly fee, ever."
+        "text": "Set up in minutes. No learning curve. No monthly fee."
       }
     },
 
@@ -2532,7 +2532,7 @@
         "getStarted": "Start free"
       },
       "hero": {
-        "trust": "No monthly fee. No subscription. Ever."
+        "trust": "No monthly fee. No subscription."
       }
     },
 
@@ -2608,7 +2608,7 @@
     },
     "landingFreeEComm": {
       "hero": {
-        "trust": "Free to join · No credit card · No subscription, ever"
+        "trust": "Free to join · No credit card · No subscription"
       }
     },
   "demoShared": {

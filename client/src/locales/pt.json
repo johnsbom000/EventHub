@@ -2486,7 +2486,7 @@
   },
   "landingFreeAComm": {
     "bar": {
-      "text": "Configure em minutos. Sem curva de aprendizado. Sem mensalidade, nunca."
+      "text": "Configure em minutos. Sem curva de aprendizado. Sem mensalidade."
     }
   },
   "landingFreeB": {
@@ -2513,7 +2513,7 @@
       "getStarted": "Comece grátis"
     },
     "hero": {
-      "trust": "Sem mensalidade. Sem assinatura. Nunca."
+      "trust": "Sem mensalidade. Sem assinatura."
     }
   },
   "landingFreeC": {
@@ -2586,7 +2586,7 @@
   },
   "landingFreeEComm": {
     "hero": {
-      "trust": "Entre grátis · Sem cartão de crédito · Sem assinatura, nunca"
+      "trust": "Entre grátis · Sem cartão de crédito · Sem assinatura"
     }
   },
   "demoShared": {
