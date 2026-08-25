@@ -1115,7 +1115,13 @@ export function CreateListingWizard({ onClose, initialListingType, parentListing
  if (lastSuccessfulAutosaveKeyRef.current === payloadKey) return;
  if (blockedAutosaveKeyRef.current === payloadKey) return;
 
- if (!listingId) {
+ // listingIdRef is set synchronously in createDraftMutation.onSuccess, before
+ // the listingId state commit. Branching on the state alone opens a window
+ // (mutation-state renders can commit before the setListingId update, e.g. on
+ // iOS Safari) where this effect re-runs seeing no id with the guard already
+ // cleared — creating a duplicate "ghost" draft.
+ const effectiveListingId = listingId ?? listingIdRef.current;
+ if (!effectiveListingId) {
  pendingPayloadRef.current = payload;
  pendingPayloadKeyRef.current = payloadKey;
  if (!createRequestedRef.current) {
@@ -1126,7 +1132,7 @@ export function CreateListingWizard({ onClose, initialListingType, parentListing
  }
 
  const timer = setTimeout(() => {
- updateDraftMutation.mutate({ id: listingId, payload, source: "autosave" });
+ updateDraftMutation.mutate({ id: effectiveListingId, payload, source: "autosave" });
  }, 1200);
 
  return () => clearTimeout(timer);
@@ -1781,8 +1787,14 @@ export function CreateListingWizard({ onClose, initialListingType, parentListing
    nextListingId = created?.id || created?.data?.id;
  }
  if (!nextListingId) {
-   // No autosave in flight (or it failed) — create now
-   created = await createDraftMutation.mutateAsync({ source: "manual", listingType: listingType ?? "single" });
+   // No autosave in flight (or it failed) — create now. Arm the same guards
+   // the autosave path uses so an autosave effect run (or a second manual
+   // save) landing mid-flight awaits this create instead of duplicating it.
+   // createRequestedRef is cleared by the mutation's onSuccess/onError.
+   createRequestedRef.current = true;
+   const createPromise = createDraftMutation.mutateAsync({ source: "manual", listingType: listingType ?? "single" });
+   createDraftPromiseRef.current = createPromise.catch(() => null);
+   created = await createPromise;
    nextListingId = created?.id || created?.data?.id;
  }
  if (!nextListingId) throw new Error("Failed to create listing draft");
