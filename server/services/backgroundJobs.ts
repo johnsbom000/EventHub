@@ -40,6 +40,7 @@ import { runDataRetentionCleanupJob } from "../jobs/dataRetentionCleanup";
 import { runCompExpiryReminderJob } from "../jobs/compExpiryReminders";
 import { runReverseTrialCardPromptJob } from "../jobs/reverseTrialCardPrompt";
 import { runCompPublishEnforcementJob } from "../jobs/compPublishEnforcement";
+import { runPublishNudgeJob } from "../jobs/publishNudge";
 
 // Module-level lazy-init guards for DDL-side-effect tables
 let moderationTableReadyPromise: Promise<void> | null = null;
@@ -1229,6 +1230,36 @@ export function startCompPublishEnforcementWorker() {
   startTimer.unref?.();
 }
 
+export function startPublishNudgeWorker() {
+  const INTERVAL_MS = 24 * 60 * 60 * 1000; // daily
+  const serverUrl = appUrl();
+  const run = async () => {
+    // Lock so multiple app instances don't send the same vendor two nudges. The
+    // per-vendor stamp already guards against repeats across days; this guards
+    // against two instances racing within the same tick.
+    const lockToken = await tryAcquireWorkerLock("publish_nudge", 30 * 60 * 1000);
+    if (!lockToken) return;
+    try {
+      await runPublishNudgeJob({
+        serverUrl,
+        logger: { log: logger.info.bind(logger), warn: logger.warn.bind(logger) },
+      });
+    } catch (err: any) {
+      captureJobError("publish_nudge", err, { stage: "worker" });
+    } finally {
+      await releaseWorkerLock("publish_nudge", lockToken);
+    }
+  };
+  // Offset from the other daily workers so a cold start does not fire every
+  // email job at once.
+  const startTimer = setTimeout(() => {
+    void run();
+    const t = setInterval(() => void run(), INTERVAL_MS);
+    t.unref?.();
+  }, 18 * 60 * 1000);
+  startTimer.unref?.();
+}
+
 export function startCompExpiryReminderWorker() {
   const INTERVAL_MS = 24 * 60 * 60 * 1000; // daily
   const serverUrl = appUrl();
@@ -1801,4 +1832,5 @@ export function startAllBackgroundWorkers() {
   startCompExpiryReminderWorker();
   startReverseTrialCardPromptWorker();
   startCompPublishEnforcementWorker();
+  startPublishNudgeWorker();
 }

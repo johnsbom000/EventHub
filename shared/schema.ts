@@ -359,6 +359,11 @@ export const vendorAccounts = pgTable(
     // once set, the launch-comp publish stipulation is permanently satisfied even
     // if the listing is later unpublished or deleted.
     firstListingPublishedAt: timestamp("first_listing_published_at", { withTimezone: true }),
+    // Once-only guard for the publish nudge (migration 0167). NULL means the
+    // vendor has never been nudged and is eligible; set means they have been.
+    // Backfilled to now() for everyone existing at deploy time, so the job only
+    // ever contacts signups from that point onward.
+    publishNudgeSentAt: timestamp("publish_nudge_sent_at", { withTimezone: true }),
     // Publish-stipulation tracking (migration 0155): day-5 nudge email sent, and
     // when the enforcement job revoked an unmet launch comp. Both reset on a new
     // campaign grant.
