@@ -1231,13 +1231,21 @@ export function startCompPublishEnforcementWorker() {
 }
 
 export function startPublishNudgeWorker() {
-  const INTERVAL_MS = 24 * 60 * 60 * 1000; // daily
+  // Ticks through the day rather than once daily, because the job delivers at
+  // 8am in each VENDOR's timezone: a New York vendor's 8am and a Los Angeles
+  // vendor's 8am are three hours apart, so a single daily run could only ever
+  // serve one of them. Half-hourly gives two chances inside each vendor's 8am
+  // hour, which absorbs a restart or a slow tick; the per-vendor stamp makes
+  // the extra passes no-ops rather than duplicate emails.
+  const INTERVAL_MS = 30 * 60 * 1000;
   const serverUrl = appUrl();
   const run = async () => {
     // Lock so multiple app instances don't send the same vendor two nudges. The
     // per-vendor stamp already guards against repeats across days; this guards
     // against two instances racing within the same tick.
-    const lockToken = await tryAcquireWorkerLock("publish_nudge", 30 * 60 * 1000);
+    // Stale window well under the tick interval, so a lock orphaned by a crash
+    // does not wedge the job until the following tick.
+    const lockToken = await tryAcquireWorkerLock("publish_nudge", 10 * 60 * 1000);
     if (!lockToken) return;
     try {
       await runPublishNudgeJob({
@@ -1250,13 +1258,13 @@ export function startPublishNudgeWorker() {
       await releaseWorkerLock("publish_nudge", lockToken);
     }
   };
-  // Offset from the other daily workers so a cold start does not fire every
-  // email job at once.
+  // Offset from the other workers so a cold start does not fire every email job
+  // at once.
   const startTimer = setTimeout(() => {
     void run();
     const t = setInterval(() => void run(), INTERVAL_MS);
     t.unref?.();
-  }, 18 * 60 * 1000);
+  }, 3 * 60 * 1000);
   startTimer.unref?.();
 }
 
