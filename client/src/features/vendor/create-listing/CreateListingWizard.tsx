@@ -2073,7 +2073,10 @@ export function CreateListingWizard({ onClose, initialListingType, parentListing
  <div
  className={cn(
  "create-listing-wizard-typography listing-onboarding-parity vendor-onboarding-input-surface mx-auto w-full max-w-[1400px] px-8 pt-10 sm:px-14 lg:px-20",
- currentStep === "basics" ? "pb-24" : "pb-36",
+ // On mobile the action bar sits below the scroll area (real footer), so
+ // only a small pad is needed; on sm+ it overlays the content (fixed), so
+ // keep the large clearance.
+ currentStep === "basics" ? "pb-10 sm:pb-24" : "pb-10 sm:pb-36",
  )}
  >
 
@@ -2134,8 +2137,11 @@ export function CreateListingWizard({ onClose, initialListingType, parentListing
          </div>
          </div>
 
- <div className="fixed bottom-0 left-0 right-0 z-30 bg-[#ffffff]/96 backdrop-blur-sm sm:left-24">
- <div className="mx-auto flex w-full max-w-[1400px] flex-wrap items-center justify-between gap-3 px-6 pt-4 pb-8 sm:px-12 lg:px-16">
+ {/* Action bar. On mobile it is a real flex footer (takes layout space, so
+     step content scrolls fully above it — it wraps to two button rows and
+     used to cover the bottom of every step). On sm+ it overlays as before. */}
+ <div className="z-30 shrink-0 border-t border-[rgba(74,106,125,0.15)] bg-[#ffffff] sm:fixed sm:bottom-0 sm:left-24 sm:right-0 sm:border-t-0 sm:bg-[#ffffff]/96 sm:backdrop-blur-sm">
+ <div className="mx-auto flex w-full max-w-[1400px] flex-wrap items-center justify-between gap-3 px-6 pt-3 pb-5 sm:px-12 sm:pt-4 sm:pb-8 lg:px-16">
  <div className="flex items-center gap-2">
  <Button
  type="button"
