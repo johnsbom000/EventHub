@@ -1985,7 +1985,7 @@ export function CreateListingWizard({ onClose, initialListingType, parentListing
 
  if (!listingType) {
  return (
- <div className="swap-dashboard-whites flex h-screen w-full flex-col overflow-hidden bg-[#ffffff]">
+ <div className="swap-dashboard-whites flex h-screen w-full flex-col overflow-hidden bg-[#ffffff] supports-[height:100dvh]:h-dvh">
  <Navigation vendorDashboardAligned />
  <AuthModal
  open={authModalOpen}
@@ -2018,7 +2018,11 @@ export function CreateListingWizard({ onClose, initialListingType, parentListing
 
  return (
  <>
- <div className="swap-dashboard-whites flex h-screen w-full flex-col bg-[#ffffff]">
+ {/* 100dvh (not 100vh/h-screen): the page itself never scrolls — content
+     scrolls in an inner container — so iOS Safari keeps its bottom URL bar
+     expanded and overlays the last ~70px of a 100vh layout, hiding the
+     footer buttons. dvh tracks the actually-visible viewport. */}
+ <div className="swap-dashboard-whites flex h-screen w-full flex-col bg-[#ffffff] supports-[height:100dvh]:h-dvh">
  <Navigation vendorDashboardAligned />
  <AuthModal
  open={authModalOpen}
