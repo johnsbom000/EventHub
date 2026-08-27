@@ -18,13 +18,15 @@ const REPLY_TO = "support@eventhubglobal.com";
 async function main() {
   const to = process.argv[2]?.trim() || REVIEW_INBOX;
 
-  // Render with a sample first name so the personalization is visible in review.
-  const { subject, html, text } = founderGreetingTemplate({ recipientName: "Karen" });
+  // Production-identical render: no [PREVIEW] tag, generic greeting — exactly
+  // what a recipient with no first name on file receives. Pass a name as the
+  // second argument to see the personalized variant.
+  const { subject, html, text } = founderGreetingTemplate({ recipientName: process.argv[3] || null });
 
-  console.log(`Sending PREVIEW to ${to} (reply-to ${REPLY_TO})`);
+  console.log(`Sending production-identical preview to ${to} (reply-to ${REPLY_TO})`);
   console.log(`Subject: ${subject}\n`);
 
-  const result = await sendViaResendRaw({ to, subject: `[PREVIEW] ${subject}`, html, text, replyTo: REPLY_TO });
+  const result = await sendViaResendRaw({ to, subject, html, text, replyTo: REPLY_TO });
   if (result.sent) {
     console.log("Preview sent.");
   } else {

@@ -33,10 +33,10 @@ export function founderGreetingTemplate(params: FounderGreetingParams = {}): {
   const name = params.recipientName?.trim();
   const greeting = name ? `Hi ${name}, this is Bo Johnson.` : `Hi, this is Bo Johnson.`;
 
-  const subject = `A hello from Bo, EventHub's founder`;
+  const subject = `Hello from Bo, EventHub's founder`;
 
   const body = `
-    <h2 style="margin:0 0 16px;font-family:'Playfair Display',Georgia,serif;font-size:22px;color:${SLATE};">Thanks for signing up — I'd love to hear from you</h2>
+    <h2 style="margin:0 0 16px;font-family:'Playfair Display',Georgia,serif;font-size:22px;color:${SLATE};">I'd love to connect!</h2>
     <p style="margin:0 0 12px;font-size:15px;line-height:1.6;">${greeting}</p>
     <p style="margin:0 0 12px;font-size:15px;line-height:1.6;">
       I built EventHub to make your life easier and to give your customers the best
