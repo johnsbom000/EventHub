@@ -4,18 +4,28 @@
  *
  * DRY-RUN by default — prints the DB host and the exact recipient list (with
  * the greeting each person would get), sends nothing. Re-run with --apply to
- * actually send. Not idempotent: running --apply twice emails everyone twice,
- * so check the dry-run list first and run --apply once.
+ * actually send.
  *
- * Recipients: users with role='vendor' AND created_at after the cutoff.
- * Internal/test accounts are excluded defensively. Greeting uses a real first
- * name when one exists (users.first_name, else vendor_accounts.owner_first_name),
- * otherwise the generic "Hi, this is Bo Johnson." — never users.name, which
- * often holds an email address or business name.
+ * SEND-ONCE: users.founder_greeting_sent_at (migration 0167) is checked in the
+ * recipient query and stamped immediately after each successful send, so
+ * re-running --apply only reaches people who have never received the email.
+ *
+ * Recipients: users with role='vendor' AND created_at after the cutoff AND
+ * founder_greeting_sent_at IS NULL. Internal/test accounts are excluded
+ * defensively. Greeting uses a real first name when one exists
+ * (users.first_name, else vendor_accounts.owner_first_name), otherwise the
+ * generic "Hi, this is Bo Johnson." — never users.name, which often holds an
+ * email address or business name.
  *
  * Against PROD:
  *   railway run --service EventHub -- npx tsx server/scripts/send_founder_greeting_batch.ts
  *   railway run --service EventHub -- npx tsx server/scripts/send_founder_greeting_batch.ts --apply
+ *
+ * Stamping people who were emailed OUTSIDE this script (no email is sent):
+ *   --mark-sent <email>            stamp one address
+ *   --mark-sent-before <ISO time>  stamp every matching recipient created
+ *                                  before the given time (use the time the
+ *                                  out-of-band send actually happened)
  */
 
 import { db, pool } from "../db";
@@ -42,8 +52,46 @@ function hostOf(url: string | undefined): string {
 
 const apply = process.argv.includes("--apply");
 
+function argValue(flag: string): string | null {
+  const i = process.argv.indexOf(flag);
+  return i >= 0 ? process.argv[i + 1]?.trim() || null : null;
+}
+const markSentEmail = argValue("--mark-sent");
+const markSentBefore = argValue("--mark-sent-before");
+
 async function main() {
   console.log(`DB host: ${hostOf(process.env.DATABASE_URL)}`);
+
+  // Stamp-only modes: record an out-of-band send, never email anyone.
+  if (markSentEmail) {
+    const res: any = await db.execute(sql`
+      update users set founder_greeting_sent_at = now(), updated_at = now()
+      where lower(email) = ${markSentEmail.toLowerCase()}
+        and founder_greeting_sent_at is null
+      returning email
+    `);
+    console.log(`Marked sent: ${(res.rows ?? []).length} row(s) for ${markSentEmail} (0 = unknown email or already marked).`);
+    return;
+  }
+  if (markSentBefore) {
+    const res: any = await db.execute(sql`
+      update users u set founder_greeting_sent_at = ${markSentBefore}, updated_at = now()
+      where u.role = 'vendor'
+        and u.created_at > ${CUTOFF}
+        and u.created_at < ${markSentBefore}
+        and u.founder_greeting_sent_at is null
+        and not (${sql.join(
+          EXCLUDE_PATTERNS.map((p) => sql`lower(u.email) like ${p}`),
+          sql` or `
+        )})
+      returning u.email
+    `);
+    const marked: any[] = res.rows ?? [];
+    console.log(`Marked ${marked.length} recipient(s) as sent at ${markSentBefore}:`);
+    for (const r of marked) console.log(`  ${r.email}`);
+    return;
+  }
+
   console.log(`Mode: ${apply ? "APPLY (will send email)" : "dry-run (no sends)"}\n`);
 
   const result: any = await db.execute(sql`
@@ -58,6 +106,7 @@ async function main() {
       on (va.user_id = u.id or lower(va.email) = lower(u.email)) and va.deleted_at is null
     where u.role = 'vendor'
       and u.created_at > ${CUTOFF}
+      and u.founder_greeting_sent_at is null
       and not (${sql.join(
         EXCLUDE_PATTERNS.map((p) => sql`lower(u.email) like ${p}`),
         sql` or `
@@ -99,6 +148,11 @@ async function main() {
     const res = await sendViaResendRaw({ to: r.email, subject, html, text, replyTo: REPLY_TO });
     if (res.sent) {
       sent++;
+      // Stamp immediately so a crash or re-run can never send twice.
+      await db.execute(sql`
+        update users set founder_greeting_sent_at = now(), updated_at = now()
+        where lower(email) = ${String(r.email).toLowerCase()}
+      `);
       console.log(`  sent  ${r.email}`);
     } else {
       failed.push(`${r.email} — ${res.reason ?? "unknown"}`);

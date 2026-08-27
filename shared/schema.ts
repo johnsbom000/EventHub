@@ -129,6 +129,10 @@ export const users = pgTable(
     // One-shot re-engagement flag: redirect to /vendor/provision on next
     // sign-in, then cleared immediately. Set manually, never by app flows.
     vendorIntentPending: boolean("vendor_intent_pending").notNull().default(false),
+    // When the founder-greeting email was sent (migration 0167). NULL = never.
+    // Every sender must check-before-send and stamp on success — this column is
+    // the only thing preventing a double-send.
+    founderGreetingSentAt: timestamp("founder_greeting_sent_at", { withTimezone: true }),
     createdAt: timestamp("created_at").defaultNow().notNull(),
     updatedAt: timestamp("updated_at").defaultNow().notNull(),
   },
