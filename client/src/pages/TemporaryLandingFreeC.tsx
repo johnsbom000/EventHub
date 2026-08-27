@@ -39,8 +39,10 @@ export default function TemporaryLandingFreeC({ model }: { model: PricingModel }
 
       {/* Hero */}
       <section className="bg-gradient-to-b from-[#f5f0e8] to-white">
-        <div className="mx-auto grid min-h-[calc(100svh-90px)] max-w-[1320px] items-center gap-12 px-5 py-16 lg:grid-cols-[1.05fr_1fr] lg:gap-16 lg:px-10 lg:py-8">
-          <div className="text-center">
+        <div className="mx-auto grid max-w-[1320px] items-center gap-12 px-5 py-16 lg:min-h-[calc(100svh-90px)] lg:grid-cols-[1.05fr_1fr] lg:gap-16 lg:px-10 lg:py-8">
+          {/* Mobile: the copy fills the first screen (centered) and the storefront
+              still starts below the fold, mirroring direction D. */}
+          <div className="flex min-h-[calc(100svh-60px)] flex-col justify-center text-center lg:block lg:min-h-0">
             <h1 className="font-heading text-[clamp(2.6rem,5.6vw,4.3rem)] font-light leading-[1.02] text-[#2a3a42]">
               <Trans i18nKey={k("hero.title")} components={{ accent: <em className="italic text-[#e07a6a]" /> }} />
             </h1>
