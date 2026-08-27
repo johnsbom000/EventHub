@@ -582,7 +582,7 @@ export default function TemporaryLanding({ model }: { model: PricingModel }) {
             model the Pro / $29-a-month offer does not exist, so the priced
             mention is replaced by one honest line in the same wrapper — same
             bar, same height, so the hero below it is unmoved. */}
-        <div className="deal-outline relative bg-[#2a3a42] text-[#f5f0e8]" style={{ ["--ring" as any]: "2px" }}>
+        <div className="deal-outline relative hidden bg-[#2a3a42] text-[#f5f0e8] lg:block" style={{ ["--ring" as any]: "2px" }}>
           <div className="mx-auto flex max-w-[1320px] flex-wrap items-center justify-center gap-x-3 gap-y-1 px-5 py-2 text-center lg:px-10">
             {model === "commission" && (
               <span className="font-sans text-[0.92rem] leading-tight">{t(k("bar.text"))}</span>
@@ -618,14 +618,14 @@ export default function TemporaryLanding({ model }: { model: PricingModel }) {
               <button
                 type="button"
                 onClick={openLogin}
-                className="rounded-[10px] px-4 py-2 font-sans text-[0.98rem] font-semibold text-[#2a3a42] transition-colors hover:bg-[#f0f4f7]"
+                className="whitespace-nowrap rounded-[10px] px-4 py-2 font-sans text-[0.98rem] font-semibold text-[#2a3a42] transition-colors hover:bg-[#f0f4f7]"
               >
                 {t("landing.header.logIn")}
               </button>
               <button
                 type="button"
                 onClick={() => handleSignupCta("header_get_started")}
-                className="rounded-[10px] bg-[#2a3a42] px-4 py-2 font-sans text-[0.98rem] font-semibold text-white transition-colors hover:bg-[#3a4f59]"
+                className="whitespace-nowrap rounded-[10px] bg-[#2a3a42] px-4 py-2 font-sans text-[0.98rem] font-semibold text-white transition-colors hover:bg-[#3a4f59]"
               >
                 {t("landing.header.getStarted")}
               </button>
@@ -636,15 +636,17 @@ export default function TemporaryLanding({ model }: { model: PricingModel }) {
 
       {/* Hero */}
       <section className="bg-gradient-to-b from-[#f8fafb] to-white">
-        <div className="mx-auto grid min-h-[calc(100svh-95px)] max-w-[1320px] items-center gap-12 px-5 py-16 lg:grid-cols-[1.05fr_1fr] lg:gap-16 lg:px-10 lg:py-24">
-          <div>
+        <div className="mx-auto grid max-w-[1320px] items-center gap-12 px-5 py-16 lg:min-h-[calc(100svh-95px)] lg:grid-cols-[1.05fr_1fr] lg:gap-16 lg:px-10 lg:py-24">
+          {/* Mobile: the copy fills the first screen (centered) and the dashboard
+              mock starts below the fold, mirroring direction D. */}
+          <div className="flex min-h-[calc(100svh-60px)] flex-col justify-center text-center lg:block lg:min-h-0 lg:text-left">
             <h1 className="font-heading text-[clamp(2.6rem,6vw,4rem)] font-light leading-[1.05] text-[#2a3a42]">
               <Trans
                 i18nKey="landing.hero.title"
                 components={{ accent: <em className="italic text-[#e07a6a]" /> }}
               />
             </h1>
-            <p className="mt-6 max-w-xl font-sans text-[1.2rem] leading-[1.6] text-[#4a6a7d]">
+            <p className="mx-auto mt-6 max-w-xl font-sans text-[1.2rem] leading-[1.6] text-[#4a6a7d] lg:mx-0">
               {t("landing.hero.subtitle")}
             </p>
             {/* CTA is centered on the trust line beneath it */}
