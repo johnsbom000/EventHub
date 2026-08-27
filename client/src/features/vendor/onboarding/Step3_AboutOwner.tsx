@@ -286,7 +286,6 @@ interface Step3AboutOwnerProps {
   formData: {
     ownerFirstName: string;
     ownerLastName: string;
-    ownerPhone: string;
     aboutVendor: string;
     shopTagline: string;
     inBusinessSinceYear: string;
@@ -776,21 +775,6 @@ export default function Step3_AboutOwner({
               />
               {lastNameError && <p className="text-[0.75rem] text-destructive">{lastNameError}</p>}
             </div>
-          </div>
-
-          <div className="space-y-2">
-            <Label htmlFor="onboarding-owner-phone">Personal phone <span className="text-muted-foreground font-normal">(optional)</span></Label>
-            <Input
-              id="onboarding-owner-phone"
-              type="tel"
-              value={formData.ownerPhone}
-              onChange={(e) => updateFormData({ ownerPhone: e.target.value })}
-              placeholder="(555) 000-0000"
-              autoComplete="tel"
-            />
-            <p className="text-[0.75rem] text-muted-foreground">
-              Only used to identify you when you book from other vendors — never shown publicly.
-            </p>
           </div>
 
           <div className="space-y-2">
