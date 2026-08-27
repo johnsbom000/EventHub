@@ -703,7 +703,9 @@ export function CreateListingWizard({ onClose, initialListingType, parentListing
 
  const createDraftMutation = useMutation({
  mutationFn: async (_variables?: { source?: "autosave" | "manual"; listingType?: string }) => {
- if (!isAuthenticated) {
+ // Auth0's isAuthenticated is false while the SDK is still restoring the
+ // session; getFreshAccessToken() awaits that and proves a usable token.
+ if (!(await getFreshAccessToken())) {
  throw new Error(AUTH_LOGIN_REQUIRED_ERROR);
  }
  const res = await apiRequest("POST", "/api/vendor/listings", {
@@ -759,7 +761,9 @@ export function CreateListingWizard({ onClose, initialListingType, parentListing
  payload: any;
  source?: "autosave" | "manual";
  }) => {
- if (!isAuthenticated) {
+ // Auth0's isAuthenticated is false while the SDK is still restoring the
+ // session; getFreshAccessToken() awaits that and proves a usable token.
+ if (!(await getFreshAccessToken())) {
  throw new Error(AUTH_LOGIN_REQUIRED_ERROR);
  }
  const res = await apiRequest("PATCH", `/api/vendor/listings/${id}`, { listingData: payload });
@@ -1436,9 +1440,6 @@ export function CreateListingWizard({ onClose, initialListingType, parentListing
  };
 
  async function uploadListingPhoto(file: File): Promise<UploadedListingPhoto> {
- if (!isAuthenticated) {
- throw new Error(AUTH_LOGIN_REQUIRED_ERROR);
- }
  const token = await getFreshAccessToken();
  if (!token) {
  throw new Error(AUTH_LOGIN_REQUIRED_ERROR);
@@ -1766,7 +1767,9 @@ export function CreateListingWizard({ onClose, initialListingType, parentListing
  };
 
  const ensureListingSaved = async (options?: { forceCreate?: boolean }): Promise<string | null> => {
- if (!isAuthenticated) {
+ // Auth0's isAuthenticated is false while the SDK is still restoring the
+ // session; getFreshAccessToken() awaits that and proves a usable token.
+ if (!(await getFreshAccessToken())) {
  throw new Error(AUTH_LOGIN_REQUIRED_ERROR);
  }
  const forceCreate = Boolean(options?.forceCreate);
