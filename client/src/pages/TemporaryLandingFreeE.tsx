@@ -37,13 +37,18 @@ export default function TemporaryLandingFreeE({ model }: { model: PricingModel }
       </div>
 
       {/* Split hero */}
-      <section className="grid min-h-[calc(100svh-90px)] lg:grid-cols-2">
-        <div className="order-1 flex flex-col justify-center bg-[#2a3a42] px-6 py-16 lg:px-12 lg:py-24 xl:px-20">
-          <div className="mx-auto w-full max-w-[540px]">
+      <section className="grid lg:min-h-[calc(100svh-90px)] lg:grid-cols-2">
+        {/* Mobile: the dark copy panel fills the first screen (centered) and the
+            demo panel starts below the fold, mirroring direction D. A full
+            100svh (not minus the header) so the light-panel edge can never peek
+            above the fold — unlike the grid heroes there is no padding/gap
+            below this panel, so any shortfall shows as a colour seam. */}
+        <div className="order-1 flex min-h-[100svh] min-w-0 flex-col justify-center bg-[#2a3a42] px-6 py-16 lg:min-h-0 lg:px-12 lg:py-24 xl:px-20">
+          <div className="mx-auto w-full max-w-[540px] text-center lg:text-left">
             <h1 className="font-heading text-[clamp(2.6rem,5.4vw,4.3rem)] font-light leading-[1.02] text-[#f5f0e8]">
               <Trans i18nKey={k("hero.title")} components={{ accent: <em className="italic text-[#e07a6a]" /> }} />
             </h1>
-            <p className="mt-6 max-w-md font-sans text-[1.2rem] leading-[1.6] text-[rgba(245,240,232,0.82)]">
+            <p className="mx-auto mt-6 max-w-md font-sans text-[1.2rem] leading-[1.6] text-[rgba(245,240,232,0.82)] lg:mx-0">
               {t(k("hero.subtitle"))}
             </p>
             {/* CTA is centered on the trust line beneath it */}
@@ -55,7 +60,7 @@ export default function TemporaryLandingFreeE({ model }: { model: PricingModel }
             </div>
           </div>
         </div>
-        <div className="order-2 flex items-center bg-[#f8fafb] px-6 py-16 lg:py-24">
+        <div className="order-2 flex min-w-0 items-center bg-[#f8fafb] px-6 py-16 lg:py-24">
           <div className="mx-auto w-full max-w-[480px]">
             <VendorDashboardDemo still />
           </div>

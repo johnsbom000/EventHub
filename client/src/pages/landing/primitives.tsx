@@ -13,15 +13,19 @@ import { useLanguage } from "@/context/LanguageContext";
 
 // Globe dropdown that switches the site language. Reuses the app-wide
 // LanguageSection + LanguageProvider so the choice persists (localStorage +
-// server) exactly like everywhere else. Styled for the landing header.
-export function LanguageMenu() {
+// server) exactly like everywhere else. Styled for the landing header; the
+// light tone fits the slate footer, where the switch lives on mobile.
+export function LanguageMenu({ tone = "dark" }: { tone?: "dark" | "light" }) {
   const { t } = useTranslation();
   const { language } = useLanguage();
   return (
     <DropdownMenu>
       <DropdownMenuTrigger
         aria-label={t("nav.language.label")}
-        className="inline-flex items-center gap-1.5 rounded-full px-3 py-2 font-sans text-[0.98rem] font-semibold text-[#4a6a7d] transition-colors hover:text-[#2a3a42] focus:outline-none focus-visible:ring-2 focus-visible:ring-[#e07a6a]/40"
+        className={cn(
+          "inline-flex items-center gap-1.5 rounded-full px-3 py-2 font-sans text-[0.98rem] font-semibold transition-colors focus:outline-none focus-visible:ring-2 focus-visible:ring-[#e07a6a]/40",
+          tone === "light" ? "text-[rgba(245,240,232,0.75)] hover:text-white" : "text-[#4a6a7d] hover:text-[#2a3a42]",
+        )}
       >
         <Globe className="h-[1.15em] w-[1.15em]" />
         <span className="uppercase">{language}</span>
@@ -116,6 +120,8 @@ export function GhostButton({
 }
 
 // Slim announcement bar sitting above the header. theme controls the palette.
+// Desktop-only: on mobile the page goes straight to the header so the hero
+// gets the full first screen.
 export function Bar({ theme = "cream", children }: { theme?: "cream" | "blue" | "dark"; children: ReactNode }) {
   const cls =
     theme === "dark"
@@ -124,7 +130,7 @@ export function Bar({ theme = "cream", children }: { theme?: "cream" | "blue" | 
         ? "bg-[#f8fafb] text-[#4a6a7d]"
         : "bg-[#f5f0e8] text-[#4a6a7d]";
   return (
-    <div className={cls}>
+    <div className={cn("hidden lg:block", cls)}>
       <div className="mx-auto flex max-w-[1320px] items-center justify-center gap-2 px-5 py-2 text-center lg:px-10">
         <span className="font-sans text-[0.9rem] leading-tight">{children}</span>
       </div>
@@ -159,12 +165,15 @@ export function Header({
           hubClassName="text-[#4a6a7d] font-normal"
         />
         <div className="flex items-center gap-2">
-          <LanguageMenu />
+          {/* On mobile the language switch lives in the footer instead */}
+          <div className="hidden lg:block">
+            <LanguageMenu />
+          </div>
           {!minimal && (
             <button
               type="button"
               onClick={onLogin}
-              className="rounded-full px-4 py-2 font-sans text-[0.98rem] font-semibold text-[#4a6a7d] transition-colors hover:text-[#2a3a42]"
+              className="whitespace-nowrap rounded-full px-4 py-2 font-sans text-[0.98rem] font-semibold text-[#4a6a7d] transition-colors hover:text-[#2a3a42]"
             >
               {t("landingShared.logIn")}
             </button>
@@ -172,7 +181,7 @@ export function Header({
           <button
             type="button"
             onClick={onSignup}
-            className="inline-flex items-center gap-1.5 rounded-full bg-[#e07a6a] px-5 py-2 font-sans text-[0.98rem] font-semibold text-white transition-colors hover:bg-[#c96959]"
+            className="inline-flex items-center gap-1.5 whitespace-nowrap rounded-full bg-[#e07a6a] px-5 py-2 font-sans text-[0.98rem] font-semibold text-white transition-colors hover:bg-[#c96959]"
           >
             {cta}
             <ChevronRight className="h-[1.05em] w-[1.05em]" />
@@ -248,13 +257,17 @@ export function Footer() {
           <p className="font-sans text-[0.87rem] text-[rgba(245,240,232,0.45)]">
             {t("landingShared.footer.copyright", { year: new Date().getFullYear() })}
           </p>
-          <div className="flex gap-6">
+          <div className="flex items-center gap-6">
             <a href="/terms" className="font-sans text-[0.87rem] text-[rgba(245,240,232,0.6)] hover:text-white">
               {t("landingShared.footer.terms")}
             </a>
             <a href="/privacy" className="font-sans text-[0.87rem] text-[rgba(245,240,232,0.6)] hover:text-white">
               {t("landingShared.footer.privacy")}
             </a>
+            {/* Mobile home of the language switch (the header hides it below lg) */}
+            <div className="lg:hidden">
+              <LanguageMenu tone="light" />
+            </div>
           </div>
         </div>
       </div>
