@@ -248,7 +248,8 @@ export default function VendorOnboarding() {
 
  const [, setLocation] = useLocation();
  const { toast } = useToast();
- const { loginWithRedirect, isAuthenticated } = useAuth0();
+ const { loginWithRedirect, isAuthenticated, user } = useAuth0();
+ const signupEmail = user?.email?.trim() ?? "";
  const isCreatingAdditionalProfile =
  typeof window !== "undefined" &&
  new URLSearchParams(window.location.search).get("createProfile") === "1";
@@ -275,6 +276,15 @@ export default function VendorOnboarding() {
  }
  // eslint-disable-next-line react-hooks/exhaustive-deps
  }, []);
+
+ // Prefill the business email with the account's signup email once Auth0
+ // resolves. Only fills an empty field, so drafts and vendor edits win.
+ useEffect(() => {
+ if (!isAuthenticated || !signupEmail) return;
+ setFormData((prev) =>
+  prev.businessEmail.trim() === "" ? { ...prev, businessEmail: signupEmail } : prev
+ );
+ }, [isAuthenticated, signupEmail]);
 
  // Hydrate from a saved draft (if any) so refreshes, closed tabs, and the
  // Auth0 login redirect don't lose progress. Lazy initializers avoid a flash
@@ -313,11 +323,13 @@ export default function VendorOnboarding() {
 
  // referralCode is auto-seeded from the URL, not typed by the vendor, so it
  // doesn't count toward "has the vendor entered anything worth saving".
+ // Likewise a businessEmail still equal to the auto-filled signup email.
  const isFormDirty = useMemo(() => {
- const { referralCode: _currentRef, ...current } = formData;
- const { referralCode: _defaultRef, ...defaults } = DEFAULT_ONBOARDING_DATA;
+ const { referralCode: _currentRef, businessEmail, ...current } = formData;
+ const { referralCode: _defaultRef, businessEmail: _defaultEmail, ...defaults } = DEFAULT_ONBOARDING_DATA;
+ if (businessEmail.trim() !== "" && businessEmail !== signupEmail) return true;
  return JSON.stringify(current) !== JSON.stringify(defaults);
- }, [formData]);
+ }, [formData, signupEmail]);
 
  const hasDraftableProgress =
  isFormDirty || currentStep > 1 || completedStepIds.length > 0;
@@ -338,6 +350,7 @@ export default function VendorOnboarding() {
  ...DEFAULT_ONBOARDING_DATA,
  operatingTimezone: detectBrowserTimezone(),
  ...(pendingReferral ? { referralCode: pendingReferral } : {}),
+ ...(isAuthenticated && signupEmail ? { businessEmail: signupEmail } : {}),
  });
  setCurrentStep(1);
  setCompletedStepIds([]);
