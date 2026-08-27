@@ -45,6 +45,7 @@ export async function sendViaResendRaw(params: {
   subject: string;
   html: string;
   text?: string;
+  replyTo?: string;
 }): Promise<EmailResult> {
   return sendViaResend(params);
 }
@@ -54,6 +55,7 @@ async function sendViaResend(params: {
   subject: string;
   html: string;
   text?: string;
+  replyTo?: string;
 }): Promise<EmailResult> {
   const cfg = resendConfig();
   if (!cfg) {
@@ -76,6 +78,7 @@ async function sendViaResend(params: {
     html: params.html,
   };
   if (params.text) body.text = params.text;
+  if (params.replyTo) body.reply_to = params.replyTo;
 
   const resp = await fetch("https://api.resend.com/emails", {
     method: "POST",
