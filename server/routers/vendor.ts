@@ -1266,6 +1266,20 @@ export function registerVendorRoutes(app: Express): void {
                 or(eq(users.vendorOnlySignup, false), eq(users.vendorIntentPending, true))
               )
             );
+          // Heal role on retry: vendors provisioned before role flipped at
+          // provision time (or whose flip was lost) are stuck as 'customer'.
+          // Separate update — the one above is guarded by vendorOnlySignup /
+          // vendorIntentPending and would skip exactly these rows. Admins are
+          // never downgraded; already-vendor rows are left untouched.
+          await db
+            .update(users)
+            .set({ role: "vendor" as const, updatedAt: new Date() })
+            .where(
+              and(
+                eq(users.id, linkedUserId),
+                drizzleSql`${users.role} not in ('vendor', 'admin')`
+              )
+            );
           if (!existingAccount.userId) {
             await db
               .update(vendorAccounts)
@@ -1371,12 +1385,17 @@ export function registerVendorRoutes(app: Express): void {
         // dropped in migration 0148, so `ON CONFLICT (email)` raises 42P10.
         // Drizzle 0.39's onConflictDoUpdate target accepts only a column, not an
         // expression, so this upsert is written as raw SQL against that index.
+        // Role is 'vendor' from the moment of provisioning — this endpoint IS the
+        // vendor signup. Waiting for onboarding/complete to flip it left every
+        // stalled vendor stranded as a 'customer' (and routed to the customer UX
+        // on return). Existing rows flip too, except admins, who never downgrade.
         const upsertedUser: any = await tx.execute(drizzleSql`
           insert into ${users} (name, display_name, email, role, auth0_sub, vendor_only_signup, last_login_at)
-          values (${normalizedName}, ${normalizedName}, ${email}, 'customer', ${auth0Sub ?? null}, true, now())
+          values (${normalizedName}, ${normalizedName}, ${email}, 'vendor', ${auth0Sub ?? null}, true, now())
           on conflict (lower(email)) do update set
             vendor_only_signup = true,
             vendor_intent_pending = false,
+            role = case when ${users}.role = 'admin' then ${users}.role else 'vendor' end,
             updated_at = now()
           returning id
         `);
