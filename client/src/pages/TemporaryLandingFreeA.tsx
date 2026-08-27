@@ -52,8 +52,13 @@ export default function TemporaryLandingFreeA({ model }: { model: PricingModel }
 
       {/* Hero */}
       <section>
-        <div className="mx-auto grid min-h-[calc(100svh-90px)] max-w-[1320px] items-center gap-12 px-5 py-16 lg:grid-cols-[1fr_1.05fr] lg:gap-16 lg:px-10 lg:py-24">
-          <motion.div className="text-center lg:text-left" {...containerProps}>
+        <div className="mx-auto grid max-w-[1320px] items-center gap-12 px-5 py-16 lg:min-h-[calc(100svh-90px)] lg:grid-cols-[1fr_1.05fr] lg:gap-16 lg:px-10 lg:py-24">
+          {/* Mobile: the copy fills the first screen (centered) and the demo
+              starts below the fold, mirroring direction D. */}
+          <motion.div
+            className="flex min-h-[calc(100svh-60px)] flex-col justify-center text-center lg:block lg:min-h-0 lg:text-left"
+            {...containerProps}
+          >
             <motion.h1
               {...headlineProps}
               className="font-heading text-[clamp(2.6rem,5.4vw,4.3rem)] font-light leading-[1.02] text-[#2a3a42]"

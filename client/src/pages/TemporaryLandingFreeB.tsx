@@ -40,8 +40,10 @@ export default function TemporaryLandingFreeB({ model }: { model: PricingModel }
 
       {/* Hero */}
       <section className="bg-[#2a3a42]">
-        <div className="mx-auto grid min-h-[calc(100svh-90px)] max-w-[1320px] items-center gap-14 px-5 py-20 lg:grid-cols-[1.05fr_1fr] lg:gap-16 lg:px-10 lg:py-24">
-          <div>
+        <div className="mx-auto grid max-w-[1320px] items-center gap-14 px-5 py-20 lg:min-h-[calc(100svh-90px)] lg:grid-cols-[1.05fr_1fr] lg:gap-16 lg:px-10 lg:py-24">
+          {/* Mobile: the copy fills the first screen (centered) and the demo
+              starts below the fold, mirroring direction D. */}
+          <div className="flex min-h-[calc(100svh-60px)] flex-col justify-center text-center lg:block lg:min-h-0 lg:text-left">
             <h1 className="font-heading text-[clamp(2.7rem,5.8vw,4.5rem)] font-light leading-[1.02] text-[#f5f0e8]">
               <Trans i18nKey={k("hero.title")} components={{ accent: <em className="italic text-[#e07a6a]" /> }} />
             </h1>
@@ -55,7 +57,7 @@ export default function TemporaryLandingFreeB({ model }: { model: PricingModel }
               <p className="mt-6 font-sans text-[0.95rem] text-[rgba(245,240,232,0.6)]">{t(k("hero.trust"))}</p>
             </div>
           </div>
-          <div>
+          <div className="min-w-0">
             <VendorDashboardDemo still />
           </div>
         </div>

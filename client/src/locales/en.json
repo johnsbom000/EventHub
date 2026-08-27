@@ -2193,7 +2193,7 @@
     },
     "header": {
       "logIn": "Log in",
-      "getStarted": "Get started"
+      "getStarted": "Start free"
     },
     "hero": {
       "title": "Run your event business, <accent>all in one place.</accent>",
@@ -2486,7 +2486,7 @@
         "text": "Set up in minutes. No learning curve. Upgrade to Pro anytime."
       },
       "header": {
-        "getStarted": "Create free account"
+        "getStarted": "Start free"
       },
       "hero": {
         "title": "Your event rental business is eating your time.<br /><accent>Take it back</accent>.",
@@ -2513,7 +2513,7 @@
         "text": "Get booked. Get paid. Keep it simple."
       },
       "header": {
-        "getStarted": "Start earning free"
+        "getStarted": "Start free"
       },
       "hero": {
         "title": "Get more event rental bookings. <accent>Work a fraction of the time</accent>.",
@@ -2542,7 +2542,7 @@
         "text": "· Free forever plan, no credit card required."
       },
       "header": {
-        "getStarted": "Create free account"
+        "getStarted": "Start free"
       },
       "hero": {
         "badge": "Loved by event vendors",
@@ -2594,7 +2594,7 @@
         "text": "· Give them a storefront to book — free."
       },
       "header": {
-        "getStarted": "Create free account"
+        "getStarted": "Start free"
       },
       "hero": {
         "title": "Stop responding to event rental <accent>DMs</accent>.",
