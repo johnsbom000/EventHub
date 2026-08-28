@@ -9,6 +9,8 @@
 // key), so call sites never need to guard.
 import posthog from "posthog-js";
 
+import { dropInAppBrowserBridgeExceptions } from "./inAppBrowserErrorFilter";
+
 declare global {
   interface Window {
     posthog: typeof posthog;
@@ -106,6 +108,9 @@ export function initPostHog(): void {
     ...(bootstrapFlags ? { bootstrap: { featureFlags: bootstrapFlags } } : {}),
     capture_pageview: false,
     capture_pageleave: true,
+    // Drop autocaptured $exception events that come from an in-app browser
+    // bridge script (Facebook/Instagram WebView), not from EventHub code.
+    before_send: dropInAppBrowserBridgeExceptions,
     persistence: "localStorage+cookie",
     // Create a person profile for ANONYMOUS visitors too (default is
     // "identified_only"). Paid Meta/IG traffic is anonymous — without this they
