@@ -248,7 +248,7 @@ export default function VendorOnboarding() {
 
  const [, setLocation] = useLocation();
  const { toast } = useToast();
- const { loginWithRedirect, isAuthenticated, user } = useAuth0();
+ const { loginWithRedirect, isAuthenticated, isLoading: isAuthLoading, user } = useAuth0();
  const signupEmail = user?.email?.trim() ?? "";
  const isCreatingAdditionalProfile =
  typeof window !== "undefined" &&
@@ -513,6 +513,11 @@ export default function VendorOnboarding() {
  destination: "dashboard" | "myHub" = "dashboard",
  ) => {
  if (isFinalizingOnboarding) return;
+ // Auth0 reports isAuthenticated === false while it is still restoring the
+ // session from localStorage / refreshing the access token. Deciding here
+ // would send a signed-in vendor to the login screen at the final step, so
+ // wait it out — the submit buttons are disabled for the same window.
+ if (isAuthLoading) return;
  setIsFinalizingOnboarding(true);
  setPendingFinalAction(createListing ? "createListing" : destination);
 
@@ -531,7 +536,7 @@ export default function VendorOnboarding() {
  if (!isAuthenticated) {
  setIsFinalizingOnboarding(false);
  setPendingFinalAction(null);
- trackEvent("vendor_signup_started", { step: currentStep });
+ trackEventBeacon("vendor_signup_started", { step: currentStep });
  await loginWithRedirect({
  appState: {
  returnTo: `${window.location.pathname}${window.location.search}${window.location.hash}`,
@@ -594,7 +599,7 @@ export default function VendorOnboarding() {
  formData={formData}
  onBack={handleBack}
  onComplete={handleComplete}
- isSubmitting={isFinalizingOnboarding}
+ isSubmitting={isFinalizingOnboarding || isAuthLoading}
  submittingAction={pendingFinalAction}
  hasPendingReferral={!!formData.referralCode}
  />
@@ -635,7 +640,7 @@ export default function VendorOnboarding() {
  formData={formData}
  onBack={handleBack}
  onComplete={handleComplete}
- isSubmitting={isFinalizingOnboarding}
+ isSubmitting={isFinalizingOnboarding || isAuthLoading}
  submittingAction={pendingFinalAction}
  hasPendingReferral={!!formData.referralCode}
  />
