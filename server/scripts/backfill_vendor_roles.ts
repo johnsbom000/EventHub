@@ -60,7 +60,8 @@ async function main() {
   }
 
   console.log(`${rows.length} user(s) currently role='customer' with a live vendor account:\n`);
-  for (const [i, r] of rows.entries()) {
+  for (let i = 0; i < rows.length; i++) {
+    const r = rows[i];
     const when = r.provisioned_at ? new Date(r.provisioned_at).toISOString().slice(0, 10) : "—";
     console.log(`${String(i + 1).padStart(3)}. ${r.email}  (${r.business_name ?? "—"}, provisioned ${when})`);
   }
