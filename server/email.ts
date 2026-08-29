@@ -13,6 +13,7 @@ import { vendorWelcomeTemplate, type VendorWelcomeParams } from "./emails/vendor
 import { proTrialEndingTemplate, type ProTrialEndingParams } from "./emails/proTrialEnding";
 import { compExpiryReminderTemplate, type CompExpiryReminderParams } from "./emails/compExpiryReminder";
 import { compPublishNudgeTemplate, type CompPublishNudgeParams } from "./emails/compPublishNudge";
+import { publishNudgeTemplate, type PublishNudgeParams } from "./emails/publishNudge";
 import { compRevokedTemplate, type CompRevokedParams } from "./emails/compRevoked";
 import { eventDayReminderTemplate, type EventDayReminderParams } from "./emails/eventDayReminder";
 import { payoutProcessedTemplate, type PayoutProcessedParams } from "./emails/payoutProcessed";
@@ -237,6 +238,14 @@ export async function sendCompPublishNudgeEmail(
   params: CompPublishNudgeParams
 ): Promise<EmailResult> {
   const { subject, html, text } = compPublishNudgeTemplate(params);
+  return sendViaResend({ to, subject, html, text });
+}
+
+export async function sendPublishNudgeEmail(
+  to: string,
+  params: PublishNudgeParams
+): Promise<EmailResult> {
+  const { subject, html, text } = publishNudgeTemplate(params);
   return sendViaResend({ to, subject, html, text });
 }
 
