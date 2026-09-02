@@ -8,6 +8,7 @@
 // No-ops entirely when VITE_POSTHOG_KEY is unset (e.g. local dev without a
 // key), so call sites never need to guard.
 import posthog from "posthog-js";
+import { scrubEventUrls } from "@/lib/scrubUrl";
 
 declare global {
   interface Window {
@@ -106,6 +107,11 @@ export function initPostHog(): void {
     ...(bootstrapFlags ? { bootstrap: { featureFlags: bootstrapFlags } } : {}),
     capture_pageview: false,
     capture_pageleave: true,
+    // Strip OAuth callback parameters (`code`, `state`) from every URL before
+    // it is sent. Auth0 redirects back to the app origin with these still in
+    // the address bar, and both the pageview and the session recording start
+    // URL are captured before onRedirectCallback cleans them. See scrubUrl.ts.
+    before_send: scrubEventUrls,
     persistence: "localStorage+cookie",
     // Create a person profile for ANONYMOUS visitors too (default is
     // "identified_only"). Paid Meta/IG traffic is anonymous — without this they
